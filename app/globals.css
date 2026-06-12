@@ -1,26 +1,118 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-base: #0d0d14;
+  --bg-surface: #131320;
+  --bg-card: #181828;
+  --bg-card-hover: #1e1e32;
+  --border: #252540;
+  --border-light: #2e2e50;
+  --text-primary: #f0effe;
+  --text-secondary: #9998bb;
+  --text-muted: #6a6a88;
+  --accent: #7c3aed;
+  --accent-hover: #6d28d9;
+  --accent-light: #8b5cf6;
+  --accent-subtle: rgba(124, 58, 237, 0.12);
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--bg-base);
+  --color-foreground: var(--text-primary);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 3px;
+}
+
+/* Neutral gray palette inside the editor — critical for accurate color work.
+   Accent shifts from purple → steel blue so it doesn't bias footage perception. */
+[data-editor="true"] {
+  --bg-base: #141414;
+  --bg-surface: #1c1c1c;
+  --bg-card: #222222;
+  --bg-card-hover: #292929;
+  --border: #2c2c2c;
+  --border-light: #393939;
+  --text-primary: #d4d4d4;
+  --text-secondary: #868686;
+  --text-muted: #4e4e4e;
+  --accent: #3d8fef;
+  --accent-hover: #2f7de0;
+  --accent-light: #6aabf5;
+  --accent-subtle: rgba(61, 143, 239, 0.12);
+}
+
+/* Slider reset for Inspector controls */
+input[type="range"].cf-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"].cf-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-light);
+  cursor: pointer;
+}
+input[type="range"].cf-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-light);
+  border: none;
+  cursor: pointer;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

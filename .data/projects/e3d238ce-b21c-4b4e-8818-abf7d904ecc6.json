@@ -1,0 +1,59 @@
+{
+  "_type": "contentforge-project",
+  "version": 1,
+  "id": "e3d238ce-b21c-4b4e-8818-abf7d904ecc6",
+  "name": "ObamaSpeechTest",
+  "savedAt": "2026-06-11T06:08:43.519Z",
+  "tracks": [
+    {
+      "id": "v1",
+      "label": "M1",
+      "type": "media",
+      "height": 44
+    },
+    {
+      "id": "a1",
+      "label": "M2",
+      "type": "media",
+      "height": 44
+    },
+    {
+      "id": "cap",
+      "label": "CAP",
+      "type": "caption",
+      "height": 20,
+      "locked": true
+    }
+  ],
+  "clips": [
+    {
+      "id": "4e03b3a0-3a51-4722-a3f0-7c63956ad01c",
+      "label": "ObamaSpeechTest",
+      "startTime": 0,
+      "inPoint": 0,
+      "outPoint": 1507.1056,
+      "color": "#2563eb",
+      "trackId": "v1",
+      "mediaRefId": "4cd36667-3b4d-4edc-9b95-1ebd33c172d5",
+      "captions": [],
+      "contentType": "video"
+    }
+  ],
+  "adjustments": {
+    "brightness": 100,
+    "contrast": 100,
+    "saturation": 100,
+    "highlights": 0
+  },
+  "zoomLevel": 1,
+  "captions": [],
+  "outputs": [],
+  "media": [
+    {
+      "id": "4cd36667-3b4d-4edc-9b95-1ebd33c172d5",
+      "name": "ObamaSpeechTest.mp4",
+      "contentType": "video",
+      "duration": 1507.1056
+    }
+  ]
+}

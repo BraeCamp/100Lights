@@ -1,0 +1,83 @@
+{
+  "_type": "contentforge-project",
+  "version": 1,
+  "id": "facba596-86b7-4caa-86d9-779e8df47305",
+  "name": "ObamaSpeechTest",
+  "savedAt": "2026-06-11T06:42:55.890Z",
+  "tracks": [
+    {
+      "id": "v1",
+      "label": "M1",
+      "type": "media",
+      "height": 44
+    },
+    {
+      "id": "a1",
+      "label": "M2",
+      "type": "media",
+      "height": 44
+    },
+    {
+      "id": "cap",
+      "label": "CAP",
+      "type": "caption",
+      "height": 20,
+      "locked": true
+    }
+  ],
+  "clips": [
+    {
+      "id": "994f4d1b-a9cc-46c4-84a9-4154e8f00e49",
+      "label": "ObamaSpeechTest",
+      "startTime": 0,
+      "inPoint": 0,
+      "outPoint": 2.7254685413801925,
+      "color": "#2563eb",
+      "trackId": "v1",
+      "mediaRefId": "aec80d4f-a972-4cde-8873-38fc3606933c",
+      "captions": [],
+      "contentType": "video"
+    },
+    {
+      "id": "5bfa38bb-6a90-4bbf-92c3-5082f536edc9",
+      "label": "ObamaSpeechTest",
+      "startTime": 0.32546854138019365,
+      "inPoint": 2.2004685413801925,
+      "outPoint": 13.39783712591467,
+      "color": "#2563eb",
+      "trackId": "a1",
+      "mediaRefId": "aec80d4f-a972-4cde-8873-38fc3606933c",
+      "captions": [],
+      "contentType": "video"
+    },
+    {
+      "id": "f3879e89-6322-4d77-8009-102e9bccc2dc",
+      "label": "ObamaSpeechTest",
+      "startTime": 8.560337125914673,
+      "inPoint": 8.560337125914671,
+      "outPoint": 1507.1056,
+      "color": "#2563eb",
+      "trackId": "v1",
+      "mediaRefId": "aec80d4f-a972-4cde-8873-38fc3606933c",
+      "captions": [],
+      "contentType": "video"
+    }
+  ],
+  "adjustments": {
+    "brightness": 100,
+    "contrast": 100,
+    "saturation": 100,
+    "highlights": 0
+  },
+  "zoomLevel": 1,
+  "captions": [],
+  "outputs": [],
+  "media": [
+    {
+      "id": "aec80d4f-a972-4cde-8873-38fc3606933c",
+      "name": "ObamaSpeechTest.mp4",
+      "contentType": "video",
+      "duration": 1507.1056
+    }
+  ]
+}

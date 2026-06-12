@@ -1,0 +1,166 @@
+'use client'
+
+import { useRef } from 'react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle } from 'lucide-react'
+import type { MediaItem } from '@/lib/editor-types'
+import type { ContextMenuItem } from './ContextMenu'
+
+interface Props {
+  items: MediaItem[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onImport: (file: File) => void
+  onAddToTimeline: (item: MediaItem) => void
+  onRemove: (id: string) => void
+  onContextMenu: (e: React.MouseEvent, items: ContextMenuItem[]) => void
+}
+
+function formatDur(s?: number) {
+  if (!s) return '—'
+  const m = Math.floor(s / 60), sec = Math.round(s % 60)
+  return `${m}:${String(sec).padStart(2, '0')}`
+}
+
+export default function MediaLibrary({
+  items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu,
+}: Props) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) onImport(file)
+    e.target.value = ''
+  }
+
+  function getMenuItems(item: MediaItem): ContextMenuItem[] {
+    return [
+      { id: 'add', label: 'Add to Timeline', shortcut: 'Enter', onClick: () => onAddToTimeline(item) },
+      { id: 'sep', separator: true, label: '' },
+      { id: 'remove', label: 'Remove from Library', danger: true, onClick: () => onRemove(item.id) },
+    ]
+  }
+
+  return (
+    <div
+      className="flex flex-col h-full select-none"
+      style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
+    >
+      {/* Panel header */}
+      <div
+        className="flex items-center justify-between px-3 py-2 shrink-0"
+        style={{ borderBottom: '1px solid var(--border)' }}
+      >
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          Media Pool
+        </span>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+          style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+          title="Import media (also drag files onto the viewer)"
+        >
+          <FolderOpen size={11} /> Import
+        </button>
+        <input ref={fileInputRef} type="file" accept="video/*,audio/*" className="hidden" onChange={handleFileInput} />
+      </div>
+
+      {/* Tabs */}
+      <div className="flex shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+        <button className="flex-1 py-1.5 text-xs font-medium" style={{ color: 'var(--text-primary)', borderBottom: '2px solid var(--accent)' }}>
+          Media
+        </button>
+        <button className="flex-1 py-1.5 text-xs font-medium" style={{ color: 'var(--text-muted)', borderBottom: '2px solid transparent' }} title="Effects — coming soon">
+          Effects
+        </button>
+        <button className="flex-1 py-1.5 text-xs font-medium" style={{ color: 'var(--text-muted)', borderBottom: '2px solid transparent' }} title="Audio — coming soon">
+          Audio
+        </button>
+      </div>
+
+      {/* Media list */}
+      <div className="flex-1 overflow-y-auto p-1.5">
+        {items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-10 px-4 text-center">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'var(--border)' }}>
+              <Layers size={18} color="var(--text-muted)" />
+            </div>
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Import or drop a file here. Drag clips to the timeline tracks below.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {items.map((item) => {
+              const Icon = item.contentType === 'video' ? Film : Mic
+              const selected = item.id === selectedId
+              return (
+                <div
+                  key={item.id}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('mediaId', item.id)
+                    e.dataTransfer.effectAllowed = 'copy'
+                  }}
+                  onClick={() => onSelect(item.id)}
+                  onDoubleClick={() => onAddToTimeline(item)}
+                  onContextMenu={(e) => { e.preventDefault(); onSelect(item.id); onContextMenu(e, getMenuItems(item)) }}
+                  className="flex items-center gap-2 w-full px-2 py-2 rounded text-left cursor-grab active:cursor-grabbing transition-colors"
+                  style={{
+                    background: selected ? 'rgba(124,58,237,0.15)' : 'transparent',
+                    border: `1px solid ${selected ? 'rgba(124,58,237,0.3)' : 'transparent'}`,
+                  }}
+                  title="Drag to a timeline track, or double-click to add"
+                >
+                  {/* Thumbnail / icon */}
+                  <div
+                    className="w-10 h-7 rounded shrink-0 flex items-center justify-center overflow-hidden"
+                    style={{ background: 'var(--border)' }}
+                  >
+                    {item.thumbnail ? (
+                      <img src={item.thumbnail} className="w-full h-full object-cover" alt="" />
+                    ) : (
+                      <Icon size={12} color="var(--text-muted)" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      {item.name}
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {item.contentType} · {formatDur(item.duration)}
+                    </div>
+                  </div>
+                  {item.uploadStatus === 'uploading' && (
+                    <span title="Uploading to cloud…" style={{ flexShrink: 0, display: 'flex' }}>
+                      <CloudUpload size={12} color="var(--text-muted)" style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    </span>
+                  )}
+                  {item.uploadStatus === 'error' && (
+                    <span title="Upload failed — file is local only" style={{ flexShrink: 0, display: 'flex' }}>
+                      <AlertCircle size={12} color="#ef4444" />
+                    </span>
+                  )}
+                  {item.uploadStatus === 'uploaded' && (
+                    <span title="Saved to cloud" style={{ flexShrink: 0, display: 'flex' }}>
+                      <CheckCircle2 size={12} color="var(--success)" />
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Drag hint */}
+      {items.length > 0 && (
+        <div
+          className="px-3 py-2 shrink-0 text-center text-xs"
+          style={{ borderTop: '1px solid var(--border)', color: 'var(--text-muted)' }}
+        >
+          Drag to timeline · Double-click to add
+        </div>
+      )}
+    </div>
+  )
+}
