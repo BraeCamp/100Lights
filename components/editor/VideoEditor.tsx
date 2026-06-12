@@ -1081,33 +1081,37 @@ export default function VideoEditor({
   }
 
   async function handleTranscribe() {
-    if (!importedFile || transcribeStatus === 'transcribing') return
+    if (transcribeStatus === 'transcribing') return
+    const media = selectedMediaId ? mediaItems.find(m => m.id === selectedMediaId) : null
+    if (!media) return
+
+    // The file must have finished uploading to R2 before Deepgram can fetch it
+    if (!media.r2Key) {
+      if (media.uploadStatus === 'uploading') {
+        setTranscribeError('Still uploading — please wait a moment and try again.')
+      } else {
+        setTranscribeError('Upload failed. Please remove and re-import the file.')
+      }
+      return
+    }
+
     setTranscribeStatus('transcribing')
-    setTranscribeProgress(0)
+    setTranscribeProgress(101) // show server-processing indicator immediately
     setTranscribeError('')
 
     try {
-      // POST to our server-side proxy — XHR so we can track upload progress.
-      const formData = new FormData()
-      formData.append('file', importedFile)
-
-      const responseText = await new Promise<string>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.open('POST', '/api/transcribe')
-
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) setTranscribeProgress(Math.round((e.loaded / e.total) * 100))
-        }
-        xhr.upload.onload = () => setTranscribeProgress(101)  // upload done, server processing
-
-        xhr.onload  = () => xhr.status >= 200 && xhr.status < 300
-          ? resolve(xhr.responseText)
-          : reject(new Error(JSON.parse(xhr.responseText || '{}')?.error ?? `Server error ${xhr.status}`))
-        xhr.onerror = () => reject(new Error('Could not reach server — check your connection'))
-        xhr.send(formData)
+      const res = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: media.r2Key, contentType: media.contentType }),
       })
 
-      const data = JSON.parse(responseText) as { captions?: Caption[]; duration?: number }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(err.error ?? `Server error ${res.status}`)
+      }
+
+      const data = await res.json() as { captions?: Caption[]; duration?: number }
       const newCaptions: Caption[] = data.captions ?? []
 
       const out: Output = {
@@ -1120,7 +1124,7 @@ export default function VideoEditor({
       setTranscribeStatus('done')
       saveProject({
         id: savedProjectId, name: localProjectName,
-        contentType: importedFile.type.startsWith('video/') ? 'video' : 'audio',
+        contentType: media.contentType,
         createdAt: new Date().toISOString(), duration: data.duration,
         captions: newCaptions, outputs: [out],
       })

@@ -18,3 +18,14 @@ CREATE TABLE IF NOT EXISTS usage (
   reset_at  TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (user_id, action)
 );
+
+-- Tracks Stripe subscription status per user
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id            TEXT        PRIMARY KEY,
+  stripe_customer_id TEXT        NOT NULL,
+  stripe_sub_id      TEXT,
+  plan               TEXT        NOT NULL DEFAULT 'free',
+  status             TEXT        NOT NULL DEFAULT 'active',
+  current_period_end TIMESTAMPTZ,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -1,10 +1,5 @@
-/**
- * Anthropic API proxy.
- * Reads the key from ANTHROPIC_API_KEY env var — never from the client.
- */
 import { auth } from '@clerk/nextjs/server'
-
-export const runtime = 'edge'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 interface AiRequest {
   system?:    string
@@ -16,6 +11,14 @@ interface AiRequest {
 export async function POST(req: Request) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const limit = await checkRateLimit(userId, 'ai_generate')
+  if (!limit.allowed) {
+    return Response.json(
+      { error: `Monthly AI generation limit reached. Resets at ${limit.resetAt.toUTCString()}.` },
+      { status: 429, headers: { 'X-RateLimit-Reset': limit.resetAt.toISOString() } },
+    )
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {

@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { presignDownload } from '@/lib/r2'
 
 export const maxDuration = 120
 
@@ -7,7 +8,6 @@ export async function POST(request: Request) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // 10 transcriptions per day per user
   const limit = await checkRateLimit(userId, 'transcribe', 10)
   if (!limit.allowed) {
     return Response.json(
@@ -21,17 +21,23 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Transcription service not configured.' }, { status: 503 })
   }
 
-  let formData: FormData
+  let body: { r2Key: string; contentType?: string }
   try {
-    formData = await request.formData()
+    body = await request.json()
   } catch {
-    return Response.json({ error: 'Could not read uploaded file.' }, { status: 400 })
+    return Response.json({ error: 'Invalid JSON.' }, { status: 400 })
   }
 
-  const file = formData.get('file')
-  if (!(file instanceof File)) {
-    return Response.json({ error: 'No file provided.' }, { status: 400 })
+  const { r2Key, contentType } = body
+  if (!r2Key) return Response.json({ error: 'Missing r2Key.' }, { status: 400 })
+
+  // Enforce users can only transcribe their own files
+  if (!r2Key.startsWith(`${userId}/`)) {
+    return Response.json({ error: 'Forbidden.' }, { status: 403 })
   }
+
+  // Give Deepgram a short-lived signed URL — it fetches the file directly from R2
+  const signedUrl = await presignDownload(r2Key, 900)
 
   const params = new URLSearchParams({
     model:        'nova-3',
@@ -50,9 +56,9 @@ export async function POST(request: Request) {
         method:  'POST',
         headers: {
           Authorization:  `Token ${apiKey}`,
-          'Content-Type': file.type || 'audio/mpeg',
+          'Content-Type': 'application/json',
         },
-        body: await file.arrayBuffer(),
+        body: JSON.stringify({ url: signedUrl }),
       }
     )
   } catch {
@@ -60,8 +66,8 @@ export async function POST(request: Request) {
   }
 
   if (!deepgramResponse.ok) {
-    const body = await deepgramResponse.json().catch(() => ({}))
-    const message = (body as { err_msg?: string })?.err_msg ?? `Deepgram returned ${deepgramResponse.status}`
+    const err = await deepgramResponse.json().catch(() => ({}))
+    const message = (err as { err_msg?: string })?.err_msg ?? `Deepgram returned ${deepgramResponse.status}`
     return Response.json({ error: message }, { status: deepgramResponse.status })
   }
 
