@@ -22,6 +22,7 @@ import {
 import type { Caption, Clip, Output, ContentType } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
+import { useUpgradeModal } from '@/components/UpgradeModal'
 
 const CLIP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#9333ea']
 
@@ -361,6 +362,7 @@ export default function VideoEditor({
   // Transcription
   const [importedFile, setImportedFile] = useState<File | null>(null)
   const [localProjectName, setLocalProjectName] = useState(projectName)
+  const { showUpgrade } = useUpgradeModal()
   const [transcribeStatus, setTranscribeStatus] = useState<TranscribeStatus>('idle')
   const [transcribeProgress, setTranscribeProgress] = useState(0) // 0–100 upload %, 101 = server processing
   const [transcribeError, setTranscribeError] = useState('')
@@ -1106,6 +1108,11 @@ export default function VideoEditor({
         body: JSON.stringify({ r2Key: media.r2Key, contentType: media.contentType }),
       })
 
+      if (res.status === 429) {
+        setTranscribeStatus('error')
+        showUpgrade('You\'ve used your free transcriptions for this month. Upgrade to Pro for 30/month.')
+        return
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(err.error ?? `Server error ${res.status}`)
@@ -1267,6 +1274,10 @@ export default function VideoEditor({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, system }),
     })
+    if (res.status === 429) {
+      showUpgrade('You\'ve used your free AI generations for this month. Upgrade to Pro for 100/month.')
+      throw new Error('Monthly AI limit reached — upgrade to continue.')
+    }
     if (!res.ok) throw new Error(`AI request failed: ${res.status}`)
     const data = await res.json() as { content: string; error?: string }
     if (data.error) throw new Error(data.error)

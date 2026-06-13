@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 function client() {
@@ -28,4 +28,16 @@ export async function presignDownload(key: string, expiresIn = 3600) {
     new GetObjectCommand({ Bucket: BUCKET(), Key: key }),
     { expiresIn },
   )
+}
+
+export async function deleteObject(key: string) {
+  await client().send(new DeleteObjectCommand({ Bucket: BUCKET(), Key: key }))
+}
+
+export async function deleteObjects(keys: string[]) {
+  if (keys.length === 0) return
+  await client().send(new DeleteObjectsCommand({
+    Bucket: BUCKET(),
+    Delete: { Objects: keys.map(Key => ({ Key })), Quiet: true },
+  }))
 }

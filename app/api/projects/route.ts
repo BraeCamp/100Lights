@@ -1,11 +1,32 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import type { CfProjFile } from '@/lib/project-serializer'
+import { deleteObjects } from '@/lib/r2'
+import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 
-// GET /api/projects — list the current user's projects
+async function purgeExpiredTrash(userId: string) {
+  const expired = await sql`
+    SELECT id, data FROM projects
+    WHERE user_id = ${userId}
+      AND deleted_at IS NOT NULL
+      AND deleted_at < NOW() - INTERVAL '7 days'
+  `
+  if (expired.length === 0) return
+  const keys = expired.flatMap(r =>
+    ((r.data as CfProjFile).media as SerializedMedia[]).map(m => m.r2Key).filter(Boolean)
+  ) as string[]
+  const ids = expired.map(r => r.id as string)
+  await Promise.all([
+    deleteObjects(keys),
+    sql`DELETE FROM projects WHERE id = ANY(${ids}::text[]) AND user_id = ${userId}`,
+  ])
+}
+
+// GET /api/projects — list the current user's active projects
 export async function GET() {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  purgeExpiredTrash(userId).catch(() => {})
 
   const rows = await sql`
     SELECT
@@ -14,7 +35,7 @@ export async function GET() {
       data->'media'            AS media,
       data->'media'->0->>'thumbnail' AS thumbnail
     FROM projects
-    WHERE user_id = ${userId}
+    WHERE user_id = ${userId} AND deleted_at IS NULL
     ORDER BY saved_at DESC
   `
 

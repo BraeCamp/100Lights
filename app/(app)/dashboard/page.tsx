@@ -92,12 +92,39 @@ export default function DashboardPage() {
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</span>
             </div>
           ) : recentProjects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-              <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>No projects yet</p>
-              <p className="text-xs mb-5" style={{ color: 'var(--text-muted)' }}>Create your first project to get started</p>
-              <Link href="/new" className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg" style={{ background: 'var(--accent)', color: '#fff' }}>
-                <PlusCircle size={14} /> New project
-              </Link>
+            <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <div className="px-6 pt-8 pb-6 text-center border-b" style={{ borderColor: 'var(--border)' }}>
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'var(--accent-subtle)', border: '1px solid rgba(139,92,246,0.25)' }}>
+                  <Film size={24} color="var(--accent-light)" />
+                </div>
+                <h3 className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                  Turn your first recording into content
+                </h3>
+                <p className="text-sm max-w-xs mx-auto mb-5" style={{ color: 'var(--text-secondary)' }}>
+                  Upload a video, podcast, or audio file and 100Lights will transcribe it and generate articles, blog posts, and show notes automatically.
+                </p>
+                <Link
+                  href="/new"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold"
+                  style={{ background: 'var(--accent)', color: '#fff' }}
+                >
+                  <PlusCircle size={15} />
+                  Create your first project
+                </Link>
+              </div>
+              <div className="grid grid-cols-3 divide-x" style={{ borderColor: 'var(--border)' }}>
+                {[
+                  { step: '01', label: 'Upload any video or audio', sub: 'MP4, MOV, MP3, WAV — up to 4 GB' },
+                  { step: '02', label: 'AI transcribes in minutes', sub: 'Word-for-word with timestamps' },
+                  { step: '03', label: 'Generate content instantly', sub: 'Articles, blog posts, show notes' },
+                ].map(({ step, label, sub }) => (
+                  <div key={step} className="px-5 py-4" style={{ borderColor: 'var(--border)' }}>
+                    <div className="text-lg font-bold mb-1.5" style={{ color: 'var(--border-light)' }}>{step}</div>
+                    <div className="text-xs font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>{label}</div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{sub}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="flex flex-col gap-2">
