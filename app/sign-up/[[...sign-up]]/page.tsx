@@ -18,7 +18,19 @@ export default function SignUpPage() {
           100Lights
         </span>
       </div>
-      <SignUp />
+      <SignUp
+        fallbackRedirectUrl="/dashboard"
+        signInUrl="/sign-in"
+        appearance={{
+          variables: {
+            colorBackground: '#181828',
+            colorInputBackground: '#0f0f1a',
+            colorText: '#f0effe',
+            colorTextSecondary: '#c4c3d8',
+            colorInputText: '#f0effe',
+          },
+        }}
+      />
     </div>
   )
 }
