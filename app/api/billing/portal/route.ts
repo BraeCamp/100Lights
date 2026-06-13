@@ -1,11 +1,14 @@
 import { auth } from '@clerk/nextjs/server'
-import { stripe } from '@/lib/stripe'
+import { stripe, getProPrice } from '@/lib/stripe'
 import { getSubscription } from '@/lib/subscription'
 
 const RETURN_URL = 'https://100lights.com/settings'
 
 async function getOrCreatePortalConfig(): Promise<string> {
-  const configs = await stripe.billingPortal.configurations.list({ is_default: true, limit: 1 })
+  const [configs, proPrice] = await Promise.all([
+    stripe.billingPortal.configurations.list({ is_default: true, limit: 1 }),
+    getProPrice(),
+  ])
   if (configs.data.length > 0) return configs.data[0].id
 
   const config = await stripe.billingPortal.configurations.create({
@@ -15,27 +18,15 @@ async function getOrCreatePortalConfig(): Promise<string> {
       terms_of_service_url: 'https://100lights.com/legal/terms',
     },
     features: {
-      customer_update: {
-        enabled: true,
-        allowed_updates: ['email', 'tax_id'],
-      },
+      customer_update: { enabled: true, allowed_updates: ['email', 'tax_id'] },
       invoice_history: { enabled: true },
       payment_method_update: { enabled: true },
-      subscription_cancel: {
-        enabled: true,
-        mode: 'at_period_end',
-        proration_behavior: 'none',
-      },
+      subscription_cancel: { enabled: true, mode: 'at_period_end', proration_behavior: 'none' },
       subscription_update: {
         enabled: true,
         default_allowed_updates: ['price'],
         proration_behavior: 'always_invoice',
-        products: [
-          {
-            product: process.env.STRIPE_PRO_PRODUCT_ID!,
-            prices: [process.env.STRIPE_PRO_PRICE_ID!],
-          },
-        ],
+        products: [{ product: proPrice.productId, prices: [proPrice.id] }],
       },
     },
     default_return_url: RETURN_URL,

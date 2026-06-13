@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
-import { stripe, PLANS } from '@/lib/stripe'
+import { stripe, getProPrice } from '@/lib/stripe'
 import { getSubscription, upsertSubscription } from '@/lib/subscription'
 
 async function getOrCreateCustomer(
@@ -34,19 +34,20 @@ export async function POST() {
   }
 
   const email = sessionClaims?.email as string | undefined
-  const customerId = await getOrCreateCustomer(userId, sub.stripeCustomerId, email)
+  const [customerId, proPrice] = await Promise.all([
+    getOrCreateCustomer(userId, sub.stripeCustomerId, email),
+    getProPrice(),
+  ])
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     payment_method_types: ['card'],
-    line_items: [{ price: PLANS.pro.priceId, quantity: 1 }],
+    line_items: [{ price: proPrice.id, quantity: 1 }],
     customer: customerId,
     metadata: { userId },
     success_url: 'https://100lights.com/dashboard?upgraded=1',
     cancel_url: 'https://100lights.com/settings',
-    subscription_data: {
-      metadata: { userId },
-    },
+    subscription_data: { metadata: { userId } },
     allow_promotion_codes: true,
   })
 
