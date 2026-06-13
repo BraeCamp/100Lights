@@ -1,6 +1,28 @@
 import { auth } from '@clerk/nextjs/server'
 import { stripe, PLANS } from '@/lib/stripe'
-import { getSubscription } from '@/lib/subscription'
+import { getSubscription, upsertSubscription } from '@/lib/subscription'
+
+async function getOrCreateCustomer(
+  userId: string,
+  existingId: string | null,
+  email: string | undefined,
+): Promise<string> {
+  if (existingId) return existingId
+
+  const customer = await stripe.customers.create({
+    email,
+    metadata: { userId },
+  })
+
+  await upsertSubscription({
+    userId,
+    stripeCustomerId: customer.id,
+    plan: 'free',
+    status: 'active',
+  })
+
+  return customer.id
+}
 
 export async function POST() {
   const { userId, sessionClaims } = await auth()
@@ -12,19 +34,20 @@ export async function POST() {
   }
 
   const email = sessionClaims?.email as string | undefined
+  const customerId = await getOrCreateCustomer(userId, sub.stripeCustomerId, email)
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     payment_method_types: ['card'],
     line_items: [{ price: PLANS.pro.priceId, quantity: 1 }],
-    customer: sub.stripeCustomerId ?? undefined,
-    customer_email: !sub.stripeCustomerId ? email : undefined,
+    customer: customerId,
     metadata: { userId },
-    success_url: `https://100lights.com/dashboard?upgraded=1`,
-    cancel_url: `https://100lights.com/dashboard`,
+    success_url: 'https://100lights.com/dashboard?upgraded=1',
+    cancel_url: 'https://100lights.com/settings',
     subscription_data: {
       metadata: { userId },
     },
+    allow_promotion_codes: true,
   })
 
   return Response.json({ url: session.url })
