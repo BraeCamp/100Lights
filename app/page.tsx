@@ -19,16 +19,16 @@ const steps = [
 export default function LandingPage() {
   return (
     <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
-      <nav className="flex items-center justify-between px-8 py-4 max-w-6xl mx-auto">
+      <nav className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
             <Zap size={16} color="#fff" fill="#fff" />
           </div>
           <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>100Lights</span>
         </div>
-        <div className="flex items-center gap-6">
-          <Link href="#features" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Features</Link>
-          <Link href="#how-it-works" className="text-sm" style={{ color: 'var(--text-secondary)' }}>How it works</Link>
+        <div className="flex items-center gap-3 sm:gap-6">
+          <Link href="#features" className="hidden sm:block text-sm" style={{ color: 'var(--text-secondary)' }}>Features</Link>
+          <Link href="#how-it-works" className="hidden sm:block text-sm" style={{ color: 'var(--text-secondary)' }}>How it works</Link>
           <Link href="/sign-in" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Sign in</Link>
           <Link
             href="/sign-up"
@@ -40,7 +40,7 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      <section className="max-w-4xl mx-auto px-8 pt-24 pb-20 text-center">
+      <section className="max-w-4xl mx-auto px-6 pt-16 sm:pt-24 pb-16 sm:pb-20 text-center">
         <div
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-8"
           style={{ background: 'var(--accent-subtle)', color: 'var(--accent-light)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
@@ -48,32 +48,32 @@ export default function LandingPage() {
           <Zap size={11} />
           AI-powered content repurposing
         </div>
-        <h1 className="text-5xl font-bold leading-tight tracking-tight mb-6" style={{ color: 'var(--text-primary)' }}>
+        <h1 className="text-3xl sm:text-5xl font-bold leading-tight tracking-tight mb-6" style={{ color: 'var(--text-primary)' }}>
           Turn hours of content into{' '}
           <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
             minutes of work
           </span>
         </h1>
-        <p className="text-lg max-w-2xl mx-auto mb-10" style={{ color: 'var(--text-secondary)' }}>
+        <p className="text-base sm:text-lg max-w-2xl mx-auto mb-10" style={{ color: 'var(--text-secondary)' }}>
           Upload any video, podcast, or recording. 100Lights transcribes, analyzes, and generates articles, blog posts, show notes, and clips — automatically.
         </p>
-        <div className="flex items-center justify-center gap-4">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <Link
             href="/sign-up"
-            className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold"
             style={{ background: 'var(--accent)', color: '#fff' }}
           >
             Start for free <ArrowRight size={15} />
           </Link>
           <Link
-            href="/projects/demo"
-            className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium"
+            href="#how-it-works"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium"
             style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
           >
-            See a live demo
+            How it works
           </Link>
         </div>
-        <div className="flex items-center justify-center gap-6 mt-10">
+        <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 mt-10">
           {['No credit card required', 'Free tier available', 'Cancel anytime'].map((item) => (
             <div key={item} className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
               <Check size={12} color="var(--success)" />
@@ -83,12 +83,12 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section id="features" className="max-w-6xl mx-auto px-8 pb-24">
-        <div className="text-center mb-14">
-          <h2 className="text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Everything in one pipeline</h2>
+      <section id="features" className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24">
+        <div className="text-center mb-10 sm:mb-14">
+          <h2 className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Everything in one pipeline</h2>
           <p className="text-base" style={{ color: 'var(--text-secondary)' }}>One upload triggers a complete content repurposing workflow.</p>
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {features.map(({ icon: Icon, title, description, color }) => (
             <div key={title} className="p-6 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4" style={{ background: `${color}18` }}>
@@ -101,9 +101,9 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section id="how-it-works" className="max-w-4xl mx-auto px-8 pb-24">
-        <div className="text-center mb-14">
-          <h2 className="text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>How it works</h2>
+      <section id="how-it-works" className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
+        <div className="text-center mb-10 sm:mb-14">
+          <h2 className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>How it works</h2>
           <p className="text-base" style={{ color: 'var(--text-secondary)' }}>From raw recording to published content in three steps.</p>
         </div>
         <div className="flex flex-col gap-4">
@@ -121,12 +121,12 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="max-w-4xl mx-auto px-8 pb-24">
+      <section className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
         <div
-          className="flex flex-col items-center text-center py-16 px-8 rounded-2xl border"
+          className="flex flex-col items-center text-center py-12 sm:py-16 px-6 sm:px-8 rounded-2xl border"
           style={{ background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(59, 130, 246, 0.08))', borderColor: 'rgba(139, 92, 246, 0.25)' }}
         >
-          <h2 className="text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Ready to start repurposing?</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Ready to start repurposing?</h2>
           <p className="text-base mb-8 max-w-lg" style={{ color: 'var(--text-secondary)' }}>
             Join creators who are multiplying their content output without multiplying their hours.
           </p>
@@ -140,8 +140,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t max-w-6xl mx-auto px-8 py-8" style={{ borderColor: 'var(--border)' }}>
-        <div className="flex items-center justify-between">
+      <footer className="border-t max-w-6xl mx-auto px-6 py-8" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-0 sm:justify-between">
           <div className="flex items-center gap-2">
             <Zap size={14} color="var(--text-muted)" />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>100Lights</span>

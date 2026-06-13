@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Film, PlusCircle, Clock, FolderOpen, Trash2 } from 'lucide-react'
+import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw } from 'lucide-react'
 import { openProjectFromFile } from '@/lib/project-serializer'
 
 interface ProjectSummary {
@@ -22,18 +22,23 @@ function formatDate(iso: string) {
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
 
-  useEffect(() => {
+  function loadProjects() {
+    setLoading(true)
+    setError(false)
     fetch('/api/projects')
-      .then(r => r.ok ? r.json() : [])
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
       .then((data: ProjectSummary[]) => setProjects(data))
-      .catch(() => {})
+      .catch(() => setError(true))
       .finally(() => setLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadProjects() }, [])
 
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.preventDefault()
-    if (!confirm('Delete this project? This cannot be undone.')) return
+    if (!confirm('Move this project to trash? It will be permanently deleted after 7 days.')) return
     await fetch(`/api/projects/${id}`, { method: 'DELETE' })
     setProjects(prev => prev.filter(p => p.id !== id))
   }
@@ -75,31 +80,21 @@ export default function ProjectsPage() {
           </div>
         </div>
 
-        {/* Demo always listed at top */}
-        <div className="flex flex-col gap-2 mb-4">
-          <Link
-            href="/projects/demo"
-            className="flex items-center gap-4 p-4 rounded-xl border transition-all"
-            style={{ background: 'var(--bg-card)', borderColor: 'rgba(139, 92, 246, 0.3)' }}
-          >
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--accent-subtle)' }}>
-              <Film size={16} color="var(--accent-light)" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                The Creator Mindset — Demo
-              </div>
-              <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Sample podcast · 22 captions · 5 outputs</div>
-            </div>
-            <span className="text-xs font-medium px-2 py-1 rounded-full shrink-0" style={{ background: 'var(--accent-subtle)', color: 'var(--accent-light)' }}>
-              Demo
-            </span>
-          </Link>
-        </div>
-
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading projects…</div>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-16 rounded-xl border gap-3" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+            <AlertCircle size={20} color="var(--text-muted)" />
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Failed to load projects</p>
+            <button
+              onClick={loadProjects}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
+              style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+            >
+              <RefreshCw size={12} /> Retry
+            </button>
           </div>
         ) : projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>

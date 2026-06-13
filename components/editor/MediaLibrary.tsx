@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
@@ -25,11 +25,27 @@ export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [importError, setImportError] = useState('')
+
+  const ACCEPTED_TYPES = ['video/', 'audio/']
+  const MAX_BYTES = 500 * 1024 * 1024
+
+  function validateFile(file: File): string {
+    if (!ACCEPTED_TYPES.some(t => file.type.startsWith(t)))
+      return `Unsupported file type "${file.type || file.name.split('.').pop()}". Upload a video or audio file.`
+    if (file.size > MAX_BYTES)
+      return `File is too large (${(file.size / 1024 / 1024).toFixed(0)} MB). Maximum size is 500 MB.`
+    return ''
+  }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) onImport(file)
     e.target.value = ''
+    if (!file) return
+    const err = validateFile(file)
+    if (err) { setImportError(err); return }
+    setImportError('')
+    onImport(file)
   }
 
   function getMenuItems(item: MediaItem): ContextMenuItem[] {
@@ -63,6 +79,17 @@ export default function MediaLibrary({
         </button>
         <input ref={fileInputRef} type="file" accept="video/*,audio/*" className="hidden" onChange={handleFileInput} />
       </div>
+
+      {/* Import error */}
+      {importError && (
+        <div
+          className="mx-3 mt-2 px-2.5 py-2 rounded-lg text-xs flex items-start gap-2"
+          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}
+        >
+          <AlertCircle size={12} className="shrink-0 mt-0.5" />
+          <span>{importError}</span>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>

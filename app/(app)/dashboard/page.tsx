@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { PlusCircle, Film, Clock, FileText, ArrowRight } from 'lucide-react'
+import { PlusCircle, Film, Clock, FileText, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react'
 
 interface ProjectSummary {
   id: string
@@ -20,14 +20,19 @@ function formatDate(iso: string) {
 export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
 
-  useEffect(() => {
+  function loadProjects() {
+    setLoading(true)
+    setError(false)
     fetch('/api/projects')
-      .then(r => r.ok ? r.json() : [])
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
       .then((data: ProjectSummary[]) => setProjects(data))
-      .catch(() => {})
+      .catch(() => setError(true))
       .finally(() => setLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadProjects() }, [])
 
   const recentProjects = projects.slice(0, 5)
 
@@ -90,6 +95,18 @@ export default function DashboardPage() {
           {loading ? (
             <div className="flex items-center justify-center py-10 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</span>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-14 rounded-xl border gap-3" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <AlertCircle size={20} color="var(--text-muted)" />
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Failed to load projects</p>
+              <button
+                onClick={loadProjects}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
+                style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+              >
+                <RefreshCw size={12} /> Retry
+              </button>
             </div>
           ) : recentProjects.length === 0 ? (
             <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
@@ -154,22 +171,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div
-          className="mt-8 flex items-center justify-between p-5 rounded-xl border"
-          style={{ background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(59, 130, 246, 0.06))', borderColor: 'rgba(139, 92, 246, 0.2)' }}
-        >
-          <div>
-            <div className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Try a live demo</div>
-            <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>See the full pipeline run with a sample podcast episode</div>
-          </div>
-          <Link
-            href="/projects/demo"
-            className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg"
-            style={{ background: 'var(--accent)', color: '#fff' }}
-          >
-            Watch it run <ArrowRight size={14} />
-          </Link>
-        </div>
       </div>
     </div>
   )

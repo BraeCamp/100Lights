@@ -10,7 +10,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "100Lights — AI Content Repurposing",
+  title: { template: '%s | 100Lights', default: '100Lights — AI Content Repurposing' },
   description: "Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.",
 }
 

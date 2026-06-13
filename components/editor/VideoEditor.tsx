@@ -1009,7 +1009,7 @@ export default function VideoEditor({
       })
       if (res.status === 413) {
         setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error' } : m))
-        alert('File is too large. Maximum size is 500 MB.')
+        setTranscribeError('File is too large. Maximum size is 500 MB.')
         return
       }
       if (!res.ok) throw new Error('presign failed')
