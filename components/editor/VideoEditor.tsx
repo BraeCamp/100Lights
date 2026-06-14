@@ -1226,6 +1226,14 @@ export default function VideoEditor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(project),
       })
+      if (res.status === 403) {
+        const body = await res.json().catch(() => ({})) as { upgrade?: boolean }
+        if (body.upgrade) {
+          showUpgrade('You\'ve reached the 5-project limit on the free plan. Upgrade to Pro for unlimited projects.')
+          setSaveStatus('idle')
+          return
+        }
+      }
       if (!res.ok) throw new Error('Cloud save failed')
       posthog.capture('project_saved', { name: nameToUse })
       flashSaved()

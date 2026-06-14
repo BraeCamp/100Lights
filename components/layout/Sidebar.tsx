@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2 } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -160,6 +160,14 @@ export default function Sidebar() {
             </span>
           </div>
         )}
+        <a
+          href="mailto:feedback@100lights.com?subject=Feedback"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <MessageSquare size={16} />
+          Send feedback
+        </a>
         <div className="flex gap-3 px-3 pt-1">
           <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
           <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>

@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { deleteObjects } from '@/lib/r2'
+import { getSubscription, getPlanLimits } from '@/lib/subscription'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 
 async function purgeExpiredTrash(userId: string) {
@@ -63,6 +64,19 @@ export async function POST(req: Request) {
 
   if (body._type !== '100lights-project' || !body.id || !body.name) {
     return Response.json({ error: 'Not a valid 100Lights project file' }, { status: 400 })
+  }
+
+  // Check project limit only for brand-new projects (not re-saves of existing ones)
+  const isNew = await sql`SELECT 1 FROM projects WHERE id = ${body.id} AND user_id = ${userId} LIMIT 1`
+  if (isNew.length === 0) {
+    const [sub, countRows] = await Promise.all([
+      getSubscription(userId),
+      sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE user_id = ${userId} AND deleted_at IS NULL`,
+    ])
+    const limits = getPlanLimits(sub.plan)
+    if (Number(countRows[0].cnt) >= limits.projectsMax) {
+      return Response.json({ error: 'Project limit reached. Upgrade to Pro for unlimited projects.', upgrade: true }, { status: 403 })
+    }
   }
 
   const project: CfProjFile = { ...body, userId }
