@@ -27,10 +27,12 @@ export default function SignInPage() {
         appearance={{
           variables: {
             colorBackground: '#181828',
-            colorInputBackground: '#0f0f1a',
-            colorText: '#f0effe',
-            colorTextSecondary: '#c4c3d8',
-            colorInputText: '#f0effe',
+            colorInputBackground: '#0d0d18',
+            colorText: '#f1f0ff',
+            colorTextSecondary: '#c0bedd',
+            colorInputText: '#f1f0ff',
+            colorNeutral: '#c4c3d8',
+            colorPrimary: '#8b5cf6',
           },
         }}
       />
