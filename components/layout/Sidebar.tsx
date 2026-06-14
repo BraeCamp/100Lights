@@ -49,11 +49,17 @@ export default function Sidebar() {
   const { showUpgrade } = useUpgradeModal()
   const [usage, setUsage] = useState<Usage | null>(null)
 
-  useEffect(() => {
+  function fetchUsage() {
     fetch('/api/usage')
       .then(r => r.ok ? r.json() : null)
       .then((d: Usage | null) => setUsage(d))
       .catch(() => {})
+  }
+
+  useEffect(() => {
+    fetchUsage()
+    const id = setInterval(fetchUsage, 60_000)
+    return () => clearInterval(id)
   }, [])
 
   const isPro = usage?.plan === 'pro'

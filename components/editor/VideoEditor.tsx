@@ -23,6 +23,7 @@ import type { Caption, Clip, Output, ContentType } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import { useUpgradeModal } from '@/components/UpgradeModal'
+import posthog from 'posthog-js'
 
 const CLIP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#9333ea']
 
@@ -1129,6 +1130,7 @@ export default function VideoEditor({
       setCaptionsWithHistory(newCaptions)
       setLocalOutputs([out])
       setTranscribeStatus('done')
+      posthog.capture('transcription_completed', { word_count: out.wordCount })
       saveProject({
         id: savedProjectId, name: localProjectName,
         contentType: media.contentType,
@@ -1225,6 +1227,7 @@ export default function VideoEditor({
         body: JSON.stringify(project),
       })
       if (!res.ok) throw new Error('Cloud save failed')
+      posthog.capture('project_saved', { name: nameToUse })
       flashSaved()
     } catch {
       setSaveStatus('error')
@@ -1275,12 +1278,14 @@ export default function VideoEditor({
       body: JSON.stringify({ prompt, system }),
     })
     if (res.status === 429) {
+      posthog.capture('upgrade_shown', { trigger: 'ai_limit' })
       showUpgrade('You\'ve used your free AI generations for this month. Upgrade to Pro for 100/month.')
       throw new Error('Monthly AI limit reached — upgrade to continue.')
     }
     if (!res.ok) throw new Error(`AI request failed: ${res.status}`)
     const data = await res.json() as { content: string; error?: string }
     if (data.error) throw new Error(data.error)
+    posthog.capture('ai_content_generated')
     return data.content
   }
 

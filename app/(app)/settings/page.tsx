@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Settings, Zap, CreditCard, CheckCircle2, ArrowRight } from 'lucide-react'
+import { Settings, Zap, CreditCard, CheckCircle2, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react'
+import posthog from 'posthog-js'
 
 interface BillingInfo {
   plan: 'free' | 'pro'
@@ -11,21 +12,32 @@ interface BillingInfo {
 
 export default function SettingsPage() {
   const [billing, setBilling] = useState<BillingInfo | null>(null)
+  const [billingError, setBillingError] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [upgradeError, setUpgradeError] = useState('')
 
-  useEffect(() => {
+  function loadBilling() {
+    setBillingError(false)
     fetch('/api/billing/info')
-      .then(r => r.ok ? r.json() : null)
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
       .then(data => setBilling(data))
-      .catch(() => {})
-  }, [])
+      .catch(() => setBillingError(true))
+  }
+
+  useEffect(() => { loadBilling() }, [])
 
   async function handleUpgrade() {
     setLoading(true)
+    setUpgradeError('')
+    posthog.capture('upgrade_clicked', { source: 'settings' })
     try {
       const res = await fetch('/api/checkout', { method: 'POST' })
-      const { url } = await res.json() as { url: string }
-      if (url) window.location.href = url
+      const body = await res.json() as { url?: string; error?: string }
+      if (!res.ok) {
+        setUpgradeError(body.error ?? 'Something went wrong. Please try again.')
+        return
+      }
+      if (body.url) window.location.href = body.url
     } finally {
       setLoading(false)
     }
@@ -55,7 +67,15 @@ export default function SettingsPage() {
         {/* Plan status */}
         <div className="mb-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Plan</h2>
-          {isPro ? (
+          {billingError ? (
+            <div className="flex flex-col items-center gap-3 py-10 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <AlertCircle size={18} color="var(--text-muted)" />
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Failed to load billing info</p>
+              <button onClick={loadBilling} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg" style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}>
+                <RefreshCw size={12} /> Retry
+              </button>
+            </div>
+          ) : isPro ? (
             <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -118,6 +138,9 @@ export default function SettingsPage() {
                   {loading ? 'Loading…' : <><Zap size={13} /> Upgrade <ArrowRight size={13} /></>}
                 </button>
               </div>
+              {upgradeError && (
+                <p className="mt-3 text-xs" style={{ color: 'var(--error)' }}>{upgradeError}</p>
+              )}
             </div>
           )}
         </div>

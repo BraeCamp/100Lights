@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { PlusCircle, Film, Clock, FileText, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react'
+import { PlusCircle, Film, Clock, FileText, ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X } from 'lucide-react'
 
 interface ProjectSummary {
   id: string
@@ -15,6 +16,27 @@ interface ProjectSummary {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function UpgradeBanner() {
+  const searchParams = useSearchParams()
+  const [visible, setVisible] = useState(searchParams.get('upgraded') === '1')
+  if (!visible) return null
+  return (
+    <div
+      className="mb-6 flex items-center justify-between gap-4 px-5 py-4 rounded-xl border"
+      style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(59,130,246,0.1))', borderColor: 'rgba(139,92,246,0.4)' }}
+    >
+      <div className="flex items-center gap-3">
+        <CheckCircle2 size={18} color="var(--accent-light)" />
+        <div>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Welcome to Pro!</p>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>You now have 30 transcriptions and 100 AI generations per month.</p>
+        </div>
+      </div>
+      <button onClick={() => setVisible(false)} style={{ color: 'var(--text-muted)' }}><X size={16} /></button>
+    </div>
+  )
 }
 
 export default function DashboardPage() {
@@ -39,6 +61,7 @@ export default function DashboardPage() {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="p-8 max-w-5xl">
+        <Suspense fallback={null}><UpgradeBanner /></Suspense>
         <div className="flex items-start justify-between mb-10">
           <div>
             <h1 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Dashboard</h1>

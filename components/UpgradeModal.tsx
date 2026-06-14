@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback } from 'react'
 import { Zap, X, Check } from 'lucide-react'
+import posthog from 'posthog-js'
 
 interface UpgradeModalContextValue {
   showUpgrade: (reason?: string) => void
@@ -23,6 +24,7 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
   }, [])
 
   async function handleUpgrade() {
+    posthog.capture('upgrade_clicked', { source: 'modal', reason })
     const res = await fetch('/api/checkout', { method: 'POST' })
     const { url } = await res.json() as { url: string }
     if (url) window.location.href = url
