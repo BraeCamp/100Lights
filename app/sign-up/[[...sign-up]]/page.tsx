@@ -26,12 +26,12 @@ export default function SignUpPage() {
         signInUrl="/sign-in"
         appearance={{
           variables: {
-            colorBackground: '#181828',
-            colorInputBackground: '#0d0d18',
-            colorText: '#f1f0ff',
-            colorTextSecondary: '#c0bedd',
-            colorInputText: '#f1f0ff',
-            colorNeutral: '#c4c3d8',
+            colorBackground: '#1e1e30',
+            colorInputBackground: '#2a2a42',
+            colorText: '#f4f3ff',
+            colorTextSecondary: '#cccbe6',
+            colorInputText: '#f4f3ff',
+            colorNeutral: '#9896b8',
             colorPrimary: '#8b5cf6',
           },
         }}
