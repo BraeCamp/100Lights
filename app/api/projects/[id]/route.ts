@@ -24,9 +24,6 @@ export async function PATCH(_req: Request, { params }: { params: Promise<{ id: s
 
   const { id } = await params
 
-  // Ensure column exists (idempotent)
-  await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE`
-
   const rows = await sql`
     UPDATE projects SET starred = NOT starred
     WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL

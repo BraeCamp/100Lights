@@ -29,12 +29,8 @@ export async function GET() {
 
   purgeExpiredTrash(userId).catch(() => {})
 
-  // Add starred column if it doesn't exist yet (idempotent)
-  try {
-    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE`
-  } catch { /* already exists */ }
-
-  // Try to include starred; if the column somehow still doesn't exist, fall back
+  // starred column is added via migration — see Neon console
+  // Gracefully fall back if column doesn't exist yet
   let rows
   try {
     rows = await sql`
