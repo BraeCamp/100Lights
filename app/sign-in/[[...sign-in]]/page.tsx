@@ -38,6 +38,8 @@ export default function SignInPage() {
             headerTitle: { color: '#ffffff' },
             headerSubtitle: { color: '#ffffff' },
             formFieldLabel: { color: '#ffffff' },
+            formFieldInput: { color: '#ffffff' },
+            otpCodeFieldInput: { color: '#ffffff' },
           },
         }}
       />
