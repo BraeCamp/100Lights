@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
-import { stripe, getProPrice } from '@/lib/stripe'
+import { stripe, getProPrice, type BillingPeriod } from '@/lib/stripe'
 import { getSubscription, upsertSubscription } from '@/lib/subscription'
 
 async function getOrCreateCustomer(
@@ -24,7 +24,7 @@ async function getOrCreateCustomer(
   return customer.id
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const { userId, sessionClaims } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -33,10 +33,13 @@ export async function POST() {
     return Response.json({ error: 'Already on Pro plan' }, { status: 400 })
   }
 
+  const body = await req.json().catch(() => ({})) as { plan?: BillingPeriod }
+  const period: BillingPeriod = body.plan === 'annual' ? 'annual' : 'monthly'
+
   const email = sessionClaims?.email as string | undefined
   const [customerId, proPrice] = await Promise.all([
     getOrCreateCustomer(userId, sub.stripeCustomerId, email),
-    getProPrice(),
+    getProPrice(period),
   ])
 
   const session = await stripe.checkout.sessions.create({

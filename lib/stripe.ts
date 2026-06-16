@@ -20,30 +20,30 @@ export const PLANS = {
 // env vars or code. To add a new plan: create a Stripe product + price with
 // a lookup_key and update PLAN_LIMITS above — no deploy needed for price changes.
 
+export type BillingPeriod = 'monthly' | 'annual'
+
 interface PriceInfo { id: string; productId: string; amount: number; currency: string }
 
-let _cache: PriceInfo | null = null
-let _cacheExpiry = 0
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const CACHE_TTL = 5 * 60 * 1000
+const _cache: Partial<Record<BillingPeriod, PriceInfo>> = {}
+const _cacheExpiry: Partial<Record<BillingPeriod, number>> = {}
 
-export async function getProPrice(): Promise<PriceInfo> {
-  if (_cache && Date.now() < _cacheExpiry) return _cache
+export async function getProPrice(period: BillingPeriod = 'monthly'): Promise<PriceInfo> {
+  const now = Date.now()
+  if (_cache[period] && now < (_cacheExpiry[period] ?? 0)) return _cache[period]!
 
-  const list = await stripe.prices.list({
-    lookup_keys: ['pro_monthly'],
-    active: true,
-    limit: 1,
-  })
+  const lookupKey = period === 'annual' ? 'pro_annual' : 'pro_monthly'
+  const list = await stripe.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 })
 
   const price = list.data[0]
-  if (!price) throw new Error('Pro price not found in Stripe. Create a price with lookup_key=pro_monthly.')
+  if (!price) throw new Error(`Pro ${period} price not found in Stripe (lookup_key=${lookupKey}).`)
 
-  _cache = {
+  _cache[period] = {
     id:        price.id,
     productId: typeof price.product === 'string' ? price.product : (price.product as { id: string }).id,
     amount:    price.unit_amount ?? 0,
     currency:  price.currency,
   }
-  _cacheExpiry = Date.now() + CACHE_TTL
-  return _cache
+  _cacheExpiry[period] = now + CACHE_TTL
+  return _cache[period]!
 }

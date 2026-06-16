@@ -4,6 +4,8 @@ import { createContext, useContext, useState, useCallback } from 'react'
 import { Zap, X, Check } from 'lucide-react'
 import posthog from 'posthog-js'
 
+type BillingPeriod = 'monthly' | 'annual'
+
 interface UpgradeModalContextValue {
   showUpgrade: (reason?: string) => void
 }
@@ -17,6 +19,8 @@ export function useUpgradeModal() {
 export function UpgradeModalProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<string>('')
+  const [period, setPeriod] = useState<BillingPeriod>('monthly')
+  const [loading, setLoading] = useState(false)
 
   const showUpgrade = useCallback((r = '') => {
     setReason(r)
@@ -24,11 +28,25 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
   }, [])
 
   async function handleUpgrade() {
-    posthog.capture('upgrade_clicked', { source: 'modal', reason })
-    const res = await fetch('/api/checkout', { method: 'POST' })
-    const { url } = await res.json() as { url: string }
-    if (url) window.location.href = url
+    setLoading(true)
+    posthog.capture('upgrade_clicked', { source: 'modal', reason, billing_period: period })
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: period }),
+      })
+      const { url } = await res.json() as { url: string }
+      if (url) window.location.href = url
+    } finally {
+      setLoading(false)
+    }
   }
+
+  const monthlyPrice = 19
+  const annualTotal = 190
+  const annualPerMonth = (annualTotal / 12).toFixed(2)
+  const annualSavings = monthlyPrice * 12 - annualTotal
 
   return (
     <UpgradeModalContext.Provider value={{ showUpgrade }}>
@@ -60,13 +78,46 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
             <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
               You've reached your limit
             </h2>
-            <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>
+            <p className="text-sm mb-5" style={{ color: 'var(--text-secondary)' }}>
               {reason || 'Upgrade to Pro to keep going — more AI power, more transcriptions, more storage.'}
             </p>
 
+            {/* Billing toggle */}
+            <div className="flex items-center gap-1 p-1 rounded-xl mb-5 w-fit" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+              {(['monthly', 'annual'] as BillingPeriod[]).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className="relative px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                  style={{
+                    background: period === p ? 'var(--accent)' : 'transparent',
+                    color: period === p ? '#fff' : 'var(--text-muted)',
+                  }}
+                >
+                  {p === 'monthly' ? 'Monthly' : 'Annual'}
+                  {p === 'annual' && (
+                    <span className="ml-1.5 text-xs" style={{ color: period === 'annual' ? 'rgba(255,255,255,0.8)' : 'var(--success)' }}>
+                      Save ${annualSavings}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
             <div className="rounded-xl p-4 mb-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+              <div className="flex items-end gap-1 mb-1">
+                <span className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {period === 'annual' ? `$${annualPerMonth}` : `$${monthlyPrice}`}
+                </span>
+                <span className="text-sm mb-0.5" style={{ color: 'var(--text-muted)' }}>/month</span>
+                {period === 'annual' && (
+                  <span className="text-xs mb-0.5 ml-1" style={{ color: 'var(--text-muted)' }}>
+                    (${annualTotal}/year)
+                  </span>
+                )}
+              </div>
               <div className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-                Pro — $19 / month
+                Pro plan
               </div>
               {[
                 '30 transcriptions per month',
@@ -83,11 +134,12 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
 
             <button
               onClick={handleUpgrade}
+              disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold"
-              style={{ background: 'var(--accent)', color: '#fff' }}
+              style={{ background: 'var(--accent)', color: '#fff', opacity: loading ? 0.7 : 1 }}
             >
               <Zap size={15} />
-              Upgrade to Pro
+              {loading ? 'Redirecting…' : `Upgrade to Pro — ${period === 'annual' ? `$${annualTotal}/year` : `$${monthlyPrice}/mo`}`}
             </button>
             <button
               onClick={() => setOpen(false)}
