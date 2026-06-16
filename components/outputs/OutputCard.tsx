@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check, FileText, Mic, Newspaper, AlignLeft, Scissors, PlaySquare, MessageSquare, Mail, BookOpen } from 'lucide-react'
+import { Copy, Check, FileText, Mic, Newspaper, AlignLeft, Scissors, PlaySquare, MessageSquare, Mail, BookOpen, Quote } from 'lucide-react'
 import CaptionViewer from '@/components/captions/CaptionViewer'
 import ClipCard from '@/components/clips/ClipCard'
 import type { Output, OutputType } from '@/lib/types'
@@ -16,6 +16,7 @@ const outputMeta: Record<OutputType, { label: string; icon: React.ElementType; c
   youtube_desc:     { label: 'YouTube Description',icon: PlaySquare,    color: '#ef4444' },
   social_caption:   { label: 'Social Captions',    icon: MessageSquare, color: '#0ea5e9' },
   email_newsletter: { label: 'Email Newsletter',   icon: Mail,          color: '#f59e0b' },
+  key_quotes:       { label: 'Key Quotes',          icon: Quote,         color: '#a78bfa' },
 }
 
 interface Props {

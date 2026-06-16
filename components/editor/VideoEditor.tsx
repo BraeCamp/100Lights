@@ -20,7 +20,7 @@ import {
   DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS,
   RULER_HEIGHT, TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
 } from '@/lib/editor-types'
-import type { Caption, Clip, Output, ContentType } from '@/lib/types'
+import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -438,6 +438,12 @@ export default function VideoEditor({
   const [smartClipStatus, setSmartClipStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
   const [genContentStatus, setGenContentStatus] = useState<Record<string, 'idle' | 'working' | 'done' | 'error'>>({})
 
+  // Playback speed
+  const [playbackRate, setPlaybackRate] = useState(1)
+
+  // Chapter markers
+  const [chapters, setChapters] = useState<ChapterMarker[]>([])
+
 
   // Internal clipboard for copy/paste within the editor
   const clipboardRef = useRef<TimelineItem | null>(null)
@@ -517,6 +523,7 @@ export default function VideoEditor({
       setLocalCaptions(loaded.captions)
       captionsRef.current = loaded.captions
       setLocalOutputs(loaded.outputs)
+      setChapters(loaded.chapters ?? [])
       setMediaItems(resolvedMedia)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     } catch {
@@ -1223,6 +1230,7 @@ export default function VideoEditor({
       zoomLevel,
       captions: localCaptions,
       outputs: localOutputs,
+      chapters,
       mediaItems,
     }
   }
@@ -1248,6 +1256,7 @@ export default function VideoEditor({
     setLocalCaptions(loaded.captions)
     captionsRef.current = loaded.captions
     setLocalOutputs(loaded.outputs)
+    setChapters(loaded.chapters ?? [])
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     setRecovery(null)
     setIsDirty(true)
@@ -1436,7 +1445,36 @@ export default function VideoEditor({
     }
   }
 
-  async function handleGenerateContent(type: 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary') {
+  function handleAddChapter() {
+    const marker: ChapterMarker = { id: crypto.randomUUID(), time: currentTime, title: `Chapter ${chapters.length + 1}` }
+    setChapters(prev => [...prev, marker].sort((a, b) => a.time - b.time))
+  }
+
+  function handleRenameChapter(id: string, title: string) {
+    setChapters(prev => prev.map(c => c.id === id ? { ...c, title } : c))
+  }
+
+  function handleDeleteChapter(id: string) {
+    setChapters(prev => prev.filter(c => c.id !== id))
+  }
+
+  async function handleGenerateChapters() {
+    if (!localCaptions.length) return
+    setGenContentStatus(prev => ({ ...prev, chapters: 'working' }))
+    try {
+      const timedTranscript = localCaptions.map(c => `[${c.start.toFixed(0)}s] ${c.text}`).join('\n')
+      const system = 'You are a content editor. Return ONLY valid JSON — no markdown, no code fences.'
+      const prompt = `Create chapter markers for this transcript. Cover distinct topics or segments. Generate 4–8 chapters.\n\nTranscript:\n${timedTranscript}\n\nReturn a JSON array: [{"time": number_seconds, "title": "string"}]`
+      const raw = await callAi(prompt, system)
+      const parsed = JSON.parse(raw) as { time: number; title: string }[]
+      setChapters(parsed.map(c => ({ id: crypto.randomUUID(), time: c.time, title: c.title })).sort((a, b) => a.time - b.time))
+      setGenContentStatus(prev => ({ ...prev, chapters: 'done' }))
+    } catch {
+      setGenContentStatus(prev => ({ ...prev, chapters: 'error' }))
+    }
+  }
+
+  async function handleGenerateContent(type: 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary' | 'key_quotes') {
     if (!localCaptions.length) return
     setGenContentStatus(prev => ({ ...prev, [type]: 'working' }))
     try {
@@ -1457,7 +1495,7 @@ export default function VideoEditor({
         },
         youtube_desc: {
           system: 'You are a YouTube creator writing video descriptions to maximise search and click-through.',
-          prompt: `Write a YouTube video description for this transcript. Include: a punchy 2-sentence hook, a paragraph summary, a chapters section with timestamps (e.g. 0:00 Intro, 1:23 Topic), 5–10 relevant hashtags, and a subscribe CTA at the end.\n\nTranscript:\n${timedTranscript}`,
+          prompt: `Write a YouTube video description for this transcript. Include: a punchy 2-sentence hook, a paragraph summary, a chapters section with timestamps (format: 0:00 Intro), 5–10 relevant hashtags, and a subscribe CTA.\n\n${chapters.length > 0 ? `Use these chapters:\n${chapters.map(c => `${Math.floor(c.time / 60)}:${String(Math.floor(c.time % 60)).padStart(2, '0')} ${c.title}`).join('\n')}\n\n` : ''}Transcript:\n${timedTranscript}`,
         },
         social_caption: {
           system: 'You are a social media strategist who writes platform-native content.',
@@ -1471,6 +1509,10 @@ export default function VideoEditor({
           system: 'You are an expert at summarising spoken content concisely and accurately.',
           prompt: `Write a structured summary of this transcript. Include: a one-sentence TL;DR, 5 key points as bullet points, and the main conclusion or takeaway. Keep it under 300 words.\n\nTranscript:\n${transcript}`,
         },
+        key_quotes: {
+          system: 'You are a content strategist finding the most shareable, standalone quotes from spoken content.',
+          prompt: `Extract the 5–8 most impactful, quotable moments from this transcript. Each should work as a standalone quote without needing surrounding context.\n\nFormat each exactly like this:\n[M:SS] "Quote text here"\n↳ One sentence of context\n\nTranscript:\n${timedTranscript}`,
+        },
       }
       const { system, prompt } = prompts[type]
       const content = await callAi(prompt, system)
@@ -1478,7 +1520,7 @@ export default function VideoEditor({
       const typeLabels: Record<string, string> = {
         article: 'Article', blog_post: 'Blog Post', show_notes: 'Show Notes',
         youtube_desc: 'YouTube Description', social_caption: 'Social Captions',
-        email_newsletter: 'Email Newsletter', summary: 'Summary',
+        email_newsletter: 'Email Newsletter', summary: 'Summary', key_quotes: 'Key Quotes',
       }
       const firstLine = content.split('\n').find(l => l.trim())?.replace(/^#+\s*/, '') ?? typeLabels[type]
       const out: Output = {
@@ -1731,11 +1773,33 @@ export default function VideoEditor({
                     {label}
                   </button>
                 ))}
+                {/* Playback speed presets */}
+                <div className="ml-auto flex items-center gap-0.5 px-2">
+                  {([0.5, 1, 1.5, 2] as const).map(rate => (
+                    <button
+                      key={rate}
+                      onClick={() => {
+                        if (videoRef.current) videoRef.current.playbackRate = rate
+                        setPlaybackRate(rate)
+                      }}
+                      className="px-1.5 py-0.5 rounded text-xs font-mono"
+                      style={{
+                        background: playbackRate === rate ? 'var(--accent-subtle)' : 'transparent',
+                        color: playbackRate === rate ? 'var(--accent-light)' : 'var(--text-muted)',
+                        border: `1px solid ${playbackRate === rate ? 'rgba(139,92,246,0.3)' : 'transparent'}`,
+                      }}
+                      title={`${rate}× speed`}
+                    >
+                      {rate}×
+                    </button>
+                  ))}
+                </div>
+
                 {/* Split layout toggle — show audio below video */}
                 {viewportTab === 'video' && !isAudioOnly && (
                   <button
                     onClick={() => setAudioLayout(l => l === 'tab' ? 'below' : 'tab')}
-                    className="ml-auto mr-2 flex items-center gap-1.5 px-2 py-1 rounded text-xs"
+                    className="mr-2 flex items-center gap-1.5 px-2 py-1 rounded text-xs"
                     title={audioLayout === 'below' ? 'Show audio as separate tab' : 'Show audio below video'}
                     style={{
                       color: audioLayout === 'below' ? 'var(--accent-light)' : 'var(--text-muted)',
@@ -1831,6 +1895,11 @@ export default function VideoEditor({
                 onSmartClip={handleSmartClip}
                 genContentStatus={genContentStatus}
                 onGenerateContent={handleGenerateContent}
+                chapters={chapters}
+                onAddChapter={handleAddChapter}
+                onRenameChapter={handleRenameChapter}
+                onDeleteChapter={handleDeleteChapter}
+                onGenerateChapters={handleGenerateChapters}
                 isAudioOnly={isAudioOnly}
               />
             </div>

@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, Wand2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen } from 'lucide-react'
+import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, Wand2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType } from '@/lib/editor-types'
-import type { Caption, Output } from '@/lib/types'
+import type { Caption, Output, ChapterMarker } from '@/lib/types'
 
 type TranscribeStatus = 'idle' | 'transcribing' | 'done' | 'error'
 type AiStatus = 'idle' | 'working' | 'done' | 'error'
-type ContentGenType = 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary'
+type ContentGenType = 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary' | 'key_quotes'
 
 interface Props {
   selectedItem: TimelineItem | null
@@ -32,6 +32,11 @@ interface Props {
   onSmartClip: () => void
   genContentStatus: Record<string, AiStatus>
   onGenerateContent: (type: ContentGenType) => void
+  chapters: ChapterMarker[]
+  onAddChapter: () => void
+  onRenameChapter: (id: string, title: string) => void
+  onDeleteChapter: (id: string) => void
+  onGenerateChapters: () => void
   isAudioOnly?: boolean
 }
 
@@ -54,6 +59,38 @@ const outputIcons: Partial<Record<string, React.ElementType>> = {
   social_caption:   MessageSquare,
   email_newsletter: Mail,
   summary:          BookOpen,
+  key_quotes:       Quote,
+}
+
+function fmtTime(t: number) {
+  const m = Math.floor(t / 60)
+  const s = Math.floor(t % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function fmtSRT(t: number) {
+  const h = Math.floor(t / 3600)
+  const m = Math.floor((t % 3600) / 60)
+  const s = Math.floor(t % 60)
+  const ms = Math.round((t % 1) * 1000)
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`
+}
+
+function fmtVTT(t: number) {
+  const h = Math.floor(t / 3600)
+  const m = Math.floor((t % 3600) / 60)
+  const s = Math.floor(t % 60)
+  const ms = Math.round((t % 1) * 1000)
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`
+}
+
+function downloadText(content: string, filename: string, mime = 'text/plain') {
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([content], { type: mime })),
+    download: filename,
+  })
+  a.click()
+  URL.revokeObjectURL(a.href)
 }
 
 const SPEAKER_COLORS = [
@@ -156,10 +193,13 @@ export default function Inspector({
   silenceTrimStatus, silenceThreshold, onSilenceThresholdChange, onSilenceTrim,
   smartClipStatus, onSmartClip,
   genContentStatus, onGenerateContent,
+  chapters, onAddChapter, onRenameChapter, onDeleteChapter, onGenerateChapters,
   isAudioOnly,
 }: Props) {
   const [tab, setTab] = useState<Tab>('ai')
   const [transcriptSearch, setTranscriptSearch] = useState('')
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(null)
+  const [editingChapterTitle, setEditingChapterTitle] = useState('')
   const activeCaptionRef = useRef<HTMLDivElement>(null)
 
   const TABS: { id: Tab; label: string }[] = [
@@ -322,6 +362,71 @@ export default function Inspector({
               </div>
             </div>
 
+            {/* Chapter markers */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>CHAPTERS</p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={onAddChapter}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs"
+                    style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                    title="Mark chapter at current playhead"
+                  >
+                    <Flag size={9} /> Mark
+                  </button>
+                  <button
+                    onClick={onGenerateChapters}
+                    disabled={needsTranscript || genContentStatus['chapters'] === 'working'}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs"
+                    style={{ background: needsTranscript ? 'var(--border)' : 'var(--accent-subtle)', border: '1px solid var(--border)', color: needsTranscript ? 'var(--text-muted)' : 'var(--accent-light)', opacity: needsTranscript ? 0.5 : 1 }}
+                    title={needsTranscript ? transcriptRequired : 'Generate chapters with AI'}
+                  >
+                    {genContentStatus['chapters'] === 'working'
+                      ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} />
+                      : <Sparkles size={9} />
+                    } AI
+                  </button>
+                </div>
+              </div>
+              {chapters.length === 0 ? (
+                <p className="text-xs py-2 text-center" style={{ color: 'var(--text-muted)' }}>
+                  No chapters yet. Mark one at the current time or generate with AI.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  {chapters.map(ch => (
+                    <div key={ch.id} className="flex items-center gap-2 px-2 py-1 rounded-lg group" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                      <span className="text-xs font-mono shrink-0" style={{ color: 'var(--accent-light)', minWidth: 36 }}>{fmtTime(ch.time)}</span>
+                      {editingChapterId === ch.id ? (
+                        <input
+                          autoFocus
+                          value={editingChapterTitle}
+                          onChange={e => setEditingChapterTitle(e.target.value)}
+                          onBlur={() => { onRenameChapter(ch.id, editingChapterTitle.trim() || ch.title); setEditingChapterId(null) }}
+                          onKeyDown={e => { if (e.key === 'Enter') { onRenameChapter(ch.id, editingChapterTitle.trim() || ch.title); setEditingChapterId(null) } if (e.key === 'Escape') setEditingChapterId(null) }}
+                          className="flex-1 text-xs px-1 py-0 rounded outline-none min-w-0"
+                          style={{ background: 'var(--bg-surface)', border: '1px solid var(--accent)', color: 'var(--text-primary)' }}
+                        />
+                      ) : (
+                        <span
+                          className="flex-1 text-xs truncate cursor-pointer"
+                          style={{ color: 'var(--text-secondary)' }}
+                          onDoubleClick={() => { setEditingChapterId(ch.id); setEditingChapterTitle(ch.title) }}
+                          onClick={() => onSeek?.(ch.time)}
+                          title="Click to seek · Double-click to rename"
+                        >{ch.title}</span>
+                      )}
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingChapterId(ch.id); setEditingChapterTitle(ch.title) }} style={{ color: 'var(--text-muted)' }} title="Rename"><Pencil size={10} /></button>
+                        <button onClick={() => onDeleteChapter(ch.id)} style={{ color: 'var(--text-muted)' }} title="Delete"><Trash2 size={10} /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Generate content */}
             <div>
               <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>GENERATE CONTENT</p>
@@ -329,10 +434,11 @@ export default function Inspector({
                 <AiActionRow icon={FileText}      label="Write Article"         description={needsTranscript ? transcriptRequired : 'Long-form from transcript'}         status={genContentStatus['article']}          onClick={() => onGenerateContent('article')}          disabled={needsTranscript || genContentStatus['article'] === 'working'} />
                 <AiActionRow icon={Newspaper}     label="Blog Post"             description={needsTranscript ? transcriptRequired : 'SEO-ready summary'}                  status={genContentStatus['blog_post']}        onClick={() => onGenerateContent('blog_post')}        disabled={needsTranscript || genContentStatus['blog_post'] === 'working'} />
                 <AiActionRow icon={AlignLeft}     label="Show Notes"            description={needsTranscript ? transcriptRequired : 'Podcast episode notes'}             status={genContentStatus['show_notes']}       onClick={() => onGenerateContent('show_notes')}       disabled={needsTranscript || genContentStatus['show_notes'] === 'working'} />
-                <AiActionRow icon={PlaySquare}    label="YouTube Description"   description={needsTranscript ? transcriptRequired : 'With chapters & timestamps'}        status={genContentStatus['youtube_desc']}     onClick={() => onGenerateContent('youtube_desc')}     disabled={needsTranscript || genContentStatus['youtube_desc'] === 'working'} />
+                <AiActionRow icon={PlaySquare}    label="YouTube Description"   description={needsTranscript ? transcriptRequired : chapters.length ? 'With your chapters' : 'With auto chapters'}  status={genContentStatus['youtube_desc']}     onClick={() => onGenerateContent('youtube_desc')}     disabled={needsTranscript || genContentStatus['youtube_desc'] === 'working'} />
                 <AiActionRow icon={MessageSquare} label="Social Captions"       description={needsTranscript ? transcriptRequired : 'Twitter, LinkedIn, Instagram'}      status={genContentStatus['social_caption']}   onClick={() => onGenerateContent('social_caption')}   disabled={needsTranscript || genContentStatus['social_caption'] === 'working'} />
                 <AiActionRow icon={Mail}          label="Email Newsletter"      description={needsTranscript ? transcriptRequired : 'Ready-to-send digest'}              status={genContentStatus['email_newsletter']} onClick={() => onGenerateContent('email_newsletter')} disabled={needsTranscript || genContentStatus['email_newsletter'] === 'working'} />
                 <AiActionRow icon={BookOpen}      label="Summary"               description={needsTranscript ? transcriptRequired : 'Key points at a glance'}            status={genContentStatus['summary']}          onClick={() => onGenerateContent('summary')}          disabled={needsTranscript || genContentStatus['summary'] === 'working'} />
+                <AiActionRow icon={Quote}         label="Key Quotes"            description={needsTranscript ? transcriptRequired : '5–8 most shareable moments'}        status={genContentStatus['key_quotes']}       onClick={() => onGenerateContent('key_quotes')}       disabled={needsTranscript || genContentStatus['key_quotes'] === 'working'} />
               </div>
             </div>
           </div>
@@ -357,22 +463,22 @@ export default function Inspector({
               <>
                 {/* Search bar + export */}
                 <div className="sticky top-0 px-3 py-2" style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', zIndex: 10 }}>
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <button
-                      onClick={() => {
-                        const lines = captions.map(c =>
-                          `[${formatDisplayTime(c.start)}]${c.speaker ? ` ${c.speaker}:` : ''} ${c.text}`
-                        ).join('\n')
-                        const blob = new Blob([lines], { type: 'text/plain' })
-                        const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'transcript.txt' })
-                        a.click()
-                        URL.revokeObjectURL(a.href)
-                      }}
-                      className="flex items-center gap-1 px-2 py-1 rounded text-xs ml-auto"
-                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-                    >
-                      <Copy size={10} /> Export .txt
-                    </button>
+                  <div className="flex items-center gap-1 mb-1.5">
+                    {([
+                      { label: '.txt', mime: 'text/plain', ext: 'txt', fn: () => captions.map(c => `[${formatDisplayTime(c.start)}]${c.speaker ? ` ${c.speaker}:` : ''} ${c.text}`).join('\n') },
+                      { label: '.srt', mime: 'text/srt',   ext: 'srt', fn: () => captions.map((c, i) => `${i + 1}\n${fmtSRT(c.start)} --> ${fmtSRT(c.end)}\n${c.speaker ? `${c.speaker}: ` : ''}${c.text}\n`).join('\n') },
+                      { label: '.vtt', mime: 'text/vtt',   ext: 'vtt', fn: () => 'WEBVTT\n\n' + captions.map((c, i) => `${i + 1}\n${fmtVTT(c.start)} --> ${fmtVTT(c.end)}\n${c.speaker ? `${c.speaker}: ` : ''}${c.text}\n`).join('\n') },
+                    ] as const).map(({ label, mime, ext, fn }) => (
+                      <button
+                        key={ext}
+                        onClick={() => downloadText(fn(), `transcript.${ext}`, mime)}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <span className="flex-1" />
                   </div>
                   <input
                     type="text"

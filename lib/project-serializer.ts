@@ -7,7 +7,7 @@
  * the same way DaVinci Resolve handles moved or missing media.
  */
 
-import type { Caption, ContentType, Output } from '@/lib/types'
+import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, Track, VideoAdjustments } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
@@ -64,6 +64,7 @@ export interface CfProjFile {
   // Content
   captions: Caption[]
   outputs: SerializedOutput[]
+  chapters?: ChapterMarker[]
   // Media pool (metadata only — no blob URLs)
   media: SerializedMedia[]
 }
@@ -79,6 +80,7 @@ export interface EditorSnapshot {
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
+  chapters?: ChapterMarker[]
   mediaItems: Array<{ id: string; name: string; contentType: ContentType; duration?: number; url?: string; r2Key?: string }>
 }
 
@@ -107,6 +109,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
     adjustments: snap.adjustments,
     zoomLevel: snap.zoomLevel,
     captions: snap.captions,
+    chapters: snap.chapters ?? [],
     outputs: snap.outputs.map((o): SerializedOutput => ({
       id:        o.id,
       type:      o.type,
@@ -138,6 +141,7 @@ export interface DeserializedProject {
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
+  chapters: ChapterMarker[]
   offlineMedia: SerializedMedia[] // media that needs re-linking
 }
 
@@ -177,6 +181,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     zoomLevel:     file.zoomLevel,
     captions:      file.captions,
     outputs,
+    chapters:      file.chapters ?? [],
     offlineMedia:  file.media,
   }
 }
