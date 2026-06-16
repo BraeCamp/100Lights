@@ -28,11 +28,16 @@ export default function SignInPage() {
           variables: {
             colorBackground: '#1e1e30',
             colorInputBackground: '#2a2a42',
-            colorText: '#f4f3ff',
-            colorTextSecondary: '#cccbe6',
+            colorText: '#ffffff',
+            colorTextSecondary: '#ffffff',
             colorInputText: '#f4f3ff',
             colorNeutral: '#9896b8',
             colorPrimary: '#8b5cf6',
+          },
+          elements: {
+            headerTitle: { color: '#ffffff' },
+            headerSubtitle: { color: '#ffffff' },
+            formFieldLabel: { color: '#ffffff' },
           },
         }}
       />
