@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star } from 'lucide-react'
 import { openProjectFromFile } from '@/lib/project-serializer'
 
 interface ProjectSummary {
   id: string
   name: string
   savedAt: string
+  starred: boolean
   clips: number
   media: number
   thumbnail: string | null
@@ -110,25 +111,37 @@ export default function ProjectsPage() {
         ) : (
           <div className="flex flex-col gap-2">
             {projects.map((project) => (
-              <Link
+              <div
                 key={project.id}
-                href={`/projects/${project.id}`}
                 className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
-                style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+                style={{ background: 'var(--bg-card)', borderColor: project.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
               >
-                <div className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+                <Link href={`/projects/${project.id}`} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
                   {project.thumbnail
                     ? <img src={project.thumbnail} className="w-full h-full object-cover" alt="" />
                     : <Film size={16} color="var(--text-secondary)" />
                   }
-                </div>
-                <div className="flex-1 min-w-0">
+                </Link>
+                <Link href={`/projects/${project.id}`} className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{project.name}</div>
                   <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                     {project.clips} clip{project.clips !== 1 ? 's' : ''} · {project.media} media file{project.media !== 1 ? 's' : ''}
                   </div>
-                </div>
+                </Link>
                 <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(project.savedAt)}</span>
+                <button
+                  onClick={() => {
+                    setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
+                    fetch(`/api/projects/${project.id}`, { method: 'PATCH' }).catch(() => {
+                      setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
+                    })
+                  }}
+                  title={project.starred ? 'Unstar' : 'Star'}
+                  className="p-1.5 rounded-lg"
+                  style={{ color: project.starred ? '#f59e0b' : 'var(--text-muted)' }}
+                >
+                  <Star size={14} fill={project.starred ? '#f59e0b' : 'none'} />
+                </button>
                 <button
                   onClick={(e) => handleDelete(e, project.id)}
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg"
@@ -137,7 +150,7 @@ export default function ProjectsPage() {
                 >
                   <Trash2 size={14} />
                 </button>
-              </Link>
+              </div>
             ))}
           </div>
         )}

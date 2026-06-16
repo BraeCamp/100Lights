@@ -29,18 +29,36 @@ export async function GET() {
 
   purgeExpiredTrash(userId).catch(() => {})
 
-  await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE`
+  // Add starred column if it doesn't exist yet (idempotent)
+  try {
+    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE`
+  } catch { /* already exists */ }
 
-  const rows = await sql`
-    SELECT
-      id, name, saved_at, starred,
-      data->'clips'            AS clips,
-      data->'media'            AS media,
-      data->'media'->0->>'thumbnail' AS thumbnail
-    FROM projects
-    WHERE user_id = ${userId} AND deleted_at IS NULL
-    ORDER BY starred DESC, saved_at DESC
-  `
+  // Try to include starred; if the column somehow still doesn't exist, fall back
+  let rows
+  try {
+    rows = await sql`
+      SELECT
+        id, name, saved_at, starred,
+        data->'clips'            AS clips,
+        data->'media'            AS media,
+        data->'media'->0->>'thumbnail' AS thumbnail
+      FROM projects
+      WHERE user_id = ${userId} AND deleted_at IS NULL
+      ORDER BY starred DESC, saved_at DESC
+    `
+  } catch {
+    rows = await sql`
+      SELECT
+        id, name, saved_at,
+        data->'clips'            AS clips,
+        data->'media'            AS media,
+        data->'media'->0->>'thumbnail' AS thumbnail
+      FROM projects
+      WHERE user_id = ${userId} AND deleted_at IS NULL
+      ORDER BY saved_at DESC
+    `
+  }
 
   return Response.json(rows.map(r => ({
     id:        r.id,

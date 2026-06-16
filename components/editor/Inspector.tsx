@@ -355,8 +355,25 @@ export default function Inspector({
               </div>
             ) : (
               <>
-                {/* Search bar */}
+                {/* Search bar + export */}
                 <div className="sticky top-0 px-3 py-2" style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', zIndex: 10 }}>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <button
+                      onClick={() => {
+                        const lines = captions.map(c =>
+                          `[${formatDisplayTime(c.start)}]${c.speaker ? ` ${c.speaker}:` : ''} ${c.text}`
+                        ).join('\n')
+                        const blob = new Blob([lines], { type: 'text/plain' })
+                        const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'transcript.txt' })
+                        a.click()
+                        URL.revokeObjectURL(a.href)
+                      }}
+                      className="flex items-center gap-1 px-2 py-1 rounded text-xs ml-auto"
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                    >
+                      <Copy size={10} /> Export .txt
+                    </button>
+                  </div>
                   <input
                     type="text"
                     placeholder="Search transcript…"

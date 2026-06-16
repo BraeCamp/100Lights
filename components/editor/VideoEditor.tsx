@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon } from 'lucide-react'
 import Link from 'next/link'
 import VideoPlayer from '@/components/editor/VideoPlayer'
 import AudioWaveform from '@/components/editor/AudioWaveform'
@@ -27,6 +27,43 @@ import { useUpgradeModal } from '@/components/UpgradeModal'
 import posthog from 'posthog-js'
 
 const CLIP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#9333ea']
+
+function ShareButton({ projectId }: { projectId: string }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'copied'>('idle')
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+
+  async function handleShare() {
+    if (shareUrl) {
+      await navigator.clipboard.writeText(window.location.origin + shareUrl)
+      setState('copied')
+      setTimeout(() => setState('idle'), 2000)
+      return
+    }
+    setState('loading')
+    try {
+      const res = await fetch(`/api/projects/${projectId}/share`, { method: 'POST' })
+      const { url } = await res.json() as { url: string }
+      setShareUrl(url)
+      await navigator.clipboard.writeText(window.location.origin + url)
+      setState('copied')
+      setTimeout(() => setState('idle'), 2000)
+    } catch {
+      setState('idle')
+    }
+  }
+
+  return (
+    <button
+      onClick={handleShare}
+      disabled={state === 'loading'}
+      className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium shrink-0"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: state === 'copied' ? '#10b981' : 'var(--text-secondary)' }}
+      title="Share — copy a read-only link"
+    >
+      {state === 'copied' ? <><CheckIcon size={11} /> Copied!</> : state === 'loading' ? <>…</> : <><Share2 size={11} /> Share</>}
+    </button>
+  )
+}
 
 /** Grabs the first video frame as a base64 JPEG thumbnail. Resolves undefined on failure. */
 function generateVideoThumbnail(url: string): Promise<string | undefined> {
@@ -1606,6 +1643,11 @@ export default function VideoEditor({
           )}
         </div>
 
+        {/* Share button */}
+        {projectId && (
+          <ShareButton projectId={projectId} />
+        )}
+
         <button
           onClick={() => setShowExport(true)}
           disabled={timelineItems.length === 0}
@@ -1834,33 +1876,35 @@ export default function VideoEditor({
         <PlaceholderPage title="Deliver" description="Export format, codec, resolution, and render queue — coming soon" />
       )}
 
-      {/* ── Page tabs ────────────────────────────────────────── */}
+      {/* ── Page tabs (centered, DaVinci-style) ─────────────── */}
       <div
-        className="flex items-stretch shrink-0"
-        style={{ height: 40, borderTop: '1px solid var(--border)', background: '#0e0e0e' }}
+        className="flex items-center justify-center shrink-0"
+        style={{ height: 38, borderTop: '1px solid var(--border)', background: '#0a0a0f' }}
       >
-        {PAGES.map(({ id, label, icon: Icon }) => {
-          const active = activePage === id
-          return (
-            <button
-              key={id}
-              onClick={() => setActivePage(id)}
-              className="flex flex-col items-center justify-center gap-0.5 flex-1 transition-colors"
-              style={{
-                color: active ? 'var(--accent-light)' : 'var(--text-muted)',
-                background: active ? 'rgba(61,143,239,0.08)' : 'transparent',
-                borderTop: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-                fontSize: 9,
-                fontWeight: active ? 600 : 400,
-                letterSpacing: '0.05em',
-                textTransform: 'uppercase',
-              }}
-            >
-              <Icon size={13} />
-              {label}
-            </button>
-          )
-        })}
+        <div className="flex items-stretch gap-0.5 px-1">
+          {PAGES.map(({ id, label, icon: Icon }) => {
+            const active = activePage === id
+            return (
+              <button
+                key={id}
+                onClick={() => setActivePage(id)}
+                className="flex items-center justify-center gap-1.5 px-5 transition-colors rounded-sm"
+                style={{
+                  height: 30,
+                  color: active ? 'var(--accent-light)' : 'var(--text-muted)',
+                  background: active ? 'rgba(139,92,246,0.12)' : 'transparent',
+                  border: `1px solid ${active ? 'rgba(139,92,246,0.3)' : 'transparent'}`,
+                  fontSize: 11,
+                  fontWeight: active ? 600 : 400,
+                  letterSpacing: '0.04em',
+                }}
+              >
+                <Icon size={12} />
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
