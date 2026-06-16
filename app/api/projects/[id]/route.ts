@@ -17,6 +17,25 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return Response.json(rows[0].data as CfProjFile)
 }
 
+// PATCH /api/projects/:id — toggle starred
+export async function PATCH(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { userId } = await auth()
+  if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id } = await params
+
+  // Ensure column exists (idempotent)
+  await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE`
+
+  const rows = await sql`
+    UPDATE projects SET starred = NOT starred
+    WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
+    RETURNING starred
+  `
+  if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
+  return Response.json({ starred: rows[0].starred })
+}
+
 // DELETE /api/projects/:id
 // ?permanent=true → hard-delete from DB and purge R2 files
 // default → soft-delete (move to trash)

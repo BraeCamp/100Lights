@@ -1,18 +1,21 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check, FileText, Mic, Newspaper, AlignLeft, Scissors } from 'lucide-react'
+import { Copy, Check, FileText, Mic, Newspaper, AlignLeft, Scissors, PlaySquare, MessageSquare, Mail, BookOpen } from 'lucide-react'
 import CaptionViewer from '@/components/captions/CaptionViewer'
 import ClipCard from '@/components/clips/ClipCard'
 import type { Output, OutputType } from '@/lib/types'
 
 const outputMeta: Record<OutputType, { label: string; icon: React.ElementType; color: string }> = {
-  article:    { label: 'Article',     icon: FileText,  color: '#8b5cf6' },
-  blog_post:  { label: 'Blog Post',   icon: Newspaper, color: '#3b82f6' },
-  show_notes: { label: 'Show Notes',  icon: AlignLeft, color: '#10b981' },
-  clips:      { label: 'Clips',       icon: Scissors,  color: '#f59e0b' },
-  transcript: { label: 'Transcript',  icon: AlignLeft, color: '#6b7280' },
-  summary:    { label: 'Summary',     icon: Mic,       color: '#ec4899' },
+  article:          { label: 'Article',           icon: FileText,      color: '#8b5cf6' },
+  blog_post:        { label: 'Blog Post',          icon: Newspaper,     color: '#3b82f6' },
+  show_notes:       { label: 'Show Notes',         icon: AlignLeft,     color: '#10b981' },
+  clips:            { label: 'Clips',              icon: Scissors,      color: '#f59e0b' },
+  transcript:       { label: 'Transcript',         icon: AlignLeft,     color: '#6b7280' },
+  summary:          { label: 'Summary',            icon: BookOpen,      color: '#ec4899' },
+  youtube_desc:     { label: 'YouTube Description',icon: PlaySquare,    color: '#ef4444' },
+  social_caption:   { label: 'Social Captions',    icon: MessageSquare, color: '#0ea5e9' },
+  email_newsletter: { label: 'Email Newsletter',   icon: Mail,          color: '#f59e0b' },
 }
 
 interface Props {

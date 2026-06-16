@@ -29,21 +29,24 @@ export async function GET() {
 
   purgeExpiredTrash(userId).catch(() => {})
 
+  await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE`
+
   const rows = await sql`
     SELECT
-      id, name, saved_at,
+      id, name, saved_at, starred,
       data->'clips'            AS clips,
       data->'media'            AS media,
       data->'media'->0->>'thumbnail' AS thumbnail
     FROM projects
     WHERE user_id = ${userId} AND deleted_at IS NULL
-    ORDER BY saved_at DESC
+    ORDER BY starred DESC, saved_at DESC
   `
 
   return Response.json(rows.map(r => ({
     id:        r.id,
     name:      r.name,
     savedAt:   r.saved_at,
+    starred:   r.starred ?? false,
     clips:     Array.isArray(r.clips) ? r.clips.length : 0,
     media:     Array.isArray(r.media) ? r.media.length : 0,
     thumbnail: r.thumbnail ?? null,

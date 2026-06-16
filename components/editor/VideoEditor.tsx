@@ -1108,8 +1108,11 @@ export default function VideoEditor({
     }
 
     setTranscribeStatus('transcribing')
-    setTranscribeProgress(101) // show server-processing indicator immediately
+    setTranscribeProgress(101)
     setTranscribeError('')
+    if (typeof window !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
 
     try {
       const res = await fetch('/api/transcribe', {
@@ -1140,6 +1143,9 @@ export default function VideoEditor({
       setLocalOutputs([out])
       setTranscribeStatus('done')
       posthog.capture('transcription_completed', { word_count: out.wordCount })
+      if (typeof window !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('Transcription complete', { body: `${out.wordCount?.toLocaleString()} words ready in ${localProjectName}`, icon: '/favicon.ico' })
+      }
       saveProject({
         id: savedProjectId, name: localProjectName,
         contentType: media.contentType,
@@ -1393,11 +1399,12 @@ export default function VideoEditor({
     }
   }
 
-  async function handleGenerateContent(type: 'article' | 'blog_post' | 'show_notes') {
+  async function handleGenerateContent(type: 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary') {
     if (!localCaptions.length) return
     setGenContentStatus(prev => ({ ...prev, [type]: 'working' }))
     try {
       const transcript = localCaptions.map(c => c.text).join(' ')
+      const timedTranscript = localCaptions.map(c => `[${c.start.toFixed(0)}s] ${c.text}`).join('\n')
       const prompts: Record<string, { system: string; prompt: string }> = {
         article: {
           system: 'You are a professional content writer. Write in a clear, engaging style.',
@@ -1409,13 +1416,33 @@ export default function VideoEditor({
         },
         show_notes: {
           system: 'You are a podcast producer writing show notes.',
-          prompt: `Write podcast show notes for this transcript. Include: a 2–3 sentence summary, key topics covered (bullet list), 2–3 notable quotes with timestamps, and a brief resources/links section.\n\nTranscript:\n${localCaptions.map(c => `[${c.start.toFixed(0)}s] ${c.text}`).join('\n')}`,
+          prompt: `Write podcast show notes for this transcript. Include: a 2–3 sentence summary, key topics covered (bullet list), 2–3 notable quotes with timestamps, and a brief resources/links section.\n\nTranscript:\n${timedTranscript}`,
+        },
+        youtube_desc: {
+          system: 'You are a YouTube creator writing video descriptions to maximise search and click-through.',
+          prompt: `Write a YouTube video description for this transcript. Include: a punchy 2-sentence hook, a paragraph summary, a chapters section with timestamps (e.g. 0:00 Intro, 1:23 Topic), 5–10 relevant hashtags, and a subscribe CTA at the end.\n\nTranscript:\n${timedTranscript}`,
+        },
+        social_caption: {
+          system: 'You are a social media strategist who writes platform-native content.',
+          prompt: `Write social media captions for this transcript. Provide 3 distinct captions:\n1. Twitter/X (max 280 chars, punchy, 2 hashtags)\n2. LinkedIn (professional tone, 3–5 sentences, 3 hashtags)\n3. Instagram (engaging, emojis welcome, storytelling hook, 5 hashtags)\n\nLabel each clearly.\n\nTranscript:\n${transcript}`,
+        },
+        email_newsletter: {
+          system: 'You are an email newsletter writer who writes compelling, scannable newsletters.',
+          prompt: `Write an email newsletter based on this transcript. Include: a subject line (labelled "Subject:"), a brief greeting, 3–5 key takeaways with short descriptions, a featured quote from the content, and a closing CTA. Keep it scannable with short paragraphs.\n\nTranscript:\n${transcript}`,
+        },
+        summary: {
+          system: 'You are an expert at summarising spoken content concisely and accurately.',
+          prompt: `Write a structured summary of this transcript. Include: a one-sentence TL;DR, 5 key points as bullet points, and the main conclusion or takeaway. Keep it under 300 words.\n\nTranscript:\n${transcript}`,
         },
       }
       const { system, prompt } = prompts[type]
       const content = await callAi(prompt, system)
 
-      const typeLabels: Record<string, string> = { article: 'Article', blog_post: 'Blog Post', show_notes: 'Show Notes' }
+      const typeLabels: Record<string, string> = {
+        article: 'Article', blog_post: 'Blog Post', show_notes: 'Show Notes',
+        youtube_desc: 'YouTube Description', social_caption: 'Social Captions',
+        email_newsletter: 'Email Newsletter', summary: 'Summary',
+      }
       const firstLine = content.split('\n').find(l => l.trim())?.replace(/^#+\s*/, '') ?? typeLabels[type]
       const out: Output = {
         id: crypto.randomUUID(),
@@ -1752,6 +1779,8 @@ export default function VideoEditor({
                 transcribeError={transcribeError}
                 onTranscribe={handleTranscribe}
                 captions={localCaptions}
+                currentTime={currentTime}
+                onSeek={handleSeek}
                 silenceTrimStatus={silenceTrimStatus}
                 silenceThreshold={silenceThreshold}
                 onSilenceThresholdChange={setSilenceThreshold}

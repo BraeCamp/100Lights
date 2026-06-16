@@ -1,5 +1,5 @@
 export type ContentType = 'video' | 'audio'
-export type OutputType = 'article' | 'blog_post' | 'show_notes' | 'clips' | 'transcript' | 'summary'
+export type OutputType = 'article' | 'blog_post' | 'show_notes' | 'clips' | 'transcript' | 'summary' | 'youtube_desc' | 'social_caption' | 'email_newsletter'
 export type ProjectStatus = 'uploading' | 'processing' | 'completed' | 'error'
 export type StepStatus = 'pending' | 'running' | 'completed' | 'error'
 
