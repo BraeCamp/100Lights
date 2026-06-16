@@ -2,7 +2,7 @@ import { currentUser } from '@clerk/nextjs/server'
 import { notFound } from 'next/navigation'
 import { sql } from '@/lib/db'
 
-const ADMIN_EMAILS = ['braedancampbell@gmail.com']
+const ADMIN_EMAILS = ['braedancampbell@gmail.com', 'braedan@100lights.com']
 
 async function getStats() {
   const [users, proUsers, newThisWeek, projects, projectsThisWeek, usageRows] = await Promise.all([

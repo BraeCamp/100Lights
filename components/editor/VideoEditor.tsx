@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic } from 'lucide-react'
 import Link from 'next/link'
 import VideoPlayer from '@/components/editor/VideoPlayer'
+import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
 import MediaLibrary from '@/components/editor/MediaLibrary'
 import ExportModal from '@/components/editor/ExportModal'
@@ -389,6 +390,11 @@ export default function VideoEditor({
   const [showExport, setShowExport] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
+  // Viewport layout
+  const [viewportTab, setViewportTab] = useState<'video' | 'audio'>('video')
+  const [audioLayout, setAudioLayout] = useState<'tab' | 'below'>('tab')
+  const [audioSplitH, setAudioSplitH] = useState(160)
+
   // AI feature state
   const [silenceTrimStatus, setSilenceTrimStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
   const [silenceThreshold, setSilenceThreshold] = useState(0.5)
@@ -400,6 +406,8 @@ export default function VideoEditor({
   const clipboardRef = useRef<TimelineItem | null>(null)
 
   const selectedItem = timelineItems.find(i => i.id === selectedId) ?? null
+  const selectedMedia = mediaItems.find(m => m.id === selectedMediaId) ?? null
+  const isAudioOnly = mediaItems.length > 0 && mediaItems.every(m => m.contentType === 'audio')
 
   // Viewer is a pure timeline monitor — shows the enabled clip at the playhead
   const viewerClip = useMemo(() => {
@@ -984,6 +992,7 @@ export default function VideoEditor({
     setTranscribeStatus('idle')
     setLocalCaptions([])
     setTranscribeError('')
+    setViewportTab(ct === 'audio' ? 'audio' : 'video')
 
     // Probe duration (fast for local blob URLs) and update the pool entry
     readDuration(url, ct).then((dur) => {
@@ -1423,9 +1432,10 @@ export default function VideoEditor({
     }
   }
 
-  const clampLeft  = (d: number) => setLeftW(w => Math.max(MIN_LEFT, Math.min(MAX_LEFT, w + d)))
-  const clampRight = (d: number) => setRightW(w => Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, w - d)))
-  const clampTl    = (d: number) => setTlHeight(h => Math.max(MIN_TL, Math.min(MAX_TL, h - d)))
+  const clampLeft   = (d: number) => setLeftW(w => Math.max(MIN_LEFT, Math.min(MAX_LEFT, w + d)))
+  const clampRight  = (d: number) => setRightW(w => Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, w - d)))
+  const clampTl     = (d: number) => setTlHeight(h => Math.max(MIN_TL, Math.min(MAX_TL, h - d)))
+  const clampAudioH = (d: number) => setAudioSplitH(h => Math.max(80, Math.min(320, h + d)))
 
   // ── Page tab config ──────────────────────────────────────────
   const PAGES: { id: EditorPage; label: string; icon: React.ElementType }[] = [
@@ -1629,21 +1639,107 @@ export default function VideoEditor({
               />
             </div>
             <VResizeHandle onDelta={clampLeft} />
-            <div className="flex-1 overflow-hidden min-w-0">
-              <VideoPlayer
-                src={effectiveUrl} contentType={effectiveContentType}
-                captions={effectiveCaptions} currentTime={currentTime}
-                timeOffset={clipTimeOffset} isPlaying={isPlaying}
-                adjustments={adjustments}
-                clipLabel={viewerClip?.label}
-                onTimeUpdate={setCurrentTime}
-                onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
-                videoRef={videoRef}
-                onMediaError={handleMediaError}
-                preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
-                seekHints={seekHints}
-              />
+
+            {/* ── Center: viewport tabs + content ─────────────── */}
+            <div className="flex-1 overflow-hidden min-w-0 flex flex-col">
+              {/* Tab bar */}
+              <div className="flex items-center shrink-0" style={{ height: 30, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+                {([
+                  { id: 'video' as const, label: 'Video', icon: Film },
+                  { id: 'audio' as const, label: 'Audio', icon: isAudioOnly ? Mic : AudioLines },
+                ] as const).map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    onClick={() => setViewportTab(id)}
+                    className="flex items-center gap-1.5 px-4 h-full text-xs transition-colors"
+                    style={{
+                      color: viewportTab === id ? 'var(--text-primary)' : 'var(--text-muted)',
+                      borderBottom: `2px solid ${viewportTab === id ? 'var(--accent)' : 'transparent'}`,
+                      background: 'transparent',
+                    }}
+                  >
+                    <Icon size={11} />
+                    {label}
+                  </button>
+                ))}
+                {/* Split layout toggle — show audio below video */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setAudioLayout(l => l === 'tab' ? 'below' : 'tab')}
+                    className="ml-auto mr-2 flex items-center gap-1.5 px-2 py-1 rounded text-xs"
+                    title={audioLayout === 'below' ? 'Show audio as separate tab' : 'Show audio below video'}
+                    style={{
+                      color: audioLayout === 'below' ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: audioLayout === 'below' ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >
+                    <PanelsTopBottom size={12} />
+                    {audioLayout === 'below' ? 'Split' : 'Split'}
+                  </button>
+                )}
+              </div>
+
+              {/* Content area */}
+              {audioLayout === 'below' && viewportTab === 'video' && !isAudioOnly ? (
+                // Side-by-side: video on top, waveform below
+                <div className="flex-1 flex flex-col min-h-0">
+                  <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'hidden' }}>
+                    <VideoPlayer
+                      src={effectiveUrl} contentType={effectiveContentType}
+                      captions={effectiveCaptions} currentTime={currentTime}
+                      timeOffset={clipTimeOffset} isPlaying={isPlaying}
+                      adjustments={adjustments}
+                      clipLabel={viewerClip?.label}
+                      onTimeUpdate={setCurrentTime}
+                      onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
+                      videoRef={videoRef}
+                      onMediaError={handleMediaError}
+                      preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
+                      seekHints={seekHints}
+                    />
+                  </div>
+                  <HResizeHandle onDelta={clampAudioH} />
+                  <div style={{ height: audioSplitH, flexShrink: 0, overflow: 'hidden' }}>
+                    <AudioWaveform
+                      src={selectedMedia?.url ?? null}
+                      contentType={selectedMedia?.contentType ?? null}
+                      currentTime={currentTime}
+                      duration={selectedMedia?.duration ?? 0}
+                      onSeek={handleSeek}
+                    />
+                  </div>
+                </div>
+              ) : viewportTab === 'audio' ? (
+                // Audio waveform tab
+                <div className="flex-1 overflow-hidden min-h-0">
+                  <AudioWaveform
+                    src={selectedMedia?.url ?? null}
+                    contentType={selectedMedia?.contentType ?? null}
+                    currentTime={currentTime}
+                    duration={selectedMedia?.duration ?? 0}
+                    onSeek={handleSeek}
+                  />
+                </div>
+              ) : (
+                // Video tab (default)
+                <div className="flex-1 overflow-hidden min-h-0">
+                  <VideoPlayer
+                    src={effectiveUrl} contentType={effectiveContentType}
+                    captions={effectiveCaptions} currentTime={currentTime}
+                    timeOffset={clipTimeOffset} isPlaying={isPlaying}
+                    adjustments={adjustments}
+                    clipLabel={viewerClip?.label}
+                    onTimeUpdate={setCurrentTime}
+                    onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
+                    videoRef={videoRef}
+                    onMediaError={handleMediaError}
+                    preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
+                    seekHints={seekHints}
+                  />
+                </div>
+              )}
             </div>
+
             <VResizeHandle onDelta={clampRight} />
             <div className="shrink-0 overflow-hidden" style={{ width: rightW }}>
               <Inspector
@@ -1664,6 +1760,7 @@ export default function VideoEditor({
                 onSmartClip={handleSmartClip}
                 genContentStatus={genContentStatus}
                 onGenerateContent={handleGenerateContent}
+                isAudioOnly={isAudioOnly}
               />
             </div>
           </div>

@@ -31,6 +31,7 @@ interface Props {
   onSmartClip: () => void
   genContentStatus: Record<string, AiStatus>
   onGenerateContent: (type: 'article' | 'blog_post' | 'show_notes') => void
+  isAudioOnly?: boolean
 }
 
 type Tab = 'clip' | 'color' | 'outputs' | 'ai'
@@ -122,13 +123,14 @@ export default function Inspector({
   silenceTrimStatus, silenceThreshold, onSilenceThresholdChange, onSilenceTrim,
   smartClipStatus, onSmartClip,
   genContentStatus, onGenerateContent,
+  isAudioOnly,
 }: Props) {
   const [tab, setTab] = useState<Tab>('ai')
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'ai',      label: 'AI' },
     { id: 'clip',    label: 'Clip' },
-    { id: 'color',   label: 'Color' },
+    ...(!isAudioOnly ? [{ id: 'color' as Tab, label: 'Color' }] : []),
     { id: 'outputs', label: 'Outputs' },
   ]
 
