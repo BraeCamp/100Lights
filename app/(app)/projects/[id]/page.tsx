@@ -106,7 +106,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       <ProjectEditor
         projectId={id}
         projectName={isDemo ? 'The Creator Mindset — Demo' : '…'}
-        modules={isDemo ? ['video', 'audio', 'transcript', 'content', 'storyboard'] : ['video']}
+        modules={isDemo ? ['video', 'audio', 'transcript', 'content', 'storyboard'] : undefined}
         allowImport={!isDemo}
       />
     </div>

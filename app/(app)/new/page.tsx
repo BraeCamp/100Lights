@@ -18,7 +18,7 @@ const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: stri
 export default function NewProjectPage() {
   const [phase, setPhase] = useState<'pick' | 'edit'>('pick')
   const [projectName, setProjectName] = useState('')
-  const [selected, setSelected] = useState<ModuleKey[]>(['video'])
+  const [selected, setSelected] = useState<ModuleKey[]>([])
   const nameRef = useRef<HTMLInputElement>(null)
 
   function toggle(key: ModuleKey) {
