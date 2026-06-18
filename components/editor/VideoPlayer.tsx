@@ -71,6 +71,10 @@ interface Props {
     localProgress: number    // 0–1 through clip duration (for animations)
   }
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
+  playbackRate?: number
+  onPlaybackRateChange?: (rate: number) => void
+  activeFocusClip?: { x: number; y: number; radius: number }
+  onSetFocusPoint?: (x: number, y: number) => void
 }
 
 function buildFilter(adj?: VideoAdjustments): string {
@@ -171,6 +175,10 @@ export default function VideoPlayer({
   blendMode,
   loopDuration,
   titleClip,
+  playbackRate = 1,
+  onPlaybackRateChange,
+  activeFocusClip,
+  onSetFocusPoint,
 }: Props) {
   // Tracks cumulative full-loop offsets so onTimeUpdate reports monotonically
   // increasing timeline time even as video.currentTime wraps back to 0.
@@ -807,6 +815,32 @@ export default function VideoPlayer({
           </div>
         )}
 
+        {/* Draw Focus spotlight overlay */}
+        {activeFocusClip && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
+            background: `radial-gradient(circle at ${activeFocusClip.x * 100}% ${activeFocusClip.y * 100}%, transparent ${activeFocusClip.radius * 100}%, rgba(0,0,0,0.72) ${activeFocusClip.radius * 100 + 8}%)`,
+          }} />
+        )}
+        {/* Click-to-set-focus crosshair (only when caller provides handler) */}
+        {onSetFocusPoint && (
+          <div
+            style={{ position: 'absolute', inset: 0, zIndex: 8, cursor: 'crosshair' }}
+            onClick={e => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              onSetFocusPoint(
+                (e.clientX - rect.left) / rect.width,
+                (e.clientY - rect.top) / rect.height,
+              )
+            }}
+            onWheel={e => {
+              // Scroll to resize the focus radius
+              if (!activeFocusClip || !onSetFocusPoint) return
+              // wheel resize is handled in VideoEditor via a dedicated prop
+            }}
+          />
+        )}
+
         {/* Video overlays (labels, captions) */}
         {src && contentType === 'video' && (
           <div className="absolute inset-0 z-10 pointer-events-none">
@@ -881,17 +915,22 @@ export default function VideoPlayer({
         >
           {isPlaying ? <Pause size={14} color="#fff" /> : <Play size={14} color="#fff" />}
         </button>
-        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: '#222' }}>
-          <div
-            className="h-full rounded-full"
-            style={{
-              width: activeEl?.duration
-                ? `${Math.min(100, ((currentTime - timeOffset) / activeEl.duration) * 100)}%`
-                : '0%',
-              background: 'var(--accent)',
-              transition: 'width 0.1s linear',
-            }}
-          />
+        <div className="flex items-center gap-0.5 flex-1 justify-center">
+          {([0.5, 1, 1.5, 2] as const).map(rate => (
+            <button
+              key={rate}
+              tabIndex={-1}
+              onClick={() => onPlaybackRateChange?.(rate)}
+              className="px-2 py-0.5 rounded font-mono"
+              style={{
+                fontSize: 10,
+                background: playbackRate === rate ? 'rgba(139,92,246,0.2)' : 'transparent',
+                color: playbackRate === rate ? 'var(--accent-light)' : '#444',
+                border: `1px solid ${playbackRate === rate ? 'rgba(139,92,246,0.35)' : 'transparent'}`,
+                cursor: 'pointer',
+              }}
+            >{rate}×</button>
+          ))}
         </div>
         <span className="text-xs font-mono shrink-0" style={{ color: '#333', fontSize: 9 }}>J·K·L</span>
       </div>

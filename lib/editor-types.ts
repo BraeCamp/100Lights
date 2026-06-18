@@ -58,12 +58,16 @@ export interface TimelineItem {
   eq?: { low: number; mid: number; high: number }
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
+  // Draw Focus overlay fields (only for clips on drawfocus tracks)
+  focusX?: number      // 0–1 horizontal position (default 0.5)
+  focusY?: number      // 0–1 vertical position (default 0.5)
+  focusRadius?: number // radius as fraction of container height (default 0.2)
 }
 
 export interface Track {
   id: string
   label: string
-  type: 'media' | 'video' | 'audio' | 'caption'  // 'video'/'audio' kept for backward compat
+  type: 'media' | 'video' | 'audio' | 'caption' | 'drawfocus'
   height: number
   locked?: boolean
   volume?: number   // 0–1 (default 1)

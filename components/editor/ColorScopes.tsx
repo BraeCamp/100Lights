@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 
-type ScopeType = 'waveform' | 'vectorscope' | 'histogram' | 'parade'
+type ScopeType = 'waveform' | 'vectorscope' | 'histogram' | 'parade' | 'spectrum'
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>
@@ -16,6 +16,7 @@ const TABS: { id: ScopeType; label: string }[] = [
   { id: 'vectorscope', label: 'Vectorscope' },
   { id: 'histogram', label: 'Histogram' },
   { id: 'parade', label: 'Parade' },
+  { id: 'spectrum', label: 'Spectrum' },
 ]
 
 const SAMPLE_W = 320
@@ -27,6 +28,37 @@ export default function ColorScopes({ videoRef, isPlaying, scope, onScopeChange 
   const rafRef = useRef<number | null>(null)
   const scopeRef = useRef(scope)
   scopeRef.current = scope
+
+  const audioCtxRef  = useRef<AudioContext | null>(null)
+  const analyserRef  = useRef<AnalyserNode | null>(null)
+  const fftDataRef   = useRef<Uint8Array<ArrayBuffer> | null>(null)
+
+  useEffect(() => {
+    if (scope !== 'spectrum') {
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {})
+        audioCtxRef.current = null
+        analyserRef.current = null
+        fftDataRef.current  = null
+      }
+      return
+    }
+    const video = videoRef.current
+    if (!video) return
+    try {
+      const ctx = new AudioContext()
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      const source = ctx.createMediaElementSource(video)
+      source.connect(analyser)
+      analyser.connect(ctx.destination)
+      audioCtxRef.current = ctx
+      analyserRef.current = analyser
+      fftDataRef.current  = new Uint8Array(analyser.frequencyBinCount)
+    } catch {
+      // Video element already owned by another AudioContext
+    }
+  }, [scope]) // eslint-disable-line
 
   // Lazily create the offscreen canvas once
   function getOffscreen(): HTMLCanvasElement {
@@ -70,6 +102,37 @@ export default function ColorScopes({ videoRef, isPlaying, scope, onScopeChange 
       drawHistogram(ctx, data, W, H, SAMPLE_W, SAMPLE_H)
     } else if (currentScope === 'parade') {
       drawParade(ctx, data, W, H, SAMPLE_W, SAMPLE_H)
+    } else if (currentScope === 'spectrum') {
+      const analyser = analyserRef.current
+      const fft      = fftDataRef.current
+      if (analyser && fft) {
+        analyser.getByteFrequencyData(fft)
+        const bins = fft.length
+        const barW = W / bins
+        for (let i = 0; i < bins; i++) {
+          const v     = fft[i] / 255
+          const barH  = v * H
+          const hue   = (i / bins) * 280
+          ctx.fillStyle = `hsl(${hue}, 100%, ${30 + v * 35}%)`
+          ctx.fillRect(i * barW, H - barH, Math.max(1, barW - 1), barH)
+          // Peak dot
+          ctx.fillStyle = `hsl(${hue}, 100%, 75%)`
+          ctx.fillRect(i * barW, H - barH - 2, Math.max(1, barW - 1), 2)
+        }
+      } else {
+        // No audio — draw placeholder bars
+        const bins = 64
+        const barW = W / bins
+        for (let i = 0; i < bins; i++) {
+          const hue = (i / bins) * 280
+          ctx.fillStyle = `hsl(${hue}, 60%, 20%)`
+          ctx.fillRect(i * barW, H * 0.7, Math.max(1, barW - 1), H * 0.3)
+        }
+        ctx.fillStyle = '#555'
+        ctx.font = '11px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('Enable audio in player to see spectrum', W / 2, H / 2)
+      }
     }
   }, [videoRef])
 

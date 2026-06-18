@@ -657,7 +657,7 @@ export default function VideoEditor({
   const [opticalFlowEnabled, setOpticalFlowEnabled] = useState(false)
   const [motionBlurGlobal, setMotionBlurGlobal] = useState(false)
   const [showColorScopes, setShowColorScopes] = useState(false)
-  const [colorScopesType, setColorScopesType] = useState<'waveform' | 'vectorscope' | 'histogram' | 'parade'>('waveform')
+  const [colorScopesType, setColorScopesType] = useState<'waveform' | 'vectorscope' | 'histogram' | 'parade' | 'spectrum'>('waveform')
   const [showRenderQueue, setShowRenderQueue] = useState(false)
   const [audioDuckingEnabled, setAudioDuckingEnabled] = useState(false)
 
@@ -1093,6 +1093,30 @@ export default function VideoEditor({
     const clipDur = viewerClip.outPoint - viewerClip.inPoint
     return clipDur > srcDur ? srcDur : undefined
   }, [viewerClip?.id, viewerClip?.outPoint, viewerClip?.inPoint, mediaItems]) // eslint-disable-line
+
+  // Draw Focus overlay — show spotlight when a drawfocus clip is active
+  const activeFocusClip = useMemo(() => {
+    if (!viewerClip) return undefined
+    const track = tracks.find(t => t.id === viewerClip.trackId)
+    if (track?.type !== 'drawfocus') return undefined
+    return {
+      x: viewerClip.focusX ?? 0.5,
+      y: viewerClip.focusY ?? 0.5,
+      radius: viewerClip.focusRadius ?? 0.2,
+    }
+  }, [viewerClip, tracks]) // eslint-disable-line
+
+  const selectedDrawFocusItem = useMemo(() => {
+    const item = timelineItems.find(i => i.id === selectedId)
+    if (!item) return null
+    const track = tracks.find(t => t.id === item.trackId)
+    return track?.type === 'drawfocus' ? item : null
+  }, [selectedId, timelineItems, tracks])
+
+  function handleSetFocusPoint(x: number, y: number) {
+    if (!selectedDrawFocusItem) return
+    handleClipChange(selectedDrawFocusItem.id, { focusX: x, focusY: y })
+  }
 
   // When a signed URL expires mid-session, refresh it using the media item's r2Key
   async function handleMediaError() {
@@ -1693,7 +1717,17 @@ export default function VideoEditor({
     handleSeek(newItem.startTime)
   }
 
-  function handleAddTrack(_type?: string) {
+  function handleAddTrack(type?: string) {
+    if (type === 'drawfocus') {
+      const n = tracks.filter(t => t.type === 'drawfocus').length + 1
+      const id = `df${n}`
+      setTracksWithHistory(prev => [
+        ...prev.filter(t => t.type !== 'caption'),
+        { id, label: `Focus ${n}`, type: 'drawfocus' as const, height: TRACK_HEIGHT },
+      ])
+      setTlHeight(h => Math.min(MAX_TL, h + TRACK_HEIGHT))
+      return
+    }
     const mediaTracks = tracks.filter(t => t.type === 'media' || t.type === 'video' || t.type === 'audio')
     const n = mediaTracks.length + 1
     const id = `m${n}`
@@ -2504,28 +2538,6 @@ export default function VideoEditor({
                     {label}
                   </button>
                 ))}
-                {/* Playback speed presets */}
-                <div className="ml-auto flex items-center gap-0.5 px-2">
-                  {([0.5, 1, 1.5, 2] as const).map(rate => (
-                    <button
-                      key={rate}
-                      onClick={() => {
-                        if (videoRef.current) videoRef.current.playbackRate = rate
-                        setPlaybackRate(rate)
-                      }}
-                      className="px-1.5 py-0.5 rounded text-xs font-mono"
-                      style={{
-                        background: playbackRate === rate ? 'var(--accent-subtle)' : 'transparent',
-                        color: playbackRate === rate ? 'var(--accent-light)' : 'var(--text-muted)',
-                        border: `1px solid ${playbackRate === rate ? 'rgba(139,92,246,0.3)' : 'transparent'}`,
-                      }}
-                      title={`${rate}× speed`}
-                    >
-                      {rate}×
-                    </button>
-                  ))}
-                </div>
-
                 {/* Before/after color compare */}
                 {viewportTab === 'video' && !isAudioOnly && (
                   <button
@@ -2735,6 +2747,10 @@ export default function VideoEditor({
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
                       } : undefined}
                       onSeekRequest={handleSeek}
+                      playbackRate={playbackRate}
+                      onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
+                      activeFocusClip={activeFocusClip}
+                      onSetFocusPoint={selectedDrawFocusItem ? handleSetFocusPoint : undefined}
                     />
                   </div>
                   <HResizeHandle onDelta={clampAudioH} />
@@ -2798,6 +2814,10 @@ export default function VideoEditor({
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
                       } : undefined}
                       onSeekRequest={handleSeek}
+                      playbackRate={playbackRate}
+                      onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
+                      activeFocusClip={activeFocusClip}
+                      onSetFocusPoint={selectedDrawFocusItem ? handleSetFocusPoint : undefined}
                     />
                   </div>
                   {showColorScopes && (
@@ -2865,6 +2885,7 @@ export default function VideoEditor({
             items={timelineItems} captions={effectiveCaptions} tracks={tracks}
             duration={duration} currentTime={currentTime} isPlaying={isPlaying} selectedId={selectedId}
             zoomLevel={zoomLevel} height={tlHeight}
+            playbackRate={playbackRate}
             activeTool={activeTool} snapEnabled={snapEnabled}
             inPoint={inPoint} outPoint={outPoint}
             hasCopied={!!clipboardRef.current}

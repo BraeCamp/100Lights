@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2 } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2, ChevronDown } from 'lucide-react'
 import type { Caption } from '@/lib/types'
 import type { TimelineItem, Track, TransitionType, MediaItem } from '@/lib/editor-types'
 import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT } from '@/lib/editor-types'
@@ -49,6 +49,7 @@ interface Props {
   selectedIds?: Set<string>
   onMultiSelect?: (ids: Set<string>) => void
   mediaItems?: MediaItem[]
+  playbackRate?: number
 }
 
 const LABEL_WIDTH = 64
@@ -126,12 +127,14 @@ export default function Timeline({
   onDeleteItem, onRippleDelete, onDropMedia, onAddTrack, onSnapToggle, onContextMenu,
   onDuplicateItem, onRenameItem, onToggleEnabled, onChangeColor, onCopyItem, onPasteItem, onDeleteTrack,
   onTrackMuteToggle, onTrackSoloToggle, onTrackVolumeChange, selectedIds, onMultiSelect, mediaItems,
+  playbackRate = 1,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   // null = not scrubbing; number = current scrub speed multiplier (1 = normal)
   const [scrubSpeed, setScrubSpeed] = useState<number | null>(null)
+  const [showAddMenu, setShowAddMenu] = useState(false)
 
   // Playhead DOM refs — updated via RAF, bypassing React re-renders for 60fps motion.
   const phLineRef = useRef<HTMLDivElement>(null)   // vertical line over tracks
@@ -147,8 +150,17 @@ export default function Timeline({
   const ppsRef        = useRef(pps)
   const syncRef       = useRef({ time: currentTime, wall: performance.now() })
   const isPlayingRef  = useRef(isPlaying)
+  const playbackRateRef = useRef(playbackRate)
   useEffect(() => { ppsRef.current = pps }, [pps])
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
+  useEffect(() => { playbackRateRef.current = playbackRate }, [playbackRate])
+
+  useEffect(() => {
+    if (!showAddMenu) return
+    const close = () => setShowAddMenu(false)
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [showAddMenu])
 
   // Sync anchor whenever the parent delivers a new currentTime (video timeupdate / seek).
   useEffect(() => {
@@ -168,7 +180,7 @@ export default function Timeline({
     function tick() {
       const { time, wall } = syncRef.current
       const elapsed = isPlayingRef.current ? (performance.now() - wall) / 1000 : 0
-      applyX((time + elapsed) * ppsRef.current)
+      applyX((time + elapsed * playbackRateRef.current) * ppsRef.current)
       rafId = requestAnimationFrame(tick)
     }
 
@@ -375,7 +387,8 @@ export default function Timeline({
     return [
       { id: 'paste',    label: 'Paste',          shortcut: '⌘V', disabled: !hasCopied, onClick: () => trackId && onPasteItem(trackId, currentTime) },
       { id: 's0',       separator: true, label: '' },
-      { id: 'addM',     label: 'Add Media Track', shortcut: '⌘⌥T', onClick: () => onAddTrack() },
+      { id: 'addM',  label: 'Add Media Track',     shortcut: '⌘⌥T', onClick: () => onAddTrack() },
+      { id: 'addDF', label: 'Add Draw Focus Track',                  onClick: () => onAddTrack('drawfocus') },
       { id: 'delTrack', label: 'Delete Track',    disabled: !canDeleteTrack, onClick: () => trackId && onDeleteTrack(trackId) },
       { id: 's1',       separator: true, label: '' },
       { id: 'fit',      label: 'Fit Timeline',    shortcut: '⇧Z', onClick: fitAll },
@@ -437,14 +450,41 @@ export default function Timeline({
         <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
 
         {/* Add track */}
-        <button
-          onClick={() => onAddTrack()}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-          style={{ color: 'var(--text-muted)' }}
-          title="Add media track (⌘⌥T)"
-        >
-          <Plus size={11} /> Track
-        </button>
+        <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
+          <button
+            onClick={() => setShowAddMenu(v => !v)}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+            style={{ color: 'var(--text-muted)' }}
+            title="Add track"
+          >
+            <Plus size={11} /> Add <ChevronDown size={9} />
+          </button>
+          {showAddMenu && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, zIndex: 100,
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 6, minWidth: 164, boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+              overflow: 'hidden', marginTop: 2,
+            }}>
+              {[
+                { label: 'Media Track', type: undefined },
+                { label: 'Draw Focus Track', type: 'drawfocus' },
+              ].map(({ label, type }) => (
+                <button
+                  key={label}
+                  onClick={() => { onAddTrack(type); setShowAddMenu(false) }}
+                  style={{
+                    display: 'block', width: '100%', padding: '7px 12px',
+                    textAlign: 'left', fontSize: 11, color: 'var(--text-secondary)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-card)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >{label}</button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex-1" />
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -533,7 +573,7 @@ export default function Timeline({
                   style={{ height: track.height, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '2px 0' }}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, getAreaMenu(track.id)) }}
                 >
-                  <span style={{ color: track.muted ? '#444' : 'var(--text-muted)', fontSize: 9, fontWeight: 700 }}>{track.label}</span>
+                  <span style={{ color: track.type === 'drawfocus' ? '#a78bfa' : (track.muted ? '#444' : 'var(--text-muted)'), fontSize: 9, fontWeight: 700 }}>{track.type === 'drawfocus' ? `⊙ ${track.label}` : track.label}</span>
                   <div style={{ display: 'flex', gap: 2 }}>
                     <button
                       onClick={(e) => { e.stopPropagation(); onTrackMuteToggle?.(track.id) }}
@@ -601,6 +641,8 @@ export default function Timeline({
                       borderBottom: '1px solid var(--border)',
                       background: dropIndicator?.trackId === track.id
                         ? 'rgba(61,143,239,0.07)'
+                        : track.type === 'drawfocus'
+                        ? 'rgba(167,139,250,0.04)'
                         : 'rgba(255,255,255,0.018)',
                       cursor: bladeCursor && !track.locked ? 'crosshair' : 'default',
                       transition: 'background 0.1s',
