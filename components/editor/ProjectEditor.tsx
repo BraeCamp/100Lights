@@ -11,14 +11,18 @@
  * - When no `projectId` (new project): `modules` prop is the source of truth.
  * - Old projects without a saved `modules` field fall back to ['video'] so
  *   they keep working exactly as before.
+ * - AudioEditor tracks are uploaded to R2 and stored in `audioMedia[]`.
+ *   When video module is activated with new/updated audio tracks, a sync
+ *   modal prompts the user to merge them into the video media library.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import type { Caption, Output } from '@/lib/types'
-import type { ModuleKey } from '@/lib/editor-types'
+import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
 import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
-import type { CfProjFile } from '@/lib/project-serializer'
+import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
+import type { AudioTrack } from './AudioEditor'
 
 // ── All editors are lazy. None load until their module is active. ─────────
 
@@ -58,11 +62,13 @@ function EditorSpinner({ label }: { label: string }) {
 export interface ProjectEditorProps {
   projectId?: string
   projectName: string
-  /** Which modules to load. For new projects this comes from the picker.
-   *  For saved projects it is overridden by whatever the API returns.
-   *  undefined = wait for API (shows loading until response arrives). */
   modules?: ModuleKey[]
   allowImport?: boolean
+}
+
+interface SyncItem {
+  audioMedia: SerializedAudioMedia
+  status: 'new' | 'updated'
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -77,6 +83,43 @@ function deserializeOutputs(raw: CfProjFile['outputs'] = []): Output[] {
     createdAt: new Date(o.createdAt),
     captions: o.captions,
   }))
+}
+
+async function resolveAudioMediaToTracks(items: SerializedAudioMedia[]): Promise<AudioTrack[]> {
+  return Promise.all(items.map(async (am) => {
+    let url = ''
+    try {
+      const res = await fetch(`/api/media/signed-url?key=${encodeURIComponent(am.r2Key)}`)
+      if (res.ok) {
+        const { url: signed } = await res.json() as { url: string }
+        url = signed
+      }
+    } catch { }
+    return {
+      id: am.id,
+      name: am.name,
+      url,
+      duration: am.duration,
+      contentType: am.contentType,
+      r2Key: am.r2Key,
+      uploadStatus: 'uploaded' as const,
+      savedAt: am.savedAt,
+    }
+  }))
+}
+
+function computeSyncItems(audioMedia: SerializedAudioMedia[], videoMedia: SerializedMedia[]): SyncItem[] {
+  const result: SyncItem[] = []
+  for (const am of audioMedia) {
+    if (!am.r2Key) continue
+    const existing = videoMedia.find(m => m.name === am.name)
+    if (!existing) {
+      result.push({ audioMedia: am, status: 'new' })
+    } else if (existing.r2Key !== am.r2Key) {
+      result.push({ audioMedia: am, status: 'updated' })
+    }
+  }
+  return result
 }
 
 // ── Resizable split-pane ──────────────────────────────────────
@@ -112,20 +155,135 @@ function SplitLayout({ left, right, defaultSplit = 360 }: {
   )
 }
 
+// ── Audio → Video sync modal ──────────────────────────────────
+
+function AudioSyncModal({
+  items,
+  onConfirm,
+  onSkip,
+}: {
+  items: SyncItem[]
+  onConfirm: (selected: SerializedAudioMedia[]) => Promise<void>
+  onSkip: () => void
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(items.map(i => i.audioMedia.id)))
+  const [saving, setSaving] = useState(false)
+
+  function toggle(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  async function confirm() {
+    setSaving(true)
+    const picked = items.filter(i => selected.has(i.audioMedia.id)).map(i => i.audioMedia)
+    await onConfirm(picked)
+  }
+
+  const MODULE_COLOR = MODULE_DEFS.find(m => m.key === 'audio')!.color
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 500,
+      background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{
+        background: 'var(--bg-surface)', border: '1px solid var(--border)',
+        borderRadius: 12, padding: 28, maxWidth: 440, width: '90%',
+        boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 10, height: 10, borderRadius: '50%', background: MODULE_COLOR, flexShrink: 0 }} />
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+            Sync Audio to Video
+          </h2>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 18, lineHeight: 1.6 }}>
+          Your Audio module has tracks that aren't in the Video module yet. Add them to the Video media library so you can place them on the timeline.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 22 }}>
+          {items.map(item => (
+            <label
+              key={item.audioMedia.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '9px 12px', borderRadius: 7,
+                border: `1px solid ${selected.has(item.audioMedia.id) ? 'var(--accent)' : 'var(--border)'}`,
+                background: selected.has(item.audioMedia.id) ? 'var(--accent-subtle)' : 'var(--bg-card)',
+                cursor: 'pointer', transition: 'border-color 0.1s, background 0.1s',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(item.audioMedia.id)}
+                onChange={() => toggle(item.audioMedia.id)}
+                style={{ accentColor: 'var(--accent)', flexShrink: 0 }}
+              />
+              <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {item.audioMedia.name}
+              </span>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                background: item.status === 'new' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
+                color: item.status === 'new' ? '#10b981' : '#f59e0b',
+                flexShrink: 0, letterSpacing: '0.06em',
+              }}>
+                {item.status === 'new' ? 'NEW' : 'UPDATED'}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onSkip}
+            disabled={saving}
+            style={{ padding: '9px 18px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}
+          >
+            Skip
+          </button>
+          <button
+            onClick={confirm}
+            disabled={saving || selected.size === 0}
+            style={{
+              padding: '9px 18px', borderRadius: 7, border: 'none',
+              background: selected.size === 0 ? 'var(--border)' : 'var(--accent)',
+              color: '#fff', fontSize: 13, fontWeight: 600,
+              cursor: selected.size === 0 || saving ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            {saving && <div style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.7s linear infinite' }} />}
+            Add to Video Library
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────
 
 export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport }: ProjectEditorProps) {
-  // For a new project (no projectId), use the picker-provided modules immediately.
-  // For a saved project, start in loading state; the API response sets the real modules.
   const isNewProject = !projectId
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
-    isNewProject ? (moduleProp ?? ['video']) : null   // null = "not yet determined"
+    isNewProject ? (moduleProp ?? ['video']) : null
   )
-  const [captions, setCaptions]   = useState<Caption[]>([])
-  const [outputs, setOutputs]     = useState<Output[]>([])
-  const [savedData, setSavedData] = useState<CfProjFile | null>(null)
-  const [localName, setLocalName] = useState(projectName)
-  const [currentTime, setCurrentTime] = useState(0)
+  const [captions, setCaptions]         = useState<Caption[]>([])
+  const [outputs, setOutputs]           = useState<Output[]>([])
+  const [savedData, setSavedData]       = useState<CfProjFile | null>(null)
+  const [localName, setLocalName]       = useState(projectName)
+  const [currentTime, setCurrentTime]   = useState(0)
+  const [audioMedia, setAudioMedia]     = useState<SerializedAudioMedia[]>([])
+  const [moduleSavedAt, setModuleSavedAt] = useState<Partial<Record<ModuleKey, string>>>({})
+  const [initAudioTracks, setInitAudioTracks] = useState<AudioTrack[]>([])
+  const [pendingModules, setPendingModules] = useState<ModuleKey[] | null>(null)
+  const [syncItems, setSyncItems]       = useState<SyncItem[] | null>(null)
   const savedProjectId = useRef(projectId ?? crypto.randomUUID())
 
   // ── Load project from API ──────────────────────────────────
@@ -133,24 +291,39 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     if (isNewProject) return
     fetch(`/api/projects/${projectId}`)
       .then(r => r.ok ? r.json() : null)
-      .then((data: CfProjFile | null) => {
+      .then(async (data: CfProjFile | null) => {
         if (!data) { setActiveModules(['video']); return }
         setSavedData(data)
         setLocalName(data.name)
         setCaptions(data.captions ?? [])
         setOutputs(deserializeOutputs(data.outputs))
-        // Old projects have no modules field → keep them working as video projects
+        setAudioMedia(data.audioMedia ?? [])
+        setModuleSavedAt(data.moduleSavedAt ?? {})
+        // Resolve audio media to playable URLs before AudioEditor mounts
+        if (data.audioMedia?.length) {
+          const tracks = await resolveAudioMediaToTracks(data.audioMedia)
+          setInitAudioTracks(tracks)
+        }
         setActiveModules(data.modules ?? ['video'])
       })
       .catch(() => setActiveModules(['video']))
   }, [projectId]) // eslint-disable-line
 
-  // ── Save (non-video editors call this) ────────────────────
-  async function save(patch: { name?: string; outputs?: Output[]; captions?: Caption[]; modules?: ModuleKey[] }) {
+  // ── Save ──────────────────────────────────────────────────
+  async function save(patch: {
+    name?: string
+    outputs?: Output[]
+    captions?: Caption[]
+    modules?: ModuleKey[]
+    audioMedia?: SerializedAudioMedia[]
+    moduleSavedAt?: Partial<Record<ModuleKey, string>>
+  }) {
     const name    = patch.name    ?? localName
     const outs    = patch.outputs ?? outputs
     const caps    = patch.captions ?? captions
     const mods    = patch.modules ?? activeModules ?? ['video']
+    const am      = patch.audioMedia ?? audioMedia
+    const msat    = patch.moduleSavedAt ? { ...moduleSavedAt, ...patch.moduleSavedAt } : moduleSavedAt
 
     const project: CfProjFile = {
       _type: '100lights-project',
@@ -168,8 +341,10 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
         wordCount: o.wordCount, createdAt: o.createdAt instanceof Date ? o.createdAt.toISOString() : String(o.createdAt),
         captions: o.captions,
       })),
-      media:   savedData?.media ?? [],
-      modules: mods,
+      media:       savedData?.media ?? [],
+      audioMedia:  am,
+      moduleSavedAt: msat,
+      modules:     mods,
     }
 
     const res = await fetch('/api/projects', {
@@ -179,8 +354,14 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     })
     if (!res.ok) throw new Error('Save failed')
     setLocalName(name)
-    if (patch.outputs)  setOutputs(outs)
-    if (patch.captions) setCaptions(caps)
+    if (patch.outputs)      setOutputs(outs)
+    if (patch.captions)     setCaptions(caps)
+    if (patch.audioMedia)   setAudioMedia(am)
+    if (patch.moduleSavedAt) setModuleSavedAt(msat)
+    // Keep savedData.media in sync so subsequent saves don't overwrite with stale data
+    if (patch.audioMedia || patch.modules) {
+      setSavedData(prev => prev ? { ...prev, audioMedia: am, modules: mods, moduleSavedAt: msat } : prev)
+    }
   }
 
   function commitName(name: string) {
@@ -197,7 +378,105 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     }
   }
 
-  // ── Loading state (saved project, API not yet responded) ───
+  // ── Module change handler (all editors) ───────────────────
+  async function handleModulesChange(newModules: ModuleKey[]) {
+    const hadVideo = (activeModules ?? []).includes('video')
+    const willHaveVideo = newModules.includes('video')
+
+    // When transitioning into video and there are audio tracks to sync, show modal
+    if (!hadVideo && willHaveVideo && audioMedia.length > 0) {
+      const currentVideoMedia = savedData?.media ?? []
+      const toSync = computeSyncItems(audioMedia, currentVideoMedia)
+      if (toSync.length > 0) {
+        setPendingModules(newModules)
+        setSyncItems(toSync)
+        return   // modal takes over — don't switch yet
+      }
+    }
+
+    // Normal module change: save new modules and switch
+    setActiveModules(newModules)
+    save({ modules: newModules }).catch(() => {})
+  }
+
+  // ── Sync modal callbacks ──────────────────────────────────
+  async function handleSyncConfirm(selected: SerializedAudioMedia[]) {
+    if (!pendingModules) return
+    // Merge selected audio tracks into video media library
+    const existingMedia = savedData?.media ?? []
+    const merged: SerializedMedia[] = [...existingMedia]
+    for (const am of selected) {
+      const idx = merged.findIndex(m => m.name === am.name)
+      const entry: SerializedMedia = {
+        id: am.id,
+        name: am.name,
+        contentType: 'audio' as import('@/lib/types').ContentType,
+        duration: am.duration,
+        r2Key: am.r2Key,
+      }
+      if (idx >= 0) merged[idx] = entry
+      else merged.push(entry)
+    }
+    const now = new Date().toISOString()
+    const updatedSavedData: CfProjFile = {
+      ...(savedData ?? {
+        _type: '100lights-project', version: 1,
+        id: savedProjectId.current, name: localName, savedAt: now,
+        tracks: [], clips: [], adjustments: DEFAULT_ADJUSTMENTS, zoomLevel: 1,
+        captions: [], outputs: [], chapters: [],
+      }),
+      media: merged,
+      audioMedia,
+      modules: pendingModules,
+      moduleSavedAt: { ...moduleSavedAt, video: now },
+    }
+    setSavedData(updatedSavedData)
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedSavedData),
+    })
+    if (!res.ok) console.warn('Sync save failed')
+    setActiveModules(pendingModules)
+    setPendingModules(null)
+    setSyncItems(null)
+  }
+
+  function handleSyncSkip() {
+    if (!pendingModules) return
+    setActiveModules(pendingModules)
+    save({ modules: pendingModules }).catch(() => {})
+    setPendingModules(null)
+    setSyncItems(null)
+  }
+
+  // ── VideoEditor data-saved callback ───────────────────────
+  // Keeps our savedData cache current so non-video editors don't overwrite
+  // VideoEditor's timeline/media with stale data.
+  function handleVideoDataSaved(data: CfProjFile) {
+    setSavedData(data)
+  }
+
+  // ── AudioEditor save callback ──────────────────────────────
+  async function handleAudioSave(tracks: AudioTrack[]) {
+    const now = new Date().toISOString()
+    const serialized: SerializedAudioMedia[] = tracks
+      .filter(t => !!t.r2Key)
+      .map(t => ({
+        id:          t.id,
+        name:        t.name,
+        duration:    t.duration,
+        contentType: t.contentType ?? 'audio/mpeg',
+        r2Key:       t.r2Key!,
+        savedAt:     now,
+      }))
+    await save({
+      audioMedia: serialized,
+      moduleSavedAt: { audio: now },
+    })
+  }
+
+  // ── Loading state ─────────────────────────────────────────
   if (activeModules === null) {
     return <EditorSpinner label="Opening project…" />
   }
@@ -208,24 +487,12 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const hasContent    = activeModules.includes('content')
   const hasTranscript = activeModules.includes('transcript')
 
-  // ── Video: VideoEditor handles all combos that include video ─
-  // Everything video-related (timeline, color, audio tab, etc.) lives there.
-  if (hasVideo) {
-    return (
-      <VideoEditor
-        projectId={projectId}
-        projectName={localName}
-        videoUrl={null}
-        captions={captions}
-        clips={[]}
-        outputs={outputs}
-        allowImport={allowImport}
-        modules={activeModules}
-      />
-    )
-  }
+  // ── Props factories ───────────────────────────────────────
 
-  // ── Non-video layouts — only what the active modules need ──
+  const sharedModuleProps = {
+    activeModules,
+    onModulesChange: handleModulesChange,
+  }
 
   const contentProps = {
     projectId,
@@ -234,6 +501,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     initialOutputs: outputs,
     onSave: async (docs: Output[]) => save({ outputs: docs }),
     onProjectNameCommit: commitName,
+    ...sharedModuleProps,
   }
 
   const transcriptProps = {
@@ -245,6 +513,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onCaptionsChange: setCaptions,
     onSave: async (caps: Caption[]) => save({ captions: caps }),
     onProjectNameCommit: commitName,
+    ...sharedModuleProps,
   }
 
   const audioProps = {
@@ -254,65 +523,131 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     currentTime,
     onTimeChange: setCurrentTime,
     onProjectNameCommit: commitName,
-    onSave: async () => save({}),
+    onSave: handleAudioSave,
+    initialTracks: initAudioTracks,
+    ...sharedModuleProps,
   }
 
-  // Transcript + Content — side by side, transcript feeds content AI generation
+  // ── Video: VideoEditor handles all combos that include video ─
+  if (hasVideo) {
+    return (
+      <>
+        <VideoEditor
+          projectId={projectId}
+          projectName={localName}
+          videoUrl={null}
+          captions={captions}
+          clips={[]}
+          outputs={outputs}
+          allowImport={allowImport}
+          modules={activeModules}
+          onModulesChange={handleModulesChange}
+          onDataSaved={handleVideoDataSaved}
+        />
+        {syncItems && (
+          <AudioSyncModal
+            items={syncItems}
+            onConfirm={handleSyncConfirm}
+            onSkip={handleSyncSkip}
+          />
+        )}
+      </>
+    )
+  }
+
+  // ── Non-video layouts — only what the active modules need ──
+
+  // Transcript + Content — side by side
   if (hasTranscript && hasContent && !hasAudio) {
     return (
-      <SplitLayout
-        left={<TranscriptEditor {...transcriptProps} />}
-        right={<ContentEditor   {...contentProps}    />}
-      />
+      <>
+        <SplitLayout
+          left={<TranscriptEditor {...transcriptProps} />}
+          right={<ContentEditor   {...contentProps}    />}
+        />
+        {syncItems && (
+          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
+        )}
+      </>
     )
   }
 
   // Audio + Transcript + Content — audio on top, transcript + content side by side below
   if (hasAudio && hasTranscript && hasContent) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div style={{ flex: '0 0 50%', overflow: 'hidden' }}>
-          <AudioEditor {...audioProps} />
+      <>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ flex: '0 0 50%', overflow: 'hidden' }}>
+            <AudioEditor {...audioProps} />
+          </div>
+          <div style={{ flex: '0 0 50%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
+            <SplitLayout
+              left={<TranscriptEditor {...transcriptProps} hideHeader />}
+              right={<ContentEditor   {...contentProps}    hideHeader />}
+            />
+          </div>
         </div>
-        <div style={{ flex: '0 0 50%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
-          <SplitLayout
-            left={<TranscriptEditor {...transcriptProps} hideHeader />}
-            right={<ContentEditor   {...contentProps}    hideHeader />}
-          />
-        </div>
-      </div>
+        {syncItems && (
+          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
+        )}
+      </>
     )
   }
 
   // Audio + Transcript — audio top, live-synced transcript below
   if (hasAudio && hasTranscript) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div style={{ flex: '0 0 55%', overflow: 'hidden' }}>
-          <AudioEditor {...audioProps} />
+      <>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ flex: '0 0 55%', overflow: 'hidden' }}>
+            <AudioEditor {...audioProps} />
+          </div>
+          <div style={{ flex: '0 0 45%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
+            <TranscriptEditor {...transcriptProps} hideHeader currentTime={currentTime} />
+          </div>
         </div>
-        <div style={{ flex: '0 0 45%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
-          <TranscriptEditor {...transcriptProps} hideHeader currentTime={currentTime} />
-        </div>
-      </div>
+        {syncItems && (
+          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
+        )}
+      </>
     )
   }
 
   // Audio + Content — waveform left, writing space right
   if (hasAudio && hasContent) {
     return (
-      <SplitLayout
-        defaultSplit={480}
-        left={<AudioEditor   {...audioProps}   />}
-        right={<ContentEditor {...contentProps} />}
-      />
+      <>
+        <SplitLayout
+          defaultSplit={480}
+          left={<AudioEditor   {...audioProps}   />}
+          right={<ContentEditor {...contentProps} />}
+        />
+        {syncItems && (
+          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
+        )}
+      </>
     )
   }
 
-  // Single module
-  if (hasContent)    return <ContentEditor    {...contentProps}    />
-  if (hasAudio)      return <AudioEditor      {...audioProps}      />
-  if (hasTranscript) return <TranscriptEditor {...transcriptProps} />
+  // Single modules
+  if (hasContent)    return (
+    <>
+      <ContentEditor {...contentProps} />
+      {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
+    </>
+  )
+  if (hasAudio)      return (
+    <>
+      <AudioEditor {...audioProps} />
+      {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
+    </>
+  )
+  if (hasTranscript) return (
+    <>
+      <TranscriptEditor {...transcriptProps} />
+      {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
+    </>
+  )
 
   // Storyboard without video is not meaningful on its own yet
   return (

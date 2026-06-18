@@ -175,3 +175,16 @@ export const MODULE_DEFS: ModuleDef[] = [
 ]
 
 export const ALL_MODULE_KEYS: ModuleKey[] = MODULE_DEFS.map(m => m.key)
+
+// ── Audio module track (shared between AudioEditor and ProjectEditor) ─────────
+
+export interface AudioTrackInit {
+  id: string
+  name: string
+  url: string           // blob URL (ephemeral) or signed R2 URL (loaded from cloud)
+  duration: number
+  contentType?: string  // 'audio/mpeg', 'audio/wav', etc.
+  r2Key?: string        // set after upload completes
+  uploadStatus?: 'uploading' | 'uploaded' | 'error'
+  savedAt?: string      // ISO timestamp of last save
+}

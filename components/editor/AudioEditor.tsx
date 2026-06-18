@@ -2,18 +2,16 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2 } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
+import ModuleSwitcher from './ModuleSwitcher'
 import type { Caption } from '@/lib/types'
+import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 
-// ── Types ────────────────────────────────────────────────────
+// ── AudioTrack extends the shared init type with runtime-only fields ──────────
 
-interface AudioTrack {
-  id: string
-  name: string
-  url: string
-  duration: number
-  file?: File
+export interface AudioTrack extends AudioTrackInit {
+  url: string   // always present at runtime (blob or signed R2 URL)
 }
 
 function fmtTime(s: number) {
@@ -31,12 +29,15 @@ export interface AudioEditorProps {
   onProjectNameCommit?: (name: string) => void
   onSave?: (tracks: AudioTrack[]) => Promise<void>
   hideHeader?: boolean
+  activeModules?: ModuleKey[]
+  onModulesChange?: (modules: ModuleKey[]) => void
 }
 
 export default function AudioEditor({
   projectId, projectName: initialName, initialTracks = [],
   captions = [], currentTime: externalTime, onTimeChange,
   onProjectNameCommit, onSave, hideHeader,
+  activeModules, onModulesChange,
 }: AudioEditorProps) {
   const [localName, setLocalName]       = useState(initialName)
   const [editingName, setEditingName]   = useState(false)
@@ -47,11 +48,19 @@ export default function AudioEditor({
   const [duration, setDuration]         = useState(0)
   const [volume, setVolume]             = useState(1)
   const [saveStatus, setSaveStatus]     = useState<'idle' | 'saving' | 'saved'>('idle')
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioRef    = useRef<HTMLAudioElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const rafRef = useRef<number>(0)
+  const rafRef      = useRef<number>(0)
 
   useEffect(() => { setLocalName(initialName) }, [initialName])
+
+  // Re-sync tracks when initialTracks changes (project loaded with cloud tracks)
+  useEffect(() => {
+    if (initialTracks.length > 0) {
+      setTracks(initialTracks)
+      setSelectedId(prev => prev ?? initialTracks[0].id)
+    }
+  }, [initialTracks]) // eslint-disable-line
 
   const selectedTrack = tracks.find(t => t.id === selectedId) ?? null
 
@@ -108,6 +117,31 @@ export default function AudioEditor({
   function skipBack() { seekTo(Math.max(0, currentTime - 5)) }
   function skipForward() { seekTo(Math.min(duration, currentTime + 5)) }
 
+  // ── R2 upload ────────────────────────────────────────────────
+
+  async function uploadToR2(file: File, trackId: string) {
+    try {
+      const mediaId = trackId
+      const res = await fetch('/api/media/presign-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type, mediaId, size: file.size }),
+      })
+      if (!res.ok) throw new Error('presign failed')
+      const { uploadUrl, key } = await res.json() as { uploadUrl: string; key: string }
+      await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+      setTracks(prev => prev.map(t =>
+        t.id === trackId ? { ...t, r2Key: key, uploadStatus: 'uploaded' as const, savedAt: new Date().toISOString() } : t
+      ))
+    } catch {
+      setTracks(prev => prev.map(t =>
+        t.id === trackId ? { ...t, uploadStatus: 'error' as const } : t
+      ))
+    }
+  }
+
+  // ── Import ───────────────────────────────────────────────────
+
   async function handleImport(files: FileList | null) {
     if (!files) return
     const newTracks: AudioTrack[] = []
@@ -115,11 +149,25 @@ export default function AudioEditor({
       if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) continue
       const url = URL.createObjectURL(file)
       const dur = await getAudioDuration(url, file.type)
-      newTracks.push({ id: crypto.randomUUID(), name: file.name, url, duration: dur, file })
+      const track: AudioTrack = {
+        id: crypto.randomUUID(),
+        name: file.name,
+        url,
+        duration: dur,
+        contentType: file.type,
+        uploadStatus: 'uploading',
+        savedAt: new Date().toISOString(),
+      }
+      newTracks.push(track)
     }
     if (newTracks.length === 0) return
     setTracks(prev => [...prev, ...newTracks])
     setSelectedId(newTracks[0].id)
+    // Upload each new track to R2 in the background
+    for (const track of newTracks) {
+      const file = Array.from(files).find(f => f.name === track.name)
+      if (file) uploadToR2(file, track.id)
+    }
   }
 
   function getAudioDuration(url: string, type: string): Promise<number> {
@@ -131,6 +179,8 @@ export default function AudioEditor({
       setTimeout(() => resolve(0), 4000)
     })
   }
+
+  // ── Save ─────────────────────────────────────────────────────
 
   async function save() {
     if (!onSave) return
@@ -144,7 +194,8 @@ export default function AudioEditor({
     }
   }
 
-  // Keyboard shortcuts
+  // ── Keyboard shortcuts ────────────────────────────────────────
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return
@@ -155,6 +206,14 @@ export default function AudioEditor({
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [isPlaying, selectedTrack, currentTime, duration]) // eslint-disable-line
+
+  // ── Upload status helpers ─────────────────────────────────────
+
+  function UploadDot({ status }: { status?: AudioTrack['uploadStatus'] }) {
+    if (!status || status === 'uploaded') return null
+    if (status === 'uploading') return <Loader2 size={9} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent-light)', flexShrink: 0 }} />
+    return <AlertCircle size={9} color="#ef4444" style={{ flexShrink: 0 }} />
+  }
 
   return (
     <div
@@ -189,6 +248,9 @@ export default function AudioEditor({
             <button onClick={save} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
               <Cloud size={11} /> Save
             </button>
+            {activeModules && onModulesChange && (
+              <ModuleSwitcher activeModules={activeModules} onModulesChange={onModulesChange} />
+            )}
           </div>
         </div>
       )}
@@ -232,8 +294,13 @@ export default function AudioEditor({
                   <span style={{ fontSize: 11, fontWeight: 500, color: selectedId === track.id ? 'var(--accent-light)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                     {track.name}
                   </span>
+                  <UploadDot status={track.uploadStatus} />
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 18 }}>{fmtTime(track.duration)}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 18, display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {fmtTime(track.duration)}
+                  {track.uploadStatus === 'uploading' && <span style={{ color: 'var(--accent-light)' }}>uploading…</span>}
+                  {track.uploadStatus === 'error' && <span style={{ color: '#ef4444' }}>upload failed</span>}
+                </div>
               </button>
             ))}
           </div>
@@ -259,7 +326,7 @@ export default function AudioEditor({
               >
                 <Upload size={40} strokeWidth={1} />
                 <p style={{ fontSize: 13, textAlign: 'center' }}>Drop audio files here or click to import</p>
-                <p style={{ fontSize: 11, color: 'var(--border-light)' }}>MP3 · WAV · FLAC · AAC · M4A</p>
+                <p style={{ fontSize: 11, color: 'var(--border-light)' }}>MP3 · WAV · FLAC · AAC · M4A · Video files</p>
               </div>
             )}
           </div>

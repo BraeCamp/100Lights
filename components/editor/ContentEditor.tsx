@@ -8,7 +8,9 @@ import {
   Download, Wand2, ChevronRight, X, Loader2, Plus as PlusIcon,
 } from 'lucide-react'
 import type { Output, Caption } from '@/lib/types'
+import type { ModuleKey } from '@/lib/editor-types'
 import { useUpgradeModal } from '@/components/UpgradeModal'
+import ModuleSwitcher from './ModuleSwitcher'
 import posthog from 'posthog-js'
 
 // ── Types ────────────────────────────────────────────────────
@@ -54,6 +56,8 @@ export interface ContentEditorProps {
   onProjectNameCommit?: (name: string) => void
   /** Override project name editing for combined layouts */
   hideHeader?: boolean
+  activeModules?: ModuleKey[]
+  onModulesChange?: (modules: ModuleKey[]) => void
 }
 
 // ── Auto-resizing textarea ────────────────────────────────────
@@ -88,6 +92,7 @@ function AutoTextarea({ value, onChange, placeholder, className, style }: {
 export default function ContentEditor({
   projectId, projectName: initialName, captions, initialOutputs = [],
   onSave, onNameChange, onProjectNameCommit, hideHeader,
+  activeModules, onModulesChange,
 }: ContentEditorProps) {
   const { showUpgrade } = useUpgradeModal()
 
@@ -274,6 +279,9 @@ export default function ContentEditor({
             >
               <Cloud size={11} /> Save
             </button>
+            {activeModules && onModulesChange && (
+              <ModuleSwitcher activeModules={activeModules} onModulesChange={onModulesChange} />
+            )}
           </div>
         </div>
       )}

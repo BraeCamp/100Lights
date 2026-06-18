@@ -113,6 +113,8 @@ interface Props {
   contentType?: ContentType | null
   allowImport?: boolean
   modules?: ModuleKey[]
+  onModulesChange?: (modules: ModuleKey[]) => void
+  onDataSaved?: (data: import('@/lib/project-serializer').CfProjFile) => void
 }
 
 function buildTimeline(clips: Clip[]): TimelineItem[] {
@@ -233,7 +235,7 @@ function PlaceholderPage({ title, description }: { title: string; description: s
 
 export default function VideoEditor({
   projectId, projectName, videoUrl, captions: propCaptions, clips, outputs: propOutputs, modules: modulesProp,
-  contentType: propContentType, allowImport,
+  contentType: propContentType, allowImport, onModulesChange, onDataSaved,
 }: Props) {
   const videoRef    = useRef<HTMLVideoElement | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -1631,7 +1633,7 @@ export default function VideoEditor({
     setEditingName(false)
   }
 
-  async function saveToCloud(opts?: { silent?: boolean }) {
+  async function saveToCloud(opts?: { silent?: boolean; modulesOverride?: ModuleKey[] }) {
     if (!opts?.silent) setShowSaveMenu(false)
     // Prompt for a real name if it's still the default
     let nameToUse = localProjectName.trim()
@@ -1647,7 +1649,8 @@ export default function VideoEditor({
       const snapshot = buildSnapshot()
       snapshot.name = nameToUse  // use confirmed name even if state hasn't updated yet
       const project: CfProjFile = serialize(snapshot)
-      project.modules = activeModules
+      project.modules = opts?.modulesOverride ?? activeModules
+      project.moduleSavedAt = { ...project.moduleSavedAt, video: new Date().toISOString() }
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1663,6 +1666,7 @@ export default function VideoEditor({
       }
       if (!res.ok) throw new Error('Cloud save failed')
       posthog.capture('project_saved', { name: nameToUse })
+      onDataSaved?.(project)
       flashSaved()
     } catch {
       setSaveStatus('error')
@@ -2135,18 +2139,26 @@ export default function VideoEditor({
               </div>
               {MODULE_DEFS.map(mod => {
                 const active = activeModules.includes(mod.key)
+                const isLast = active && activeModules.length === 1
                 return (
                   <button
                     key={mod.key}
-                    onClick={() => {
-                      setActiveModules(prev =>
-                        prev.includes(mod.key) ? prev.filter(k => k !== mod.key) : [...prev, mod.key]
-                      )
+                    onClick={async () => {
+                      if (isLast) return
+                      const newMods = active
+                        ? activeModules.filter(k => k !== mod.key)
+                        : [...activeModules, mod.key]
+                      setActiveModules(newMods)
+                      setShowModulesMenu(false)
+                      // Save immediately with new modules (avoids stale-closure on activeModules)
+                      await saveToCloud({ silent: true, modulesOverride: newMods })
+                      onModulesChange?.(newMods)
                     }}
+                    disabled={isLast}
                     className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-left"
-                    style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-card-hover)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)', opacity: isLast ? 0.38 : 1, cursor: isLast ? 'not-allowed' : 'pointer' }}
+                    onMouseEnter={e => { if (!isLast) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-card-hover)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
                   >
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? mod.color : 'var(--border)', flexShrink: 0 }} />
                     <span style={{ flex: 1 }}>{mod.label}</span>

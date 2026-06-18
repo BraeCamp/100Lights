@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Search, Download, Cloud, CheckCircle2, AlignLeft, ChevronDown } from 'lucide-react'
 import type { Caption } from '@/lib/types'
+import type { ModuleKey } from '@/lib/editor-types'
+import ModuleSwitcher from './ModuleSwitcher'
 
 function fmtTime(s: number) {
   const m = Math.floor(s / 60)
@@ -42,11 +44,14 @@ export interface TranscriptEditorProps {
   onProjectNameCommit?: (name: string) => void
   onSave?: (captions: Caption[]) => Promise<void>
   hideHeader?: boolean
+  activeModules?: ModuleKey[]
+  onModulesChange?: (modules: ModuleKey[]) => void
 }
 
 export default function TranscriptEditor({
   projectId, projectName: initialName, captions: initialCaptions,
   currentTime = 0, onSeek, onCaptionsChange, onProjectNameCommit, onSave, hideHeader,
+  activeModules, onModulesChange,
 }: TranscriptEditorProps) {
   const [localName, setLocalName]       = useState(initialName)
   const [editingName, setEditingName]   = useState(false)
@@ -146,6 +151,9 @@ export default function TranscriptEditor({
             <button onClick={save} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
               <Cloud size={11} /> Save
             </button>
+            {activeModules && onModulesChange && (
+              <ModuleSwitcher activeModules={activeModules} onModulesChange={onModulesChange} />
+            )}
           </div>
         </div>
       )}

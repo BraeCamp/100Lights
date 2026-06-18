@@ -59,6 +59,15 @@ export interface SerializedOutput {
   captions?: Caption[]
 }
 
+export interface SerializedAudioMedia {
+  id: string
+  name: string
+  duration: number
+  contentType: string   // 'audio/mpeg', 'audio/wav', etc.
+  r2Key: string         // R2 object key — survives page refreshes
+  savedAt: string       // ISO — when this track was last saved in the audio module
+}
+
 export interface CfProjFile {
   _type: '100lights-project'
   version: typeof CF_VERSION
@@ -77,6 +86,10 @@ export interface CfProjFile {
   chapters?: ChapterMarker[]
   // Media pool (metadata only — no blob URLs)
   media: SerializedMedia[]
+  // Audio module's own media library — persisted separately from video media
+  audioMedia?: SerializedAudioMedia[]
+  // Per-module last-save timestamps — used to detect stale cross-module data
+  moduleSavedAt?: Partial<Record<ModuleKey, string>>
   // Which modules are loaded in this project (undefined = all, for backward compat)
   modules?: ModuleKey[]
 }
