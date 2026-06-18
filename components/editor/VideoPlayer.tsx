@@ -73,7 +73,7 @@ interface Props {
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
   playbackRate?: number
   onPlaybackRateChange?: (rate: number) => void
-  activeFocusClip?: { x: number; y: number; radius: number }
+  activeFocusClip?: { x: number; y: number; radius: number; selected?: boolean }
   onSetFocusPoint?: (x: number, y: number) => void
   onViewerZoomChange?: (z: number) => void
 }
@@ -819,10 +819,27 @@ export default function VideoPlayer({
 
         {/* Draw Focus spotlight overlay */}
         {activeFocusClip && (
-          <div style={{
-            position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
-            background: `radial-gradient(circle at ${activeFocusClip.x * 100}% ${activeFocusClip.y * 100}%, transparent ${activeFocusClip.radius * 100}%, rgba(0,0,0,0.72) ${activeFocusClip.radius * 100 + 8}%)`,
-          }} />
+          <>
+            {/* Vignette darkening outside focus circle */}
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
+              background: `radial-gradient(circle at ${activeFocusClip.x * 100}% ${activeFocusClip.y * 100}%, transparent ${activeFocusClip.radius * 100}%, rgba(0,0,0,0.72) ${activeFocusClip.radius * 100 + 8}%)`,
+            }} />
+            {/* Selection ring — only when the focus clip is selected */}
+            {activeFocusClip.selected && (
+              <div style={{
+                position: 'absolute', zIndex: 8, pointerEvents: 'none',
+                left: `${activeFocusClip.x * 100}%`,
+                top: `${activeFocusClip.y * 100}%`,
+                transform: 'translate(-50%, -50%)',
+                width: `${activeFocusClip.radius * 200}%`,
+                height: `${activeFocusClip.radius * 200}%`,
+                borderRadius: '50%',
+                border: '2px solid rgba(167,139,250,0.85)',
+                boxShadow: '0 0 12px rgba(167,139,250,0.5), inset 0 0 12px rgba(167,139,250,0.12)',
+              }} />
+            )}
+          </>
         )}
         {/* Click-to-set-focus crosshair (only when caller provides handler) */}
         {onSetFocusPoint && (

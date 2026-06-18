@@ -1097,24 +1097,42 @@ export default function VideoEditor({
     return clipDur > srcDur ? srcDur : undefined
   }, [viewerClip?.id, viewerClip?.outPoint, viewerClip?.inPoint, mediaItems]) // eslint-disable-line
 
-  // Draw Focus overlay — show spotlight when a drawfocus clip is active
-  const activeFocusClip = useMemo(() => {
-    if (!viewerClip) return undefined
-    const track = tracks.find(t => t.id === viewerClip.trackId)
-    if (track?.type !== 'drawfocus') return undefined
-    return {
-      x: viewerClip.focusX ?? 0.5,
-      y: viewerClip.focusY ?? 0.5,
-      radius: viewerClip.focusRadius ?? 0.2,
-    }
-  }, [viewerClip, tracks]) // eslint-disable-line
-
   const selectedDrawFocusItem = useMemo(() => {
     const item = timelineItems.find(i => i.id === selectedId)
     if (!item) return null
     const track = tracks.find(t => t.id === item.trackId)
     return track?.type === 'drawfocus' ? item : null
   }, [selectedId, timelineItems, tracks])
+
+  // Draw Focus overlay:
+  // Priority 1 — selected focus clip (lets user position the point at any time)
+  // Priority 2 — any focus clip that the playhead is currently inside
+  const activeFocusClip = useMemo(() => {
+    if (selectedDrawFocusItem) {
+      return {
+        x: selectedDrawFocusItem.focusX ?? 0.5,
+        y: selectedDrawFocusItem.focusY ?? 0.5,
+        radius: selectedDrawFocusItem.focusRadius ?? 0.2,
+        selected: true,
+      }
+    }
+    for (const track of tracks) {
+      if (track.type !== 'drawfocus') continue
+      const hit = timelineItems.find(i =>
+        i.trackId === track.id &&
+        i.enabled !== false &&
+        currentTime >= i.startTime &&
+        currentTime < i.startTime + (i.outPoint - i.inPoint)
+      )
+      if (hit) return {
+        x: hit.focusX ?? 0.5,
+        y: hit.focusY ?? 0.5,
+        radius: hit.focusRadius ?? 0.2,
+        selected: false,
+      }
+    }
+    return undefined
+  }, [selectedDrawFocusItem, timelineItems, tracks, currentTime])
 
   function handleSetFocusPoint(x: number, y: number) {
     if (!selectedDrawFocusItem) return
