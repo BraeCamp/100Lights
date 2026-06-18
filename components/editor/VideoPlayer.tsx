@@ -60,6 +60,7 @@ interface Props {
   currentClipSpeed?: number             // real-time speed (may differ from clipSpeed via ramp)
   opticalFlowEnabled?: boolean
   blendMode?: string         // CSS mix-blend-mode
+  loopDuration?: number      // when set, clip loops: source plays 0→loopDuration repeatedly
   titleClip?: {              // populated when contentType === 'title'
     text: string
     fontSize: number
@@ -168,8 +169,12 @@ export default function VideoPlayer({
   currentClipSpeed = 1,
   opticalFlowEnabled = false,
   blendMode,
+  loopDuration,
   titleClip,
 }: Props) {
+  // Tracks cumulative full-loop offsets so onTimeUpdate reports monotonically
+  // increasing timeline time even as video.currentTime wraps back to 0.
+  const loopBaseRef = useRef(0)
   const poolRef = useRef<Map<string, HTMLVideoElement>>(new Map())
   const [visibleSrc, setVisibleSrc] = useState<string | null>(null)
 
@@ -435,13 +440,16 @@ export default function VideoPlayer({
   useEffect(() => {
     if (src === prevSrcRef.current) return
     prevSrcRef.current = src
+    loopBaseRef.current = 0   // reset loop offset whenever the active clip changes
     if (!src) { setVisibleSrc(null); return }
     const video = poolRef.current.get(src)
     if (!video) { setVisibleSrc(src); return }
     const clipTime = Math.max(0, currentTimeRef.current - timeOffsetRef.current)
-    if (Math.abs(video.currentTime - clipTime) <= 0.12) { setVisibleSrc(src); return }
+    const srcTime  = loopDuration ? clipTime % loopDuration : clipTime
+    loopBaseRef.current = loopDuration ? Math.floor(clipTime / loopDuration) * loopDuration : 0
+    if (Math.abs(video.currentTime - srcTime) <= 0.12) { setVisibleSrc(src); return }
     setVisibleSrc(null)
-    video.currentTime = clipTime
+    video.currentTime = srcTime
     const reveal = () => setVisibleSrc(src)
     if (typeof (video as any).requestVideoFrameCallback === 'function') {
       const id = (video as any).requestVideoFrameCallback(reveal)
@@ -457,7 +465,10 @@ export default function VideoPlayer({
     const video = src ? poolRef.current.get(src) : null
     if (!video) return
     const clipTime = Math.max(0, currentTime - timeOffset)
-    if (Math.abs(video.currentTime - clipTime) > 0.5) video.currentTime = clipTime
+    const srcTime  = loopDuration ? clipTime % loopDuration : clipTime
+    // Sync loopBase whenever we seek so onTimeUpdate stays correct
+    loopBaseRef.current = loopDuration ? Math.floor(clipTime / loopDuration) * loopDuration : 0
+    if (Math.abs(video.currentTime - srcTime) > 0.5) video.currentTime = srcTime
   }, [currentTime, timeOffset, src]) // eslint-disable-line
 
   useEffect(() => {
@@ -652,10 +663,22 @@ export default function VideoPlayer({
                 mixBlendMode: (s === src && blendMode) ? blendMode as React.CSSProperties['mixBlendMode'] : undefined,
                 ...(s === src ? clipStyle : {}),
               }}
-              onTimeUpdate={e => { if (s === src) onTimeUpdate(e.currentTarget.currentTime + timeOffset) }}
+              onTimeUpdate={e => {
+                if (s !== src) return
+                onTimeUpdate(loopBaseRef.current + e.currentTarget.currentTime + timeOffset)
+              }}
               onPlay={() => { if (s === src) onPlay() }}
               onPause={() => { if (s === src) onPause() }}
-              onEnded={() => { if (s === src) onPause() }}
+              onEnded={e => {
+                if (s !== src) return
+                if (loopDuration) {
+                  loopBaseRef.current += loopDuration
+                  e.currentTarget.currentTime = 0
+                  e.currentTarget.play().catch(() => {})
+                } else {
+                  onPause()
+                }
+              }}
               onError={() => { if (s === src) onMediaError?.() }}
             />
           ))}

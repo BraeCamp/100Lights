@@ -26,6 +26,7 @@ interface Props {
   inPoint: number | null
   outPoint: number | null
   onClose: () => void
+  inline?: boolean  // when true, renders without the modal backdrop
 }
 
 const QUALITIES: ExportOptions['quality'][] = ['high', 'medium', 'web']
@@ -71,7 +72,7 @@ function buildClips(
     })
 }
 
-export default function RenderQueue({ timelineItems, mediaItems, projectName, inPoint, outPoint, onClose }: Props) {
+export default function RenderQueue({ timelineItems, mediaItems, projectName, inPoint, outPoint, onClose, inline }: Props) {
   const [jobs, setJobs] = useState<RenderJob[]>([])
   const [draftQuality, setDraftQuality] = useState<ExportOptions['quality']>('medium')
   const [draftRes, setDraftRes] = useState<ExportOptions['resolution']>('original')
@@ -161,15 +162,12 @@ export default function RenderQueue({ timelineItems, mediaItems, projectName, in
 
   const queuedCount = jobs.filter(j => j.status === 'queued').length
 
-  return (
-    <div
-      className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
-      onClick={e => { if (e.target === e.currentTarget && !isRunning) onClose() }}
-    >
+  const inner = (
       <div
         className="flex flex-col rounded-xl shadow-2xl overflow-hidden"
-        style={{ width: 540, maxHeight: '80vh', background: 'var(--bg-card)', border: '1px solid var(--border-light)' }}
+        style={inline
+          ? { width: '100%', height: '100%', background: 'var(--bg-base)', border: 'none', borderRadius: 0 }
+          : { width: 540, maxHeight: '80vh', background: 'var(--bg-card)', border: '1px solid var(--border-light)' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -312,6 +310,17 @@ export default function RenderQueue({ timelineItems, mediaItems, projectName, in
           </div>
         </div>
       </div>
+  )
+
+  if (inline) return inner
+
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+      onClick={e => { if (e.target === e.currentTarget && !isRunning) onClose() }}
+    >
+      {inner}
     </div>
   )
 }

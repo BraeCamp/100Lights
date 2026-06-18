@@ -242,6 +242,12 @@ export default function Timeline({
       ...items.filter(i => i.id !== item.id).flatMap(i => [i.startTime, i.startTime + (i.outPoint - i.inPoint)]),
     ]
 
+    // Loop snap points for trim-out: snap to k*sourceDuration boundaries
+    const srcDuration = mediaItems?.find(m => m.url === item.url)?.duration
+    const loopSnapPts: number[] = (type === 'trim-out' && srcDuration)
+      ? Array.from({ length: 50 }, (_, k) => (k + 1) * srcDuration)
+      : []
+
     // Last computed position — committed to history once on pointerup.
     let lastMove: { start: number; trackId: string } | null = null
     let lastTrim: { edge: 'in' | 'out'; newIn: number; newOut: number; newStart: number } | null = null
@@ -281,7 +287,7 @@ export default function Timeline({
 
       } else {
         const rawOut = origOut + dt
-        const newOut = snapFn(Math.max(origIn + 0.1, rawOut), snapCandidates, capturedPps, snapEnabled)
+        const newOut = snapFn(Math.max(origIn + 0.1, rawOut), [...snapCandidates, ...loopSnapPts], capturedPps, snapEnabled)
         lastTrim = { edge: 'out', newIn: origIn, newOut, newStart: origStart }
         onTrimItem(item.id, 'out', origIn, newOut, origStart, false)   // preview only
         // Ripple: shift all clips that start at or after origEnd on the same track
@@ -707,15 +713,37 @@ export default function Timeline({
                             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onSelectItem(item.id); onContextMenu(e, getClipMenu(item)) }}
                           >
                             {isAudio ? (
-                              mediaItem?.peaks ? (
-                                <WaveformBar peaks={mediaItem.peaks} color={item.color} clipWidth={width} />
-                              ) : (
-                                <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', padding: '0 2px', gap: 1, overflow: 'hidden' }}>
-                                  {Array.from({ length: Math.floor(width / 3) }).map((_, i) => (
-                                    <div key={i} style={{ width: 1, flexShrink: 0, height: `${25 + Math.abs(Math.sin(i * 0.7 + item.startTime)) * 60}%`, background: `${item.color}99`, borderRadius: 1 }} />
-                                  ))}
-                                </div>
-                              )
+                              <>
+                                {mediaItem?.peaks ? (
+                                  <WaveformBar peaks={mediaItem.peaks} color={item.color} clipWidth={width} />
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', padding: '0 2px', gap: 1, overflow: 'hidden' }}>
+                                    {Array.from({ length: Math.floor(width / 3) }).map((_, i) => (
+                                      <div key={i} style={{ width: 1, flexShrink: 0, height: `${25 + Math.abs(Math.sin(i * 0.7 + item.startTime)) * 60}%`, background: `${item.color}99`, borderRadius: 1 }} />
+                                    ))}
+                                  </div>
+                                )}
+                                {/* Loop boundary markers for audio clips */}
+                                {(() => {
+                                  const sd = mediaItem?.duration
+                                  if (!sd) return null
+                                  const clipDur = item.outPoint - item.inPoint
+                                  if (clipDur <= sd) return null
+                                  const markers: React.ReactNode[] = []
+                                  for (let k = 1; k * sd - item.inPoint < clipDur; k++) {
+                                    const offsetPx = timeToX(k * sd - item.inPoint)
+                                    if (offsetPx <= 0 || offsetPx >= width) continue
+                                    markers.push(
+                                      <div key={k} style={{
+                                        position: 'absolute', left: offsetPx, top: 0, bottom: 0, width: 1,
+                                        backgroundImage: 'repeating-linear-gradient(to bottom, rgba(255,255,255,0.55) 0px, rgba(255,255,255,0.55) 3px, transparent 3px, transparent 6px)',
+                                        pointerEvents: 'none', zIndex: 4,
+                                      }} />
+                                    )
+                                  }
+                                  return markers
+                                })()}
+                              </>
                             ) : (
                               <>
                                 {/* Trim-in handle */}
@@ -762,6 +790,26 @@ export default function Timeline({
                                 {fadeOutW > 0 && (
                                   <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: fadeOutW, background: 'linear-gradient(to left, rgba(0,0,0,0.55), transparent)', pointerEvents: 'none', zIndex: 3 }} />
                                 )}
+                                {/* Loop boundary markers — dotted vertical lines every sourceDuration */}
+                                {(() => {
+                                  const sd = mediaItem?.duration
+                                  if (!sd) return null
+                                  const clipDur = item.outPoint - item.inPoint
+                                  if (clipDur <= sd) return null
+                                  const markers: React.ReactNode[] = []
+                                  for (let k = 1; k * sd - item.inPoint < clipDur; k++) {
+                                    const offsetPx = timeToX(k * sd - item.inPoint)
+                                    if (offsetPx <= 0 || offsetPx >= width) continue
+                                    markers.push(
+                                      <div key={k} style={{
+                                        position: 'absolute', left: offsetPx, top: 0, bottom: 0, width: 1,
+                                        backgroundImage: 'repeating-linear-gradient(to bottom, rgba(255,255,255,0.55) 0px, rgba(255,255,255,0.55) 3px, transparent 3px, transparent 6px)',
+                                        pointerEvents: 'none', zIndex: 4,
+                                      }} />
+                                    )
+                                  }
+                                  return markers
+                                })()}
                               </>
                             )}
                           </div>

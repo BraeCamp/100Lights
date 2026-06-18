@@ -233,6 +233,180 @@ function PlaceholderPage({ title, description }: { title: string; description: s
   )
 }
 
+function FairlightPage({
+  tracks, timelineItems, currentTime, selectedId,
+  onVolumeChange, onMuteToggle, onSoloToggle, onClipChange,
+}: {
+  tracks: Track[]
+  timelineItems: TimelineItem[]
+  currentTime: number
+  selectedId: string | null
+  onVolumeChange: (trackId: string, v: number) => void
+  onMuteToggle: (trackId: string) => void
+  onSoloToggle: (trackId: string) => void
+  onClipChange: (id: string, patch: Partial<TimelineItem>) => void
+}) {
+  const audioTracks = tracks.filter(t => t.type === 'media' || t.type === 'video' || t.type === 'audio')
+
+  const activeClipOnTrack = (trackId: string) =>
+    timelineItems.find(i =>
+      i.trackId === trackId && i.enabled !== false &&
+      currentTime >= i.startTime && currentTime < i.startTime + (i.outPoint - i.inPoint)
+    )
+
+  const eqItem = timelineItems.find(i => i.id === selectedId) ?? null
+  const eqTrackName = eqItem ? (tracks.find(t => t.id === eqItem.trackId)?.label ?? '') : ''
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--bg-base)' }}>
+      {/* Header */}
+      <div style={{ padding: '0 16px', height: 36, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', background: 'var(--bg-surface)', flexShrink: 0 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Fairlight — Audio Mixer</span>
+      </div>
+
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Channel strips */}
+        <div style={{ display: 'flex', gap: 2, padding: '16px 16px 16px 16px', overflowX: 'auto', flexShrink: 0, alignItems: 'flex-end', borderRight: '1px solid var(--border)' }}>
+          {audioTracks.length === 0 && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'center', padding: '0 16px' }}>
+              No media tracks — add clips to the timeline first.
+            </p>
+          )}
+          {audioTracks.map(track => {
+            const volume = track.volume ?? 1
+            const dbLabel = volume <= 0 ? '−∞' : volume >= 0.995 ? '0.0' : `${(20 * Math.log10(volume)).toFixed(1)}`
+            const activeClip = activeClipOnTrack(track.id)
+
+            return (
+              <div key={track.id} style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                width: 68, padding: '10px 6px 8px',
+                background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6,
+                outline: activeClip ? '1.5px solid var(--accent)' : 'none',
+              }}>
+                {/* Track label */}
+                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {track.label}
+                </span>
+
+                {/* Active clip name */}
+                <span style={{ fontSize: 8, color: activeClip ? 'var(--accent-light)' : 'transparent', maxWidth: 56, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', height: 10 }}>
+                  {activeClip?.label ?? '·'}
+                </span>
+
+                {/* dB readout */}
+                <span style={{ fontSize: 9, color: track.muted ? '#666' : 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', height: 12 }}>
+                  {dbLabel} <span style={{ fontSize: 7 }}>dB</span>
+                </span>
+
+                {/* Vertical fader */}
+                <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', width: '100%', overflow: 'visible' }}>
+                  <input
+                    type="range" min={0} max={1} step={0.01} value={volume}
+                    onChange={e => onVolumeChange(track.id, parseFloat(e.target.value))}
+                    style={{
+                      width: 96, position: 'absolute',
+                      transform: 'rotate(-90deg)',
+                      accentColor: track.muted ? '#555' : 'var(--accent)',
+                      cursor: 'pointer',
+                      opacity: track.muted ? 0.4 : 1,
+                    }}
+                  />
+                </div>
+
+                {/* Mute / Solo */}
+                <div style={{ display: 'flex', gap: 3 }}>
+                  <button
+                    onClick={() => onMuteToggle(track.id)}
+                    title="Mute"
+                    style={{
+                      width: 26, height: 18, fontSize: 8, fontWeight: 700, borderRadius: 3,
+                      background: track.muted ? '#dc2626' : 'var(--bg-card)',
+                      color: track.muted ? '#fff' : 'var(--text-muted)',
+                      border: `1px solid ${track.muted ? '#dc2626' : 'var(--border)'}`,
+                      cursor: 'pointer',
+                    }}
+                  >M</button>
+                  <button
+                    onClick={() => onSoloToggle(track.id)}
+                    title="Solo"
+                    style={{
+                      width: 26, height: 18, fontSize: 8, fontWeight: 700, borderRadius: 3,
+                      background: track.solo ? '#d97706' : 'var(--bg-card)',
+                      color: track.solo ? '#fff' : 'var(--text-muted)',
+                      border: `1px solid ${track.solo ? '#d97706' : 'var(--border)'}`,
+                      cursor: 'pointer',
+                    }}
+                  >S</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* EQ + Inspector panel */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+          {eqItem ? (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 16 }}>
+                EQ — {eqTrackName && <span style={{ color: 'var(--accent-light)', marginRight: 4 }}>{eqTrackName}</span>}{eqItem.label}
+              </div>
+
+              {/* 3-band EQ sliders */}
+              <div style={{ display: 'flex', gap: 32, marginBottom: 24 }}>
+                {(['low', 'mid', 'high'] as const).map(band => {
+                  const val = eqItem.eq?.[band] ?? 0
+                  const color = val > 0 ? '#4ade80' : val < 0 ? '#f87171' : 'var(--text-muted)'
+                  return (
+                    <div key={band} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, minWidth: 100 }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{band}</span>
+                      <input
+                        type="range" min={-12} max={12} step={0.5} value={val}
+                        onChange={e => {
+                          const v = parseFloat(e.target.value)
+                          onClipChange(eqItem.id, { eq: { low: 0, mid: 0, high: 0, ...(eqItem.eq ?? {}), [band]: v } })
+                        }}
+                        style={{ width: 100, accentColor: val !== 0 ? (val > 0 ? '#4ade80' : '#f87171') : 'var(--accent)', cursor: 'pointer' }}
+                      />
+                      {/* +/- bar */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 600, color, fontVariantNumeric: 'tabular-nums', minWidth: 48, textAlign: 'center' }}>
+                          {val > 0 ? '+' : ''}{val.toFixed(1)} dB
+                        </span>
+                        {val !== 0 && (
+                          <button
+                            onClick={() => onClipChange(eqItem.id, { eq: { low: 0, mid: 0, high: 0, ...(eqItem.eq ?? {}), [band]: 0 } })}
+                            style={{ fontSize: 8, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                            title="Reset"
+                          >✕</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Divider */}
+              <div style={{ height: 1, background: 'var(--border)', marginBottom: 16 }} />
+
+              {/* Clip info */}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                <div>Start: <span style={{ color: 'var(--text-secondary)' }}>{eqItem.startTime.toFixed(2)}s</span></div>
+                <div>Duration: <span style={{ color: 'var(--text-secondary)' }}>{(eqItem.outPoint - eqItem.inPoint).toFixed(2)}s</span></div>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Select a clip to edit its EQ</p>
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.6 }}>Click any clip in the timeline, then switch to this tab</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function VideoEditor({
   projectId, projectName, videoUrl, captions: propCaptions, clips, outputs: propOutputs, modules: modulesProp,
   contentType: propContentType, allowImport, onModulesChange, onDataSaved,
@@ -909,6 +1083,16 @@ export default function VideoEditor({
   const effectiveUrl: string | null = viewerClip?.url ?? null
   const effectiveContentType: ContentType | null = viewerClip?.contentType ?? null
   const effectiveCaptions = localCaptions
+
+  // When a clip is extended past its source duration, pass loopDuration so
+  // VideoPlayer can loop the video seamlessly instead of stopping at end.
+  const viewerLoopDuration = useMemo(() => {
+    if (!viewerClip) return undefined
+    const srcDur = mediaItems.find(m => m.url === viewerClip.url)?.duration
+    if (!srcDur) return undefined
+    const clipDur = viewerClip.outPoint - viewerClip.inPoint
+    return clipDur > srcDur ? srcDur : undefined
+  }, [viewerClip?.id, viewerClip?.outPoint, viewerClip?.inPoint, mediaItems]) // eslint-disable-line
 
   // When a signed URL expires mid-session, refresh it using the media item's r2Key
   async function handleMediaError() {
@@ -2540,6 +2724,7 @@ export default function VideoEditor({
                       currentClipSpeed={rampSpeed}
                       opticalFlowEnabled={opticalFlowEnabled}
                       blendMode={viewerClip?.blendMode}
+                      loopDuration={viewerLoopDuration}
                       titleClip={viewerClip?.contentType === 'title' ? {
                         text: viewerClip.titleText ?? '',
                         fontSize: viewerClip.titleFontSize ?? 48,
@@ -2602,6 +2787,7 @@ export default function VideoEditor({
                       currentClipSpeed={rampSpeed}
                       opticalFlowEnabled={opticalFlowEnabled}
                       blendMode={viewerClip?.blendMode}
+                      loopDuration={viewerLoopDuration}
                       titleClip={viewerClip?.contentType === 'title' ? {
                         text: viewerClip.titleText ?? '',
                         fontSize: viewerClip.titleFontSize ?? 48,
@@ -2713,10 +2899,29 @@ export default function VideoEditor({
         <ColorPage adjustments={adjustments} onAdjustmentsChange={setAdjustmentsWithHistory} />
       )}
       {activePage === 'audio' && (
-        <PlaceholderPage title="Audio — Fairlight" description="Per-track volume, EQ, dynamics, and audio meters — coming soon" />
+        <FairlightPage
+          tracks={tracks}
+          timelineItems={timelineItems}
+          currentTime={currentTime}
+          selectedId={selectedId}
+          onVolumeChange={handleTrackVolumeChange}
+          onMuteToggle={handleTrackMuteToggle}
+          onSoloToggle={handleTrackSoloToggle}
+          onClipChange={handleClipChange}
+        />
       )}
       {activePage === 'deliver' && (
-        <PlaceholderPage title="Deliver" description="Export format, codec, resolution, and render queue — coming soon" />
+        <div className="flex-1 flex overflow-hidden">
+          <RenderQueue
+            inline
+            timelineItems={timelineItems}
+            mediaItems={mediaItems}
+            projectName={localProjectName}
+            inPoint={inPoint}
+            outPoint={outPoint}
+            onClose={() => setActivePage('edit')}
+          />
+        </div>
       )}
 
       {/* ── Page tabs (centered, DaVinci-style) ─────────────── */}
