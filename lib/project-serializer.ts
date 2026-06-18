@@ -8,7 +8,7 @@
  */
 
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -37,6 +37,16 @@ export interface SerializedClip {
   transitionIn?: string
   transitionDuration?: number
   contentType?: ContentType
+  speed?: number
+  opacity?: number
+  flipH?: boolean
+  flipV?: boolean
+  fadeIn?: number
+  fadeOut?: number
+  cropZoom?: number
+  cropX?: number
+  cropY?: number
+  flags?: import('@/lib/editor-types').ClipFlag[]
 }
 
 export interface SerializedOutput {
@@ -67,6 +77,8 @@ export interface CfProjFile {
   chapters?: ChapterMarker[]
   // Media pool (metadata only — no blob URLs)
   media: SerializedMedia[]
+  // Which modules are loaded in this project (undefined = all, for backward compat)
+  modules?: ModuleKey[]
 }
 
 // ── Serialize ────────────────────────────────────────────────
@@ -105,6 +117,16 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       transitionIn:     item.transitionIn,
       transitionDuration: item.transitionDuration,
       contentType:      item.contentType,
+      speed:            item.speed,
+      opacity:          item.opacity,
+      flipH:            item.flipH,
+      flipV:            item.flipV,
+      fadeIn:           item.fadeIn,
+      fadeOut:          item.fadeOut,
+      cropZoom:         item.cropZoom,
+      cropX:            item.cropX,
+      cropY:            item.cropY,
+      flags:            item.flags,
     })),
     adjustments: snap.adjustments,
     zoomLevel: snap.zoomLevel,
@@ -158,6 +180,16 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     transitionIn:     clip.transitionIn as TimelineItem['transitionIn'],
     transitionDuration: clip.transitionDuration,
     contentType:      clip.contentType,
+    speed:            clip.speed,
+    opacity:          clip.opacity,
+    flipH:            clip.flipH,
+    flipV:            clip.flipV,
+    fadeIn:           clip.fadeIn,
+    fadeOut:          clip.fadeOut,
+    cropZoom:         clip.cropZoom,
+    cropX:            clip.cropX,
+    cropY:            clip.cropY,
+    flags:            clip.flags,
     // url is intentionally absent — media is offline until re-linked
   }))
 

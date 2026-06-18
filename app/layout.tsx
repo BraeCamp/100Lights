@@ -10,8 +10,22 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] })
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://100lights.com'),
   title: { template: '%s | 100Lights', default: '100Lights — AI Content Repurposing' },
   description: "Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.",
+  openGraph: {
+    type: 'website',
+    siteName: '100Lights',
+    title: '100Lights — AI Content Repurposing',
+    description: 'Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.',
+    url: 'https://100lights.com',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: '100Lights — AI Content Repurposing',
+    description: 'Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.',
+  },
+  robots: { index: true, follow: true },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

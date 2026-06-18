@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from 'react'
 import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2 } from 'lucide-react'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, Track, TransitionType } from '@/lib/editor-types'
+import type { TimelineItem, Track, TransitionType, MediaItem } from '@/lib/editor-types'
 import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT } from '@/lib/editor-types'
 import type { EditorTool } from './VideoEditor'
 import type { ContextMenuItem } from './ContextMenu'
@@ -43,9 +43,15 @@ interface Props {
   onCopyItem: (id: string) => void
   onPasteItem: (trackId: string, atTime: number) => void
   onDeleteTrack: (trackId: string) => void
+  onTrackMuteToggle?: (trackId: string) => void
+  onTrackSoloToggle?: (trackId: string) => void
+  onTrackVolumeChange?: (trackId: string, volume: number) => void
+  selectedIds?: Set<string>
+  onMultiSelect?: (ids: Set<string>) => void
+  mediaItems?: MediaItem[]
 }
 
-const LABEL_WIDTH = 48
+const LABEL_WIDTH = 64
 const SNAP_PX = 8
 const ZOOM_MIN = 0.01
 const ZOOM_MAX = 10
@@ -93,12 +99,33 @@ function trackAtY(clientY: number, el: HTMLDivElement, tracks: Track[]): string 
 
 const CLIP_COLORS_MENU = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#9333ea', '#db2777', '#65a30d']
 
+function WaveformBar({ peaks, color, clipWidth }: { peaks: number[]; color: string; clipWidth: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const H = 22, W = Math.max(1, Math.floor(clipWidth))
+    canvas.width = W; canvas.height = H
+    ctx.clearRect(0, 0, W, H)
+    const step = W / peaks.length
+    ctx.fillStyle = `${color}aa`
+    for (let i = 0; i < peaks.length; i++) {
+      const h = Math.max(1, peaks[i] * (H - 2))
+      ctx.fillRect(i * step, (H - h) / 2, Math.max(1, step - 0.5), h)
+    }
+  }, [peaks, color, clipWidth])
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', borderRadius: 3, pointerEvents: 'none' }} />
+}
+
 export default function Timeline({
   items, captions, tracks, duration, currentTime, isPlaying, selectedId, zoomLevel, height,
   activeTool, snapEnabled, inPoint, outPoint, hasCopied,
   onSeek, onSelectItem, onMoveItem, onTrimItem, onSplitItem, onZoomChange,
   onDeleteItem, onRippleDelete, onDropMedia, onAddTrack, onSnapToggle, onContextMenu,
   onDuplicateItem, onRenameItem, onToggleEnabled, onChangeColor, onCopyItem, onPasteItem, onDeleteTrack,
+  onTrackMuteToggle, onTrackSoloToggle, onTrackVolumeChange, selectedIds, onMultiSelect, mediaItems,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
@@ -198,6 +225,8 @@ export default function Timeline({
     const origOut      = item.outPoint
     const origTrackId  = item.trackId
     const itemDuration = origOut - origIn
+    // Ripple trim: Shift+trim-out shifts all downstream clips on same track
+    const ripple = e.shiftKey && (type === 'trim-out' || type === 'trim-in')
 
     setDraggingId(item.id)
     onSelectItem(item.id)
@@ -251,6 +280,14 @@ export default function Timeline({
         const newOut = snapFn(Math.max(origIn + 0.1, rawOut), snapCandidates, capturedPps, snapEnabled)
         lastTrim = { edge: 'out', newIn: origIn, newOut, newStart: origStart }
         onTrimItem(item.id, 'out', origIn, newOut, origStart, false)   // preview only
+        // Ripple: shift all clips that start at or after origEnd on the same track
+        if (ripple) {
+          const delta = newOut - origOut
+          const origEnd = origStart + (origOut - origIn)
+          items
+            .filter(i => i.id !== item.id && i.trackId === origTrackId && i.startTime >= origEnd - 0.01)
+            .forEach(i => onMoveItem(i.id, Math.max(0, i.startTime + delta), i.trackId, false))
+        }
       }
     }
 
@@ -263,6 +300,14 @@ export default function Timeline({
         onMoveItem(item.id, lastMove.start, lastMove.trackId, true)
       } else if (lastTrim) {
         onTrimItem(item.id, lastTrim.edge, lastTrim.newIn, lastTrim.newOut, lastTrim.newStart, true)
+        // Commit ripple shifts for downstream clips
+        if (ripple && lastTrim.edge === 'out') {
+          const delta = lastTrim.newOut - origOut
+          const origEnd = origStart + (origOut - origIn)
+          items
+            .filter(i => i.id !== item.id && i.trackId === origTrackId && i.startTime >= origEnd - 0.01)
+            .forEach(i => onMoveItem(i.id, Math.max(0, i.startTime + delta), i.trackId, true))
+        }
       }
     }
 
@@ -475,10 +520,45 @@ export default function Timeline({
               {tracks.filter(t => t.type !== 'caption').map((track) => (
                 <div
                   key={track.id}
-                  style={{ height: track.height, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ height: track.height, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '2px 0' }}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, getAreaMenu(track.id)) }}
                 >
-                  <span style={{ color: 'var(--text-muted)', fontSize: 9, fontWeight: 700 }}>{track.label}</span>
+                  <span style={{ color: track.muted ? '#444' : 'var(--text-muted)', fontSize: 9, fontWeight: 700 }}>{track.label}</span>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onTrackMuteToggle?.(track.id) }}
+                      style={{
+                        fontSize: 7, padding: '1px 3px', borderRadius: 2, cursor: 'pointer', lineHeight: 1.3, fontWeight: 700,
+                        background: track.muted ? '#f97316' : 'rgba(255,255,255,0.05)',
+                        color: track.muted ? '#fff' : '#555',
+                        border: `1px solid ${track.muted ? '#f97316' : '#2a2a2a'}`,
+                      }}
+                      title="Mute track"
+                    >M</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onTrackSoloToggle?.(track.id) }}
+                      style={{
+                        fontSize: 7, padding: '1px 3px', borderRadius: 2, cursor: 'pointer', lineHeight: 1.3, fontWeight: 700,
+                        background: track.solo ? '#8b5cf6' : 'rgba(255,255,255,0.05)',
+                        color: track.solo ? '#fff' : '#555',
+                        border: `1px solid ${track.solo ? '#8b5cf6' : '#2a2a2a'}`,
+                      }}
+                      title="Solo track"
+                    >S</button>
+                  </div>
+                  <input
+                    type="range" min={0} max={1} step={0.01}
+                    value={track.volume ?? 1}
+                    onChange={(e) => { e.stopPropagation(); onTrackVolumeChange?.(track.id, Number(e.target.value)) }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="cf-slider"
+                    style={{
+                      width: 50, height: 3, cursor: 'pointer',
+                      background: `linear-gradient(to right, var(--accent) ${(track.volume ?? 1) * 100}%, #2a2a2a ${(track.volume ?? 1) * 100}%)`,
+                      opacity: track.muted ? 0.3 : 1,
+                    }}
+                    title={`Volume: ${Math.round((track.volume ?? 1) * 100)}%`}
+                  />
                 </div>
               ))}
             </div>
@@ -562,12 +642,16 @@ export default function Timeline({
 
                     {/* Clip blocks */}
                     {trackItems.map((item) => {
-                      const left     = timeToX(item.startTime)
-                      const width    = Math.max(timeToX(item.outPoint - item.inPoint), 8)
-                      const selected = item.id === selectedId
-                      const dragging = item.id === draggingId
-                      const disabled = item.enabled === false
-                      const transW   = item.transitionIn ? Math.max(timeToX(item.transitionDuration ?? 0.5), 12) : 0
+                      const left       = timeToX(item.startTime)
+                      const width      = Math.max(timeToX(item.outPoint - item.inPoint), 8)
+                      const selected   = item.id === selectedId || (selectedIds?.has(item.id) ?? false)
+                      const dragging   = item.id === draggingId
+                      const disabled   = item.enabled === false
+                      const transW     = item.transitionIn ? Math.max(timeToX(item.transitionDuration ?? 0.5), 12) : 0
+                      const mediaItem  = mediaItems?.find(m => m.url === item.url)
+                      const clipOpacity = dragging ? 0.75 : disabled ? 0.45 : ((item.opacity ?? 100) / 100)
+                      const fadeInW    = item.fadeIn  ? Math.min(timeToX(item.fadeIn),  width - 4) : 0
+                      const fadeOutW   = item.fadeOut ? Math.min(timeToX(item.fadeOut), width - 4) : 0
 
                       return (
                         <div key={item.id}>
@@ -593,7 +677,7 @@ export default function Timeline({
                               border: `1.5px solid ${disabled ? '#444' : (selected ? item.color : `${item.color}55`)}`,
                               borderRadius: 4,
                               cursor: bladeCursor ? 'crosshair' : (dragging ? 'grabbing' : 'grab'),
-                              opacity: dragging ? 0.75 : disabled ? 0.45 : 1,
+                              opacity: clipOpacity,
                               overflow: 'hidden',
                               boxShadow: selected ? `0 0 0 1.5px ${item.color}, 0 2px 8px rgba(0,0,0,0.4)` : '0 1px 3px rgba(0,0,0,0.3)',
                               userSelect: 'none',
@@ -601,10 +685,17 @@ export default function Timeline({
                             }}
                             onPointerDown={(e) => {
                               if (bladeCursor) {
-                                // Blade: compute split time and split
                                 e.stopPropagation()
                                 const clickTime = bladeClickTime(e)
                                 onSplitItem(item.id, clickTime)
+                                return
+                              }
+                              if (e.shiftKey && onMultiSelect) {
+                                e.stopPropagation()
+                                const next = new Set(selectedIds ?? (selectedId ? [selectedId] : []))
+                                if (next.has(item.id)) next.delete(item.id)
+                                else next.add(item.id)
+                                onMultiSelect(next)
                                 return
                               }
                               startDrag(e, 'move', item)
@@ -612,11 +703,15 @@ export default function Timeline({
                             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onSelectItem(item.id); onContextMenu(e, getClipMenu(item)) }}
                           >
                             {isAudio ? (
-                              <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', padding: '0 2px', gap: 1, overflow: 'hidden' }}>
-                                {Array.from({ length: Math.floor(width / 3) }).map((_, i) => (
-                                  <div key={i} style={{ width: 1, flexShrink: 0, height: `${25 + Math.abs(Math.sin(i * 0.7 + item.startTime)) * 60}%`, background: `${item.color}99`, borderRadius: 1 }} />
-                                ))}
-                              </div>
+                              mediaItem?.peaks ? (
+                                <WaveformBar peaks={mediaItem.peaks} color={item.color} clipWidth={width} />
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', padding: '0 2px', gap: 1, overflow: 'hidden' }}>
+                                  {Array.from({ length: Math.floor(width / 3) }).map((_, i) => (
+                                    <div key={i} style={{ width: 1, flexShrink: 0, height: `${25 + Math.abs(Math.sin(i * 0.7 + item.startTime)) * 60}%`, background: `${item.color}99`, borderRadius: 1 }} />
+                                  ))}
+                                </div>
+                              )
                             ) : (
                               <>
                                 {/* Trim-in handle */}
@@ -647,6 +742,22 @@ export default function Timeline({
                                 >
                                   <div style={{ width: 1.5, height: 12, background: 'rgba(255,255,255,0.6)', borderRadius: 1 }} />
                                 </div>
+                                {/* Flag dots */}
+                                {item.flags && item.flags.length > 0 && (
+                                  <div style={{ position: 'absolute', top: 3, right: 10, display: 'flex', gap: 2, pointerEvents: 'none', zIndex: 4 }}>
+                                    {item.flags.map(f => (
+                                      <div key={f.id} style={{ width: 5, height: 5, borderRadius: '50%', background: f.color, flexShrink: 0, boxShadow: '0 0 2px rgba(0,0,0,0.6)' }} />
+                                    ))}
+                                  </div>
+                                )}
+                                {/* Fade in overlay */}
+                                {fadeInW > 0 && (
+                                  <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: fadeInW, background: 'linear-gradient(to right, rgba(0,0,0,0.55), transparent)', pointerEvents: 'none', zIndex: 3 }} />
+                                )}
+                                {/* Fade out overlay */}
+                                {fadeOutW > 0 && (
+                                  <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: fadeOutW, background: 'linear-gradient(to left, rgba(0,0,0,0.55), transparent)', pointerEvents: 'none', zIndex: 3 }} />
+                                )}
                               </>
                             )}
                           </div>

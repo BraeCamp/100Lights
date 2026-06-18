@@ -3,14 +3,29 @@
 import { useState, useRef } from 'react'
 import { X, Download, Film, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
+import type { Caption } from '@/lib/types'
 import type { TimelineItem, MediaItem } from '@/lib/editor-types'
 
 interface Props {
   projectName: string
   timelineItems: TimelineItem[]
   mediaItems: MediaItem[]
+  captions?: Caption[]
+  inPoint?: number | null
+  outPoint?: number | null
   onClose: () => void
 }
+
+function fmtTime(t: number) {
+  const m = Math.floor(t / 60), s = Math.floor(t % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+const EXPORT_PRESETS = [
+  { id: 'youtube', label: 'YouTube', desc: '1080p · High quality', quality: 'high'   as const, resolution: '1080p'    as const },
+  { id: 'web',     label: 'Web',     desc: '720p · Balanced',      quality: 'medium' as const, resolution: '720p'     as const },
+  { id: 'draft',   label: 'Draft',   desc: '480p · Fast export',   quality: 'web'    as const, resolution: '480p'     as const },
+] as const
 
 const QUALITIES = [
   { id: 'high',   label: 'High',   desc: 'Best quality · largest file' },
@@ -25,17 +40,30 @@ const RESOLUTIONS = [
   { id: '480p',     label: '480p' },
 ] as const
 
-export default function ExportModal({ projectName, timelineItems, mediaItems, onClose }: Props) {
+export default function ExportModal({ projectName, timelineItems, mediaItems, captions, inPoint, outPoint, onClose }: Props) {
   const [quality, setQuality]         = useState<ExportOptions['quality']>('medium')
   const [resolution, setResolution]   = useState<ExportOptions['resolution']>('original')
   const [progress, setProgress]       = useState<ExportProgress | null>(null)
   const [error, setError]             = useState<string | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [burnInSubs, setBurnInSubs]   = useState(false)
+  const [useRange, setUseRange]       = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const exportableClips = timelineItems.filter(
+  const hasRange = inPoint != null && outPoint != null && outPoint > inPoint
+  const rangeStart = (useRange && hasRange) ? inPoint! : null
+  const rangeEnd   = (useRange && hasRange) ? outPoint! : null
+
+  const allClips = timelineItems.filter(
     i => i.enabled !== false && i.url && (i.contentType === 'video' || i.contentType === 'audio' || !i.contentType),
   )
+  const exportableClips = rangeStart !== null && rangeEnd !== null
+    ? allClips.filter(i => {
+        const clipEnd = i.startTime + (i.outPoint - i.inPoint)
+        return clipEnd > rangeStart! && i.startTime < rangeEnd!
+      })
+    : allClips
+
   const isAudioOnly   = exportableClips.length > 0 && exportableClips.every(i => i.contentType === 'audio')
   const canExport     = exportableClips.length > 0 && !progress
 
@@ -44,11 +72,19 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, on
       .sort((a, b) => a.startTime - b.startTime)
       .map(item => {
         const media = mediaItems.find(m => m.url === item.url)
+        let trimIn = item.inPoint, trimOut = item.outPoint
+
+        if (rangeStart !== null && rangeEnd !== null) {
+          const clipEnd = item.startTime + (item.outPoint - item.inPoint)
+          if (item.startTime < rangeStart) trimIn = item.inPoint + (rangeStart - item.startTime)
+          if (clipEnd > rangeEnd) trimOut = item.outPoint - (clipEnd - rangeEnd)
+        }
+
         return {
           id:          item.id,
           label:       item.label,
-          inPoint:     item.inPoint,
-          outPoint:    item.outPoint,
+          inPoint:     trimIn,
+          outPoint:    trimOut,
           contentType: item.contentType ?? 'video',
           file:        media?.file,
           url:         item.url,
@@ -131,6 +167,31 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, on
           {/* Settings — hidden during export */}
           {!isExporting && !isDone && (
             <>
+              {/* Quick presets */}
+              <div>
+                <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>Quick Preset</p>
+                <div className="flex gap-2">
+                  {EXPORT_PRESETS.map(p => {
+                    const active = quality === p.quality && resolution === p.resolution
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => { setQuality(p.quality); setResolution(p.resolution) }}
+                        className="flex-1 flex flex-col items-center py-2.5 px-2 rounded-lg text-xs"
+                        style={{
+                          background: active ? 'var(--accent-subtle)' : 'var(--bg-surface)',
+                          border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                          color: active ? 'var(--accent-light)' : 'var(--text-secondary)',
+                        }}
+                      >
+                        <span className="font-semibold">{p.label}</span>
+                        <span className="text-center leading-tight mt-0.5" style={{ fontSize: 10, opacity: 0.7 }}>{p.desc}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               {/* Quality */}
               <div>
                 <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>Quality</p>
@@ -174,14 +235,42 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, on
                 </div>
               </div>
 
+              {/* Options */}
+              <div className="flex flex-col gap-2">
+                {hasRange && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={useRange} onChange={e => setUseRange(e.target.checked)}
+                      className="rounded" style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
+                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      Export In/Out range only
+                      <span className="ml-1.5 font-mono" style={{ color: 'var(--text-muted)', fontSize: 10 }}>
+                        ({fmtTime(inPoint!)}–{fmtTime(outPoint!)})
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {captions && captions.length > 0 && !isAudioOnly && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={burnInSubs} onChange={e => setBurnInSubs(e.target.checked)}
+                      className="rounded" style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
+                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      Burn-in subtitles
+                      <span className="ml-1.5" style={{ color: 'var(--text-muted)', fontSize: 10 }}>({captions.length} utterances)</span>
+                    </span>
+                  </label>
+                )}
+              </div>
+
               {/* Clip summary */}
               <div className="rounded-lg px-3 py-2.5 text-xs" style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
                 {exportableClips.length > 0
                   ? <>
                       <span style={{ color: 'var(--text-secondary)' }}>
                         {exportableClips.length} {isAudioOnly ? 'audio' : 'media'} clip{exportableClips.length !== 1 ? 's' : ''}
+                        {useRange && hasRange ? ' (in range)' : ''}
                       </span>{' '}
                       will be encoded and merged into a single {isAudioOnly ? 'M4A' : 'MP4'}.
+                      {burnInSubs && ' Subtitles will be embedded.'}
                     </>
                   : <span style={{ color: '#ef4444' }}>No clips on the timeline. Add video or audio clips before exporting.</span>
                 }

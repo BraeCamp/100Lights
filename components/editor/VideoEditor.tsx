@@ -1,16 +1,23 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus } from 'lucide-react'
 import Link from 'next/link'
 import VideoPlayer from '@/components/editor/VideoPlayer'
 import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
 import MediaLibrary from '@/components/editor/MediaLibrary'
-import ExportModal from '@/components/editor/ExportModal'
-import Inspector from '@/components/editor/Inspector'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { saveProject } from '@/lib/project-store'
+import type { LutData } from '@/lib/lut-parser'
+
+// Heavy panels — loaded on demand so the initial editor paint is fast
+const Inspector     = dynamic(() => import('@/components/editor/Inspector'),     { ssr: false, loading: () => <div style={{ flex: 1, background: 'var(--bg-surface)' }} /> })
+const ColorScopes   = dynamic(() => import('@/components/editor/ColorScopes'),   { ssr: false })
+const RenderQueue   = dynamic(() => import('@/components/editor/RenderQueue'),   { ssr: false })
+const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),   { ssr: false })
+const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
 import {
   serialize, saveProjectToFile, openProjectFromFile, deserialize,
   type CfProjFile, type EditorSnapshot,
@@ -19,6 +26,8 @@ import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
   DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS,
   RULER_HEIGHT, TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
+  MODULE_DEFS, ALL_MODULE_KEYS,
+  type ModuleKey,
 } from '@/lib/editor-types'
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
@@ -103,6 +112,7 @@ interface Props {
   outputs: Output[]
   contentType?: ContentType | null
   allowImport?: boolean
+  modules?: ModuleKey[]
 }
 
 function buildTimeline(clips: Clip[]): TimelineItem[] {
@@ -165,7 +175,10 @@ function ColorPage({
   adjustments, onAdjustmentsChange,
 }: { adjustments: VideoAdjustments; onAdjustmentsChange: (a: VideoAdjustments) => void }) {
   const isDefault = adjustments.brightness === 100 && adjustments.contrast === 100 &&
-    adjustments.saturation === 100 && adjustments.highlights === 0
+    adjustments.saturation === 100 && adjustments.highlights === 0 &&
+    (adjustments.vignette ?? 0) === 0 && (adjustments.shadows ?? 0) === 0 &&
+    (adjustments.midtones ?? 0) === 0 && (adjustments.lift ?? 0) === 0 &&
+    (adjustments.gamma ?? 100) === 100 && (adjustments.gain ?? 100) === 100
 
   function Slider({ label, value, min, max, unit, onChange }: {
     label: string; value: number; min: number; max: number; unit?: string; onChange: (v: number) => void
@@ -189,7 +202,7 @@ function ColorPage({
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Color</h2>
           {!isDefault && (
-            <button onClick={() => onAdjustmentsChange({ brightness: 100, contrast: 100, saturation: 100, highlights: 0 })}
+            <button onClick={() => onAdjustmentsChange({ ...DEFAULT_ADJUSTMENTS })}
               className="text-xs px-3 py-1.5 rounded" style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}>
               Reset All
             </button>
@@ -219,10 +232,10 @@ function PlaceholderPage({ title, description }: { title: string; description: s
 }
 
 export default function VideoEditor({
-  projectId, projectName, videoUrl, captions: propCaptions, clips, outputs: propOutputs,
+  projectId, projectName, videoUrl, captions: propCaptions, clips, outputs: propOutputs, modules: modulesProp,
   contentType: propContentType, allowImport,
 }: Props) {
-  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const videoRef    = useRef<HTMLVideoElement | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -401,6 +414,10 @@ export default function VideoEditor({
   // Transcription
   const [importedFile, setImportedFile] = useState<File | null>(null)
   const [localProjectName, setLocalProjectName] = useState(projectName)
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState(projectName)
+  const [activeModules, setActiveModules] = useState<ModuleKey[]>(() => modulesProp ?? ALL_MODULE_KEYS)
+  const [showModulesMenu, setShowModulesMenu] = useState(false)
   const { showUpgrade } = useUpgradeModal()
   const [transcribeStatus, setTranscribeStatus] = useState<TranscribeStatus>('idle')
   const [transcribeProgress, setTranscribeProgress] = useState(0) // 0–100 upload %, 101 = server processing
@@ -420,7 +437,14 @@ export default function VideoEditor({
   const [showSaveMenu, setShowSaveMenu] = useState(false)
   const savedStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isDirty, setIsDirty] = useState(false)
-  const autoSaveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoSaveTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cloudAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveToCloudRef        = useRef<() => Promise<void>>(async () => {})
+  // LUT functions loaded on-demand when the first .cube file is imported
+  const lutFnsRef = useRef<{
+    parseCube: (t: string) => LutData
+    applyLutToCanvas: (ctx: CanvasRenderingContext2D, lut: LutData, w: number, h: number) => void
+  } | null>(null)
 
   // Recovery state — set when a more-recent autosave is found on mount
   const [recovery, setRecovery] = useState<{ cfproj: CfProjFile; at: Date } | null>(null)
@@ -441,6 +465,85 @@ export default function VideoEditor({
   // Playback speed
   const [playbackRate, setPlaybackRate] = useState(1)
 
+  // Before/after color compare
+  const [showOriginal, setShowOriginal] = useState(false)
+
+  // Viewer overlays
+  const [showSafeAreas, setShowSafeAreas] = useState(false)
+  const [aspectGuide, setAspectGuide] = useState<'none' | '9:16' | '1:1' | '4:5' | '2.35:1'>('none')
+  const [viewerZoom, setViewerZoom] = useState(1)
+  const [showStoryboard, setShowStoryboard] = useState(false)
+  const [showVUMeter, setShowVUMeter] = useState(false)
+  const [frameBlendEnabled, setFrameBlendEnabled] = useState(false)
+  const [opticalFlowEnabled, setOpticalFlowEnabled] = useState(false)
+  const [motionBlurGlobal, setMotionBlurGlobal] = useState(false)
+  const [showColorScopes, setShowColorScopes] = useState(false)
+  const [colorScopesType, setColorScopesType] = useState<'waveform' | 'vectorscope' | 'histogram' | 'parade'>('waveform')
+  const [showRenderQueue, setShowRenderQueue] = useState(false)
+  const [audioDuckingEnabled, setAudioDuckingEnabled] = useState(false)
+
+  // Audio ducking: analyzes primary track, reduces volume on music tracks under dialogue
+  const duckingRafRef    = useRef<number | null>(null)
+  const duckingCtxRef    = useRef<AudioContext | null>(null)
+  const duckingSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
+  const duckingAnalyser  = useRef<AnalyserNode | null>(null)
+  const duckingGainRef   = useRef<GainNode | null>(null)
+
+  useEffect(() => {
+    if (!audioDuckingEnabled) {
+      if (duckingRafRef.current !== null) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null }
+      return
+    }
+    const v = videoRef.current
+    if (!v) return
+
+    try {
+      if (!duckingCtxRef.current) duckingCtxRef.current = new AudioContext()
+      const ctx = duckingCtxRef.current
+      if (!duckingSourceRef.current) {
+        const src = ctx.createMediaElementSource(v)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        const gain = ctx.createGain()
+        src.connect(analyser).connect(gain).connect(ctx.destination)
+        duckingSourceRef.current = src
+        duckingAnalyser.current  = analyser
+        duckingGainRef.current   = gain
+      }
+
+      const buf = new Uint8Array(duckingAnalyser.current!.frequencyBinCount)
+      function tick() {
+        duckingAnalyser.current!.getByteTimeDomainData(buf)
+        // RMS level of primary clip audio
+        let sum = 0
+        for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
+        const rms = Math.sqrt(sum / buf.length)
+        // Duck: reduce gain when RMS > 0.05 (dialogue threshold)
+        const target = rms > 0.05 ? 0.3 : 1.0
+        const current = duckingGainRef.current!.gain.value
+        duckingGainRef.current!.gain.value = current + (target - current) * 0.05 // smooth 50ms RC
+        duckingRafRef.current = requestAnimationFrame(tick)
+      }
+      duckingRafRef.current = requestAnimationFrame(tick)
+    } catch { /* blocked before user gesture */ }
+
+    return () => {
+      if (duckingRafRef.current !== null) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null }
+    }
+  }, [audioDuckingEnabled]) // eslint-disable-line
+
+  // LUT data keyed by MediaItem id
+  const [lutMap, setLutMap] = useState<Map<string, LutData>>(new Map())
+
+  // EQ — Web Audio chain per active clip (low/mid/high BiquadFilter + GainNode)
+  const eqCtxRef    = useRef<AudioContext | null>(null)
+  const eqSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
+  const eqNodesRef  = useRef<{ low: BiquadFilterNode; mid: BiquadFilterNode; high: BiquadFilterNode; gain: GainNode } | null>(null)
+  const eqSrcIdRef  = useRef<string | null>(null)  // tracks which clip the EQ chain was built for
+
+  // Multi-select
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
   // Chapter markers
   const [chapters, setChapters] = useState<ChapterMarker[]>([])
 
@@ -448,13 +551,45 @@ export default function VideoEditor({
   // Internal clipboard for copy/paste within the editor
   const clipboardRef = useRef<TimelineItem | null>(null)
 
+  function handleSelectItem(id: string | null) {
+    setSelectedId(id)
+    setSelectedIds(new Set())   // single click always clears multi-select
+  }
+
   const selectedItem = timelineItems.find(i => i.id === selectedId) ?? null
   const selectedMedia = mediaItems.find(m => m.id === selectedMediaId) ?? null
   const isAudioOnly = mediaItems.length > 0 && mediaItems.every(m => m.contentType === 'audio')
+  const hasVideo      = activeModules.includes('video')
+  const hasAudio      = activeModules.includes('audio')
+  const hasStoryboard = activeModules.includes('storyboard')
 
-  // Viewer is a pure timeline monitor — shows the enabled clip at the playhead
+  // Interpolate speed from a clip's velocity curve keyframes
+  function interpSpeedRamp(points: Array<{ t: number; speed: number }>, t: number): number {
+    if (!points.length) return 1
+    const sorted = [...points].sort((a, b) => a.t - b.t)
+    if (t <= sorted[0].t) return sorted[0].speed
+    if (t >= sorted[sorted.length - 1].t) return sorted[sorted.length - 1].speed
+    for (let i = 0; i < sorted.length - 1; i++) {
+      if (t >= sorted[i].t && t <= sorted[i + 1].t) {
+        const frac = (t - sorted[i].t) / (sorted[i + 1].t - sorted[i].t)
+        // Smooth-step (cubic) interpolation for the velocity ease
+        const smooth = frac * frac * (3 - 2 * frac)
+        return sorted[i].speed + (sorted[i + 1].speed - sorted[i].speed) * smooth
+      }
+    }
+    return 1
+  }
+
+  // Viewer is a pure timeline monitor — shows the enabled clip at the playhead.
+  // Respects mute/solo: muted tracks are skipped; when any track is soloed, only
+  // solo tracks play.
   const viewerClip = useMemo(() => {
-    const mediaTracks = tracks.filter(t => t.type === 'media' || t.type === 'video' || t.type === 'audio')
+    const hasSolo = tracks.some(t => (t.type === 'media' || t.type === 'video' || t.type === 'audio') && t.solo)
+    const mediaTracks = tracks.filter(t =>
+      (t.type === 'media' || t.type === 'video' || t.type === 'audio') &&
+      !t.muted &&
+      (!hasSolo || t.solo)
+    )
     for (const track of mediaTracks) {
       const hit = timelineItems.find(i =>
         i.trackId === track.id &&
@@ -466,6 +601,163 @@ export default function VideoEditor({
     }
     return null
   }, [timelineItems, tracks, currentTime])
+
+  // Real-time speed: interpolates velocity curve if the clip has speedPoints
+  const rampSpeed = useMemo(() => {
+    const clip = viewerClip
+    if (!clip) return playbackRate
+    const baseSpeed = clip.speed ?? 1
+    if (!clip.speedPoints?.length) return baseSpeed * playbackRate
+    const clipDur = clip.outPoint - clip.inPoint
+    if (clipDur <= 0) return baseSpeed
+    const localT = Math.max(0, Math.min(1, (currentTime - clip.startTime) / clipDur))
+    return interpSpeedRamp(clip.speedPoints, localT) * baseSpeed
+  }, [viewerClip?.id, viewerClip?.speedPoints, viewerClip?.speed, currentTime, playbackRate]) // eslint-disable-line
+
+  // Apply track volume when the active clip changes
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !viewerClip) return
+    const track = tracks.find(t => t.id === viewerClip.trackId)
+    v.volume = Math.max(0, Math.min(1, track?.volume ?? 1))
+  }, [viewerClip?.id, tracks]) // eslint-disable-line
+
+  // Apply per-clip playback speed (and velocity ramp) to the video element
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.playbackRate = rampSpeed
+  }, [rampSpeed])
+
+  // Per-clip EQ via Web Audio API
+  useEffect(() => {
+    const v = videoRef.current
+    const clip = viewerClip
+    const eq = clip?.eq
+
+    // Tear down chain if no EQ or clip changed
+    if (!eq || !clip || !v) {
+      eqNodesRef.current?.gain.disconnect()
+      eqNodesRef.current = null
+      eqSourceRef.current?.disconnect()
+      eqSourceRef.current = null
+      eqSrcIdRef.current = null
+      return
+    }
+
+    try {
+      // Create AudioContext lazily
+      if (!eqCtxRef.current) eqCtxRef.current = new AudioContext()
+      const ctx = eqCtxRef.current
+
+      // Rebuild chain when clip changes
+      if (eqSrcIdRef.current !== clip.id) {
+        eqNodesRef.current?.gain.disconnect()
+        eqSourceRef.current?.disconnect()
+        const src = ctx.createMediaElementSource(v)
+        const low  = ctx.createBiquadFilter(); low.type  = 'lowshelf';  low.frequency.value  = 200
+        const mid  = ctx.createBiquadFilter(); mid.type  = 'peaking';   mid.frequency.value  = 1000; mid.Q.value = 1
+        const high = ctx.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 6000
+        const gain = ctx.createGain()
+        src.connect(low).connect(mid).connect(high).connect(gain).connect(ctx.destination)
+        eqSourceRef.current = src
+        eqNodesRef.current  = { low, mid, high, gain }
+        eqSrcIdRef.current  = clip.id
+      }
+
+      // Update filter gains
+      const nodes = eqNodesRef.current
+      if (nodes) {
+        nodes.low.gain.value  = eq.low
+        nodes.mid.gain.value  = eq.mid
+        nodes.high.gain.value = eq.high
+      }
+    } catch { /* AudioContext may be blocked before user interaction */ }
+  }, [viewerClip?.id, viewerClip?.eq]) // eslint-disable-line
+
+  // LUT — apply color lookup table to video frames via OffscreenCanvas
+  const lutCanvasRef  = useRef<OffscreenCanvas | null>(null)
+  const lutRvfcRef    = useRef<number | null>(null)
+  const lutRafRef     = useRef<number | null>(null)
+
+  useEffect(() => {
+    const clip = viewerClip
+    const lut  = clip?.lutId ? lutMap.get(clip.lutId) : null
+    const v    = videoRef.current
+
+    // Cancel any previous LUT rVFC loop
+    const cancelLut = () => {
+      if (lutRvfcRef.current !== null && v) {
+        (v as any).cancelVideoFrameCallback?.(lutRvfcRef.current)
+        lutRvfcRef.current = null
+      }
+      if (lutRafRef.current !== null) { cancelAnimationFrame(lutRafRef.current); lutRafRef.current = null }
+      lutCanvasRef.current = null
+    }
+
+    if (!lut || !v || !clip || clip.contentType !== 'video') { cancelLut(); return }
+
+    function processFrame() {
+      if (!v || !lut) return
+      const vw = v.videoWidth, vh = v.videoHeight
+      if (vw === 0 || vh === 0) { schedule(); return }
+      if (!lutCanvasRef.current || lutCanvasRef.current.width !== vw || lutCanvasRef.current.height !== vh) {
+        lutCanvasRef.current = new OffscreenCanvas(vw, vh)
+      }
+      const ctx = lutCanvasRef.current.getContext('2d') as OffscreenCanvasRenderingContext2D | null
+      if (!ctx) { schedule(); return }
+      ctx.drawImage(v, 0, 0, vw, vh)
+      lutFnsRef.current?.applyLutToCanvas(ctx as unknown as CanvasRenderingContext2D, lut, vw, vh)
+      schedule()
+    }
+
+    function schedule() {
+      if ((v as any).requestVideoFrameCallback) {
+        lutRvfcRef.current = (v as any).requestVideoFrameCallback(processFrame)
+      } else {
+        lutRafRef.current = requestAnimationFrame(processFrame)
+      }
+    }
+    schedule()
+    return cancelLut
+  }, [viewerClip?.id, viewerClip?.lutId, lutMap]) // eslint-disable-line
+
+  // Clip transform: opacity, flip, crop, zoom, and fade envelope from current playhead
+  const clipTransform = useMemo(() => {
+    if (!viewerClip) return undefined
+    const clip = viewerClip
+    const clipDur = clip.outPoint - clip.inPoint
+    const clipLocalTime = currentTime - clip.startTime
+    let fadeOpacity = 1
+    if (clip.fadeIn && clip.fadeIn > 0 && clipLocalTime < clip.fadeIn) {
+      fadeOpacity = Math.min(1, clipLocalTime / clip.fadeIn)
+    }
+    if (clip.fadeOut && clip.fadeOut > 0 && clipLocalTime > clipDur - clip.fadeOut) {
+      fadeOpacity = Math.min(fadeOpacity, Math.min(1, (clipDur - clipLocalTime) / clip.fadeOut))
+    }
+    // Ken Burns: animate cropZoom/cropX/cropY over the clip's duration
+    let cropZoom = clip.cropZoom ?? 100
+    let cropX    = clip.cropX ?? 0
+    let cropY    = clip.cropY ?? 0
+    if (clip.kenBurns && clipDur > 0) {
+      const t = Math.max(0, Math.min(1, clipLocalTime / clipDur))
+      const s = t * t * (3 - 2 * t)  // smooth-step
+      const kb = clip.kenBurns
+      cropZoom = kb.fromZoom + (kb.toZoom - kb.fromZoom) * s
+      cropX    = kb.fromX   + (kb.toX   - kb.fromX)   * s
+      cropY    = kb.fromY   + (kb.toY   - kb.fromY)   * s
+    }
+
+    return {
+      opacity: clip.opacity ?? 100,
+      flipH: clip.flipH ?? false,
+      flipV: clip.flipV ?? false,
+      cropZoom, cropX, cropY,
+      fadeOpacity,
+    }
+  }, [viewerClip?.id, viewerClip?.opacity, viewerClip?.flipH, viewerClip?.flipV, // eslint-disable-line
+      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY,
+      viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns, currentTime]) // eslint-disable-line
 
   // Converts timeline time ↔ source clip time:  clipTime = timelineTime − offset
   const clipTimeOffset = viewerClip ? viewerClip.startTime - viewerClip.inPoint : 0
@@ -525,6 +817,7 @@ export default function VideoEditor({
       setLocalOutputs(loaded.outputs)
       setChapters(loaded.chapters ?? [])
       setMediaItems(resolvedMedia)
+      setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     } catch {
       // Silently ignore corrupt/unreadable project
@@ -572,6 +865,15 @@ export default function VideoEditor({
     autoSaveTimerRef.current = setTimeout(() => {
       writeAutosave(savedProjectId, serialize(snapshot))
     }, 5000)
+
+    // Cloud auto-save: 30 s after last change, for any named project
+    const name = localProjectName.trim()
+    if (name && name !== 'New Project') {
+      if (cloudAutoSaveTimerRef.current) clearTimeout(cloudAutoSaveTimerRef.current)
+      cloudAutoSaveTimerRef.current = setTimeout(() => {
+        saveToCloudRef.current()
+      }, 30_000)
+    }
   }, [timelineItems, tracks, adjustments, localCaptions, localOutputs, localProjectName]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
@@ -688,12 +990,10 @@ export default function VideoEditor({
         return
       }
 
-      // Space = play/pause
+      // Space = play/pause (works with or without media loaded)
       if (e.code === 'Space') {
         e.preventDefault()
-        if (!v) return
-        if (v.paused) { v.play().catch(() => {}); setIsPlaying(true) }
-        else { v.pause(); setIsPlaying(false) }
+        setIsPlaying(p => !p)
         return
       }
 
@@ -741,14 +1041,20 @@ export default function VideoEditor({
         return
       }
 
-      // Delete / Backspace
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+      // Delete / Backspace — supports single or multi-select
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedId || selectedIds.size > 0)) {
         e.preventDefault()
-        if (e.shiftKey) {
-          handleRippleDelete(selectedId)
-        } else {
-          setTimelineItems(p => p.filter(i => i.id !== selectedId))
+        if (selectedIds.size > 1) {
+          setTimelineItems(p => p.filter(i => !selectedIds.has(i.id)))
+          setSelectedIds(new Set())
           setSelectedId(null)
+        } else if (selectedId) {
+          if (e.shiftKey) {
+            handleRippleDelete(selectedId)
+          } else {
+            setTimelineItems(p => p.filter(i => i.id !== selectedId))
+            setSelectedId(null)
+          }
         }
         return
       }
@@ -882,9 +1188,9 @@ export default function VideoEditor({
         e.preventDefault(); redo(); return
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, isPlaying, currentTime, timelineItems])  // eslint-disable-line
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [selectedId, isPlaying, timelineItems])  // eslint-disable-line — currentTime excluded intentionally: all reads use functional setCurrentTime
 
   useEffect(() => {
     if (ctxMenu) {
@@ -1012,6 +1318,21 @@ export default function VideoEditor({
 
   // ── Import / media ───────────────────────────────────────────
 
+  async function computeAudioPeaks(url: string): Promise<number[]> {
+    try {
+      const arrayBuffer = await fetch(url).then(r => r.arrayBuffer())
+      const offCtx = new OfflineAudioContext(1, 1, 44100)
+      const decoded = await offCtx.decodeAudioData(arrayBuffer)
+      const data = decoded.getChannelData(0)
+      const bands = 80, step = Math.floor(data.length / bands)
+      return Array.from({ length: bands }, (_, i) => {
+        let max = 0
+        for (let j = 0; j < step; j++) max = Math.max(max, Math.abs(data[i * step + j] ?? 0))
+        return max
+      })
+    } catch { return [] }
+  }
+
   // Read actual duration from a blob/object URL without touching the viewer
   function readDuration(url: string, ct: ContentType): Promise<number> {
     return new Promise((resolve) => {
@@ -1024,6 +1345,25 @@ export default function VideoEditor({
   }
 
   function handleFileImport(file: File) {
+    // .cube LUT files — parse and store in lutMap, add to media pool as 'lut' type
+    if (file.name.toLowerCase().endsWith('.cube')) {
+      const id = crypto.randomUUID()
+      file.text().then(async text => {
+        try {
+          if (!lutFnsRef.current) {
+            const mod = await import('@/lib/lut-parser')
+            lutFnsRef.current = { parseCube: mod.parseCube, applyLutToCanvas: mod.applyLutToCanvas }
+          }
+          const lut = lutFnsRef.current.parseCube(text)
+          setLutMap(prev => new Map(prev).set(id, lut))
+          setMediaItems(prev => [...prev, { id, name: file.name, contentType: 'lut', file }])
+        } catch (err) {
+          console.warn('LUT parse error:', err)
+        }
+      })
+      return
+    }
+
     const ct: ContentType = file.type.startsWith('video/') ? 'video' : 'audio'
     const url = URL.createObjectURL(file)
     const id = crypto.randomUUID()
@@ -1047,6 +1387,13 @@ export default function VideoEditor({
     if (ct === 'video') {
       generateVideoThumbnail(url).then((thumbnail) => {
         if (thumbnail) setMediaItems(prev => prev.map(m => m.id === id ? { ...m, thumbnail } : m))
+      })
+    }
+
+    // Compute audio peak waveform in background (used by Timeline mini waveform)
+    if (ct === 'audio') {
+      computeAudioPeaks(url).then(peaks => {
+        if (peaks.length) setMediaItems(prev => prev.map(m => m.id === id ? { ...m, peaks } : m))
       })
     }
 
@@ -1267,11 +1614,29 @@ export default function VideoEditor({
     setRecovery(null)
   }
 
-  async function saveToCloud() {
-    setShowSaveMenu(false)
+  function commitName() {
+    const trimmed = nameInput.trim()
+    if (trimmed && trimmed !== localProjectName) {
+      setLocalProjectName(trimmed)
+      if (projectId) {
+        fetch(`/api/projects/${projectId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: trimmed }),
+        }).catch(() => {})
+      }
+    } else {
+      setNameInput(localProjectName)
+    }
+    setEditingName(false)
+  }
+
+  async function saveToCloud(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setShowSaveMenu(false)
     // Prompt for a real name if it's still the default
     let nameToUse = localProjectName.trim()
     if (nameToUse === 'New Project') {
+      if (opts?.silent) return   // never prompt during auto-save
       const input = window.prompt('Name this project:', 'My Project')
       if (!input?.trim()) return
       nameToUse = input.trim()
@@ -1282,6 +1647,7 @@ export default function VideoEditor({
       const snapshot = buildSnapshot()
       snapshot.name = nameToUse  // use confirmed name even if state hasn't updated yet
       const project: CfProjFile = serialize(snapshot)
+      project.modules = activeModules
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1302,6 +1668,8 @@ export default function VideoEditor({
       setSaveStatus('error')
     }
   }
+  // Keep ref current so the 30-second auto-save timer always calls the latest version
+  saveToCloudRef.current = () => saveToCloud({ silent: true })
 
   /** Download a portable .cfproj backup file — not the primary save path. */
   async function downloadProjectFile() {
@@ -1445,6 +1813,43 @@ export default function VideoEditor({
     }
   }
 
+  function handleTrackMuteToggle(trackId: string) {
+    setTracksWithHistory(prev => prev.map(t => t.id === trackId ? { ...t, muted: !t.muted } : t))
+  }
+
+  function handleTrackSoloToggle(trackId: string) {
+    setTracksWithHistory(prev => prev.map(t => t.id === trackId ? { ...t, solo: !t.solo } : t))
+  }
+
+  function handleClipSpeedChange(id: string, speed: number) {
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, speed } : i))
+  }
+
+  function handleClipChange(id: string, patch: Partial<TimelineItem>) {
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
+  }
+
+  function handleTrackVolumeChange(trackId: string, volume: number) {
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, volume } : t))
+    const v = videoRef.current
+    if (v && viewerClip?.trackId === trackId) {
+      v.volume = Math.max(0, Math.min(1, volume))
+    }
+  }
+
+  function handleStoryboardReorder(draggedId: string, targetId: string) {
+    setTimelineItems(prev => {
+      const dragged = prev.find(i => i.id === draggedId)
+      const target  = prev.find(i => i.id === targetId)
+      if (!dragged || !target) return prev
+      const tmp = dragged.startTime
+      return prev.map(i =>
+        i.id === draggedId ? { ...i, startTime: target.startTime } :
+        i.id === targetId  ? { ...i, startTime: tmp } : i
+      )
+    })
+  }
+
   function handleAddChapter() {
     const marker: ChapterMarker = { id: crypto.randomUUID(), time: currentTime, title: `Chapter ${chapters.length + 1}` }
     setChapters(prev => [...prev, marker].sort((a, b) => a.time - b.time))
@@ -1546,9 +1951,9 @@ export default function VideoEditor({
   // ── Page tab config ──────────────────────────────────────────
   const PAGES: { id: EditorPage; label: string; icon: React.ElementType }[] = [
     { id: 'edit',    label: 'Edit',    icon: Film },
-    { id: 'color',   label: 'Color',   icon: Palette },
-    { id: 'audio',   label: 'Audio',   icon: Music },
-    { id: 'deliver', label: 'Deliver', icon: Package },
+    ...(hasVideo ? [{ id: 'color'   as const, label: 'Color',   icon: Palette }] : []),
+    ...(hasAudio ? [{ id: 'audio'   as const, label: 'Audio',   icon: Music   }] : []),
+    ...(hasVideo ? [{ id: 'deliver' as const, label: 'Deliver', icon: Package }] : []),
   ]
 
   return (
@@ -1560,7 +1965,26 @@ export default function VideoEditor({
           <ArrowLeft size={12} /> Dashboard
         </Link>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
-        <span className="text-xs font-semibold truncate flex-1" style={{ color: 'var(--text-primary)' }}>{localProjectName}</span>
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={e => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') { setNameInput(localProjectName); setEditingName(false) } }}
+            className="text-xs font-semibold bg-transparent outline-none border-b flex-1 min-w-0"
+            style={{ color: 'var(--text-primary)', borderColor: 'var(--accent)', maxWidth: 240 }}
+          />
+        ) : (
+          <button
+            onClick={() => { setNameInput(localProjectName); setEditingName(true) }}
+            className="text-xs font-semibold truncate flex-1 text-left hover:opacity-70 transition-opacity"
+            style={{ color: 'var(--text-primary)', maxWidth: 240 }}
+            title="Click to rename project"
+          >
+            {localProjectName}
+          </button>
+        )}
 
         {/* Undo / Redo */}
         <div className="flex items-center gap-0.5">
@@ -1615,7 +2039,7 @@ export default function VideoEditor({
         <div className="relative shrink-0">
           <div className="flex" style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
             <button
-              onClick={saveToCloud}
+              onClick={() => saveToCloud()}
               title="Save project (⌘S)"
               className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium"
               style={{
@@ -1654,7 +2078,7 @@ export default function VideoEditor({
               onMouseLeave={() => setShowSaveMenu(false)}
             >
               <button
-                onClick={saveToCloud}
+                onClick={() => saveToCloud()}
                 className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left"
                 style={{ color: 'var(--text-primary)' }}
                 onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-card-hover)')}
@@ -1689,6 +2113,53 @@ export default function VideoEditor({
         {projectId && (
           <ShareButton projectId={projectId} />
         )}
+
+        {/* Modules — add / remove loaded modules */}
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setShowModulesMenu(v => !v)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+            title="Manage modules"
+          >
+            <Plus size={10} /> Modules
+          </button>
+          {showModulesMenu && (
+            <div
+              className="absolute right-0 top-full mt-1 rounded shadow-lg z-50 overflow-hidden"
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', minWidth: 220 }}
+              onMouseLeave={() => setShowModulesMenu(false)}
+            >
+              <div className="px-3 py-2 text-xs font-semibold" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                Loaded modules
+              </div>
+              {MODULE_DEFS.map(mod => {
+                const active = activeModules.includes(mod.key)
+                return (
+                  <button
+                    key={mod.key}
+                    onClick={() => {
+                      setActiveModules(prev =>
+                        prev.includes(mod.key) ? prev.filter(k => k !== mod.key) : [...prev, mod.key]
+                      )
+                    }}
+                    className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-left"
+                    style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-card-hover)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? mod.color : 'var(--border)', flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{mod.label}</span>
+                    {active && <CheckIcon size={11} color="var(--text-muted)" />}
+                  </button>
+                )
+              })}
+              <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+                Changes apply immediately
+              </div>
+            </div>
+          )}
+        </div>
 
         <button
           onClick={() => setShowExport(true)}
@@ -1752,13 +2223,13 @@ export default function VideoEditor({
             <VResizeHandle onDelta={clampLeft} />
 
             {/* ── Center: viewport tabs + content ─────────────── */}
-            <div className="flex-1 overflow-hidden min-w-0 flex flex-col">
+            <div className="flex-1 overflow-hidden min-w-0 flex flex-col" style={{ position: 'relative' }}>
               {/* Tab bar */}
               <div className="flex items-center shrink-0" style={{ height: 30, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
                 {([
-                  { id: 'video' as const, label: 'Video', icon: Film },
-                  { id: 'audio' as const, label: 'Audio', icon: isAudioOnly ? Mic : AudioLines },
-                ] as const).map(({ id, label, icon: Icon }) => (
+                  { id: 'video' as const, label: 'Video', icon: Film,                              show: hasVideo },
+                  { id: 'audio' as const, label: 'Audio', icon: isAudioOnly ? Mic : AudioLines,    show: hasAudio },
+                ] as const).filter(t => t.show).map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
                     onClick={() => setViewportTab(id)}
@@ -1795,11 +2266,27 @@ export default function VideoEditor({
                   ))}
                 </div>
 
+                {/* Before/after color compare */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setShowOriginal(v => !v)}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                    title="Toggle original vs. graded (before/after color compare)"
+                    style={{
+                      color: showOriginal ? '#f97316' : 'var(--text-muted)',
+                      background: showOriginal ? 'rgba(249,115,22,0.1)' : 'transparent',
+                      border: `1px solid ${showOriginal ? 'rgba(249,115,22,0.35)' : 'transparent'}`,
+                    }}
+                  >
+                    {showOriginal ? 'Before' : 'Compare'}
+                  </button>
+                )}
+
                 {/* Split layout toggle — show audio below video */}
                 {viewportTab === 'video' && !isAudioOnly && (
                   <button
                     onClick={() => setAudioLayout(l => l === 'tab' ? 'below' : 'tab')}
-                    className="mr-2 flex items-center gap-1.5 px-2 py-1 rounded text-xs"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-xs"
                     title={audioLayout === 'below' ? 'Show audio as separate tab' : 'Show audio below video'}
                     style={{
                       color: audioLayout === 'below' ? 'var(--accent-light)' : 'var(--text-muted)',
@@ -1810,6 +2297,142 @@ export default function VideoEditor({
                     {audioLayout === 'below' ? 'Split' : 'Split'}
                   </button>
                 )}
+
+                {/* Safe areas overlay */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setShowSafeAreas(v => !v)}
+                    className="px-2 py-1 rounded text-xs"
+                    title="Show safe areas (title/action)"
+                    style={{
+                      color: showSafeAreas ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: showSafeAreas ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >Safe</button>
+                )}
+
+                {/* Aspect guide */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <select value={aspectGuide}
+                    onChange={e => setAspectGuide(e.target.value as typeof aspectGuide)}
+                    className="text-xs rounded px-1 py-0.5"
+                    title="Aspect ratio guide"
+                    style={{
+                      background: 'var(--bg-card)', border: '1px solid var(--border)',
+                      color: aspectGuide !== 'none' ? 'var(--accent-light)' : 'var(--text-muted)',
+                    }}
+                  >
+                    <option value="none">No guide</option>
+                    <option value="9:16">9:16</option>
+                    <option value="1:1">1:1</option>
+                    <option value="4:5">4:5</option>
+                    <option value="2.35:1">2.35:1</option>
+                  </select>
+                )}
+
+                {/* VU meter */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setShowVUMeter(v => !v)}
+                    className="px-2 py-1 rounded text-xs"
+                    title="VU audio meter"
+                    style={{
+                      color: showVUMeter ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: showVUMeter ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >VU</button>
+                )}
+
+                {/* Frame blend */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setFrameBlendEnabled(v => !v)}
+                    className="px-2 py-1 rounded text-xs"
+                    title="Frame blending (smooth slow-motion)"
+                    style={{
+                      color: frameBlendEnabled ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: frameBlendEnabled ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >Blend</button>
+                )}
+
+                {/* Optical flow */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setOpticalFlowEnabled(v => !v)}
+                    className="px-2 py-1 rounded text-xs"
+                    title="Optical flow (multi-frame temporal smoothing)"
+                    style={{
+                      color: opticalFlowEnabled ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: opticalFlowEnabled ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >Flow</button>
+                )}
+
+                {/* Motion blur */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setMotionBlurGlobal(v => !v)}
+                    className="px-2 py-1 rounded text-xs"
+                    title="Motion blur (speed-proportional shutter blur)"
+                    style={{
+                      color: motionBlurGlobal ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: motionBlurGlobal ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >MBlur</button>
+                )}
+
+                {/* Viewer zoom */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <div className="flex items-center gap-0.5 mr-2">
+                    {([0.5, 1, 1.5] as const).map(z => (
+                      <button key={z}
+                        onClick={() => setViewerZoom(z)}
+                        className="px-1.5 py-0.5 rounded text-xs font-mono"
+                        title={`Viewer zoom ${z}×`}
+                        style={{
+                          color: viewerZoom === z ? 'var(--accent-light)' : 'var(--text-muted)',
+                          background: viewerZoom === z ? 'var(--accent-subtle)' : 'transparent',
+                          border: `1px solid ${viewerZoom === z ? 'rgba(139,92,246,0.3)' : 'transparent'}`,
+                        }}
+                      >{z}×</button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Storyboard view */}
+                {hasStoryboard && (
+                  <button
+                    onClick={() => setShowStoryboard(v => !v)}
+                    className="mr-2 px-2 py-1 rounded text-xs"
+                    title="Storyboard view"
+                    style={{
+                      color: showStoryboard ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: showStoryboard ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >Board</button>
+                )}
+
+                {/* Color scopes */}
+                {viewportTab === 'video' && !isAudioOnly && (
+                  <button
+                    onClick={() => setShowColorScopes(v => !v)}
+                    className="mr-1 px-2 py-1 rounded text-xs"
+                    title="Color scopes"
+                    style={{
+                      color: showColorScopes ? 'var(--accent-light)' : 'var(--text-muted)',
+                      background: showColorScopes ? 'var(--accent-subtle)' : 'transparent',
+                    }}
+                  >Scopes</button>
+                )}
+
+                {/* Render queue */}
+                <button
+                  onClick={() => setShowRenderQueue(true)}
+                  className="px-2 py-1 rounded text-xs"
+                  title="Render queue"
+                  style={{ color: 'var(--text-muted)' }}
+                >Queue</button>
               </div>
 
               {/* Content area */}
@@ -1822,6 +2445,7 @@ export default function VideoEditor({
                       captions={effectiveCaptions} currentTime={currentTime}
                       timeOffset={clipTimeOffset} isPlaying={isPlaying}
                       adjustments={adjustments}
+                      showOriginal={showOriginal}
                       clipLabel={viewerClip?.label}
                       onTimeUpdate={setCurrentTime}
                       onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
@@ -1829,13 +2453,34 @@ export default function VideoEditor({
                       onMediaError={handleMediaError}
                       preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
                       seekHints={seekHints}
+                      clipTransform={clipTransform}
+                      viewerZoom={viewerZoom}
+                      showSafeAreas={showSafeAreas}
+                      aspectGuide={aspectGuide}
+                      showVUMeter={showVUMeter}
+                      frameBlendEnabled={frameBlendEnabled}
+                      clipSpeed={rampSpeed}
+                      motionBlurEnabled={motionBlurGlobal || (viewerClip?.motionBlurEnabled ?? false)}
+                      currentClipSpeed={rampSpeed}
+                      opticalFlowEnabled={opticalFlowEnabled}
+                      blendMode={viewerClip?.blendMode}
+                      titleClip={viewerClip?.contentType === 'title' ? {
+                        text: viewerClip.titleText ?? '',
+                        fontSize: viewerClip.titleFontSize ?? 48,
+                        color: viewerClip.titleColor ?? '#ffffff',
+                        bg: viewerClip.titleBg ?? 'transparent',
+                        position: viewerClip.titlePosition ?? 'center',
+                        animation: viewerClip.titleAnimation ?? 'none',
+                        localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
+                      } : undefined}
+                      onSeekRequest={handleSeek}
                     />
                   </div>
                   <HResizeHandle onDelta={clampAudioH} />
                   <div style={{ height: audioSplitH, flexShrink: 0, overflow: 'hidden' }}>
                     <AudioWaveform
                       src={selectedMedia?.url ?? null}
-                      contentType={selectedMedia?.contentType ?? null}
+                      contentType={(selectedMedia?.contentType === 'video' || selectedMedia?.contentType === 'audio') ? selectedMedia.contentType : null}
                       currentTime={currentTime}
                       duration={selectedMedia?.duration ?? 0}
                       onSeek={handleSeek}
@@ -1847,7 +2492,7 @@ export default function VideoEditor({
                 <div className="flex-1 overflow-hidden min-h-0">
                   <AudioWaveform
                     src={selectedMedia?.url ?? null}
-                    contentType={selectedMedia?.contentType ?? null}
+                    contentType={(selectedMedia?.contentType === 'video' || selectedMedia?.contentType === 'audio') ? selectedMedia.contentType : null}
                     currentTime={currentTime}
                     duration={selectedMedia?.duration ?? 0}
                     onSeek={handleSeek}
@@ -1855,21 +2500,63 @@ export default function VideoEditor({
                 </div>
               ) : (
                 // Video tab (default)
-                <div className="flex-1 overflow-hidden min-h-0">
-                  <VideoPlayer
-                    src={effectiveUrl} contentType={effectiveContentType}
-                    captions={effectiveCaptions} currentTime={currentTime}
-                    timeOffset={clipTimeOffset} isPlaying={isPlaying}
-                    adjustments={adjustments}
-                    clipLabel={viewerClip?.label}
-                    onTimeUpdate={setCurrentTime}
-                    onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
-                    videoRef={videoRef}
-                    onMediaError={handleMediaError}
-                    preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
-                    seekHints={seekHints}
-                  />
+                <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                  <div className={showColorScopes ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} style={{ flex: showColorScopes ? '1 1 0' : '1 1 auto' }}>
+                    <VideoPlayer
+                      src={effectiveUrl} contentType={effectiveContentType}
+                      captions={effectiveCaptions} currentTime={currentTime}
+                      timeOffset={clipTimeOffset} isPlaying={isPlaying}
+                      adjustments={adjustments}
+                      showOriginal={showOriginal}
+                      clipLabel={viewerClip?.label}
+                      onTimeUpdate={setCurrentTime}
+                      onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
+                      videoRef={videoRef}
+                      onMediaError={handleMediaError}
+                      preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
+                      seekHints={seekHints}
+                      clipTransform={clipTransform}
+                      viewerZoom={viewerZoom}
+                      showSafeAreas={showSafeAreas}
+                      aspectGuide={aspectGuide}
+                      showVUMeter={showVUMeter}
+                      frameBlendEnabled={frameBlendEnabled}
+                      clipSpeed={rampSpeed}
+                      motionBlurEnabled={motionBlurGlobal || (viewerClip?.motionBlurEnabled ?? false)}
+                      currentClipSpeed={rampSpeed}
+                      opticalFlowEnabled={opticalFlowEnabled}
+                      blendMode={viewerClip?.blendMode}
+                      titleClip={viewerClip?.contentType === 'title' ? {
+                        text: viewerClip.titleText ?? '',
+                        fontSize: viewerClip.titleFontSize ?? 48,
+                        color: viewerClip.titleColor ?? '#ffffff',
+                        bg: viewerClip.titleBg ?? 'transparent',
+                        position: viewerClip.titlePosition ?? 'center',
+                        animation: viewerClip.titleAnimation ?? 'none',
+                        localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
+                      } : undefined}
+                      onSeekRequest={handleSeek}
+                    />
+                  </div>
+                  {showColorScopes && (
+                    <div style={{ height: 140, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
+                      <ColorScopes videoRef={videoRef} isPlaying={isPlaying} scope={colorScopesType} onScopeChange={setColorScopesType} />
+                    </div>
+                  )}
                 </div>
+              )}
+
+              {/* Storyboard overlay */}
+              {showStoryboard && (
+                <StoryboardView
+                  items={timelineItems}
+                  mediaItems={mediaItems}
+                  selectedId={selectedId}
+                  onSelect={(id) => { handleSelectItem(id); setShowStoryboard(false) }}
+                  onSeek={handleSeek}
+                  onReorder={handleStoryboardReorder}
+                  onClose={() => setShowStoryboard(false)}
+                />
               )}
             </div>
 
@@ -1879,6 +2566,7 @@ export default function VideoEditor({
                 selectedItem={selectedItem} adjustments={adjustments} outputs={localOutputs}
                 onAdjustmentsChange={setAdjustmentsWithHistory}
                 onTransitionChange={handleTransitionChange}
+                onClipChange={handleClipChange}
                 importedFile={importedFile}
                 transcribeStatus={transcribeStatus}
                 transcribeProgress={transcribeProgress}
@@ -1900,7 +2588,11 @@ export default function VideoEditor({
                 onRenameChapter={handleRenameChapter}
                 onDeleteChapter={handleDeleteChapter}
                 onGenerateChapters={handleGenerateChapters}
+                onSpeedChange={handleClipSpeedChange}
                 isAudioOnly={isAudioOnly}
+                lutItems={mediaItems.filter(m => m.contentType === 'lut').map(m => ({ id: m.id, name: m.name }))}
+                audioDuckingEnabled={audioDuckingEnabled}
+                onAudioDuckingToggle={() => setAudioDuckingEnabled(v => !v)}
               />
             </div>
           </div>
@@ -1914,7 +2606,7 @@ export default function VideoEditor({
             activeTool={activeTool} snapEnabled={snapEnabled}
             inPoint={inPoint} outPoint={outPoint}
             hasCopied={!!clipboardRef.current}
-            onSeek={handleSeek} onSelectItem={setSelectedId}
+            onSeek={handleSeek} onSelectItem={handleSelectItem}
             onMoveItem={handleMoveItem} onTrimItem={handleTrimItem}
             onSplitItem={handleSplitItem}
             onZoomChange={setZoomLevel}
@@ -1931,6 +2623,12 @@ export default function VideoEditor({
             onCopyItem={handleCopyItem}
             onPasteItem={handlePasteItem}
             onDeleteTrack={handleDeleteTrack}
+            onTrackMuteToggle={handleTrackMuteToggle}
+            onTrackSoloToggle={handleTrackSoloToggle}
+            onTrackVolumeChange={handleTrackVolumeChange}
+            selectedIds={selectedIds}
+            onMultiSelect={setSelectedIds}
+            mediaItems={mediaItems}
           />
         </>
       )}
@@ -2017,7 +2715,21 @@ export default function VideoEditor({
           projectName={localProjectName}
           timelineItems={timelineItems}
           mediaItems={mediaItems}
+          captions={localCaptions}
+          inPoint={inPoint}
+          outPoint={outPoint}
           onClose={() => setShowExport(false)}
+        />
+      )}
+
+      {showRenderQueue && (
+        <RenderQueue
+          projectName={localProjectName}
+          timelineItems={timelineItems}
+          mediaItems={mediaItems}
+          inPoint={inPoint}
+          outPoint={outPoint}
+          onClose={() => setShowRenderQueue(false)}
         />
       )}
 

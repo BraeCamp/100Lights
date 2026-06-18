@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { PlusCircle, Film, Clock, FileText, ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X, Star } from 'lucide-react'
+import { PlusCircle, Film, Clock, FileText, ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X, Star, Pencil } from 'lucide-react'
 
 interface ProjectSummary {
   id: string
@@ -44,6 +44,29 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  function startRename(id: string, currentName: string) {
+    setRenamingId(id)
+    setRenameValue(currentName)
+  }
+
+  function commitRename(id: string) {
+    const trimmed = renameValue.trim()
+    setRenamingId(null)
+    if (!trimmed) return
+    const prev = projects.find(p => p.id === id)?.name
+    if (trimmed === prev) return
+    setProjects(ps => ps.map(p => p.id === id ? { ...p, name: trimmed } : p))
+    fetch(`/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: trimmed }),
+    }).catch(() => {
+      if (prev !== undefined) setProjects(ps => ps.map(p => p.id === id ? { ...p, name: prev } : p))
+    })
+  }
 
   function loadProjects() {
     setLoading(true)
@@ -172,7 +195,7 @@ export default function DashboardPage() {
               {recentProjects.map((project) => (
                 <div
                   key={project.id}
-                  className="flex items-center gap-4 p-4 rounded-xl border transition-all"
+                  className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
                   style={{ background: 'var(--bg-card)', borderColor: project.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
                 >
                   <Link href={`/projects/${project.id}`} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
@@ -181,13 +204,41 @@ export default function DashboardPage() {
                       : <Film size={16} color="var(--text-secondary)" />
                     }
                   </Link>
-                  <Link href={`/projects/${project.id}`} className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{project.name}</div>
+                  <div className="flex-1 min-w-0">
+                    {renamingId === project.id ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onBlur={() => commitRename(project.id)}
+                        onKeyDown={e => { if (e.key === 'Enter') commitRename(project.id); if (e.key === 'Escape') setRenamingId(null) }}
+                        className="text-sm font-medium bg-transparent outline-none border-b w-full"
+                        style={{ color: 'var(--text-primary)', borderColor: 'var(--accent)' }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <button
+                        className="text-sm font-medium truncate block w-full text-left hover:underline"
+                        style={{ color: 'var(--text-primary)' }}
+                        onClick={() => startRename(project.id, project.name)}
+                        title="Click to rename"
+                      >
+                        {project.name}
+                      </button>
+                    )}
                     <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                       {project.clips} clip{project.clips !== 1 ? 's' : ''} · {project.media} media file{project.media !== 1 ? 's' : ''}
                     </div>
-                  </Link>
-                  <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(project.savedAt)}</span>
+                  </div>
+                  <Link href={`/projects/${project.id}`} className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(project.savedAt)}</Link>
+                  <button
+                    onClick={() => startRename(project.id, project.name)}
+                    title="Rename project"
+                    className="p-1.5 rounded-lg shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    <Pencil size={13} />
+                  </button>
                   <button
                     onClick={() => {
                       setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))

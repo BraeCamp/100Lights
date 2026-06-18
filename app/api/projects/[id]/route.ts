@@ -17,12 +17,28 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return Response.json(rows[0].data as CfProjFile)
 }
 
-// PATCH /api/projects/:id — toggle starred
-export async function PATCH(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+// PATCH /api/projects/:id — toggle starred OR rename
+// Body: {} → toggle starred  |  { name: string } → rename
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  const body = await req.json().catch(() => ({})) as { name?: string }
+
+  if (body.name !== undefined) {
+    const name = body.name.trim().slice(0, 200)
+    if (!name) return Response.json({ error: 'Name cannot be empty' }, { status: 400 })
+    const rows = await sql`
+      UPDATE projects
+      SET name = ${name},
+          data = jsonb_set(data, '{name}', to_jsonb(${name}::text))
+      WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
+      RETURNING name
+    `
+    if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
+    return Response.json({ name: rows[0].name })
+  }
 
   const rows = await sql`
     UPDATE projects SET starred = NOT starred

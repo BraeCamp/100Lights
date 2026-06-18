@@ -1,6 +1,18 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Zap, Film, Mic, FileText, Camera, Newspaper, AlignLeft, ArrowRight, Check } from 'lucide-react'
 import PricingSection from '@/components/PricingSection'
+
+export const metadata: Metadata = {
+  title: 'AI Content Repurposing — Turn Video into Articles, Blog Posts & More',
+  description: 'Upload any video, podcast, or recording. 100Lights transcribes and generates articles, blog posts, show notes, and clips automatically.',
+  openGraph: {
+    title: '100Lights — AI Content Repurposing',
+    description: 'Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.',
+    url: 'https://100lights.com',
+  },
+  alternates: { canonical: 'https://100lights.com' },
+}
 
 const features = [
   { icon: Film, title: 'Video Clipping', description: 'AI identifies your best moments and cuts them into shareable clips automatically.', color: '#8b5cf6' },
@@ -51,9 +63,9 @@ export default function LandingPage() {
           AI-powered content repurposing
         </div>
         <h1 className="text-3xl sm:text-5xl font-bold leading-tight tracking-tight mb-6" style={{ color: 'var(--text-primary)' }}>
-          Turn hours of content into{' '}
+          AI content repurposing —{' '}
           <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            minutes of work
+            turn video into articles, blog posts & more
           </span>
         </h1>
         <p className="text-base sm:text-lg max-w-2xl mx-auto mb-10" style={{ color: 'var(--text-secondary)' }}>

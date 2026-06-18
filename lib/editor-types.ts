@@ -2,6 +2,12 @@ import type { Caption, ContentType } from '@/lib/types'
 
 export type TransitionType = 'dissolve' | 'dip_black' | 'wipe_right' | 'push'
 
+export interface ClipFlag {
+  id: string
+  color: string
+  label?: string
+}
+
 export interface TimelineItem {
   id: string
   label: string
@@ -16,6 +22,42 @@ export interface TimelineItem {
   transitionIn?: TransitionType
   transitionDuration?: number
   enabled?: boolean    // false = clip is muted/skipped in playback
+  speed?: number       // playback rate multiplier (default 1)
+  // Clip visual properties
+  opacity?: number     // 0–100, default 100
+  flipH?: boolean
+  flipV?: boolean
+  fadeIn?: number      // seconds
+  fadeOut?: number     // seconds
+  cropZoom?: number    // 100–400, default 100 (percent scale)
+  cropX?: number       // -50 to 50, default 0 (percent pan)
+  cropY?: number       // -50 to 50, default 0
+  flags?: ClipFlag[]   // colored clip markers
+  // Smoothness
+  speedPoints?: Array<{ t: number; speed: number }>  // velocity curve: t=0–1 fraction of clip, speed=multiplier
+  motionBlurEnabled?: boolean
+  // Compositing
+  blendMode?: string           // CSS mix-blend-mode value, e.g. 'multiply', 'screen', 'overlay'
+  // Ken Burns animated pan/zoom
+  kenBurns?: {
+    fromZoom: number   // starting cropZoom (100–400)
+    fromX: number      // starting cropX (-50 to 50)
+    fromY: number      // starting cropY (-50 to 50)
+    toZoom: number
+    toX: number
+    toY: number
+  }
+  // Title clip (contentType === 'title')
+  titleText?: string
+  titleFontSize?: number       // px, default 48
+  titleColor?: string          // hex, default '#ffffff'
+  titleBg?: string             // hex or 'transparent', default 'transparent'
+  titlePosition?: 'upper' | 'center' | 'lower-third'  // default 'center'
+  titleAnimation?: 'none' | 'fade' | 'slide-up'       // default 'none'
+  // Per-clip audio EQ (gain in dB: -12 to +12, 0 = flat)
+  eq?: { low: number; mid: number; high: number }
+  // LUT reference (id of a MediaItem with contentType === 'lut')
+  lutId?: string
 }
 
 export interface Track {
@@ -24,6 +66,9 @@ export interface Track {
   type: 'media' | 'video' | 'audio' | 'caption'  // 'video'/'audio' kept for backward compat
   height: number
   locked?: boolean
+  volume?: number   // 0–1 (default 1)
+  muted?: boolean
+  solo?: boolean
 }
 
 export interface MediaItem {
@@ -36,20 +81,35 @@ export interface MediaItem {
   thumbnail?: string   // base64 JPEG data URL; video only
   r2Key?: string       // R2 object key; set after successful upload
   uploadStatus?: 'uploading' | 'uploaded' | 'error'
+  peaks?: number[]     // audio waveform peak data (0–1 per band, 80 samples)
 }
 
 export interface VideoAdjustments {
   brightness: number   // 0–200, 100 = normal
   contrast: number     // 0–200, 100 = normal
   saturation: number   // 0–200, 100 = normal
-  highlights: number   // -100–100, 0 = normal
+  highlights: number   // -100–100, 0 = normal  (tone curve: highlights handle)
+  // Extended color controls
+  vignette: number     // 0–100, 0 = none
+  shadows: number      // -50–50, 0 = neutral  (tone curve: shadows handle)
+  midtones: number     // -50–50, 0 = neutral  (tone curve: midtones handle)
+  // Color wheel (master channel, CSS-approximated lift/gamma/gain)
+  lift: number         // -50–50, 0 = neutral (black point)
+  gamma: number        // 50–150, 100 = neutral (midpoint)
+  gain: number         // 50–150, 100 = neutral (white point)
 }
 
 export const DEFAULT_ADJUSTMENTS: VideoAdjustments = {
   brightness: 100,
-  contrast: 100,
+  contrast:   100,
   saturation: 100,
   highlights: 0,
+  vignette:   0,
+  shadows:    0,
+  midtones:   0,
+  lift:       0,
+  gamma:      100,
+  gain:       100,
 }
 
 export const PIXELS_PER_SECOND = 80
@@ -63,3 +123,55 @@ export const DEFAULT_TRACKS: Track[] = [
   { id: 'v1', label: 'M1', type: 'media', height: TRACK_HEIGHT },
   { id: 'a1', label: 'M2', type: 'media', height: TRACK_HEIGHT },
 ]
+
+// ── Modular project system ────────────────────────────────────
+
+export type ModuleKey = 'video' | 'audio' | 'transcript' | 'content' | 'storyboard'
+
+export interface ModuleDef {
+  key: ModuleKey
+  label: string
+  tagline: string
+  features: string[]
+  color: string
+}
+
+export const MODULE_DEFS: ModuleDef[] = [
+  {
+    key: 'video',
+    label: 'Video',
+    tagline: 'Timeline, color grading, effects',
+    features: ['Multi-track timeline', 'Color grading & LUTs', 'Transitions & effects', 'Export & render'],
+    color: '#8b5cf6',
+  },
+  {
+    key: 'audio',
+    label: 'Audio',
+    tagline: 'Waveform editing, mixing, EQ',
+    features: ['Waveform editor', 'Per-clip EQ', 'Volume automation', 'Silence detection'],
+    color: '#3b82f6',
+  },
+  {
+    key: 'transcript',
+    label: 'Transcript',
+    tagline: 'AI captions, speaker detection',
+    features: ['AI transcription', 'Speaker detection', 'Inline caption editing', 'Full-text search'],
+    color: '#10b981',
+  },
+  {
+    key: 'content',
+    label: 'Content',
+    tagline: 'Articles, blogs, show notes',
+    features: ['AI article generation', 'Blog posts', 'Show notes', 'Social captions'],
+    color: '#f59e0b',
+  },
+  {
+    key: 'storyboard',
+    label: 'Storyboard',
+    tagline: 'Visual planning & scenes',
+    features: ['Scene cards', 'Chapter markers', 'Shot list', 'Visual timeline'],
+    color: '#ec4899',
+  },
+]
+
+export const ALL_MODULE_KEYS: ModuleKey[] = MODULE_DEFS.map(m => m.key)

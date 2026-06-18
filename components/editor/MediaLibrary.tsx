@@ -31,8 +31,9 @@ export default function MediaLibrary({
   const MAX_BYTES = 500 * 1024 * 1024
 
   function validateFile(file: File): string {
-    if (!ACCEPTED_TYPES.some(t => file.type.startsWith(t)))
-      return `Unsupported file type "${file.type || file.name.split('.').pop()}". Upload a video or audio file.`
+    const isCube = file.name.toLowerCase().endsWith('.cube')
+    if (!isCube && !ACCEPTED_TYPES.some(t => file.type.startsWith(t)))
+      return `Unsupported file type "${file.type || file.name.split('.').pop()}". Upload a video, audio, or .cube LUT file.`
     if (file.size > MAX_BYTES)
       return `File is too large (${(file.size / 1024 / 1024).toFixed(0)} MB). Maximum size is 500 MB.`
     return ''
@@ -77,7 +78,7 @@ export default function MediaLibrary({
         >
           <FolderOpen size={11} /> Import
         </button>
-        <input ref={fileInputRef} type="file" accept="video/*,audio/*" className="hidden" onChange={handleFileInput} />
+        <input ref={fileInputRef} type="file" accept="video/*,audio/*,.cube" className="hidden" onChange={handleFileInput} />
       </div>
 
       {/* Import error */}
