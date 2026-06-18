@@ -4,17 +4,28 @@ import { deleteObjects } from '@/lib/r2'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 
 // GET /api/projects/:id
+// Returns the project's manually-saved data. If autosave_data exists and is
+// newer, also returns it as _cloudAutosave so the client can offer recovery.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
   const rows = await sql`
-    SELECT data FROM projects WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
+    SELECT data, autosave_data FROM projects WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
   `
 
   if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
-  return Response.json(rows[0].data as CfProjFile)
+
+  const data = rows[0].data as CfProjFile
+  const autosaveData = rows[0].autosave_data as CfProjFile | null
+
+  // Attach cloud autosave only when it is strictly newer than the saved copy
+  const savedAt = data?.savedAt ? new Date(data.savedAt).getTime() : 0
+  const autosaveAt = autosaveData?.savedAt ? new Date(autosaveData.savedAt).getTime() : 0
+  const cloudAutosave = autosaveData && autosaveAt > savedAt ? autosaveData : null
+
+  return Response.json({ ...data, ...(cloudAutosave ? { _cloudAutosave: cloudAutosave } : {}) })
 }
 
 // PATCH /api/projects/:id — toggle starred OR rename

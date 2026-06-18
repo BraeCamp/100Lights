@@ -439,9 +439,12 @@ export default function VideoEditor({
   const [showSaveMenu, setShowSaveMenu] = useState(false)
   const savedStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isDirty, setIsDirty] = useState(false)
-  const autoSaveTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const cloudAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const saveToCloudRef        = useRef<() => Promise<void>>(async () => {})
+  const autoSaveTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cloudAutoSaveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveToCloudRef          = useRef<() => Promise<void>>(async () => {})
+  const cloudAutoSaveFnRef      = useRef<() => Promise<void>>(async () => {})
+  // Holds the cloud autosave received in the project GET response, checked after mount
+  const pendingCloudAutosaveRef = useRef<CfProjFile | null>(null)
   // LUT functions loaded on-demand when the first .cube file is imported
   const lutFnsRef = useRef<{
     parseCube: (t: string) => LutData
@@ -449,7 +452,7 @@ export default function VideoEditor({
   } | null>(null)
 
   // Recovery state — set when a more-recent autosave is found on mount
-  const [recovery, setRecovery] = useState<{ cfproj: CfProjFile; at: Date } | null>(null)
+  const [recovery, setRecovery] = useState<{ cfproj: CfProjFile; at: Date; source: 'local' | 'cloud' } | null>(null)
   const [showExport, setShowExport] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
@@ -777,10 +780,16 @@ export default function VideoEditor({
       loadCfproj(stashed)
       return
     }
-    // Otherwise fetch directly from the API (normal cloud-saved project)
+    // Otherwise fetch directly from the API (normal cloud-saved project).
+    // The response may include _cloudAutosave if a newer autosave exists.
     fetch(`/api/projects/${projectId}`)
-      .then(r => r.ok ? r.text() : null)
-      .then(text => { if (text) loadCfproj(text) })
+      .then(async r => {
+        if (!r.ok) return
+        const raw = await r.json() as CfProjFile & { _cloudAutosave?: CfProjFile }
+        const { _cloudAutosave, ...project } = raw
+        if (_cloudAutosave) pendingCloudAutosaveRef.current = _cloudAutosave
+        loadCfproj(JSON.stringify(project))
+      })
       .catch(() => {})
       .finally(() => setIsLoadingProject(false))
   }, []) // eslint-disable-line
@@ -844,13 +853,20 @@ export default function VideoEditor({
   }
 
   // ── Recovery check on mount ────────────────────────────────
-  // If an autosave from a previous session exists, surface a banner so the
-  // user can choose to restore it. Runs after the cfproj-load effect so a
-  // freshly-opened project doesn't immediately trigger a false positive.
+  // Compare local localStorage autosave vs cloud autosave (from GET response),
+  // and surface whichever is newer as a recovery banner.
   useEffect(() => {
-    const saved = readAutosave(savedProjectId)
-    if (!saved) return
-    setRecovery({ cfproj: saved, at: new Date(saved.savedAt) })
+    const localSaved = readAutosave(savedProjectId)
+    const cloudSaved = pendingCloudAutosaveRef.current
+    const localAt  = localSaved?.savedAt  ? new Date(localSaved.savedAt)  : null
+    const cloudAt  = cloudSaved?.savedAt  ? new Date(cloudSaved.savedAt)  : null
+
+    if (!localAt && !cloudAt) return
+    if (cloudAt && (!localAt || cloudAt > localAt)) {
+      setRecovery({ cfproj: cloudSaved!, at: cloudAt, source: 'cloud' })
+    } else {
+      setRecovery({ cfproj: localSaved!, at: localAt!, source: 'local' })
+    }
   }, []) // eslint-disable-line
 
   // ── Dirty tracking + auto-save ─────────────────────────────
@@ -868,12 +884,13 @@ export default function VideoEditor({
       writeAutosave(savedProjectId, serialize(snapshot))
     }, 5000)
 
-    // Cloud auto-save: 30 s after last change, for any named project
+    // Cloud auto-save: 30 s after last change, writes to autosave_data column
+    // (separate from the manually-saved data column).
     const name = localProjectName.trim()
-    if (name && name !== 'New Project') {
+    if (name && name !== 'New Project' && projectId) {
       if (cloudAutoSaveTimerRef.current) clearTimeout(cloudAutoSaveTimerRef.current)
       cloudAutoSaveTimerRef.current = setTimeout(() => {
-        saveToCloudRef.current()
+        cloudAutoSaveFnRef.current()
       }, 30_000)
     }
   }, [timelineItems, tracks, adjustments, localCaptions, localOutputs, localProjectName]) // eslint-disable-line
@@ -1404,33 +1421,48 @@ export default function VideoEditor({
   }
 
   async function uploadMediaToR2(file: File, mediaId: string) {
+    // Some browsers return empty type for formats like .mkv or .avi;
+    // the presign route guesses from the extension when contentType is empty.
+    const contentType = file.type || ''
     try {
-      const res = await fetch('/api/media/presign-upload', {
+      const presignRes = await fetch('/api/media/presign-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, contentType: file.type, mediaId, size: file.size }),
+        body: JSON.stringify({ filename: file.name, contentType, mediaId, size: file.size }),
       })
-      if (res.status === 413) {
+      if (!presignRes.ok) {
+        const err = await presignRes.json().catch(() => ({})) as { error?: string }
+        const msg = presignRes.status === 413
+          ? 'File is too large. Maximum size is 500 MB.'
+          : (err.error ?? `Upload rejected (${presignRes.status})`)
         setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error' } : m))
-        setTranscribeError('File is too large. Maximum size is 500 MB.')
+        setTranscribeError(msg)
         return
       }
-      if (!res.ok) throw new Error('presign failed')
-      const { uploadUrl, key } = await res.json() as { uploadUrl: string; key: string }
+      const { uploadUrl, key } = await presignRes.json() as { uploadUrl: string; key: string }
 
-      await fetch(uploadUrl, {
+      // PUT directly to R2 via presigned URL. If your R2 bucket has no CORS
+      // policy, this PUT may fail — add a CORS rule in the Cloudflare dashboard
+      // allowing PUT from your app's origin.
+      const putRes = await fetch(uploadUrl, {
         method: 'PUT',
         body: file,
-        headers: { 'Content-Type': file.type },
+        headers: { 'Content-Type': contentType || 'application/octet-stream' },
       })
+      if (!putRes.ok) throw new Error(`R2 upload failed (${putRes.status})`)
 
       setMediaItems(prev => prev.map(m =>
         m.id === mediaId ? { ...m, r2Key: key, uploadStatus: 'uploaded' } : m
       ))
-    } catch {
-      setMediaItems(prev => prev.map(m =>
-        m.id === mediaId ? { ...m, uploadStatus: 'error' } : m
-      ))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed'
+      setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error' } : m))
+      // Surface a brief note if the error looks like a CORS/network block
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('CORS')) {
+        setTranscribeError('Upload blocked — configure R2 CORS to allow PUT from this origin, or contact support.')
+      } else {
+        setTranscribeError(msg)
+      }
     }
   }
 
@@ -1607,12 +1639,20 @@ export default function VideoEditor({
     setLocalOutputs(loaded.outputs)
     setChapters(loaded.chapters ?? [])
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
+    // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
+    if (recovery.source === 'cloud' && projectId) {
+      fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
+    }
     setRecovery(null)
     setIsDirty(true)
   }
 
   function handleDismissRecovery() {
-    clearAutosave(savedProjectId)
+    if (recovery?.source === 'cloud' && projectId) {
+      fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
+    } else {
+      clearAutosave(savedProjectId)
+    }
     setRecovery(null)
   }
 
@@ -1667,13 +1707,35 @@ export default function VideoEditor({
       if (!res.ok) throw new Error('Cloud save failed')
       posthog.capture('project_saved', { name: nameToUse })
       onDataSaved?.(project)
+      // Clear cloud autosave since the manual save is now canonical
+      if (projectId) {
+        fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
+      }
       flashSaved()
     } catch {
       setSaveStatus('error')
     }
   }
-  // Keep ref current so the 30-second auto-save timer always calls the latest version
+  // Keep refs current so timers always call the latest closure
   saveToCloudRef.current = () => saveToCloud({ silent: true })
+
+  async function cloudAutoSave() {
+    if (!projectId) return
+    const nameToUse = localProjectName.trim()
+    if (!nameToUse || nameToUse === 'New Project') return
+    try {
+      const snapshot = buildSnapshot()
+      snapshot.name = nameToUse
+      const project = serialize(snapshot)
+      project.modules = activeModules
+      await fetch(`/api/projects/${projectId}/autosave`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(project),
+      })
+    } catch { /* silent — autosave failures are non-critical */ }
+  }
+  cloudAutoSaveFnRef.current = cloudAutoSave
 
   /** Download a portable .cfproj backup file — not the primary save path. */
   async function downloadProjectFile() {
@@ -2195,8 +2257,10 @@ export default function VideoEditor({
           style={{ background: '#1c1400', borderBottom: '1px solid #3d2e00', color: '#fbbf24' }}
         >
           <span>
-            Unsaved changes from{' '}
-            <strong>{formatRelativeTime(recovery.at)}</strong> were found — your last session may have ended unexpectedly.
+            {recovery.source === 'cloud'
+              ? <>Cloud autosave from <strong>{formatRelativeTime(recovery.at)}</strong> found — restore to continue where you left off.</>
+              : <>Unsaved changes from <strong>{formatRelativeTime(recovery.at)}</strong> were found — your last session may have ended unexpectedly.</>
+            }
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <button

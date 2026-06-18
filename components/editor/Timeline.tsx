@@ -182,20 +182,25 @@ export default function Timeline({
     const el = trackAreaRef.current
     if (!el) return
 
-    const startClientX = e.clientX
     const startClientY = e.clientY
-    // Anchor: timeline time at the initial click position
-    const startTime   = xToTime(e.clientX - el.getBoundingClientRect().left - LABEL_WIDTH + el.scrollLeft)
-    onSeek(startTime)
+    // Accumulated time starts at the clicked position
+    let accTime = xToTime(e.clientX - el.getBoundingClientRect().left - LABEL_WIDTH + el.scrollLeft)
+    let lastClientX = e.clientX
+    onSeek(accTime)
     setScrubSpeed(1)
 
     const onMove = (ev: PointerEvent) => {
+      // Vertical offset from initial click sets the speed multiplier.
+      // Moving UP from start = faster; moving DOWN = slower.
+      // Each call only accumulates the NEW horizontal delta since the last event,
+      // so changing speed never retroactively shifts the playhead position.
       const deltaY = ev.clientY - startClientY
-      // 100 px down → ¼× speed (fine); 100 px up → 4× speed (coarse)
       const factor = Math.pow(4, -deltaY / 100)
+      const dX = ev.clientX - lastClientX
+      lastClientX = ev.clientX
+      accTime = Math.max(0, accTime + (dX * factor) / pps)
       setScrubSpeed(factor)
-      const seekTime = Math.max(0, startTime + (ev.clientX - startClientX) * factor / pps)
-      onSeek(seekTime)
+      onSeek(accTime)
     }
     const onUp = () => {
       setScrubSpeed(null)
@@ -204,7 +209,6 @@ export default function Timeline({
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
-
   }
 
   // ── Clip drag (select tool only) ─────────────────────────────

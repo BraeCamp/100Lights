@@ -12,10 +12,24 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { filename, contentType, mediaId } = body
-  if (!filename || !contentType || !mediaId) {
+  const { filename, mediaId } = body
+  if (!filename || !mediaId) {
     return Response.json({ error: 'Missing required fields' }, { status: 400 })
   }
+
+  // Resolve content type — browsers sometimes return empty string for formats
+  // like .mkv or .avi, so we fall back to extension-based guessing.
+  const EXT_TO_MIME: Record<string, string> = {
+    '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.m4v': 'video/x-m4v',
+    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.flac': 'audio/flac',
+    '.aac': 'audio/aac', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg',
+    '.opus': 'audio/opus', '.wma': 'audio/x-ms-wma',
+  }
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : ''
+  const resolvedType: string = (body.contentType && body.contentType.includes('/'))
+    ? body.contentType
+    : (EXT_TO_MIME[ext] ?? '')
 
   // Namespace by userId so users can only access their own files
   // 500 MB limit
@@ -26,12 +40,12 @@ export async function POST(req: Request) {
   }
 
   const ALLOWED = ['video/', 'audio/']
-  if (!ALLOWED.some(p => contentType.startsWith(p))) {
-    return Response.json({ error: 'Only video and audio files are accepted.' }, { status: 415 })
+  if (!ALLOWED.some(p => resolvedType.startsWith(p))) {
+    return Response.json({ error: `Unsupported file type (${resolvedType || ext || 'unknown'}). Upload a video or audio file.` }, { status: 415 })
   }
 
-  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : ''
   const key = `${userId}/${mediaId}${ext}`
+  const contentType = resolvedType
 
   // Presign for 15 minutes — the browser uploads immediately after receiving this
   const uploadUrl = await presignUpload(key, contentType, 900)

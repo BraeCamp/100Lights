@@ -120,16 +120,21 @@ export default function AudioEditor({
   // ── R2 upload ────────────────────────────────────────────────
 
   async function uploadToR2(file: File, trackId: string) {
+    const contentType = file.type || ''
     try {
-      const mediaId = trackId
-      const res = await fetch('/api/media/presign-upload', {
+      const presignRes = await fetch('/api/media/presign-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, contentType: file.type, mediaId, size: file.size }),
+        body: JSON.stringify({ filename: file.name, contentType, mediaId: trackId, size: file.size }),
       })
-      if (!res.ok) throw new Error('presign failed')
-      const { uploadUrl, key } = await res.json() as { uploadUrl: string; key: string }
-      await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+      if (!presignRes.ok) throw new Error(`presign failed (${presignRes.status})`)
+      const { uploadUrl, key } = await presignRes.json() as { uploadUrl: string; key: string }
+      const putRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': contentType || 'application/octet-stream' },
+      })
+      if (!putRes.ok) throw new Error(`R2 upload failed (${putRes.status})`)
       setTracks(prev => prev.map(t =>
         t.id === trackId ? { ...t, r2Key: key, uploadStatus: 'uploaded' as const, savedAt: new Date().toISOString() } : t
       ))
