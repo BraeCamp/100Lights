@@ -31,6 +31,7 @@ interface Props {
   onDeleteItem: (id: string) => void
   onRippleDelete: (id: string) => void
   onDropMedia: (mediaId: string, trackId: string, startTime: number) => void
+  onCreateFocusClip?: (trackId: string, startTime: number, duration: number) => void
   onAddTrack: (type?: string) => void
   onSnapToggle: () => void
   onContextMenu: (e: React.MouseEvent, items: ContextMenuItem[]) => void
@@ -130,10 +131,12 @@ export default function Timeline({
   onTrackMuteToggle, onTrackSoloToggle, onTrackVolumeChange, selectedIds, onMultiSelect, mediaItems,
   playbackRate = 1,
   syncAnchorRef: syncAnchorRefProp,
+  onCreateFocusClip,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [creatingFocus, setCreatingFocus] = useState<{ trackId: string; x0: number; x1: number } | null>(null)
   // null = not scrubbing; number = current scrub speed multiplier (1 = normal)
   const [scrubSpeed, setScrubSpeed] = useState<number | null>(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
@@ -653,8 +656,36 @@ export default function Timeline({
                       cursor: bladeCursor && !track.locked ? 'crosshair' : 'default',
                       transition: 'background 0.1s',
                     }}
-                    // Blade click on empty track area
                     onPointerDown={(e) => {
+                      // Draw Focus: drag on empty area to create a new focus range
+                      if (track.type === 'drawfocus' && !bladeCursor) {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const scrollLeft = trackAreaRef.current?.scrollLeft ?? 0
+                        const x0 = e.clientX - rect.left + scrollLeft
+                        const tHit = xToTime(x0)
+                        const hitClip = trackItems.find(i => tHit >= i.startTime && tHit < i.startTime + (i.outPoint - i.inPoint))
+                        if (!hitClip) {
+                          e.stopPropagation()
+                          let x1 = x0
+                          setCreatingFocus({ trackId: track.id, x0, x1 })
+                          const onMove = (ev: PointerEvent) => {
+                            x1 = ev.clientX - rect.left + (trackAreaRef.current?.scrollLeft ?? 0)
+                            setCreatingFocus({ trackId: track.id, x0, x1 })
+                          }
+                          const onUp = () => {
+                            document.removeEventListener('pointermove', onMove)
+                            document.removeEventListener('pointerup', onUp)
+                            const s = xToTime(Math.min(x0, x1))
+                            const d = xToTime(Math.max(x0, x1)) - s
+                            if (d > 0.1) onCreateFocusClip?.(track.id, s, d)
+                            setCreatingFocus(null)
+                          }
+                          document.addEventListener('pointermove', onMove)
+                          document.addEventListener('pointerup', onUp)
+                          return
+                        }
+                      }
+                      // Blade click on empty track area
                       if (!bladeCursor || track.locked) return
                       e.stopPropagation()
                       const clickTime = bladeClickTime(e)
@@ -664,7 +695,7 @@ export default function Timeline({
                       if (target) onSplitItem(target.id, clickTime)
                     }}
                     onDragOver={(e) => {
-                      if (track.locked) return
+                      if (track.locked || track.type === 'drawfocus') return
                       e.preventDefault(); e.dataTransfer.dropEffect = 'copy'
                       const rect = e.currentTarget.getBoundingClientRect()
                       setDropIndicator({ trackId: track.id, x: e.clientX - rect.left + (trackAreaRef.current?.scrollLeft ?? 0) })
@@ -672,6 +703,7 @@ export default function Timeline({
                     onDragLeave={() => setDropIndicator(null)}
                     onDrop={(e) => {
                       e.preventDefault(); setDropIndicator(null)
+                      if (track.type === 'drawfocus') return
                       const mediaId = e.dataTransfer.getData('mediaId')
                       if (!mediaId) return
                       const rect = e.currentTarget.getBoundingClientRect()
@@ -710,6 +742,54 @@ export default function Timeline({
                       const clipOpacity = dragging ? 0.75 : disabled ? 0.45 : ((item.opacity ?? 100) / 100)
                       const fadeInW    = item.fadeIn  ? Math.min(timeToX(item.fadeIn),  width - 4) : 0
                       const fadeOutW   = item.fadeOut ? Math.min(timeToX(item.fadeOut), width - 4) : 0
+
+                      // Draw Focus track: render as a thin focus strip, not a media block
+                      if (track.type === 'drawfocus') {
+                        return (
+                          <div
+                            key={item.id}
+                            style={{
+                              position: 'absolute', left, width,
+                              top: '50%', transform: 'translateY(-50%)',
+                              height: 12, borderRadius: 6,
+                              background: selected ? '#a78bfa' : 'rgba(167,139,250,0.5)',
+                              cursor: bladeCursor ? 'crosshair' : (dragging ? 'grabbing' : 'grab'),
+                              opacity: dragging ? 0.65 : 1,
+                              boxShadow: selected ? '0 0 0 1.5px #c4b5fd, 0 0 10px rgba(167,139,250,0.3)' : 'none',
+                              userSelect: 'none', overflow: 'visible',
+                              transition: dragging ? 'none' : 'box-shadow 0.1s',
+                            }}
+                            onPointerDown={(e) => {
+                              if (bladeCursor) { e.stopPropagation(); onSplitItem(item.id, bladeClickTime(e)); return }
+                              if (e.shiftKey && onMultiSelect) {
+                                e.stopPropagation()
+                                const next = new Set(selectedIds ?? (selectedId ? [selectedId] : []))
+                                next.has(item.id) ? next.delete(item.id) : next.add(item.id)
+                                onMultiSelect(next)
+                                return
+                              }
+                              startDrag(e, 'move', item)
+                            }}
+                            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onSelectItem(item.id); onContextMenu(e, getClipMenu(item)) }}
+                          >
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', overflow: 'hidden' }}>
+                              <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.9)' }}>⊙</span>
+                            </div>
+                            <div
+                              style={{ position: 'absolute', left: 0, top: -5, bottom: -5, width: 8, cursor: 'w-resize', zIndex: 3 }}
+                              onPointerDown={(e) => { e.stopPropagation(); if (!bladeCursor) startDrag(e, 'trim-in', item) }}
+                            >
+                              <div style={{ position: 'absolute', left: 2, top: '50%', transform: 'translateY(-50%)', width: 3, height: 18, background: 'rgba(255,255,255,0.65)', borderRadius: 2 }} />
+                            </div>
+                            <div
+                              style={{ position: 'absolute', right: 0, top: -5, bottom: -5, width: 8, cursor: 'e-resize', zIndex: 3 }}
+                              onPointerDown={(e) => { e.stopPropagation(); if (!bladeCursor) startDrag(e, 'trim-out', item) }}
+                            >
+                              <div style={{ position: 'absolute', right: 2, top: '50%', transform: 'translateY(-50%)', width: 3, height: 18, background: 'rgba(255,255,255,0.65)', borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        )
+                      }
 
                       return (
                         <div key={item.id}>
@@ -864,6 +944,20 @@ export default function Timeline({
                         </div>
                       )
                     })}
+
+                    {/* Focus range creation preview */}
+                    {creatingFocus?.trackId === track.id && (
+                      <div style={{
+                        position: 'absolute',
+                        left: Math.min(creatingFocus.x0, creatingFocus.x1),
+                        width: Math.max(4, Math.abs(creatingFocus.x1 - creatingFocus.x0)),
+                        top: '50%', transform: 'translateY(-50%)',
+                        height: 12, borderRadius: 6,
+                        background: 'rgba(167,139,250,0.2)',
+                        border: '1px dashed rgba(167,139,250,0.7)',
+                        pointerEvents: 'none',
+                      }} />
+                    )}
 
                     {/* Drop cursor */}
                     {dropIndicator?.trackId === track.id && (

@@ -1745,6 +1745,29 @@ export default function VideoEditor({
     setTlHeight(h => Math.min(MAX_TL, h + TRACK_HEIGHT))
   }
 
+  function handleCreateFocusClip(trackId: string, startTime: number, duration: number) {
+    const n = timelineItems.filter(i => {
+      const t = tracks.find(tr => tr.id === i.trackId)
+      return t?.type === 'drawfocus'
+    }).length + 1
+    const newItem: TimelineItem = {
+      id: `df-${Date.now()}`,
+      trackId,
+      startTime,
+      inPoint: 0,
+      outPoint: duration,
+      label: `Focus ${n}`,
+      color: '#a78bfa',
+      captions: [],
+      enabled: true,
+      focusX: 0.5,
+      focusY: 0.5,
+      focusRadius: 0.2,
+    }
+    setTimelineItems(prev => [...prev, newItem])
+    setSelectedId(newItem.id)
+  }
+
   async function handleTranscribe() {
     if (transcribeStatus === 'transcribing') return
     const media = selectedMediaId ? mediaItems.find(m => m.id === selectedMediaId) : null
@@ -2891,6 +2914,7 @@ export default function VideoEditor({
             onDeleteItem={(id) => { setTimelineItems(p => p.filter(i => i.id !== id)); setSelectedId(null) }}
             onRippleDelete={handleRippleDelete}
             onDropMedia={handleDropMedia}
+            onCreateFocusClip={handleCreateFocusClip}
             onAddTrack={handleAddTrack}
             onSnapToggle={() => setSnapEnabled(s => !s)}
             onContextMenu={openCtx}
