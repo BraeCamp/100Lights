@@ -50,6 +50,7 @@ interface Props {
   onMultiSelect?: (ids: Set<string>) => void
   mediaItems?: MediaItem[]
   playbackRate?: number
+  syncAnchorRef?: React.MutableRefObject<{ time: number; wall: number }>
 }
 
 const LABEL_WIDTH = 64
@@ -128,6 +129,7 @@ export default function Timeline({
   onDuplicateItem, onRenameItem, onToggleEnabled, onChangeColor, onCopyItem, onPasteItem, onDeleteTrack,
   onTrackMuteToggle, onTrackSoloToggle, onTrackVolumeChange, selectedIds, onMultiSelect, mediaItems,
   playbackRate = 1,
+  syncAnchorRef: syncAnchorRefProp,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
@@ -178,7 +180,11 @@ export default function Timeline({
     }
 
     function tick() {
-      const { time, wall } = syncRef.current
+      // Prefer the direct anchor (wall time captured at the exact timeupdate event)
+      // over the effect-based syncRef (which is set ~1 frame later via React).
+      const direct = syncAnchorRefProp?.current
+      const effect = syncRef.current
+      const { time, wall } = (direct && direct.wall >= effect.wall) ? direct : effect
       const elapsed = isPlayingRef.current ? (performance.now() - wall) / 1000 : 0
       applyX((time + elapsed * playbackRateRef.current) * ppsRef.current)
       rafId = requestAnimationFrame(tick)

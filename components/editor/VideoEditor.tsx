@@ -411,7 +411,10 @@ export default function VideoEditor({
   projectId, projectName, videoUrl, captions: propCaptions, clips, outputs: propOutputs, modules: modulesProp,
   contentType: propContentType, allowImport, onModulesChange, onDataSaved,
 }: Props) {
-  const videoRef    = useRef<HTMLVideoElement | null>(null)
+  const videoRef      = useRef<HTMLVideoElement | null>(null)
+  // Captures sync wall-time at the exact moment onTimeUpdate fires (before React re-render latency).
+  // Passed to Timeline so its RAF tick doesn't drift between timeupdate events.
+  const tlSyncRef     = useRef<{ time: number; wall: number }>({ time: 0, wall: performance.now() })
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -1432,6 +1435,13 @@ export default function VideoEditor({
     setCurrentTime(t)
     const v = videoRef.current
     if (v) v.currentTime = Math.max(0, t - clipTimeOffsetRef.current)
+  }, [])
+
+  // Captures the exact wall-clock moment the video fires timeupdate so Timeline's RAF
+  // interpolation doesn't drift due to React re-render latency (~16ms per frame).
+  const handleTimeUpdate = useCallback((t: number) => {
+    tlSyncRef.current = { time: t, wall: performance.now() }
+    setCurrentTime(t)
   }, [])
 
   // ── Timeline item operations ──────────────────────────────────
@@ -2654,24 +2664,6 @@ export default function VideoEditor({
                   >MBlur</button>
                 )}
 
-                {/* Viewer zoom */}
-                {viewportTab === 'video' && !isAudioOnly && (
-                  <div className="flex items-center gap-0.5 mr-2">
-                    {([0.5, 1, 1.5] as const).map(z => (
-                      <button key={z}
-                        onClick={() => setViewerZoom(z)}
-                        className="px-1.5 py-0.5 rounded text-xs font-mono"
-                        title={`Viewer zoom ${z}×`}
-                        style={{
-                          color: viewerZoom === z ? 'var(--accent-light)' : 'var(--text-muted)',
-                          background: viewerZoom === z ? 'var(--accent-subtle)' : 'transparent',
-                          border: `1px solid ${viewerZoom === z ? 'rgba(139,92,246,0.3)' : 'transparent'}`,
-                        }}
-                      >{z}×</button>
-                    ))}
-                  </div>
-                )}
-
                 {/* Storyboard view */}
                 {hasStoryboard && (
                   <button
@@ -2719,7 +2711,7 @@ export default function VideoEditor({
                       adjustments={adjustments}
                       showOriginal={showOriginal}
                       clipLabel={viewerClip?.label}
-                      onTimeUpdate={setCurrentTime}
+                      onTimeUpdate={handleTimeUpdate}
                       onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
                       videoRef={videoRef}
                       onMediaError={handleMediaError}
@@ -2727,6 +2719,7 @@ export default function VideoEditor({
                       seekHints={seekHints}
                       clipTransform={clipTransform}
                       viewerZoom={viewerZoom}
+                      onViewerZoomChange={setViewerZoom}
                       showSafeAreas={showSafeAreas}
                       aspectGuide={aspectGuide}
                       showVUMeter={showVUMeter}
@@ -2786,7 +2779,7 @@ export default function VideoEditor({
                       adjustments={adjustments}
                       showOriginal={showOriginal}
                       clipLabel={viewerClip?.label}
-                      onTimeUpdate={setCurrentTime}
+                      onTimeUpdate={handleTimeUpdate}
                       onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
                       videoRef={videoRef}
                       onMediaError={handleMediaError}
@@ -2794,6 +2787,7 @@ export default function VideoEditor({
                       seekHints={seekHints}
                       clipTransform={clipTransform}
                       viewerZoom={viewerZoom}
+                      onViewerZoomChange={setViewerZoom}
                       showSafeAreas={showSafeAreas}
                       aspectGuide={aspectGuide}
                       showVUMeter={showVUMeter}
@@ -2886,6 +2880,7 @@ export default function VideoEditor({
             duration={duration} currentTime={currentTime} isPlaying={isPlaying} selectedId={selectedId}
             zoomLevel={zoomLevel} height={tlHeight}
             playbackRate={playbackRate}
+            syncAnchorRef={tlSyncRef}
             activeTool={activeTool} snapEnabled={snapEnabled}
             inPoint={inPoint} outPoint={outPoint}
             hasCopied={!!clipboardRef.current}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react'
-import { Play, Pause, SkipBack, Mic, Film } from 'lucide-react'
+import { Play, Pause, SkipBack, Mic, Film, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Caption, ContentType } from '@/lib/types'
 import type { VideoAdjustments } from '@/lib/editor-types'
 
@@ -75,6 +75,7 @@ interface Props {
   onPlaybackRateChange?: (rate: number) => void
   activeFocusClip?: { x: number; y: number; radius: number }
   onSetFocusPoint?: (x: number, y: number) => void
+  onViewerZoomChange?: (z: number) => void
 }
 
 function buildFilter(adj?: VideoAdjustments): string {
@@ -179,6 +180,7 @@ export default function VideoPlayer({
   onPlaybackRateChange,
   activeFocusClip,
   onSetFocusPoint,
+  onViewerZoomChange,
 }: Props) {
   // Tracks cumulative full-loop offsets so onTimeUpdate reports monotonically
   // increasing timeline time even as video.currentTime wraps back to 0.
@@ -797,9 +799,9 @@ export default function VideoPlayer({
           </div>
         )}
 
-        {/* VU Meter */}
+        {/* VU Meter — left side so right-side toolbars stay clear */}
         {showVUMeter && (
-          <div style={{ position: 'absolute', right: 8, top: 8, bottom: 36, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
+          <div style={{ position: 'absolute', left: 8, top: 8, bottom: 8, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
             {vuLevels.map((lvl, i) => (
               <div key={i} style={{ width: 8, height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                 <div style={{
@@ -857,6 +859,81 @@ export default function VideoPlayer({
             )}
           </div>
         )}
+
+        {/* ── Right-side vertical toolbars ─────────────────────────── */}
+        {/* Zoom bar */}
+        {onViewerZoomChange && (
+          <div style={{
+            position: 'absolute', right: 52, top: '50%', transform: 'translateY(-50%)',
+            zIndex: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            background: 'rgba(10,10,10,0.75)', backdropFilter: 'blur(10px)',
+            borderRadius: 10, padding: '8px 5px',
+            border: '1px solid rgba(255,255,255,0.07)',
+          }}>
+            <button
+              tabIndex={-1}
+              onClick={() => onViewerZoomChange(Math.min(2, Math.round((viewerZoom + 0.25) * 100) / 100))}
+              style={{ color: '#888', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
+              title="Zoom in"
+            >
+              <ZoomIn size={13} />
+            </button>
+            <span style={{ fontSize: 9, color: '#555', fontFamily: 'monospace', lineHeight: 1 }}>{viewerZoom}×</span>
+            <button
+              tabIndex={-1}
+              onClick={() => onViewerZoomChange(Math.max(0.25, Math.round((viewerZoom - 0.25) * 100) / 100))}
+              style={{ color: '#888', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
+              title="Zoom out"
+            >
+              <ZoomOut size={13} />
+            </button>
+          </div>
+        )}
+
+        {/* Playback bar */}
+        <div style={{
+          position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+          zIndex: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+          background: 'rgba(10,10,10,0.75)', backdropFilter: 'blur(10px)',
+          borderRadius: 10, padding: '8px 5px',
+          border: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <button
+            tabIndex={-1}
+            onClick={() => { if (activeEl) activeEl.currentTime = 0; onTimeUpdate(timeOffset) }}
+            style={{ color: '#666', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
+            title="Return to start (Home)"
+          >
+            <SkipBack size={13} />
+          </button>
+          <button
+            tabIndex={-1}
+            onClick={() => isPlaying ? onPause() : onPlay()}
+            style={{
+              width: 30, height: 30, borderRadius: 8,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'var(--accent)', border: 'none', cursor: 'pointer',
+            }}
+            title={isPlaying ? 'Pause (K / Space)' : 'Play (L / Space)'}
+          >
+            {isPlaying ? <Pause size={13} color="#fff" /> : <Play size={13} color="#fff" />}
+          </button>
+          <div style={{ width: 20, height: 1, background: 'rgba(255,255,255,0.08)', margin: '1px 0' }} />
+          {([0.5, 1, 1.5, 2] as const).map(rate => (
+            <button
+              key={rate}
+              tabIndex={-1}
+              onClick={() => onPlaybackRateChange?.(rate)}
+              style={{
+                fontSize: 9, fontFamily: 'monospace', cursor: 'pointer',
+                color: playbackRate === rate ? 'var(--accent-light)' : '#444',
+                background: playbackRate === rate ? 'rgba(139,92,246,0.2)' : 'none',
+                border: `1px solid ${playbackRate === rate ? 'rgba(139,92,246,0.35)' : 'transparent'}`,
+                borderRadius: 4, padding: '2px 4px', width: 28, textAlign: 'center',
+              }}
+            >{rate}×</button>
+          ))}
+        </div>
       </div>
 
       {/* ── Timecode strip ───────────────────────────────────────── */}
@@ -892,48 +969,6 @@ export default function VideoPlayer({
         </span>
       </div>
 
-      {/* ── Transport bar ────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 px-4 py-2 shrink-0" style={{ borderTop: '1px solid #1e1e1e', background: '#111' }}>
-        <button
-          tabIndex={-1}
-          onClick={() => {
-            if (activeEl) activeEl.currentTime = 0
-            onTimeUpdate(timeOffset)
-          }}
-          className="p-1.5 rounded"
-          style={{ color: '#666' }}
-          title="Return to start (Home)"
-        >
-          <SkipBack size={14} />
-        </button>
-        <button
-          tabIndex={-1}
-          onClick={() => isPlaying ? onPause() : onPlay()}
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: 'var(--accent)' }}
-          title={isPlaying ? 'Pause (K / Space)' : 'Play (L / Space)'}
-        >
-          {isPlaying ? <Pause size={14} color="#fff" /> : <Play size={14} color="#fff" />}
-        </button>
-        <div className="flex items-center gap-0.5 flex-1 justify-center">
-          {([0.5, 1, 1.5, 2] as const).map(rate => (
-            <button
-              key={rate}
-              tabIndex={-1}
-              onClick={() => onPlaybackRateChange?.(rate)}
-              className="px-2 py-0.5 rounded font-mono"
-              style={{
-                fontSize: 10,
-                background: playbackRate === rate ? 'rgba(139,92,246,0.2)' : 'transparent',
-                color: playbackRate === rate ? 'var(--accent-light)' : '#444',
-                border: `1px solid ${playbackRate === rate ? 'rgba(139,92,246,0.35)' : 'transparent'}`,
-                cursor: 'pointer',
-              }}
-            >{rate}×</button>
-          ))}
-        </div>
-        <span className="text-xs font-mono shrink-0" style={{ color: '#333', fontSize: 9 }}>J·K·L</span>
-      </div>
     </div>
   )
 }
