@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
-import VideoEditor from '@/components/editor/VideoEditor'
+import ProjectEditor from '@/components/editor/ProjectEditor'
 import PipelineView from '@/components/pipeline/PipelineView'
 import { createDemoPipeline, MOCK_CAPTIONS, MOCK_OUTPUTS, MOCK_CLIPS } from '@/lib/mock'
 import type { PipelineStep, Caption, Output, Clip } from '@/lib/types'
@@ -103,12 +103,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <VideoEditor
+      <ProjectEditor
         projectId={id}
         projectName={isDemo ? 'The Creator Mindset — Demo' : '…'}
-        videoUrl={null}
+        modules={isDemo ? ['video', 'audio', 'transcript', 'content', 'storyboard'] : ['video']}
         allowImport={!isDemo}
-        {...demoProps}
       />
     </div>
   )

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Film, AudioLines, FileText, Newspaper, PanelsTopBottom, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
-import VideoEditor from '@/components/editor/VideoEditor'
+import ProjectEditor from '@/components/editor/ProjectEditor'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
@@ -28,14 +28,10 @@ export default function NewProjectPage() {
   if (phase === 'edit') {
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <VideoEditor
+        <ProjectEditor
           projectName={projectName.trim() || 'New Project'}
-          videoUrl={null}
-          captions={[]}
-          clips={[]}
-          outputs={[]}
-          allowImport
           modules={selected}
+          allowImport
         />
       </div>
     )
