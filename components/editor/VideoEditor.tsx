@@ -1116,7 +1116,14 @@ export default function VideoEditor({
       if (kf[mid].time <= localTime) lo = mid; else hi = mid
     }
     const t = (localTime - kf[lo].time) / (kf[hi].time - kf[lo].time)
-    return { x: kf[lo].x + t * (kf[hi].x - kf[lo].x), y: kf[lo].y + t * (kf[hi].y - kf[lo].y) }
+    // Catmull-Rom spline — clamp phantom points at ends to avoid overshoot
+    const p0 = kf[Math.max(0, lo - 1)]
+    const p1 = kf[lo]
+    const p2 = kf[hi]
+    const p3 = kf[Math.min(kf.length - 1, hi + 1)]
+    const cr = (a: number, b: number, c: number, d: number) =>
+      0.5 * ((2*b) + (-a + c)*t + (2*a - 5*b + 4*c - d)*t*t + (-a + 3*b - 3*c + d)*t*t*t)
+    return { x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y) }
   }
 
   const selectedDrawFocusItem = useMemo(() => {
@@ -1153,10 +1160,14 @@ export default function VideoEditor({
   function handleSetFocusPoint(x: number, y: number) {
     if (!selectedDrawFocusItem) return
     if (focusRecordingRef.current) {
-      // Throttle to ~30fps based on timeline time
-      if (currentTime - lastFocusKfTimeRef.current < 1 / 30) return
-      lastFocusKfTimeRef.current = currentTime
-      focusBufferRef.current.push({ time: currentTime - selectedDrawFocusItem.startTime, x, y })
+      // Throttle by wall clock so we record at ~30fps regardless of timeupdate rate
+      const wallNow = performance.now()
+      if (wallNow - lastFocusKfTimeRef.current < 1000 / 30) return
+      lastFocusKfTimeRef.current = wallNow
+      // Derive accurate timeline time from the sync anchor + elapsed wall time
+      const liveTime = tlSyncRef.current.time +
+        (wallNow - tlSyncRef.current.wall) / 1000 * playbackRate
+      focusBufferRef.current.push({ time: liveTime - selectedDrawFocusItem.startTime, x, y })
     } else {
       // Paused — update static position
       handleClipChange(selectedDrawFocusItem.id, { focusX: x, focusY: y })
@@ -1167,7 +1178,7 @@ export default function VideoEditor({
     if (!isPlaying || !selectedDrawFocusItem) return
     focusRecordingRef.current = true
     focusBufferRef.current = []
-    lastFocusKfTimeRef.current = 0
+    lastFocusKfTimeRef.current = 0  // 0 ensures first keyframe is captured immediately
   }
 
   function handleFocusRecordEnd() {
