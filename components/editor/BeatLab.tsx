@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown } from 'lucide-react'
 import type { BeatHit, BeatAnalysis, BeatType } from '@/lib/beat-analyzer'
-import { analyzeBeats, triggerHit } from '@/lib/beat-analyzer'
+import { analyzeBeats } from '@/lib/beat-analyzer'
+import { playDrumHit, DRUM_PACKS, type PackId } from '@/lib/drum-samples'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,18 @@ const TYPE_LABELS: Record<BeatType, string> = {
   other: 'Other',
 }
 
+// Piano roll note range (C2–C6)
+const NOTE_MIN = 36
+const NOTE_MAX = 84
+const NOTE_RANGE = NOTE_MAX - NOTE_MIN
+const LANE_HEIGHT = 96
+
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+function midiName(note: number) {
+  return `${NOTE_NAMES[note % 12]}${Math.floor(note / 12) - 1}`
+}
+
 type Phase = 'idle' | 'recording' | 'analyzing' | 'editing'
 
 // ── Helper: decode a Blob to AudioBuffer ─────────────────────────────────────
@@ -37,12 +50,19 @@ async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
 
 // ── Time ruler tick labels ────────────────────────────────────────────────────
 
-function RulerTicks({ duration, px }: { duration: number; px: number }) {
+function RulerTicks({ duration, px, onSeek }: { duration: number; px: number; onSeek?: (t: number) => void }) {
   const step = duration <= 4 ? 0.5 : duration <= 10 ? 1 : 2
   const ticks: number[] = []
   for (let t = 0; t <= duration; t += step) ticks.push(t)
   return (
-    <div style={{ position: 'relative', height: 18, borderBottom: '1px solid var(--border)' }}>
+    <div
+      style={{ position: 'relative', height: 18, borderBottom: '1px solid var(--border)', cursor: onSeek ? 'pointer' : 'default' }}
+      onClick={e => {
+        if (!onSeek) return
+        const rect = e.currentTarget.getBoundingClientRect()
+        onSeek(Math.max(0, Math.min(duration, ((e.clientX - rect.left) / rect.width) * duration)))
+      }}
+    >
       {ticks.map(t => (
         <div key={t} style={{
           position: 'absolute',
@@ -63,7 +83,7 @@ function RulerTicks({ duration, px }: { duration: number; px: number }) {
   )
 }
 
-// ── HitBlock: a single draggable hit marker ───────────────────────────────────
+// ── HitBlock: draggable piano-roll note block ─────────────────────────────────
 
 interface HitBlockProps {
   hit: BeatHit
@@ -71,31 +91,35 @@ interface HitBlockProps {
   pxWidth: number
   selected: boolean
   onSelect: () => void
-  onMove: (newTime: number) => void
+  onMove: (id: string, time: number, note: number | undefined) => void
   onDelete: () => void
 }
 
 function HitBlock({ hit, duration, pxWidth, selected, onSelect, onMove, onDelete }: HitBlockProps) {
-  const dragStart = useRef<{ x: number; time: number } | null>(null)
+  const dragStart = useRef<{ x: number; y: number; time: number; note: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
-
-  const left = (hit.time / duration) * pxWidth
-  const h = Math.max(8, Math.round(hit.velocity * 32))
   const color = TYPE_COLORS[hit.type]
+
+  const noteVal = hit.note ?? Math.round((NOTE_MIN + NOTE_MAX) / 2)
+  const left = (hit.time / duration) * pxWidth - 6
+  const top = (1 - (noteVal - NOTE_MIN) / NOTE_RANGE) * (LANE_HEIGHT - 10) + 1
 
   function handlePointerDown(e: React.PointerEvent) {
     e.stopPropagation()
     onSelect()
-    dragStart.current = { x: e.clientX, time: hit.time }
+    dragStart.current = { x: e.clientX, y: e.clientY, time: hit.time, note: noteVal }
     blockRef.current?.setPointerCapture(e.pointerId)
   }
 
   function handlePointerMove(e: React.PointerEvent) {
     if (!dragStart.current) return
     const dx = e.clientX - dragStart.current.x
-    const dt = (dx / pxWidth) * duration
-    const newTime = Math.max(0, Math.min(duration - 0.01, dragStart.current.time + dt))
-    onMove(newTime)
+    const dy = e.clientY - dragStart.current.y
+    const newTime = Math.max(0, Math.min(duration - 0.01, dragStart.current.time + (dx / pxWidth) * duration))
+    const newNote = hit.note !== undefined
+      ? Math.max(NOTE_MIN, Math.min(NOTE_MAX, Math.round(dragStart.current.note - (dy / LANE_HEIGHT) * NOTE_RANGE)))
+      : undefined
+    onMove(hit.id, newTime, newNote)
   }
 
   function handlePointerUp() { dragStart.current = null }
@@ -109,15 +133,15 @@ function HitBlock({ hit, duration, pxWidth, selected, onSelect, onMove, onDelete
       onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
       style={{
         position: 'absolute',
-        left: left - 4,
-        bottom: 0,
-        width: 8,
-        height: h,
+        left,
+        top,
+        width: 13,
+        height: 8,
         background: color,
         borderRadius: 2,
+        opacity: selected ? 1 : 0.35 + 0.6 * hit.velocity,
         cursor: 'grab',
-        opacity: selected ? 1 : 0.78,
-        boxShadow: selected ? `0 0 0 2px #fff, 0 0 0 3px ${color}` : 'none',
+        boxShadow: selected ? `0 0 0 1px #fff, 0 0 0 2px ${color}` : 'none',
         zIndex: selected ? 10 : 1,
         touchAction: 'none',
         transition: 'box-shadow 0.1s',
@@ -126,7 +150,25 @@ function HitBlock({ hit, duration, pxWidth, selected, onSelect, onMove, onDelete
   )
 }
 
-// ── Lane: a single drum-type row ──────────────────────────────────────────────
+// ── Note grid overlay ─────────────────────────────────────────────────────────
+
+function NoteGrid() {
+  const lines: React.ReactNode[] = []
+  for (let n = NOTE_MIN; n <= NOTE_MAX; n++) {
+    const y = (1 - (n - NOTE_MIN) / NOTE_RANGE) * LANE_HEIGHT
+    const isC = n % 12 === 0
+    lines.push(
+      <div key={n} style={{
+        position: 'absolute', left: 0, right: 0, top: y, height: isC ? 1 : 0,
+        background: isC ? 'rgba(139,92,246,0.18)' : 'transparent',
+        pointerEvents: 'none',
+      }} />
+    )
+  }
+  return <>{lines}</>
+}
+
+// ── Lane ──────────────────────────────────────────────────────────────────────
 
 interface LaneProps {
   type: BeatType
@@ -135,9 +177,9 @@ interface LaneProps {
   pxWidth: number
   selectedId: string | null
   onSelect: (id: string) => void
-  onMoveHit: (id: string, t: number) => void
+  onMoveHit: (id: string, t: number, note: number | undefined) => void
   onDeleteHit: (id: string) => void
-  onAddHit: (t: number) => void
+  onAddHit: (t: number, note: number) => void
 }
 
 function Lane({ type, hits, duration, pxWidth, selectedId, onSelect, onMoveHit, onDeleteHit, onAddHit }: LaneProps) {
@@ -147,32 +189,41 @@ function Lane({ type, hits, duration, pxWidth, selectedId, onSelect, onMoveHit, 
   function handleLaneClick(e: React.MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
     const t = ((e.clientX - rect.left) / rect.width) * duration
-    onAddHit(Math.max(0, Math.min(duration - 0.01, t)))
+    const note = Math.round(NOTE_MAX - ((e.clientY - rect.top) / rect.height) * NOTE_RANGE)
+    onAddHit(
+      Math.max(0, Math.min(duration - 0.01, t)),
+      Math.max(NOTE_MIN, Math.min(NOTE_MAX, note)),
+    )
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', height: 44, borderBottom: '1px solid var(--border)' }}>
+    <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT, borderBottom: '1px solid var(--border)' }}>
       {/* Label */}
       <div style={{
         width: 64, flexShrink: 0,
-        display: 'flex', alignItems: 'center', paddingLeft: 10,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         borderRight: '1px solid var(--border)',
         background: 'var(--bg-surface)',
+        gap: 4,
       }}>
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, marginRight: 7, flexShrink: 0 }} />
+        <div style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
         <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
           {label}
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+          {hits.length}
         </span>
       </div>
       {/* Hit area */}
       <div
         onClick={handleLaneClick}
         style={{
-          flex: 1, position: 'relative', cursor: 'crosshair',
+          flex: 1, position: 'relative', cursor: 'crosshair', height: LANE_HEIGHT,
           background: 'var(--bg-card)',
           backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent calc(12.5% - 1px), var(--border) calc(12.5% - 1px), var(--border) 12.5%)',
         }}
       >
+        <NoteGrid />
         {hits.map(hit => (
           <HitBlock
             key={hit.id}
@@ -181,7 +232,7 @@ function Lane({ type, hits, duration, pxWidth, selectedId, onSelect, onMoveHit, 
             pxWidth={pxWidth}
             selected={hit.id === selectedId}
             onSelect={() => onSelect(hit.id)}
-            onMove={(t) => onMoveHit(hit.id, t)}
+            onMove={onMoveHit}
             onDelete={() => onDeleteHit(hit.id)}
           />
         ))}
@@ -190,11 +241,30 @@ function Lane({ type, hits, duration, pxWidth, selectedId, onSelect, onMoveHit, 
   )
 }
 
+// ── Note Y-axis labels ────────────────────────────────────────────────────────
+
+function NoteAxis() {
+  const markers: React.ReactNode[] = []
+  for (let n = NOTE_MIN; n <= NOTE_MAX; n += 12) {
+    const y = (1 - (n - NOTE_MIN) / NOTE_RANGE) * LANE_HEIGHT
+    markers.push(
+      <div key={n} style={{ position: 'absolute', right: 4, top: y - 5, fontSize: 8, color: 'rgba(139,92,246,0.5)', pointerEvents: 'none', userSelect: 'none' }}>
+        {midiName(n)}
+      </div>
+    )
+  }
+  return (
+    <div style={{ position: 'relative', width: 24, height: LANE_HEIGHT, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid rgba(139,92,246,0.1)' }}>
+      {markers}
+    </div>
+  )
+}
+
 // ── Playhead ─────────────────────────────────────────────────────────────────
 
 function Playhead({ time, duration, pxWidth }: { time: number; duration: number; pxWidth: number }) {
-  const left = (time / duration) * pxWidth + 64  // 64px = lane label width
-  if (time <= 0) return null
+  const left = (time / duration) * pxWidth + 64
+  if (time < 0) return null
   return (
     <div style={{
       position: 'absolute',
@@ -226,6 +296,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
   const [duration, setDuration] = useState(0)
   const [selectedType, setSelectedType] = useState<BeatType | null>(null)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
+  const [packId, setPackId] = useState<PackId>('synth')
 
   const recorderRef  = useRef<MediaRecorder | null>(null)
   const chunksRef    = useRef<Blob[]>([])
@@ -236,10 +307,10 @@ export default function BeatLab({ onExport }: BeatLabProps) {
   const timelineRef  = useRef<HTMLDivElement>(null)
   const [timelinePx, setTimelinePx] = useState(800)
 
-  // Measure the timeline div
+  // Measure the timeline div (minus 64px lane label + 24px note axis = 88px)
   useEffect(() => {
     if (!timelineRef.current) return
-    const ro = new ResizeObserver(([e]) => setTimelinePx(e.contentRect.width - 64))
+    const ro = new ResizeObserver(([e]) => setTimelinePx(e.contentRect.width - 88))
     ro.observe(timelineRef.current)
     return () => ro.disconnect()
   }, [])
@@ -299,7 +370,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
       setDuration(result.duration)
       setPlayhead(0)
       setPhase('editing')
-    } catch (err) {
+    } catch {
       setError('Could not analyze audio. Try again with a clearer beatbox.')
       setPhase('idle')
     }
@@ -315,27 +386,49 @@ export default function BeatLab({ onExport }: BeatLabProps) {
     return audioCtxRef.current
   }
 
-  function startPlayback() {
+  function startPlaybackFrom(startFrom: number) {
     if (duration <= 0) return
     const ctx = getAudioCtx()
-    const startFrom = playhead >= duration ? 0 : playhead
     const now = ctx.currentTime
 
-    // Schedule all hits that come after startFrom
+    const kickTimes = hits.filter(h => h.type === 'kick').map(h => h.time).sort((a, b) => a - b)
+
     for (const hit of hits) {
       if (hit.time < startFrom - 0.01) continue
-      const when = now + (hit.time - startFrom)
-      triggerHit(ctx, hit, Math.max(now, when))
+      const when = Math.max(now, now + (hit.time - startFrom))
+      const maxKickDur = hit.type === 'kick'
+        ? (() => {
+            const idx = kickTimes.indexOf(hit.time)
+            const next = kickTimes[idx + 1] ?? Infinity
+            return Math.min(0.45, next - hit.time - 0.01)
+          })()
+        : 0.45
+      playDrumHit(ctx, packId, hit.type, when, hit.velocity, hit.note, maxKickDur)
     }
 
     playStartRef.current = { wallTime: performance.now(), beatTime: startFrom }
     setIsPlaying(true)
   }
 
+  function startPlayback() {
+    startPlaybackFrom(playhead >= duration ? 0 : playhead)
+  }
+
   function stopPlayback() {
     cancelAnimationFrame(playRafRef.current)
     setIsPlaying(false)
     playStartRef.current = null
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      audioCtxRef.current.close()
+      audioCtxRef.current = null
+    }
+  }
+
+  function handleSeek(t: number) {
+    const wasPlaying = isPlaying
+    stopPlayback()
+    setPlayhead(t)
+    if (wasPlaying) startPlaybackFrom(t)
   }
 
   function togglePlay() {
@@ -345,8 +438,8 @@ export default function BeatLab({ onExport }: BeatLabProps) {
 
   // ── Hit editing ────────────────────────────────────────────────────────────
 
-  const moveHit = useCallback((id: string, t: number) => {
-    setHits(prev => prev.map(h => h.id === id ? { ...h, time: t } : h).sort((a, b) => a.time - b.time))
+  const moveHit = useCallback((id: string, t: number, note: number | undefined) => {
+    setHits(prev => prev.map(h => h.id === id ? { ...h, time: t, note } : h).sort((a, b) => a.time - b.time))
   }, [])
 
   const deleteHit = useCallback((id: string) => {
@@ -354,8 +447,8 @@ export default function BeatLab({ onExport }: BeatLabProps) {
     setSelectedId(null)
   }, [])
 
-  function addHit(type: BeatType, t: number) {
-    const newHit: BeatHit = { id: crypto.randomUUID(), time: t, type, velocity: 0.7 }
+  function addHit(type: BeatType, t: number, note: number) {
+    const newHit: BeatHit = { id: crypto.randomUUID(), time: t, type, velocity: 0.7, note }
     setHits(prev => [...prev, newHit].sort((a, b) => a.time - b.time))
     setSelectedId(newHit.id)
   }
@@ -450,7 +543,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
           </span>
         )}
 
-        {/* Play / Stop (editing mode) */}
+        {/* Play / Stop + BPM + editing controls */}
         {phase === 'editing' && (
           <>
             <button
@@ -467,7 +560,25 @@ export default function BeatLab({ onExport }: BeatLabProps) {
                 : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
             </button>
 
-            {/* BPM badge */}
+            {/* Pack selector */}
+            <div style={{ display: 'flex', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: 2 }}>
+              {DRUM_PACKS.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setPackId(p.id)}
+                  style={{
+                    padding: '2px 8px', fontSize: 11, borderRadius: 4, border: 'none', cursor: 'pointer',
+                    background: packId === p.id ? 'var(--border-light)' : 'transparent',
+                    color: packId === p.id ? 'var(--text-primary)' : 'var(--text-muted)',
+                    fontWeight: packId === p.id ? 600 : 400,
+                  }}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+
+            {/* BPM */}
             {bpm && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>BPM</span>
@@ -493,6 +604,9 @@ export default function BeatLab({ onExport }: BeatLabProps) {
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_COLORS[selectedHit.type], flexShrink: 0 }} />
                 <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
                   {TYPE_LABELS[selectedHit.type]} @ {selectedHit.time.toFixed(2)}s
+                  {selectedHit.note !== undefined && (
+                    <span style={{ marginLeft: 5, color: 'var(--accent-light)' }}>{midiName(selectedHit.note)}</span>
+                  )}
                 </span>
                 {/* Type picker */}
                 <div style={{ position: 'relative' }}>
@@ -551,24 +665,23 @@ export default function BeatLab({ onExport }: BeatLabProps) {
       {/* ── Content area ──────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
-        {/* Idle: big record prompt */}
+        {/* Idle */}
         {phase === 'idle' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: 40 }}>
             <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'rgba(220,38,38,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(220,38,38,0.3)' }}>
               <Mic size={32} color="#dc2626" />
             </div>
-            <div style={{ textAlign: 'center', maxWidth: 320 }}>
+            <div style={{ textAlign: 'center', maxWidth: 340 }}>
               <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
                 Beatbox your rhythm
               </p>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-                Hit Record and beatbox for a few seconds. 100Lights will detect the
-                kick, snare, and hi-hat sounds and separate them into lanes for editing.
+                Hit Record and beatbox for a few seconds. 100Lights detects kick, snare,
+                and hi-hat sounds, places them on a piano roll, and uses the pitch you
+                sung to tune the synthesizer.
               </p>
             </div>
-            {error && (
-              <p style={{ fontSize: 12, color: '#ef4444', textAlign: 'center' }}>{error}</p>
-            )}
+            {error && <p style={{ fontSize: 12, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
             <button
               onClick={startRecording}
               style={{
@@ -583,7 +696,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
           </div>
         )}
 
-        {/* Recording: animated mic + timer */}
+        {/* Recording */}
         {phase === 'recording' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
             <div style={{
@@ -611,46 +724,48 @@ export default function BeatLab({ onExport }: BeatLabProps) {
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
             <RefreshCw size={32} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
             <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              Detecting kicks, snares, and hi-hats…
+              Detecting kicks, snares, hi-hats, and pitches…
             </p>
           </div>
         )}
 
-        {/* Editing: sequencer grid */}
+        {/* Editing: piano roll */}
         {phase === 'editing' && duration > 0 && (
           <div ref={timelineRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
 
             {/* Playhead */}
-            {isPlaying && <Playhead time={playhead} duration={duration} pxWidth={timelinePx} />}
+            <Playhead time={playhead} duration={duration} pxWidth={timelinePx} />
 
-            {/* Ruler */}
-            <div style={{ paddingLeft: 64 }}>
-              <RulerTicks duration={duration} px={timelinePx} />
+            {/* Ruler — offset by label (64px) + note axis (24px) = 88px */}
+            <div style={{ paddingLeft: 88 }}>
+              <RulerTicks duration={duration} px={timelinePx} onSeek={handleSeek} />
             </div>
 
-            {/* Lanes */}
+            {/* Lanes with note axis */}
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {BEAT_TYPES.map(type => (
-                <Lane
-                  key={type}
-                  type={type}
-                  hits={hitsByType[type]}
-                  duration={duration}
-                  pxWidth={timelinePx}
-                  selectedId={selectedId}
-                  onSelect={setSelectedId}
-                  onMoveHit={moveHit}
-                  onDeleteHit={deleteHit}
-                  onAddHit={(t) => addHit(type, t)}
-                />
+                <div key={type} style={{ display: 'flex' }}>
+                  <NoteAxis />
+                  <Lane
+                    type={type}
+                    hits={hitsByType[type]}
+                    duration={duration}
+                    pxWidth={timelinePx}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                    onMoveHit={moveHit}
+                    onDeleteHit={deleteHit}
+                    onAddHit={(t, note) => addHit(type, t, note)}
+                  />
+                </div>
               ))}
             </div>
 
             {/* Legend */}
             <div style={{
-              padding: '6px 10px', borderTop: '1px solid var(--border)',
+              padding: '5px 10px', borderTop: '1px solid var(--border)',
               background: 'var(--bg-surface)', flexShrink: 0,
-              display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+              display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
             }}>
               {BEAT_TYPES.map(t => (
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-muted)' }}>
@@ -659,7 +774,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
                 </span>
               ))}
               <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--border-light)' }}>
-                Click lane to add hit · Drag to move · Double-click to delete
+                Click ruler to seek · Click lane to add · Drag X=time Y=pitch · Double-click to delete
               </span>
             </div>
           </div>

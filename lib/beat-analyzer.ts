@@ -69,6 +69,36 @@ function estimateBPM(times: number[]): number | null {
   return Math.round(bpm)
 }
 
+// ── Pitch detection via normalized autocorrelation ───────────────────────────
+
+function detectPitch(buffer: AudioBuffer, startSample: number, sr: number): number | null {
+  const windowLen = Math.min(Math.floor(0.05 * sr), buffer.length - startSample)
+  if (windowLen < 128) return null
+  const frame = buffer.getChannelData(0).subarray(startSample, startSample + windowLen)
+
+  let energy = 0
+  for (let i = 0; i < windowLen; i++) energy += frame[i] * frame[i]
+  if (energy / windowLen < 2e-4) return null
+
+  const minLag = Math.ceil(sr / 1100)
+  const maxLag = Math.floor(sr / 70)
+  let bestLag = minLag, bestNsdf = -1
+
+  // NSDF (normalized square difference) — more reliable than raw autocorrelation
+  for (let tau = minLag; tau <= Math.min(maxLag, windowLen - 1); tau += 2) {
+    let num = 0, den = 0
+    for (let i = 0; i + tau < windowLen; i++) {
+      num += frame[i] * frame[i + tau]
+      den += frame[i] * frame[i] + frame[i + tau] * frame[i + tau]
+    }
+    const nsdf = den > 0 ? (2 * num) / den : 0
+    if (nsdf > bestNsdf) { bestNsdf = nsdf; bestLag = tau }
+  }
+
+  if (bestNsdf < 0.45) return null
+  return sr / bestLag
+}
+
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
 export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalysis> {
@@ -91,9 +121,9 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
   const onset = new Float32Array(nFrames)
   for (let i = 1; i < nFrames; i++) onset[i] = Math.max(0, energy[i] - energy[i - 1])
 
-  // Step 3: adaptive threshold (local median × 1.5) + peak picking
+  // Step 3: adaptive threshold + peak picking
   const smoothHalf = Math.max(1, Math.floor((0.4 * sr) / hopSize))
-  const minGap = Math.max(2, Math.floor((0.05 * sr) / hopSize))  // 50 ms
+  const minGap = Math.max(2, Math.floor((0.09 * sr) / hopSize))  // 90 ms
   const pickedSamples: number[] = []
 
   for (let i = 1; i < nFrames - 1; i++) {
@@ -101,7 +131,7 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
     const hi = Math.min(nFrames, i + smoothHalf + 1)
     const window = Array.from(onset.subarray(lo, hi)).sort((a, b) => a - b)
     const med = window[Math.floor(window.length / 2)]
-    const thresh = Math.max(0.002, 1.5 * med)
+    const thresh = Math.max(0.002, 2.5 * med)
 
     if (
       onset[i] > thresh &&
@@ -158,13 +188,34 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
     return { id: crypto.randomUUID(), time: t, type, velocity: vel }
   })
 
-  const bpm = estimateBPM(pickedSamples.map(s => s / sr))
-  return { hits, bpm, duration: audioBuffer.duration }
+  // Post-classification deduplication: remove same-type hits too close together
+  const dedupGaps: Record<BeatType, number> = { kick: 0.18, snare: 0.10, hihat: 0.03, clap: 0.08, other: 0.08 }
+  const lastByType: Partial<Record<BeatType, number>> = {}
+  const dedupedHits = hits.filter(hit => {
+    const gap = dedupGaps[hit.type]
+    const last = lastByType[hit.type] ?? -Infinity
+    if (hit.time - last < gap) return false
+    lastByType[hit.type] = hit.time
+    return true
+  })
+
+  // Pitch detection — sets note on hits where a clear fundamental is detected
+  for (const hit of dedupedHits) {
+    const freq = detectPitch(audioBuffer, Math.floor(hit.time * sr), sr)
+    if (freq !== null) {
+      const midi = Math.round(69 + 12 * Math.log2(freq / 440))
+      if (midi >= 24 && midi <= 96) hit.note = midi
+    }
+  }
+
+  const bpm = estimateBPM(dedupedHits.map(h => h.time))
+  return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
 }
 
 // ── Web Audio drum synthesis (no external samples needed for Phase 1) ────────
 
-export function synthKick(ctx: AudioContext, when: number, velocity = 1) {
+export function synthKick(ctx: AudioContext, when: number, velocity = 1, maxDur = 0.45) {
+  const dur = Math.max(0.12, Math.min(0.45, maxDur))
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.connect(gain)
@@ -172,9 +223,9 @@ export function synthKick(ctx: AudioContext, when: number, velocity = 1) {
   osc.frequency.setValueAtTime(160, when)
   osc.frequency.exponentialRampToValueAtTime(50, when + 0.12)
   gain.gain.setValueAtTime(velocity * 0.9, when)
-  gain.gain.exponentialRampToValueAtTime(0.001, when + 0.45)
+  gain.gain.exponentialRampToValueAtTime(0.001, when + dur)
   osc.start(when)
-  osc.stop(when + 0.5)
+  osc.stop(when + dur + 0.05)
 }
 
 export function synthSnare(ctx: AudioContext, when: number, velocity = 1) {
