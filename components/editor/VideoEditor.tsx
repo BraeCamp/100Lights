@@ -32,6 +32,7 @@ import {
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
+import type { LibraryMediaItem } from '@/app/api/media/library/route'
 import { useUpgradeModal } from '@/components/UpgradeModal'
 import posthog from 'posthog-js'
 import { interpolateFocusKF } from '@/lib/focus-utils'
@@ -587,7 +588,10 @@ export default function VideoEditor({
 
   // Media library
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([])
+  const mediaItemsRef = useRef<MediaItem[]>([])
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null)
+
+  useEffect(() => { mediaItemsRef.current = mediaItems }, [mediaItems])
 
   // Color adjustments
   const [adjustments, setAdjustments] = useState<VideoAdjustments>(DEFAULT_ADJUSTMENTS)
@@ -1687,7 +1691,17 @@ export default function VideoEditor({
     // Capture first frame as thumbnail for video files
     if (ct === 'video') {
       generateVideoThumbnail(url).then((thumbnail) => {
-        if (thumbnail) setMediaItems(prev => prev.map(m => m.id === id ? { ...m, thumbnail } : m))
+        if (!thumbnail) return
+        setMediaItems(prev => prev.map(m => m.id === id ? { ...m, thumbnail } : m))
+        // Update library entry if already uploaded
+        const item = mediaItemsRef.current.find(m => m.id === id)
+        if (item?.r2Key) {
+          fetch('/api/media/library', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, name: item.name, contentType: file.type, duration: item.duration ?? 0, r2Key: item.r2Key, thumbnail }),
+          }).catch(() => {})
+        }
       })
     }
 
@@ -1736,6 +1750,21 @@ export default function VideoEditor({
       setMediaItems(prev => prev.map(m =>
         m.id === mediaId ? { ...m, r2Key: key, uploadStatus: 'uploaded' } : m
       ))
+
+      // Register in account media library so other projects can reuse this file
+      const item = mediaItemsRef.current.find(m => m.id === mediaId)
+      fetch('/api/media/library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: mediaId,
+          name: item?.name ?? file.name,
+          contentType: contentType || file.type,
+          duration: item?.duration ?? 0,
+          r2Key: key,
+          thumbnail: item?.thumbnail ?? null,
+        }),
+      }).catch(() => {})
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed'
       setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error' } : m))
@@ -1746,6 +1775,22 @@ export default function VideoEditor({
         setTranscribeError(msg)
       }
     }
+  }
+
+  async function handleAddFromLibrary(lib: LibraryMediaItem) {
+    // Check if already in this project's media pool
+    if (mediaItems.some(m => m.id === lib.id)) return
+    // Fetch a signed URL for the R2 file — no re-upload needed
+    const res = await fetch(`/api/media/signed-url?key=${encodeURIComponent(lib.r2Key)}`)
+    if (!res.ok) return
+    const { url } = await res.json() as { url: string }
+    const ct: import('@/lib/editor-types').MediaItem['contentType'] = lib.contentType.startsWith('video') ? 'video' : 'audio'
+    setMediaItems(prev => [...prev, {
+      id: lib.id, name: lib.name, contentType: ct, url,
+      duration: lib.duration, thumbnail: lib.thumbnail ?? undefined,
+      r2Key: lib.r2Key, uploadStatus: 'uploaded',
+    }])
+    setSelectedMediaId(lib.id)
   }
 
   async function addMediaToTimeline(media: MediaItem) {
@@ -2609,6 +2654,7 @@ export default function VideoEditor({
                 onAddToTimeline={addMediaToTimeline}
                 onRemove={(id) => setMediaItems(prev => prev.filter(m => m.id !== id))}
                 onContextMenu={openCtx}
+                onAddFromLibrary={handleAddFromLibrary}
               />
             </div>
             <VResizeHandle onDelta={clampLeft} />

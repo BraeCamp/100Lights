@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, Suspense, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { PlusCircle, Film, Clock, FileText, ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X, Star, Pencil } from 'lucide-react'
+import { PlusCircle, Film, ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X, Star, Pencil } from 'lucide-react'
 
 interface ProjectSummary {
   id: string
@@ -46,6 +46,8 @@ export default function DashboardPage() {
   const [error, setError] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [ctxMenu, setCtxMenu] = useState<{ id: string; name: string; x: number; y: number } | null>(null)
+  const ctxRef = useRef<HTMLDivElement>(null)
 
   function startRename(id: string, currentName: string) {
     setRenamingId(id)
@@ -80,9 +82,19 @@ export default function DashboardPage() {
 
   useEffect(() => { loadProjects() }, [])
 
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = (e: MouseEvent) => {
+      if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [ctxMenu])
+
   const recentProjects = projects.slice(0, 5)
 
   return (
+    <>
     <div className="flex-1 overflow-y-auto">
       <div className="p-8 max-w-5xl">
         <Suspense fallback={null}><UpgradeBanner /></Suspense>
@@ -99,36 +111,6 @@ export default function DashboardPage() {
             <PlusCircle size={15} />
             New project
           </Link>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4 mb-10">
-          <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Projects</span>
-              <FileText size={14} color="var(--text-muted)" />
-            </div>
-            <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {loading ? '—' : projects.length}
-            </div>
-          </div>
-          <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Total clips</span>
-              <Film size={14} color="var(--text-muted)" />
-            </div>
-            <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {loading ? '—' : projects.reduce((n, p) => n + p.clips, 0)}
-            </div>
-          </div>
-          <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Media files</span>
-              <Clock size={14} color="var(--text-muted)" />
-            </div>
-            <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-              {loading ? '—' : projects.reduce((n, p) => n + p.media, 0)}
-            </div>
-          </div>
         </div>
 
         <div>
@@ -197,6 +179,7 @@ export default function DashboardPage() {
                   key={project.id}
                   className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
                   style={{ background: 'var(--bg-card)', borderColor: project.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
+                  onContextMenu={e => { e.preventDefault(); setCtxMenu({ id: project.id, name: project.name, x: e.clientX, y: e.clientY }) }}
                 >
                   <Link href={`/projects/${project.id}`} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
                     {project.thumbnail
@@ -217,14 +200,13 @@ export default function DashboardPage() {
                         onClick={e => e.stopPropagation()}
                       />
                     ) : (
-                      <button
-                        className="text-sm font-medium truncate block w-full text-left hover:underline"
+                      <Link
+                        href={`/projects/${project.id}`}
+                        className="text-sm font-medium truncate block w-full hover:underline"
                         style={{ color: 'var(--text-primary)' }}
-                        onClick={() => startRename(project.id, project.name)}
-                        title="Click to rename"
                       >
                         {project.name}
-                      </button>
+                      </Link>
                     )}
                     <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                       {project.clips} clip{project.clips !== 1 ? 's' : ''} · {project.media} media file{project.media !== 1 ? 's' : ''}
@@ -260,5 +242,25 @@ export default function DashboardPage() {
 
       </div>
     </div>
+
+    {/* Right-click context menu */}
+    {ctxMenu && (
+      <div
+        ref={ctxRef}
+        className="fixed z-50 rounded-lg py-1 shadow-lg"
+        style={{ top: ctxMenu.y, left: ctxMenu.x, background: 'var(--bg-card)', border: '1px solid var(--border)', minWidth: 140 }}
+      >
+        <button
+          className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-2"
+          style={{ color: 'var(--text-primary)' }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+          onMouseLeave={e => (e.currentTarget.style.background = '')}
+          onClick={() => { startRename(ctxMenu.id, ctxMenu.name); setCtxMenu(null) }}
+        >
+          <Pencil size={13} /> Rename
+        </button>
+      </div>
+    )}
+    </>
   )
 }
