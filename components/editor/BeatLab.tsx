@@ -12,27 +12,47 @@ const ALL_BEAT_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'cla
 const DEFAULT_ENABLED: BeatType[] = ['kick', 'snare', 'hihat', 'clap']
 
 const TYPE_COLORS: Record<BeatType, string> = {
-  kick:         '#7c3aed',
-  snare:        '#dc2626',
-  hihat:        '#ca8a04',
-  'open-hihat': '#d97706',
-  clap:         '#0284c7',
-  tom:          '#059669',
-  crash:        '#9333ea',
-  rim:          '#db2777',
-  other:        '#6b7280',
+  kick:              '#7c3aed',
+  snare:             '#dc2626',
+  hihat:             '#ca8a04',
+  'open-hihat':      '#d97706',
+  clap:              '#0284c7',
+  tom:               '#059669',
+  crash:             '#9333ea',
+  rim:               '#db2777',
+  'guitar-acoustic': '#b45309',
+  'guitar-electric': '#0891b2',
+  'guitar-nylon':    '#a16207',
+  'piano-grand':     '#1d4ed8',
+  'piano-electric':  '#0369a1',
+  'piano-rhodes':    '#1e40af',
+  'synth-lead':      '#be123c',
+  'synth-pad':       '#9333ea',
+  'synth-bass':      '#15803d',
+  'synth-arp':       '#c2410c',
+  other:             '#6b7280',
 }
 
 const TYPE_LABELS: Record<BeatType, string> = {
-  kick:         'Kick',
-  snare:        'Snare',
-  hihat:        'Hi-Hat',
-  'open-hihat': 'Open HH',
-  clap:         'Clap',
-  tom:          'Tom',
-  crash:        'Crash',
-  rim:          'Rim',
-  other:        'Other',
+  kick:              'Kick',
+  snare:             'Snare',
+  hihat:             'Hi-Hat',
+  'open-hihat':      'Open HH',
+  clap:              'Clap',
+  tom:               'Tom',
+  crash:             'Crash',
+  rim:               'Rim',
+  'guitar-acoustic': 'Acoustic',
+  'guitar-electric': 'Electric Gtr',
+  'guitar-nylon':    'Nylon',
+  'piano-grand':     'Grand Piano',
+  'piano-electric':  'Electric Piano',
+  'piano-rhodes':    'Rhodes',
+  'synth-lead':      'Synth Lead',
+  'synth-pad':       'Synth Pad',
+  'synth-bass':      'Synth Bass',
+  'synth-arp':       'Arp',
+  other:             'Other',
 }
 
 const NOTE_MIN = 36
@@ -121,7 +141,7 @@ interface HitBlockProps {
   selected: boolean
   muted: boolean
   onSelect: () => void
-  onMove: (id: string, time: number, note: number | undefined) => void
+  onMove: (id: string, time: number, note: number) => void
   onDelete: () => void
 }
 
@@ -147,9 +167,7 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, onSelect, onMove, o
       const dx = ev.clientX - startX
       const dy = ev.clientY - startY
       const newTime = Math.max(0, Math.min(capDur - 0.01, startTime + (dx / capPx) * capDur))
-      const newNote = hit.note !== undefined
-        ? Math.max(NOTE_MIN, Math.min(NOTE_MAX, Math.round(startNote - (dy / LANE_HEIGHT) * NOTE_RANGE)))
-        : undefined
+      const newNote = Math.max(NOTE_MIN, Math.min(NOTE_MAX, Math.round(startNote - (dy / LANE_HEIGHT) * NOTE_RANGE)))
       onMove(hit.id, newTime, newNote)
     }
     function onGlobalUp() {
@@ -220,7 +238,7 @@ interface LaneProps {
   selectedId: string | null
   muted: boolean
   onSelect: (id: string) => void
-  onMoveHit: (id: string, t: number, note: number | undefined) => void
+  onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
   onToggleMute: () => void
@@ -304,9 +322,12 @@ function Playhead({ time, duration, pxWidth }: { time: number; duration: number;
 
 interface BeatLabProps {
   onExport?: (hits: BeatHit[], bpm: number | null) => void
+  hasSong?: boolean
+  onRequestSongPlay?: () => void
+  onRequestSongStop?: () => void
 }
 
-export default function BeatLab({ onExport }: BeatLabProps) {
+export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -329,7 +350,10 @@ export default function BeatLab({ onExport }: BeatLabProps) {
   const [loopTargetBpm, setLoopTargetBpm] = useState<number>(120)
   const [loopPlaying, setLoopPlaying] = useState(false)
 
-  const recorderRef  = useRef<MediaRecorder | null>(null)
+  const [playSongDuringRec, setPlaySongDuringRec] = useState(false)
+
+  const recorderRef    = useRef<MediaRecorder | null>(null)
+  const startedSongRef = useRef(false)
   const chunksRef    = useRef<Blob[]>([])
   const recTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioCtxRef  = useRef<AudioContext | null>(null)
@@ -377,6 +401,10 @@ export default function BeatLab({ onExport }: BeatLabProps) {
       setPhase('recording')
       setRecordingTime(0)
       recTimerRef.current = setInterval(() => setRecordingTime(t => t + 0.1), 100)
+      if (playSongDuringRec && onRequestSongPlay) {
+        onRequestSongPlay()
+        startedSongRef.current = true
+      }
     } catch {
       setError('Microphone access denied.')
     }
@@ -386,6 +414,10 @@ export default function BeatLab({ onExport }: BeatLabProps) {
     const recorder = recorderRef.current
     if (!recorder) return
     if (recTimerRef.current) clearInterval(recTimerRef.current)
+    if (startedSongRef.current) {
+      onRequestSongStop?.()
+      startedSongRef.current = false
+    }
     setPhase('analyzing')
     recorder.stop()
     recorder.stream.getTracks().forEach(t => t.stop())
@@ -509,7 +541,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
 
   // ── Hit editing ────────────────────────────────────────────────────────────
 
-  const moveHit = useCallback((id: string, t: number, note: number | undefined) => {
+  const moveHit = useCallback((id: string, t: number, note: number) => {
     setHits(prev => prev.map(h => h.id === id ? { ...h, time: t, note } : h).sort((a, b) => a.time - b.time))
   }, [])
 
@@ -757,6 +789,17 @@ export default function BeatLab({ onExport }: BeatLabProps) {
               </div>
             </div>}
 
+            {hasSong && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={playSongDuringRec}
+                  onChange={e => setPlaySongDuringRec(e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: 'var(--accent)', cursor: 'pointer' }}
+                />
+                Play song while recording
+              </label>
+            )}
             {error && <p style={{ fontSize: 12, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
             <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 8, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
               <Mic size={15} /> {recMode === 'loop' ? 'Start Loop Recording' : 'Start Recording'}
@@ -774,6 +817,9 @@ export default function BeatLab({ onExport }: BeatLabProps) {
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
                 {recMode === 'loop' ? 'Recording loop…' : `Detecting: ${Array.from(selectedTypes).map(t => TYPE_LABELS[t]).join(', ')}`}
               </p>
+              {startedSongRef.current && (
+                <p style={{ fontSize: 11, color: 'var(--accent-light)', marginTop: 2 }}>♪ Song playing in background</p>
+              )}
               <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Click Stop when done</p>
             </div>
           </div>

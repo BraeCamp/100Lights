@@ -3,14 +3,50 @@
  * Runs entirely in the browser via OfflineAudioContext — no server calls needed.
  */
 
-export type BeatType = 'kick' | 'snare' | 'hihat' | 'open-hihat' | 'clap' | 'tom' | 'crash' | 'rim' | 'other'
+export type BeatType =
+  // Drums
+  'kick' | 'snare' | 'hihat' | 'open-hihat' | 'clap' | 'tom' | 'crash' | 'rim' |
+  // Guitar
+  'guitar-acoustic' | 'guitar-electric' | 'guitar-nylon' |
+  // Piano
+  'piano-grand' | 'piano-electric' | 'piano-rhodes' |
+  // EDM synth
+  'synth-lead' | 'synth-pad' | 'synth-bass' | 'synth-arp' |
+  // Fallback
+  'other'
+
+export const DRUM_BEAT_TYPES: BeatType[] = [
+  'kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim',
+]
+
+export const DEFAULT_NOTES: Record<BeatType, number> = {
+  kick:            40,
+  snare:           57,
+  hihat:           67,
+  'open-hihat':    67,
+  clap:            55,
+  tom:             50,
+  crash:           65,
+  rim:             62,
+  'guitar-acoustic': 64,
+  'guitar-electric': 64,
+  'guitar-nylon':    64,
+  'piano-grand':     60,
+  'piano-electric':  60,
+  'piano-rhodes':    60,
+  'synth-lead':      60,
+  'synth-pad':       60,
+  'synth-bass':      48,
+  'synth-arp':       72,
+  other:           60,
+}
 
 export interface BeatHit {
   id: string
   time: number       // seconds from start of recording
   type: BeatType
-  velocity: number   // 0–1 (derived from onset strength)
-  note?: number      // MIDI note number
+  velocity: number   // 0–1
+  note: number       // MIDI note — always set (defaults to DEFAULT_NOTES[type])
 }
 
 export interface BeatAnalysis {
@@ -119,27 +155,39 @@ function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number
   return Math.round(bpm)
 }
 
-// Fallback chains: maps a natural type to the nearest alternative when the
-// natural type is not in the user's allowed set.
 const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
-  'kick':       ['tom', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
-  'tom':        ['kick', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
-  'snare':      ['clap', 'rim', 'tom', 'kick', 'hihat', 'open-hihat', 'crash', 'other'],
-  'clap':       ['snare', 'rim', 'tom', 'kick', 'hihat', 'open-hihat', 'crash', 'other'],
-  'rim':        ['clap', 'snare', 'hihat', 'tom', 'kick', 'open-hihat', 'crash', 'other'],
-  'hihat':      ['open-hihat', 'rim', 'clap', 'crash', 'snare', 'tom', 'kick', 'other'],
-  'open-hihat': ['crash', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
-  'crash':      ['open-hihat', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
-  'other':      ['snare', 'clap', 'kick', 'tom', 'hihat', 'rim', 'open-hihat', 'crash'],
+  'kick':            ['tom', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
+  'tom':             ['kick', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
+  'snare':           ['clap', 'rim', 'tom', 'kick', 'hihat', 'open-hihat', 'crash', 'other'],
+  'clap':            ['snare', 'rim', 'tom', 'kick', 'hihat', 'open-hihat', 'crash', 'other'],
+  'rim':             ['clap', 'snare', 'hihat', 'tom', 'kick', 'open-hihat', 'crash', 'other'],
+  'hihat':           ['open-hihat', 'rim', 'clap', 'crash', 'snare', 'tom', 'kick', 'other'],
+  'open-hihat':      ['crash', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
+  'crash':           ['open-hihat', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
+  'guitar-acoustic': ['guitar-electric', 'guitar-nylon', 'piano-grand', 'synth-lead', 'other'],
+  'guitar-electric': ['guitar-acoustic', 'guitar-nylon', 'piano-grand', 'synth-lead', 'other'],
+  'guitar-nylon':    ['guitar-acoustic', 'guitar-electric', 'piano-grand', 'synth-lead', 'other'],
+  'piano-grand':     ['piano-electric', 'piano-rhodes', 'guitar-acoustic', 'synth-pad', 'other'],
+  'piano-electric':  ['piano-grand', 'piano-rhodes', 'guitar-acoustic', 'synth-lead', 'other'],
+  'piano-rhodes':    ['piano-electric', 'piano-grand', 'guitar-acoustic', 'synth-pad', 'other'],
+  'synth-lead':      ['synth-arp', 'synth-pad', 'synth-bass', 'guitar-electric', 'other'],
+  'synth-pad':       ['synth-lead', 'synth-arp', 'piano-grand', 'guitar-nylon', 'other'],
+  'synth-bass':      ['synth-lead', 'kick', 'tom', 'other'],
+  'synth-arp':       ['synth-lead', 'guitar-electric', 'piano-electric', 'other'],
+  'other':           ['snare', 'clap', 'kick', 'tom', 'hihat', 'rim', 'open-hihat', 'crash'],
 }
 
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
 export async function analyzeBeats(
   audioBuffer: AudioBuffer,
-  options?: { allowedTypes?: BeatType[] },
+  options?: {
+    allowedTypes?: BeatType[]   // drum mode: which types to classify into
+    melodicType?: BeatType       // melodic mode: all hits = this type, skip drum classification
+  },
 ): Promise<BeatAnalysis> {
   const allowed = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
+  const melodicType = options?.melodicType ?? null
   const sr = audioBuffer.sampleRate
   const raw = audioBuffer.getChannelData(0)
 
@@ -155,13 +203,13 @@ export async function analyzeBeats(
     energy[i] = Math.sqrt(s / frameSize)
   }
 
-  // Step 2: onset strength = positive first-derivative of energy
+  // Step 2: onset strength
   const onset = new Float32Array(nFrames)
   for (let i = 1; i < nFrames; i++) onset[i] = Math.max(0, energy[i] - energy[i - 1])
 
   // Step 3: adaptive threshold + peak picking
   const smoothHalf = Math.max(1, Math.floor((0.4 * sr) / hopSize))
-  const minGap = Math.max(2, Math.floor((0.09 * sr) / hopSize))  // 90 ms
+  const minGap = Math.max(2, Math.floor((0.09 * sr) / hopSize))
   const pickedSamples: number[] = []
 
   for (let i = 1; i < nFrames - 1; i++) {
@@ -188,83 +236,101 @@ export async function analyzeBeats(
     return { hits: [], bpm: null, duration: audioBuffer.duration }
   }
 
-  // Step 4: five frequency bands for richer classification
-  const [subBand, lowMidBand, midBand, hiMidBand, highBand] = await Promise.all([
-    renderFiltered(audioBuffer, 'lowpass',  150, 0.7),   // 0–150 Hz: sub → kick / bass
-    renderFiltered(audioBuffer, 'bandpass', 400, 1.2),   // 200–700 Hz: low-mid → tom / kick body
-    renderFiltered(audioBuffer, 'bandpass', 1400, 1.0),  // 700–2.5k Hz: mid → snare / clap / rim
-    renderFiltered(audioBuffer, 'bandpass', 5000, 1.0),  // 3–8k Hz: hi-mid → hihat / crash
-    renderFiltered(audioBuffer, 'highpass', 9000, 0.7),  // 9k+: shimmer → hihat / crash
-  ])
+  // Step 4: classify hits
+  let hits: BeatHit[]
 
-  // Step 5: classify each onset
-  const classWindow = 0.06
-  const sustainOffset = Math.floor(0.06 * sr)  // check energy 60ms after onset
+  if (melodicType) {
+    // Melodic mode: all onsets get the selected instrument type; pitch detection fills note
+    hits = pickedSamples.map((sampleIdx) => {
+      const t = sampleIdx / sr
+      const vel = Math.min(1, Math.max(0.15, onset[Math.floor(sampleIdx / hopSize)] * 40))
+      return { id: crypto.randomUUID(), time: t, type: melodicType, velocity: vel, note: DEFAULT_NOTES[melodicType] }
+    })
+  } else {
+    // Drum mode: five-band classification
+    const [subBand, lowMidBand, midBand, hiMidBand, highBand] = await Promise.all([
+      renderFiltered(audioBuffer, 'lowpass',  150, 0.7),
+      renderFiltered(audioBuffer, 'bandpass', 400, 1.2),
+      renderFiltered(audioBuffer, 'bandpass', 1400, 1.0),
+      renderFiltered(audioBuffer, 'bandpass', 5000, 1.0),
+      renderFiltered(audioBuffer, 'highpass', 9000, 0.7),
+    ])
 
-  const hits: BeatHit[] = pickedSamples.map((sampleIdx) => {
-    const t = sampleIdx / sr
-    const subE    = rmsWindow(subBand,    sampleIdx, sr, classWindow)
-    const lowMidE = rmsWindow(lowMidBand, sampleIdx, sr, classWindow)
-    const midE    = rmsWindow(midBand,    sampleIdx, sr, classWindow)
-    const hiMidE  = rmsWindow(hiMidBand,  sampleIdx, sr, classWindow)
-    const highE   = rmsWindow(highBand,   sampleIdx, sr, classWindow)
-    const total   = subE + lowMidE + midE + hiMidE + highE || 1
+    const classWindow = 0.06
+    const sustainOffset = Math.floor(0.06 * sr)
 
-    const subR    = subE / total
-    const lowMidR = lowMidE / total
-    const midR    = midE / total
-    const hiR     = (hiMidE + highE) / total
+    hits = pickedSamples.map((sampleIdx) => {
+      const t = sampleIdx / sr
+      const subE    = rmsWindow(subBand,    sampleIdx, sr, classWindow)
+      const lowMidE = rmsWindow(lowMidBand, sampleIdx, sr, classWindow)
+      const midE    = rmsWindow(midBand,    sampleIdx, sr, classWindow)
+      const hiMidE  = rmsWindow(hiMidBand,  sampleIdx, sr, classWindow)
+      const highE   = rmsWindow(highBand,   sampleIdx, sr, classWindow)
+      const total   = subE + lowMidE + midE + hiMidE + highE || 1
 
-    // Sustained high energy 60ms after onset → open-hihat or crash
-    const sustainHigh = rmsWindow(
-      highBand,
-      Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
-      sr, 0.08,
-    )
-    const attackHigh = rmsWindow(highBand, sampleIdx, sr, 0.025)
-    const highSustained = attackHigh > 0.003 && sustainHigh > attackHigh * 0.30
+      const subR  = subE / total
+      const lowMidR = lowMidE / total
+      const midR  = midE / total
+      const hiR   = (hiMidE + highE) / total
 
-    let natural: BeatType
-    if      (subR > 0.42)                                  natural = 'kick'
-    else if ((subR + lowMidR) > 0.50 && subR > 0.15)      natural = 'tom'
-    else if (hiR > 0.42 && highSustained)                  natural = 'crash'
-    else if (hiR > 0.42)                                   natural = 'hihat'
-    else if (hiR > 0.32 && highSustained)                  natural = 'open-hihat'
-    else if (midR > 0.45 && subR < 0.18)                   natural = 'rim'
-    else if (midR > 0.30 && subR < 0.28)                   natural = 'snare'
-    else                                                    natural = 'clap'
+      const sustainHigh = rmsWindow(
+        highBand,
+        Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
+        sr, 0.08,
+      )
+      const attackHigh = rmsWindow(highBand, sampleIdx, sr, 0.025)
+      const highSustained = attackHigh > 0.003 && sustainHigh > attackHigh * 0.30
 
-    // High-energy snare → clap
-    if (natural === 'snare') {
-      const frameIdx = Math.floor(sampleIdx / hopSize)
-      if (frameIdx < energy.length && energy[frameIdx] > 0.15) natural = 'clap'
-    }
+      let natural: BeatType
+      if      (subR > 0.42)                                 natural = 'kick'
+      else if ((subR + lowMidR) > 0.50 && subR > 0.15)     natural = 'tom'
+      else if (hiR > 0.42 && highSustained)                 natural = 'crash'
+      else if (hiR > 0.42)                                  natural = 'hihat'
+      else if (hiR > 0.32 && highSustained)                 natural = 'open-hihat'
+      else if (midR > 0.45 && subR < 0.18)                  natural = 'rim'
+      else if (midR > 0.30 && subR < 0.28)                  natural = 'snare'
+      else                                                   natural = 'clap'
 
-    // Map to nearest allowed type when set
-    let type: BeatType = natural
-    if (allowed && !allowed.has(natural)) {
-      type = TYPE_FALLBACKS[natural].find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other'
-    }
+      if (natural === 'snare') {
+        const frameIdx = Math.floor(sampleIdx / hopSize)
+        if (frameIdx < energy.length && energy[frameIdx] > 0.15) natural = 'clap'
+      }
 
-    const vel = Math.min(1, Math.max(0.15, onset[Math.floor(sampleIdx / hopSize)] * 40))
-    return { id: crypto.randomUUID(), time: t, type, velocity: vel }
-  })
+      let type: BeatType = natural
+      if (allowed && !allowed.has(natural)) {
+        type = TYPE_FALLBACKS[natural].find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other'
+      }
 
-  // Estimate tempo from the raw energy envelope
+      const vel = Math.min(1, Math.max(0.15, onset[Math.floor(sampleIdx / hopSize)] * 40))
+      return { id: crypto.randomUUID(), time: t, type, velocity: vel, note: DEFAULT_NOTES[type] }
+    })
+  }
+
+  // Estimate tempo
   const envBpm = findTempoFromEnvelope(energy, sr, hopSize)
   const subdivSec = envBpm ? (60 / envBpm / 4) : 0.10
 
-  // Post-classification dedup: no single instrument fires faster than musical grid
+  // Dedup
   const dedupGaps: Record<BeatType, number> = {
-    kick:         Math.max(0.18, subdivSec),
-    snare:        Math.max(0.10, subdivSec),
-    hihat:        Math.max(0.04, subdivSec / 2),
-    'open-hihat': Math.max(0.10, subdivSec),
-    clap:         Math.max(0.10, subdivSec),
-    tom:          Math.max(0.15, subdivSec),
-    crash:        Math.max(0.40, subdivSec * 4),
-    rim:          Math.max(0.06, subdivSec / 2),
-    other:        Math.max(0.08, subdivSec),
+    kick:              Math.max(0.18, subdivSec),
+    snare:             Math.max(0.10, subdivSec),
+    hihat:             Math.max(0.04, subdivSec / 2),
+    'open-hihat':      Math.max(0.10, subdivSec),
+    clap:              Math.max(0.10, subdivSec),
+    tom:               Math.max(0.15, subdivSec),
+    crash:             Math.max(0.40, subdivSec * 4),
+    rim:               Math.max(0.06, subdivSec / 2),
+    'guitar-acoustic': Math.max(0.06, subdivSec / 2),
+    'guitar-electric': Math.max(0.06, subdivSec / 2),
+    'guitar-nylon':    Math.max(0.06, subdivSec / 2),
+    'piano-grand':     Math.max(0.05, subdivSec / 2),
+    'piano-electric':  Math.max(0.05, subdivSec / 2),
+    'piano-rhodes':    Math.max(0.05, subdivSec / 2),
+    'synth-lead':      Math.max(0.05, subdivSec / 2),
+    'synth-pad':       Math.max(0.10, subdivSec),
+    'synth-bass':      Math.max(0.08, subdivSec / 2),
+    'synth-arp':       Math.max(0.04, subdivSec / 4),
+    other:             Math.max(0.08, subdivSec),
   }
   const lastByType: Partial<Record<BeatType, number>> = {}
   let dedupedHits = hits.filter(hit => {
@@ -275,8 +341,7 @@ export async function analyzeBeats(
     return true
   })
 
-  // Grid-snap each hit to the nearest 16th-note at the detected BPM.
-  // Same type + same slot → keep highest velocity.
+  // Grid-snap to 16th notes
   if (envBpm) {
     const gridSec = 60 / envBpm / 4
     const slotMap = new Map<string, BeatHit>()
@@ -291,7 +356,7 @@ export async function analyzeBeats(
     dedupedHits = Array.from(slotMap.values()).sort((a, b) => a.time - b.time)
   }
 
-  // Pitch detection for each hit
+  // Pitch detection — refine note from default when a clear pitch is found
   for (const hit of dedupedHits) {
     const freq = detectPitch(audioBuffer, Math.floor(hit.time * sr), sr)
     if (freq !== null) {

@@ -342,15 +342,25 @@ function other808(ctx: AudioContext, when: number, v: number, note: number) {
 // ── Unified API ───────────────────────────────────────────────────────────────
 
 const DEFAULT_NOTE: Record<BeatType, number> = {
-  kick:         40,
-  snare:        57,
-  hihat:        67,
-  'open-hihat': 67,
-  clap:         55,
-  tom:          50,
-  crash:        65,
-  rim:          62,
-  other:        60,
+  kick:              40,
+  snare:             57,
+  hihat:             67,
+  'open-hihat':      67,
+  clap:              55,
+  tom:               50,
+  crash:             65,
+  rim:               62,
+  'guitar-acoustic': 64,
+  'guitar-electric': 64,
+  'guitar-nylon':    64,
+  'piano-grand':     60,
+  'piano-electric':  60,
+  'piano-rhodes':    60,
+  'synth-lead':      60,
+  'synth-pad':       60,
+  'synth-bass':      48,
+  'synth-arp':       72,
+  other:             60,
 }
 
 export function playDrumHit(

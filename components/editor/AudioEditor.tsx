@@ -2,14 +2,12 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2, Drum } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2 } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
 import BeatLab from './BeatLab'
 import ModuleSwitcher from './ModuleSwitcher'
 import type { Caption } from '@/lib/types'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
-
-type AudioTab = 'tracks' | 'beatlab'
 
 // ── AudioTrack extends the shared init type with runtime-only fields ──────────
 
@@ -44,7 +42,6 @@ export default function AudioEditor({
 }: AudioEditorProps) {
   const [localName, setLocalName]       = useState(initialName)
   const [editingName, setEditingName]   = useState(false)
-  const [audioTab, setAudioTab]         = useState<AudioTab>('tracks')
   const [tracks, setTracks]             = useState<AudioTrack[]>(initialTracks)
   const [selectedId, setSelectedId]     = useState<string | null>(initialTracks[0]?.id ?? null)
   const [isPlaying, setIsPlaying]       = useState(false)
@@ -252,23 +249,9 @@ export default function AudioEditor({
               {localName}
             </button>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 16 }}>
-            {(['tracks', 'beatlab'] as AudioTab[]).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setAudioTab(tab)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
-                  fontSize: 11, fontWeight: audioTab === tab ? 600 : 400,
-                  background: audioTab === tab ? 'var(--accent-subtle)' : 'transparent',
-                  color: audioTab === tab ? 'var(--accent-light)' : 'var(--text-muted)',
-                }}
-              >
-                {tab === 'tracks' ? <Music size={11} /> : <Drum size={11} />}
-                {tab === 'tracks' ? 'Tracks' : 'Beat Lab'}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 16 }}>
+            <Music size={11} color="var(--text-muted)" />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Audio + Beat Lab</span>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             {saveStatus === 'saved' && <span style={{ fontSize: 11, color: '#4ade80', display: 'flex', alignItems: 'center', gap: 4 }}><CheckCircle2 size={11} /> Saved</span>}
@@ -282,18 +265,11 @@ export default function AudioEditor({
         </div>
       )}
 
-      {/* ── Beat Lab ─────────────────────────────────────────── */}
-      {audioTab === 'beatlab' && (
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <BeatLab />
-        </div>
-      )}
+      {/* ── Unified layout ────────────────────────────────────── */}
+      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex' }}>
 
-      {/* ── Main layout ──────────────────────────────────────── */}
-      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: audioTab === 'tracks' ? 'flex' : 'none' }}>
-
-        {/* Track list */}
-        <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Track list sidebar */}
+        <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Tracks</span>
             <button
@@ -307,9 +283,7 @@ export default function AudioEditor({
             {tracks.length === 0 && (
               <div style={{ padding: '20px 12px', textAlign: 'center' }}>
                 <Mic size={24} color="var(--text-muted)" style={{ marginBottom: 10 }} />
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                  Drop audio files here or click Import
-                </p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>Drop audio here or click Import</p>
               </div>
             )}
             {tracks.map(track => (
@@ -340,11 +314,11 @@ export default function AudioEditor({
           </div>
         </div>
 
-        {/* Waveform + transport */}
+        {/* Right column: waveform + beat lab + transport */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
-          {/* Waveform */}
-          <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
+          {/* Song waveform */}
+          <div style={{ flex: '0 0 148px', overflow: 'hidden', position: 'relative', borderBottom: '1px solid var(--border)' }}>
             {selectedTrack ? (
               <AudioWaveform
                 src={selectedTrack.url}
@@ -355,36 +329,53 @@ export default function AudioEditor({
               />
             ) : (
               <div
-                style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--text-muted)', cursor: 'pointer' }}
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload size={40} strokeWidth={1} />
-                <p style={{ fontSize: 13, textAlign: 'center' }}>Drop audio files here or click to import</p>
-                <p style={{ fontSize: 11, color: 'var(--border-light)' }}>MP3 · WAV · FLAC · AAC · M4A · Video files</p>
+                <Upload size={32} strokeWidth={1} />
+                <p style={{ fontSize: 12, textAlign: 'center' }}>Drop audio here or click to import</p>
+                <p style={{ fontSize: 10, color: 'var(--border-light)' }}>MP3 · WAV · FLAC · AAC · M4A</p>
               </div>
             )}
           </div>
 
-          {/* Transport */}
-          <div style={{ height: 56, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, flexShrink: 0, padding: '0 24px' }}>
-            <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 70, textAlign: 'right' }}>{fmtTime(currentTime)}</span>
-            <button onClick={skipBack} tabIndex={-1} style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}><SkipBack size={18} /></button>
+          {/* Beat Lab */}
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <BeatLab
+              hasSong={!!selectedTrack}
+              onRequestSongPlay={() => {
+                if (audioRef.current && selectedTrack) {
+                  audioRef.current.play().catch(() => {})
+                  setIsPlaying(true)
+                }
+              }}
+              onRequestSongStop={() => {
+                audioRef.current?.pause()
+                setIsPlaying(false)
+              }}
+            />
+          </div>
+
+          {/* Song transport */}
+          <div style={{ height: 52, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexShrink: 0, padding: '0 20px' }}>
+            <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 52, textAlign: 'right' }}>{fmtTime(currentTime)}</span>
+            <button onClick={skipBack} tabIndex={-1} style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}><SkipBack size={16} /></button>
             <button
               onClick={togglePlay}
               tabIndex={-1}
               disabled={!selectedTrack}
-              style={{ width: 38, height: 38, borderRadius: '50%', background: selectedTrack ? 'var(--accent)' : 'var(--border)', border: 'none', cursor: selectedTrack ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+              style={{ width: 34, height: 34, borderRadius: '50%', background: selectedTrack ? 'var(--accent)' : 'var(--border)', border: 'none', cursor: selectedTrack ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}
             >
-              {isPlaying ? <Pause size={16} fill="#fff" /> : <Play size={16} fill="#fff" style={{ marginLeft: 2 }} />}
+              {isPlaying ? <Pause size={14} fill="#fff" /> : <Play size={14} fill="#fff" style={{ marginLeft: 1 }} />}
             </button>
-            <button onClick={skipForward} tabIndex={-1} style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}><SkipForward size={18} /></button>
-            <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 70 }}>{fmtTime(duration)}</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16 }}>
-              <Volume2 size={13} color="var(--text-muted)" />
+            <button onClick={skipForward} tabIndex={-1} style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}><SkipForward size={16} /></button>
+            <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 52 }}>{fmtTime(duration)}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 12 }}>
+              <Volume2 size={12} color="var(--text-muted)" />
               <input
                 type="range" min={0} max={1} step={0.01} value={volume}
                 onChange={e => { const v = Number(e.target.value); setVolume(v); if (audioRef.current) audioRef.current.volume = v }}
-                style={{ width: 72 }}
+                style={{ width: 64 }}
                 className="cf-slider"
               />
             </div>
