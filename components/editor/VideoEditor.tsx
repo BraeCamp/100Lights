@@ -415,6 +415,10 @@ export default function VideoEditor({
   // Captures sync wall-time at the exact moment onTimeUpdate fires (before React re-render latency).
   // Passed to Timeline so its RAF tick doesn't drift between timeupdate events.
   const tlSyncRef     = useRef<{ time: number; wall: number }>({ time: 0, wall: performance.now() })
+  // Focus motion recording: buffer fills on pointer-move during playback, committed on pointer-up
+  const focusRecordingRef    = useRef(false)
+  const focusBufferRef       = useRef<Array<{ time: number; x: number; y: number }>>([])
+  const lastFocusKfTimeRef   = useRef(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -1093,9 +1097,27 @@ export default function VideoEditor({
     if (!viewerClip) return undefined
     const srcDur = mediaItems.find(m => m.url === viewerClip.url)?.duration
     if (!srcDur) return undefined
+    // Loop cycle = inPoint→srcDur (not 0→srcDur); use the actual playable length per cycle
+    const loopCycleDur = srcDur - viewerClip.inPoint
     const clipDur = viewerClip.outPoint - viewerClip.inPoint
-    return clipDur > srcDur ? srcDur : undefined
+    return clipDur > loopCycleDur && loopCycleDur > 0 ? loopCycleDur : undefined
   }, [viewerClip?.id, viewerClip?.outPoint, viewerClip?.inPoint, mediaItems]) // eslint-disable-line
+
+  function interpolateFocusKF(
+    kf: Array<{ time: number; x: number; y: number }>,
+    localTime: number,
+  ): { x: number; y: number } {
+    if (localTime <= kf[0].time) return { x: kf[0].x, y: kf[0].y }
+    const last = kf[kf.length - 1]
+    if (localTime >= last.time) return { x: last.x, y: last.y }
+    let lo = 0, hi = kf.length - 1
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1
+      if (kf[mid].time <= localTime) lo = mid; else hi = mid
+    }
+    const t = (localTime - kf[lo].time) / (kf[hi].time - kf[lo].time)
+    return { x: kf[lo].x + t * (kf[hi].x - kf[lo].x), y: kf[lo].y + t * (kf[hi].y - kf[lo].y) }
+  }
 
   const selectedDrawFocusItem = useMemo(() => {
     const item = timelineItems.find(i => i.id === selectedId)
@@ -1104,17 +1126,16 @@ export default function VideoEditor({
     return track?.type === 'drawfocus' ? item : null
   }, [selectedId, timelineItems, tracks])
 
-  // Draw Focus overlay:
-  // Priority 1 — selected focus clip (lets user position the point at any time)
-  // Priority 2 — any focus clip that the playhead is currently inside
+  // Draw Focus overlay — interpolates keyframes when present, falls back to static focusX/Y.
+  // Priority 1: selected focus clip. Priority 2: any clip the playhead is inside.
   const activeFocusClip = useMemo(() => {
+    const getFocusPos = (clip: typeof timelineItems[0]) => {
+      const kf = clip.focusKeyframes
+      if (kf && kf.length > 0) return interpolateFocusKF(kf, currentTime - clip.startTime)
+      return { x: clip.focusX ?? 0.5, y: clip.focusY ?? 0.5 }
+    }
     if (selectedDrawFocusItem) {
-      return {
-        x: selectedDrawFocusItem.focusX ?? 0.5,
-        y: selectedDrawFocusItem.focusY ?? 0.5,
-        radius: selectedDrawFocusItem.focusRadius ?? 0.2,
-        selected: true,
-      }
+      return { ...getFocusPos(selectedDrawFocusItem), radius: selectedDrawFocusItem.focusRadius ?? 0.2 }
     }
     for (const track of tracks) {
       if (track.type !== 'drawfocus') continue
@@ -1124,20 +1145,47 @@ export default function VideoEditor({
         currentTime >= i.startTime &&
         currentTime < i.startTime + (i.outPoint - i.inPoint)
       )
-      if (hit) return {
-        x: hit.focusX ?? 0.5,
-        y: hit.focusY ?? 0.5,
-        radius: hit.focusRadius ?? 0.2,
-        selected: false,
-      }
+      if (hit) return { ...getFocusPos(hit), radius: hit.focusRadius ?? 0.2 }
     }
     return undefined
   }, [selectedDrawFocusItem, timelineItems, tracks, currentTime])
 
   function handleSetFocusPoint(x: number, y: number) {
     if (!selectedDrawFocusItem) return
-    handleClipChange(selectedDrawFocusItem.id, { focusX: x, focusY: y })
+    if (focusRecordingRef.current) {
+      // Throttle to ~30fps based on timeline time
+      if (currentTime - lastFocusKfTimeRef.current < 1 / 30) return
+      lastFocusKfTimeRef.current = currentTime
+      focusBufferRef.current.push({ time: currentTime - selectedDrawFocusItem.startTime, x, y })
+    } else {
+      // Paused — update static position
+      handleClipChange(selectedDrawFocusItem.id, { focusX: x, focusY: y })
+    }
   }
+
+  function handleFocusRecordStart() {
+    if (!isPlaying || !selectedDrawFocusItem) return
+    focusRecordingRef.current = true
+    focusBufferRef.current = []
+    lastFocusKfTimeRef.current = 0
+  }
+
+  function handleFocusRecordEnd() {
+    if (!focusRecordingRef.current) return
+    focusRecordingRef.current = false
+    const buffer = focusBufferRef.current
+    focusBufferRef.current = []
+    if (buffer.length === 0 || !selectedDrawFocusItem) return
+    // Merge: replace keyframes in the recorded time range, keep those outside it
+    const rangeStart = buffer[0].time
+    const rangeEnd   = buffer[buffer.length - 1].time
+    const existing   = selectedDrawFocusItem.focusKeyframes ?? []
+    const outside    = existing.filter(k => k.time < rangeStart || k.time > rangeEnd)
+    const merged     = [...outside, ...buffer].sort((a, b) => a.time - b.time)
+    handleClipChange(selectedDrawFocusItem.id, { focusKeyframes: merged })
+  }
+
+  const isRecordingFocus = isPlaying && selectedDrawFocusItem !== null
 
   // When a signed URL expires mid-session, refresh it using the media item's r2Key
   async function handleMediaError() {
@@ -2771,6 +2819,7 @@ export default function VideoEditor({
                       opticalFlowEnabled={opticalFlowEnabled}
                       blendMode={viewerClip?.blendMode}
                       loopDuration={viewerLoopDuration}
+                      clipInPoint={viewerClip?.inPoint ?? 0}
                       titleClip={viewerClip?.contentType === 'title' ? {
                         text: viewerClip.titleText ?? '',
                         fontSize: viewerClip.titleFontSize ?? 48,
@@ -2785,6 +2834,9 @@ export default function VideoEditor({
                       onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
                       activeFocusClip={activeFocusClip}
                       onSetFocusPoint={selectedDrawFocusItem ? handleSetFocusPoint : undefined}
+                      onFocusRecordStart={handleFocusRecordStart}
+                      onFocusRecordEnd={handleFocusRecordEnd}
+                      isRecordingFocus={isRecordingFocus}
                     />
                   </div>
                   <HResizeHandle onDelta={clampAudioH} />
@@ -2839,6 +2891,7 @@ export default function VideoEditor({
                       opticalFlowEnabled={opticalFlowEnabled}
                       blendMode={viewerClip?.blendMode}
                       loopDuration={viewerLoopDuration}
+                      clipInPoint={viewerClip?.inPoint ?? 0}
                       titleClip={viewerClip?.contentType === 'title' ? {
                         text: viewerClip.titleText ?? '',
                         fontSize: viewerClip.titleFontSize ?? 48,
@@ -2853,6 +2906,9 @@ export default function VideoEditor({
                       onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
                       activeFocusClip={activeFocusClip}
                       onSetFocusPoint={selectedDrawFocusItem ? handleSetFocusPoint : undefined}
+                      onFocusRecordStart={handleFocusRecordStart}
+                      onFocusRecordEnd={handleFocusRecordEnd}
+                      isRecordingFocus={isRecordingFocus}
                     />
                   </div>
                   {showColorScopes && (

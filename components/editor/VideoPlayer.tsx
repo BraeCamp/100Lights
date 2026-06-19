@@ -60,7 +60,8 @@ interface Props {
   currentClipSpeed?: number             // real-time speed (may differ from clipSpeed via ramp)
   opticalFlowEnabled?: boolean
   blendMode?: string         // CSS mix-blend-mode
-  loopDuration?: number      // when set, clip loops: source plays 0→loopDuration repeatedly
+  loopDuration?: number      // when set, clip loops; each cycle plays clipInPoint→(clipInPoint+loopDuration)
+  clipInPoint?: number       // inPoint of the active clip (used for loop reset position)
   titleClip?: {              // populated when contentType === 'title'
     text: string
     fontSize: number
@@ -73,8 +74,11 @@ interface Props {
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
   playbackRate?: number
   onPlaybackRateChange?: (rate: number) => void
-  activeFocusClip?: { x: number; y: number; radius: number; selected?: boolean }
+  activeFocusClip?: { x: number; y: number; radius: number }
   onSetFocusPoint?: (x: number, y: number) => void
+  onFocusRecordStart?: () => void
+  onFocusRecordEnd?: () => void
+  isRecordingFocus?: boolean
   onViewerZoomChange?: (z: number) => void
 }
 
@@ -175,11 +179,15 @@ export default function VideoPlayer({
   opticalFlowEnabled = false,
   blendMode,
   loopDuration,
+  clipInPoint = 0,
   titleClip,
   playbackRate = 1,
   onPlaybackRateChange,
   activeFocusClip,
   onSetFocusPoint,
+  onFocusRecordStart,
+  onFocusRecordEnd,
+  isRecordingFocus = false,
   onViewerZoomChange,
 }: Props) {
   // Tracks cumulative full-loop offsets so onTimeUpdate reports monotonically
@@ -187,6 +195,9 @@ export default function VideoPlayer({
   const loopBaseRef = useRef(0)
   const poolRef = useRef<Map<string, HTMLVideoElement>>(new Map())
   const [visibleSrc, setVisibleSrc] = useState<string | null>(null)
+  // Focus recording: local pointer-down state + live display position
+  const focusPointerDownRef = useRef(false)
+  const [focusLivePos, setFocusLivePos] = useState<{ x: number; y: number } | null>(null)
 
   // Timecode editing
   const [editingTC, setEditingTC] = useState(false)
@@ -454,9 +465,9 @@ export default function VideoPlayer({
     if (!src) { setVisibleSrc(null); return }
     const video = poolRef.current.get(src)
     if (!video) { setVisibleSrc(src); return }
-    const clipTime = Math.max(0, currentTimeRef.current - timeOffsetRef.current)
-    const srcTime  = loopDuration ? clipTime % loopDuration : clipTime
-    loopBaseRef.current = loopDuration ? Math.floor(clipTime / loopDuration) * loopDuration : 0
+    const elapsed  = Math.max(0, currentTimeRef.current - timeOffsetRef.current - clipInPoint)
+    const srcTime  = loopDuration ? clipInPoint + (elapsed % loopDuration) : Math.max(0, currentTimeRef.current - timeOffsetRef.current)
+    loopBaseRef.current = loopDuration ? Math.floor(elapsed / loopDuration) * loopDuration : 0
     if (Math.abs(video.currentTime - srcTime) <= 0.12) { setVisibleSrc(src); return }
     setVisibleSrc(null)
     video.currentTime = srcTime
@@ -474,10 +485,9 @@ export default function VideoPlayer({
   useEffect(() => {
     const video = src ? poolRef.current.get(src) : null
     if (!video) return
-    const clipTime = Math.max(0, currentTime - timeOffset)
-    const srcTime  = loopDuration ? clipTime % loopDuration : clipTime
-    // Sync loopBase whenever we seek so onTimeUpdate stays correct
-    loopBaseRef.current = loopDuration ? Math.floor(clipTime / loopDuration) * loopDuration : 0
+    const elapsed  = Math.max(0, currentTime - timeOffset - clipInPoint)
+    const srcTime  = loopDuration ? clipInPoint + (elapsed % loopDuration) : Math.max(0, currentTime - timeOffset)
+    loopBaseRef.current = loopDuration ? Math.floor(elapsed / loopDuration) * loopDuration : 0
     if (Math.abs(video.currentTime - srcTime) > 0.5) video.currentTime = srcTime
   }, [currentTime, timeOffset, src]) // eslint-disable-line
 
@@ -683,7 +693,10 @@ export default function VideoPlayer({
                 if (s !== src) return
                 if (loopDuration) {
                   loopBaseRef.current += loopDuration
-                  e.currentTarget.currentTime = 0
+                  e.currentTarget.currentTime = clipInPoint
+                  // Report the new loop-start time immediately so React state is
+                  // up to date before the seek effect can fire with stale currentTime
+                  onTimeUpdate(loopBaseRef.current + clipInPoint + timeOffset)
                   e.currentTarget.play().catch(() => {})
                 } else {
                   onPause()
@@ -817,45 +830,47 @@ export default function VideoPlayer({
           </div>
         )}
 
-        {/* Draw Focus spotlight overlay */}
-        {activeFocusClip && (
-          <>
-            {/* Vignette darkening outside focus circle */}
+        {/* Draw Focus spotlight overlay — position comes from live pointer during recording, otherwise from activeFocusClip */}
+        {(activeFocusClip || focusLivePos) && (() => {
+          const fx = focusLivePos?.x ?? activeFocusClip!.x
+          const fy = focusLivePos?.y ?? activeFocusClip!.y
+          const fr = activeFocusClip?.radius ?? 0.2
+          return (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
-              background: `radial-gradient(circle at ${activeFocusClip.x * 100}% ${activeFocusClip.y * 100}%, transparent ${activeFocusClip.radius * 100}%, rgba(0,0,0,0.72) ${activeFocusClip.radius * 100 + 8}%)`,
+              background: `radial-gradient(circle at ${fx * 100}% ${fy * 100}%, transparent ${fr * 100}%, rgba(0,0,0,0.72) ${fr * 100 + 8}%)`,
             }} />
-            {/* Selection ring — only when the focus clip is selected */}
-            {activeFocusClip.selected && (
-              <div style={{
-                position: 'absolute', zIndex: 8, pointerEvents: 'none',
-                left: `${activeFocusClip.x * 100}%`,
-                top: `${activeFocusClip.y * 100}%`,
-                transform: 'translate(-50%, -50%)',
-                width: `${activeFocusClip.radius * 200}%`,
-                height: `${activeFocusClip.radius * 200}%`,
-                borderRadius: '50%',
-                border: '2px solid rgba(167,139,250,0.85)',
-                boxShadow: '0 0 12px rgba(167,139,250,0.5), inset 0 0 12px rgba(167,139,250,0.12)',
-              }} />
-            )}
-          </>
-        )}
-        {/* Click-to-set-focus crosshair (only when caller provides handler) */}
+          )
+        })()}
+        {/* Focus pointer capture — active whenever a focus clip is selected */}
         {onSetFocusPoint && (
           <div
-            style={{ position: 'absolute', inset: 0, zIndex: 8, cursor: 'crosshair' }}
-            onClick={e => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              onSetFocusPoint(
-                (e.clientX - rect.left) / rect.width,
-                (e.clientY - rect.top) / rect.height,
-              )
+            style={{
+              position: 'absolute', inset: 0, zIndex: 8,
+              cursor: isRecordingFocus ? 'crosshair' : 'default',
             }}
-            onWheel={e => {
-              // Scroll to resize the focus radius
-              if (!activeFocusClip || !onSetFocusPoint) return
-              // wheel resize is handled in VideoEditor via a dedicated prop
+            onPointerDown={e => {
+              e.currentTarget.setPointerCapture(e.pointerId)
+              focusPointerDownRef.current = true
+              const rect = e.currentTarget.getBoundingClientRect()
+              const x = (e.clientX - rect.left) / rect.width
+              const y = (e.clientY - rect.top) / rect.height
+              setFocusLivePos({ x, y })
+              onFocusRecordStart?.()
+              onSetFocusPoint(x, y)
+            }}
+            onPointerMove={e => {
+              if (!focusPointerDownRef.current) return
+              const rect = e.currentTarget.getBoundingClientRect()
+              const x = (e.clientX - rect.left) / rect.width
+              const y = (e.clientY - rect.top) / rect.height
+              setFocusLivePos({ x, y })
+              onSetFocusPoint(x, y)
+            }}
+            onPointerUp={() => {
+              focusPointerDownRef.current = false
+              setFocusLivePos(null)
+              onFocusRecordEnd?.()
             }}
           />
         )}

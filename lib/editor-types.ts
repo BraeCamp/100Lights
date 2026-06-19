@@ -59,9 +59,10 @@ export interface TimelineItem {
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
   // Draw Focus overlay fields (only for clips on drawfocus tracks)
-  focusX?: number      // 0–1 horizontal position (default 0.5)
+  focusX?: number      // 0–1 horizontal position (default 0.5) — static fallback when no keyframes
   focusY?: number      // 0–1 vertical position (default 0.5)
   focusRadius?: number // radius as fraction of container height (default 0.2)
+  focusKeyframes?: Array<{ time: number; x: number; y: number }>  // time = seconds since clip startTime
 }
 
 export interface Track {
