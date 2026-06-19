@@ -1135,7 +1135,7 @@ export default function VideoEditor({
       return { x: clip.focusX ?? 0.5, y: clip.focusY ?? 0.5 }
     }
     if (selectedDrawFocusItem) {
-      return { ...getFocusPos(selectedDrawFocusItem), radius: selectedDrawFocusItem.focusRadius ?? 0.2 }
+      return getFocusPos(selectedDrawFocusItem)
     }
     for (const track of tracks) {
       if (track.type !== 'drawfocus') continue
@@ -1145,7 +1145,7 @@ export default function VideoEditor({
         currentTime >= i.startTime &&
         currentTime < i.startTime + (i.outPoint - i.inPoint)
       )
-      if (hit) return { ...getFocusPos(hit), radius: hit.focusRadius ?? 0.2 }
+      if (hit) return getFocusPos(hit)
     }
     return undefined
   }, [selectedDrawFocusItem, timelineItems, tracks, currentTime])

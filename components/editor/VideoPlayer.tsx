@@ -74,7 +74,7 @@ interface Props {
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
   playbackRate?: number
   onPlaybackRateChange?: (rate: number) => void
-  activeFocusClip?: { x: number; y: number; radius: number }
+  activeFocusClip?: { x: number; y: number }
   onSetFocusPoint?: (x: number, y: number) => void
   onFocusRecordStart?: () => void
   onFocusRecordEnd?: () => void
@@ -830,16 +830,39 @@ export default function VideoPlayer({
           </div>
         )}
 
-        {/* Draw Focus spotlight overlay — position comes from live pointer during recording, otherwise from activeFocusClip */}
+        {/* Draw Focus point marker — single crosshair dot tracking the recorded path */}
         {(activeFocusClip || focusLivePos) && (() => {
           const fx = focusLivePos?.x ?? activeFocusClip!.x
           const fy = focusLivePos?.y ?? activeFocusClip!.y
-          const fr = activeFocusClip?.radius ?? 0.2
           return (
             <div style={{
-              position: 'absolute', inset: 0, zIndex: 7, pointerEvents: 'none',
-              background: `radial-gradient(circle at ${fx * 100}% ${fy * 100}%, transparent ${fr * 100}%, rgba(0,0,0,0.72) ${fr * 100 + 8}%)`,
-            }} />
+              position: 'absolute', zIndex: 7, pointerEvents: 'none',
+              left: `${fx * 100}%`, top: `${fy * 100}%`,
+              transform: 'translate(-50%, -50%)',
+            }}>
+              {/* Outer ring */}
+              <div style={{
+                position: 'absolute',
+                width: 28, height: 28,
+                borderRadius: '50%',
+                border: '1.5px solid rgba(167,139,250,0.9)',
+                top: '50%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+                boxShadow: '0 0 6px rgba(0,0,0,0.6)',
+              }} />
+              {/* Center dot */}
+              <div style={{
+                position: 'absolute',
+                width: 5, height: 5,
+                borderRadius: '50%',
+                background: 'rgba(167,139,250,1)',
+                top: '50%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+              }} />
+              {/* Crosshair lines */}
+              <div style={{ position: 'absolute', width: 1, height: 16, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }} />
+              <div style={{ position: 'absolute', width: 16, height: 1, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }} />
+            </div>
           )
         })()}
         {/* Focus pointer capture — active whenever a focus clip is selected */}
