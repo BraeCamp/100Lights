@@ -1,8 +1,34 @@
-import { auth } from '@clerk/nextjs/server'
+import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { deleteObjects } from '@/lib/r2'
 import { getSubscription, getPlanLimits } from '@/lib/subscription'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
+import { slugify } from '@/lib/slugify'
+
+// Add slug + owner_username columns on first cold start (idempotent)
+let columnsReady = false
+async function ensureSlugColumns() {
+  if (columnsReady) return
+  try {
+    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS slug TEXT`
+    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_username TEXT`
+  } catch { /* ignore */ }
+  columnsReady = true
+}
+
+async function uniqueSlug(userId: string, name: string, excludeId?: string): Promise<string> {
+  const base = slugify(name)
+  const rows = await sql`
+    SELECT slug FROM projects
+    WHERE user_id = ${userId} AND slug LIKE ${base + '%'} AND deleted_at IS NULL
+    ${excludeId ? sql`AND id != ${excludeId}` : sql``}
+  `
+  const taken = new Set(rows.map(r => r.slug as string))
+  if (!taken.has(base)) return base
+  let i = 2
+  while (taken.has(`${base}-${i}`)) i++
+  return `${base}-${i}`
+}
 
 async function purgeExpiredTrash(userId: string) {
   const expired = await sql`
@@ -96,17 +122,31 @@ export async function POST(req: Request) {
     }
   }
 
+  await ensureSlugColumns()
+
   const project: CfProjFile = { ...body, userId }
   const savedAt = new Date().toISOString()
 
+  // Generate slug (only used if the project doesn't have one yet)
+  const slug = await uniqueSlug(userId, project.name, project.id)
+  const user = await currentUser()
+  const ownerUsername = user?.username ?? user?.emailAddresses[0]?.emailAddress.split('@')[0] ?? userId
+
   await sql`
-    INSERT INTO projects (id, user_id, name, saved_at, data)
-    VALUES (${project.id}, ${userId}, ${project.name}, ${savedAt}, ${JSON.stringify(project) as unknown as object})
+    INSERT INTO projects (id, user_id, name, slug, owner_username, saved_at, data)
+    VALUES (${project.id}, ${userId}, ${project.name}, ${slug}, ${ownerUsername}, ${savedAt}, ${JSON.stringify(project) as unknown as object})
     ON CONFLICT (id) DO UPDATE
-      SET name     = EXCLUDED.name,
-          saved_at = EXCLUDED.saved_at,
-          data     = EXCLUDED.data
+      SET name           = EXCLUDED.name,
+          saved_at       = EXCLUDED.saved_at,
+          data           = EXCLUDED.data,
+          slug           = COALESCE(projects.slug, EXCLUDED.slug),
+          owner_username = COALESCE(projects.owner_username, EXCLUDED.owner_username)
   `
 
-  return Response.json({ ok: true, id: project.id, savedAt })
+  // Return the actual stored slug (may differ from generated if project already had one)
+  const stored = await sql`SELECT slug, owner_username FROM projects WHERE id = ${project.id}`
+  const storedSlug = (stored[0]?.slug ?? slug) as string
+  const storedUsername = (stored[0]?.owner_username ?? ownerUsername) as string
+
+  return Response.json({ ok: true, id: project.id, savedAt, slug: storedSlug, username: storedUsername })
 }

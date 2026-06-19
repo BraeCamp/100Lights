@@ -2,6 +2,20 @@ import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { deleteObjects } from '@/lib/r2'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
+import { slugify } from '@/lib/slugify'
+
+async function uniqueSlugExcluding(userId: string, name: string, excludeId: string): Promise<string> {
+  const base = slugify(name)
+  const rows = await sql`
+    SELECT slug FROM projects
+    WHERE user_id = ${userId} AND slug LIKE ${base + '%'} AND deleted_at IS NULL AND id != ${excludeId}
+  `
+  const taken = new Set(rows.map(r => r.slug as string))
+  if (!taken.has(base)) return base
+  let i = 2
+  while (taken.has(`${base}-${i}`)) i++
+  return `${base}-${i}`
+}
 
 // GET /api/projects/:id
 // Returns the project's manually-saved data. If autosave_data exists and is
@@ -40,15 +54,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (body.name !== undefined) {
     const name = body.name.trim().slice(0, 200)
     if (!name) return Response.json({ error: 'Name cannot be empty' }, { status: 400 })
+    const slug = await uniqueSlugExcluding(userId, name, id)
     const rows = await sql`
       UPDATE projects
       SET name = ${name},
+          slug = ${slug},
           data = jsonb_set(data, '{name}', to_jsonb(${name}::text))
       WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
-      RETURNING name
+      RETURNING name, slug, owner_username
     `
     if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
-    return Response.json({ name: rows[0].name })
+    return Response.json({ name: rows[0].name, slug: rows[0].slug, username: rows[0].owner_username })
   }
 
   const rows = await sql`

@@ -4,6 +4,8 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter, usePathname } from 'next/navigation'
+import { useUser } from '@clerk/nextjs'
 import VideoPlayer from '@/components/editor/VideoPlayer'
 import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
@@ -413,6 +415,19 @@ export default function VideoEditor({
   projectId, projectName, videoUrl, captions: propCaptions, clips, outputs: propOutputs, modules: modulesProp,
   contentType: propContentType, allowImport, onModulesChange, onDataSaved,
 }: Props) {
+  const router        = useRouter()
+  const pathname      = usePathname()
+  const { user }      = useUser()
+
+  function ownerUsername() {
+    return user?.username ?? user?.emailAddresses[0]?.emailAddress.split('@')[0] ?? null
+  }
+
+  function navigateToProject(slug: string, username?: string | null) {
+    const uname = username ?? ownerUsername()
+    if (uname && slug) router.replace(`/${uname}/${slug}`)
+  }
+
   const videoRef      = useRef<HTMLVideoElement | null>(null)
   // Captures sync wall-time at the exact moment onTimeUpdate fires (before React re-render latency).
   // Passed to Timeline so its RAF tick doesn't drift between timeupdate events.
@@ -2039,7 +2054,12 @@ export default function VideoEditor({
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: trimmed }),
-        }).catch(() => {})
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then((data: { slug?: string; username?: string } | null) => {
+            if (data?.slug) navigateToProject(data.slug, data.username)
+          })
+          .catch(() => {})
       }
     } else {
       setNameInput(localProjectName)
@@ -2079,6 +2099,7 @@ export default function VideoEditor({
         }
       }
       if (!res.ok) throw new Error('Cloud save failed')
+      const saved = await res.json().catch(() => ({})) as { slug?: string; username?: string }
       posthog.capture('project_saved', { name: nameToUse })
       onDataSaved?.(project)
       // Clear cloud autosave since the manual save is now canonical
@@ -2086,6 +2107,10 @@ export default function VideoEditor({
         fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
       }
       flashSaved()
+      // Navigate to pretty URL after first save (exits /new) or any save that produced a slug
+      if (saved.slug && pathname === '/new') {
+        navigateToProject(saved.slug, saved.username)
+      }
     } catch {
       setSaveStatus('error')
     }
