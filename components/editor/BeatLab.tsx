@@ -8,22 +8,31 @@ import { playDrumHit, DRUM_PACKS, type PackId } from '@/lib/drum-samples'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const BEAT_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'clap', 'other']
+const ALL_BEAT_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
+const DEFAULT_ENABLED: BeatType[] = ['kick', 'snare', 'hihat', 'clap']
 
 const TYPE_COLORS: Record<BeatType, string> = {
-  kick:  '#7c3aed',
-  snare: '#dc2626',
-  hihat: '#ca8a04',
-  clap:  '#0284c7',
-  other: '#6b7280',
+  kick:         '#7c3aed',
+  snare:        '#dc2626',
+  hihat:        '#ca8a04',
+  'open-hihat': '#d97706',
+  clap:         '#0284c7',
+  tom:          '#059669',
+  crash:        '#9333ea',
+  rim:          '#db2777',
+  other:        '#6b7280',
 }
 
 const TYPE_LABELS: Record<BeatType, string> = {
-  kick:  'Kick',
-  snare: 'Snare',
-  hihat: 'Hi-Hat',
-  clap:  'Clap',
-  other: 'Other',
+  kick:         'Kick',
+  snare:        'Snare',
+  hihat:        'Hi-Hat',
+  'open-hihat': 'Open HH',
+  clap:         'Clap',
+  tom:          'Tom',
+  crash:        'Crash',
+  rim:          'Rim',
+  other:        'Other',
 }
 
 const NOTE_MIN = 36
@@ -37,6 +46,7 @@ function midiName(note: number) {
 }
 
 type Phase = 'idle' | 'recording' | 'analyzing' | 'editing'
+type RecMode = 'hits' | 'loop'
 
 async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
   const ab = await blob.arrayBuffer()
@@ -116,37 +126,44 @@ interface HitBlockProps {
 }
 
 function HitBlock({ hit, duration, pxWidth, selected, muted, onSelect, onMove, onDelete }: HitBlockProps) {
-  const dragStart = useRef<{ x: number; y: number; time: number; note: number } | null>(null)
-  const blockRef = useRef<HTMLDivElement>(null)
-  const color = TYPE_COLORS[hit.type]
+  const color = TYPE_COLORS[hit.type] ?? '#6b7280'
   const noteVal = hit.note ?? Math.round((NOTE_MIN + NOTE_MAX) / 2)
   const left = (hit.time / duration) * pxWidth - 6
   const top = (1 - (noteVal - NOTE_MIN) / NOTE_RANGE) * (LANE_HEIGHT - 10) + 1
 
   function handlePointerDown(e: React.PointerEvent) {
     e.stopPropagation()
+    e.preventDefault()
     onSelect()
-    dragStart.current = { x: e.clientX, y: e.clientY, time: hit.time, note: noteVal }
-    blockRef.current?.setPointerCapture(e.pointerId)
-  }
 
-  function handlePointerMove(e: React.PointerEvent) {
-    if (!dragStart.current) return
-    const dx = e.clientX - dragStart.current.x
-    const dy = e.clientY - dragStart.current.y
-    const newTime = Math.max(0, Math.min(duration - 0.01, dragStart.current.time + (dx / pxWidth) * duration))
-    const newNote = hit.note !== undefined
-      ? Math.max(NOTE_MIN, Math.min(NOTE_MAX, Math.round(dragStart.current.note - (dy / LANE_HEIGHT) * NOTE_RANGE)))
-      : undefined
-    onMove(hit.id, newTime, newNote)
+    const startX = e.clientX
+    const startY = e.clientY
+    const startTime = hit.time
+    const startNote = noteVal
+    const capDur = duration
+    const capPx = pxWidth
+
+    function onGlobalMove(ev: PointerEvent) {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      const newTime = Math.max(0, Math.min(capDur - 0.01, startTime + (dx / capPx) * capDur))
+      const newNote = hit.note !== undefined
+        ? Math.max(NOTE_MIN, Math.min(NOTE_MAX, Math.round(startNote - (dy / LANE_HEIGHT) * NOTE_RANGE)))
+        : undefined
+      onMove(hit.id, newTime, newNote)
+    }
+    function onGlobalUp() {
+      document.removeEventListener('pointermove', onGlobalMove)
+      document.removeEventListener('pointerup', onGlobalUp)
+    }
+    document.addEventListener('pointermove', onGlobalMove)
+    document.addEventListener('pointerup', onGlobalUp)
   }
 
   return (
     <div
-      ref={blockRef}
       onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={() => { dragStart.current = null }}
+      onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
       style={{
         position: 'absolute', left, top, width: 13, height: 8,
@@ -210,7 +227,7 @@ interface LaneProps {
 }
 
 function Lane({ type, hits, duration, pxWidth, selectedId, muted, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute }: LaneProps) {
-  const color = TYPE_COLORS[type]
+  const color = TYPE_COLORS[type] ?? '#6b7280'
 
   function handleLaneClick(e: React.MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -304,6 +321,13 @@ export default function BeatLab({ onExport }: BeatLabProps) {
   const [packId, setPackId] = useState<PackId>('synth')
   const [mutedTypes, setMutedTypes] = useState<Set<BeatType>>(new Set())
   const [audioBuf, setAudioBuf] = useState<AudioBuffer | null>(null)
+  const [selectedTypes, setSelectedTypes] = useState<Set<BeatType>>(new Set(DEFAULT_ENABLED))
+  const [recMode, setRecMode] = useState<RecMode>('hits')
+  // Loop mode state
+  const [loopBuffer, setLoopBuffer] = useState<AudioBuffer | null>(null)
+  const [loopDetectedBpm, setLoopDetectedBpm] = useState<number | null>(null)
+  const [loopTargetBpm, setLoopTargetBpm] = useState<number>(120)
+  const [loopPlaying, setLoopPlaying] = useState(false)
 
   const recorderRef  = useRef<MediaRecorder | null>(null)
   const chunksRef    = useRef<Blob[]>([])
@@ -311,6 +335,8 @@ export default function BeatLab({ onExport }: BeatLabProps) {
   const audioCtxRef  = useRef<AudioContext | null>(null)
   const playRafRef   = useRef<number>(0)
   const playStartRef = useRef<{ wallTime: number; beatTime: number } | null>(null)
+  const loopSrcRef   = useRef<AudioBufferSourceNode | null>(null)
+  const loopCtxRef   = useRef<AudioContext | null>(null)
   const timelineRef  = useRef<HTMLDivElement>(null)
   const [timelinePx, setTimelinePx] = useState(800)
 
@@ -367,15 +393,26 @@ export default function BeatLab({ onExport }: BeatLabProps) {
     const blob = new Blob(chunksRef.current, { type: chunksRef.current[0]?.type ?? 'audio/webm' })
     try {
       const buf = await decodeAudio(blob)
-      const result = await analyzeBeats(buf)
-      setAudioBuf(buf)
-      setAnalysis(result)
-      setHits(result.hits)
-      setBpm(result.bpm)
-      setDuration(result.duration)
-      setPlayhead(0)
-      setMutedTypes(new Set())  // reset mutes on new recording
-      setPhase('editing')
+      if (recMode === 'loop') {
+        // Loop mode: just detect BPM, store buffer, go to editing
+        const result = await analyzeBeats(buf, { allowedTypes: ['kick', 'snare'] })
+        const detectedBpm = result.bpm ?? 120
+        setLoopBuffer(buf)
+        setLoopDetectedBpm(detectedBpm)
+        setLoopTargetBpm(detectedBpm)
+        setLoopPlaying(false)
+        setPhase('editing')
+      } else {
+        const result = await analyzeBeats(buf, { allowedTypes: Array.from(selectedTypes) })
+        setAudioBuf(buf)
+        setAnalysis(result)
+        setHits(result.hits)
+        setBpm(result.bpm)
+        setDuration(result.duration)
+        setPlayhead(0)
+        setMutedTypes(new Set())
+        setPhase('editing')
+      }
     } catch {
       setError('Could not analyze audio. Try again with a clearer beatbox.')
       setPhase('idle')
@@ -435,6 +472,41 @@ export default function BeatLab({ onExport }: BeatLabProps) {
 
   function togglePlay() { if (isPlaying) stopPlayback(); else startPlayback() }
 
+  // ── Loop playback ─────────────────────────────────────────────────────────
+
+  function startLoopPlayback() {
+    if (!loopBuffer) return
+    stopLoopPlayback()
+    const ctx = new AudioContext()
+    loopCtxRef.current = ctx
+    const src = ctx.createBufferSource()
+    src.buffer = loopBuffer
+    src.loop = true
+    if (loopDetectedBpm && loopTargetBpm) {
+      src.playbackRate.value = loopTargetBpm / loopDetectedBpm
+    }
+    src.connect(ctx.destination)
+    src.start()
+    loopSrcRef.current = src
+    src.onended = () => setLoopPlaying(false)
+    setLoopPlaying(true)
+  }
+
+  function stopLoopPlayback() {
+    loopSrcRef.current?.stop()
+    loopSrcRef.current = null
+    loopCtxRef.current?.close()
+    loopCtxRef.current = null
+    setLoopPlaying(false)
+  }
+
+  function updateLoopRate(targetBpm: number) {
+    setLoopTargetBpm(targetBpm)
+    if (loopSrcRef.current && loopDetectedBpm) {
+      loopSrcRef.current.playbackRate.value = targetBpm / loopDetectedBpm
+    }
+  }
+
   // ── Hit editing ────────────────────────────────────────────────────────────
 
   const moveHit = useCallback((id: string, t: number, note: number | undefined) => {
@@ -476,6 +548,9 @@ export default function BeatLab({ onExport }: BeatLabProps) {
     setError(null)
     setAudioBuf(null)
     setMutedTypes(new Set())
+    stopLoopPlayback()
+    setLoopBuffer(null)
+    setLoopDetectedBpm(null)
   }
 
   function toggleMute(type: BeatType) {
@@ -486,8 +561,23 @@ export default function BeatLab({ onExport }: BeatLabProps) {
     })
   }
 
+  function toggleSelectedType(type: BeatType) {
+    setSelectedTypes(prev => {
+      const next = new Set(prev)
+      if (next.has(type) && next.size > 1) next.delete(type)
+      else next.add(type)
+      return next
+    })
+  }
+
+  // Lanes to show in editing: selected types + any types that have hits
+  const activeBeatTypes = ALL_BEAT_TYPES.filter(t =>
+    selectedTypes.has(t) || hits.some(h => h.type === t)
+  )
   const selectedHit = hits.find(h => h.id === selectedId) ?? null
-  const hitsByType = Object.fromEntries(BEAT_TYPES.map(t => [t, hits.filter(h => h.type === t)])) as Record<BeatType, BeatHit[]>
+  const hitsByType = Object.fromEntries(
+    ALL_BEAT_TYPES.map(t => [t, hits.filter(h => h.type === t)])
+  ) as Record<BeatType, BeatHit[]>
   const activeHitCount = hits.filter(h => !mutedTypes.has(h.type)).length
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -562,8 +652,8 @@ export default function BeatLab({ onExport }: BeatLabProps) {
                   {showTypeMenu && (
                     <>
                       <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setShowTypeMenu(false)} />
-                      <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, overflow: 'hidden', minWidth: 100 }}>
-                        {BEAT_TYPES.map(t => (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, overflow: 'hidden', minWidth: 110 }}>
+                        {ALL_BEAT_TYPES.map(t => (
                           <button key={t} onClick={() => changeSelectedType(t)} style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', padding: '6px 10px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-primary)', textAlign: 'left' }}
                             onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
                             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
@@ -597,21 +687,79 @@ export default function BeatLab({ onExport }: BeatLabProps) {
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
         {phase === 'idle' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: 40 }}>
-            <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'rgba(220,38,38,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(220,38,38,0.3)' }}>
-              <Mic size={32} color="#dc2626" />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: 40, overflowY: 'auto' }}>
+            {/* Mode selector */}
+            <div style={{ display: 'flex', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 3 }}>
+              {(['hits', 'loop'] as RecMode[]).map(m => (
+                <button key={m} onClick={() => setRecMode(m)} style={{ padding: '5px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', background: recMode === m ? 'var(--border-light)' : 'transparent', color: recMode === m ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 12, fontWeight: recMode === m ? 600 : 400, transition: 'all 0.15s' }}>
+                  {m === 'hits' ? 'Beat Grid' : 'Loop'}
+                </button>
+              ))}
             </div>
-            <div style={{ textAlign: 'center', maxWidth: 340 }}>
-              <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>Beatbox your rhythm</p>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-                Hit Record and beatbox. 100Lights separates kick, snare, and hi-hat
-                sounds into individual lanes — mute any lane that picked up a false
-                positive after analysis.
+
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(220,38,38,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(220,38,38,0.3)' }}>
+              <Mic size={28} color="#dc2626" />
+            </div>
+            <div style={{ textAlign: 'center', maxWidth: 360 }}>
+              {recMode === 'hits' ? (
+                <>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>Beatbox your rhythm</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                    Select which sounds you&apos;ll beatbox, then hit Record.
+                    Hits snap to the detected tempo grid.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>Record a loop</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                    Record any rhythm or sound. 100Lights detects the tempo and
+                    creates a loopable clip you can stretch to any BPM.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Instrument selector — hits mode only */}
+            {recMode === 'hits' && <div style={{ width: '100%', maxWidth: 380 }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
+                Instruments to detect
               </p>
-            </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                {ALL_BEAT_TYPES.map(type => {
+                  const active = selectedTypes.has(type)
+                  const color = TYPE_COLORS[type]
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => toggleSelectedType(type)}
+                      style={{
+                        padding: '8px 4px',
+                        borderRadius: 7,
+                        border: `1.5px solid ${active ? color : 'var(--border)'}`,
+                        background: active ? `${color}18` : 'var(--bg-card)',
+                        cursor: 'pointer',
+                        color: active ? color : 'var(--text-muted)',
+                        fontSize: 11,
+                        fontWeight: active ? 700 : 400,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 5,
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
+                      {TYPE_LABELS[type]}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>}
+
             {error && <p style={{ fontSize: 12, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
             <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 8, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
-              <Mic size={15} /> Start Recording
+              <Mic size={15} /> {recMode === 'loop' ? 'Start Loop Recording' : 'Start Recording'}
             </button>
           </div>
         )}
@@ -623,7 +771,10 @@ export default function BeatLab({ onExport }: BeatLabProps) {
             </div>
             <div style={{ textAlign: 'center' }}>
               <p style={{ fontSize: 32, fontFamily: 'monospace', fontWeight: 700, color: '#dc2626' }}>{recordingTime.toFixed(1)}s</p>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>Beatboxing… click Stop when done</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+                {recMode === 'loop' ? 'Recording loop…' : `Detecting: ${Array.from(selectedTypes).map(t => TYPE_LABELS[t]).join(', ')}`}
+              </p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Click Stop when done</p>
             </div>
           </div>
         )}
@@ -631,11 +782,49 @@ export default function BeatLab({ onExport }: BeatLabProps) {
         {phase === 'analyzing' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
             <RefreshCw size={32} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Detecting kicks, snares, hi-hats, and pitches…</p>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Detecting hits and snapping to grid…</p>
           </div>
         )}
 
-        {phase === 'editing' && duration > 0 && (
+        {/* ── Loop editing ──────────────────────────────────────────────── */}
+        {phase === 'editing' && recMode === 'loop' && loopBuffer && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24, padding: 40 }}>
+            <Waveform audioBuffer={loopBuffer} pxWidth={Math.min(600, timelinePx || 600)} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              {loopDetectedBpm && (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  Detected BPM: <strong style={{ color: 'var(--text-primary)' }}>{loopDetectedBpm}</strong>
+                </p>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 70 }}>Target BPM</span>
+                <input
+                  type="range" min={40} max={220} step={1} value={loopTargetBpm}
+                  onChange={e => updateLoopRate(Number(e.target.value))}
+                  style={{ width: 180 }}
+                />
+                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-primary)', minWidth: 36 }}>
+                  {loopTargetBpm}
+                </span>
+                {loopDetectedBpm && loopTargetBpm !== loopDetectedBpm && (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {((loopTargetBpm / loopDetectedBpm) * 100 - 100).toFixed(0)}%
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={loopPlaying ? stopLoopPlayback : startLoopPlayback} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 18px', borderRadius: 7, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                {loopPlaying ? <><Pause size={14} fill="#fff" /> Stop</> : <><Play size={14} fill="#fff" style={{ marginLeft: 1 }} /> Play Loop</>}
+              </button>
+              <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '8px 14px', borderRadius: 7, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <RefreshCw size={12} /> Re-record
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'editing' && recMode === 'hits' && duration > 0 && (
           <div ref={timelineRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
 
             <Playhead time={playhead} duration={duration} pxWidth={timelinePx} />
@@ -650,7 +839,7 @@ export default function BeatLab({ onExport }: BeatLabProps) {
 
             {/* Lanes */}
             <div style={{ flex: 1, overflowY: 'auto' }}>
-              {BEAT_TYPES.map(type => (
+              {activeBeatTypes.map(type => (
                 <div key={type} style={{ display: 'flex' }}>
                   <NoteAxis />
                   <Lane
@@ -672,14 +861,14 @@ export default function BeatLab({ onExport }: BeatLabProps) {
 
             {/* Legend */}
             <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-              {BEAT_TYPES.map(t => (
+              {activeBeatTypes.map(t => (
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
                   <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] }} />
                   {TYPE_LABELS[t]} ({hitsByType[t].length})
                 </span>
               ))}
               <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--border-light)' }}>
-                Click ruler to seek · Click lane to add · Drag X=time Y=pitch · Click speaker to mute
+                Click ruler to seek · Click lane to add · Drag X=time Y=pitch · Dbl-click to delete
               </span>
             </div>
           </div>

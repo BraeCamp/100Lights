@@ -3,14 +3,14 @@
  * Runs entirely in the browser via OfflineAudioContext — no server calls needed.
  */
 
-export type BeatType = 'kick' | 'snare' | 'hihat' | 'clap' | 'other'
+export type BeatType = 'kick' | 'snare' | 'hihat' | 'open-hihat' | 'clap' | 'tom' | 'crash' | 'rim' | 'other'
 
 export interface BeatHit {
   id: string
   time: number       // seconds from start of recording
   type: BeatType
   velocity: number   // 0–1 (derived from onset strength)
-  note?: number      // MIDI note number (set by pitch detector in future phase)
+  note?: number      // MIDI note number
 }
 
 export interface BeatAnalysis {
@@ -84,7 +84,6 @@ function detectPitch(buffer: AudioBuffer, startSample: number, sr: number): numb
   const maxLag = Math.floor(sr / 70)
   let bestLag = minLag, bestNsdf = -1
 
-  // NSDF (normalized square difference) — more reliable than raw autocorrelation
   for (let tau = minLag; tau <= Math.min(maxLag, windowLen - 1); tau += 2) {
     let num = 0, den = 0
     for (let i = 0; i + tau < windowLen; i++) {
@@ -100,13 +99,11 @@ function detectPitch(buffer: AudioBuffer, startSample: number, sr: number): numb
 }
 
 // ── Tempo from energy-envelope autocorrelation ───────────────────────────────
-// More robust than IOI-from-peaks because it doesn't depend on correct
-// onset detection — it listens to the rhythm in the raw energy signal.
 
 function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number): number | null {
   const envSr = sr / hopSize
-  const minPeriod = Math.floor(envSr * 60 / 220)  // max 220 BPM
-  const maxPeriod = Math.floor(envSr * 60 / 55)   // min 55 BPM
+  const minPeriod = Math.floor(envSr * 60 / 220)
+  const maxPeriod = Math.floor(envSr * 60 / 55)
   if (energy.length < maxPeriod * 2) return null
 
   let bestPeriod = minPeriod, bestCorr = -1
@@ -122,9 +119,27 @@ function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number
   return Math.round(bpm)
 }
 
+// Fallback chains: maps a natural type to the nearest alternative when the
+// natural type is not in the user's allowed set.
+const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
+  'kick':       ['tom', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
+  'tom':        ['kick', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
+  'snare':      ['clap', 'rim', 'tom', 'kick', 'hihat', 'open-hihat', 'crash', 'other'],
+  'clap':       ['snare', 'rim', 'tom', 'kick', 'hihat', 'open-hihat', 'crash', 'other'],
+  'rim':        ['clap', 'snare', 'hihat', 'tom', 'kick', 'open-hihat', 'crash', 'other'],
+  'hihat':      ['open-hihat', 'rim', 'clap', 'crash', 'snare', 'tom', 'kick', 'other'],
+  'open-hihat': ['crash', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
+  'crash':      ['open-hihat', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
+  'other':      ['snare', 'clap', 'kick', 'tom', 'hihat', 'rim', 'open-hihat', 'crash'],
+}
+
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
-export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalysis> {
+export async function analyzeBeats(
+  audioBuffer: AudioBuffer,
+  options?: { allowedTypes?: BeatType[] },
+): Promise<BeatAnalysis> {
+  const allowed = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
   const sr = audioBuffer.sampleRate
   const raw = audioBuffer.getChannelData(0)
 
@@ -173,60 +188,86 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
     return { hits: [], bpm: null, duration: audioBuffer.duration }
   }
 
-  // Step 4: filter the entire buffer into three frequency bands for classification
-  const [kickBand, snareBand, hihatBand] = await Promise.all([
-    renderFiltered(audioBuffer, 'lowpass',  200, 0.7),   // 0–200 Hz → kick
-    renderFiltered(audioBuffer, 'bandpass', 900, 1.0),   // ~400–2k Hz → snare/clap
-    renderFiltered(audioBuffer, 'highpass', 5000, 0.7),  // 5 kHz+ → hi-hat
+  // Step 4: five frequency bands for richer classification
+  const [subBand, lowMidBand, midBand, hiMidBand, highBand] = await Promise.all([
+    renderFiltered(audioBuffer, 'lowpass',  150, 0.7),   // 0–150 Hz: sub → kick / bass
+    renderFiltered(audioBuffer, 'bandpass', 400, 1.2),   // 200–700 Hz: low-mid → tom / kick body
+    renderFiltered(audioBuffer, 'bandpass', 1400, 1.0),  // 700–2.5k Hz: mid → snare / clap / rim
+    renderFiltered(audioBuffer, 'bandpass', 5000, 1.0),  // 3–8k Hz: hi-mid → hihat / crash
+    renderFiltered(audioBuffer, 'highpass', 9000, 0.7),  // 9k+: shimmer → hihat / crash
   ])
 
   // Step 5: classify each onset
-  const classWindow = 0.06  // 60 ms window around each onset
+  const classWindow = 0.06
+  const sustainOffset = Math.floor(0.06 * sr)  // check energy 60ms after onset
+
   const hits: BeatHit[] = pickedSamples.map((sampleIdx) => {
     const t = sampleIdx / sr
-    const kickE  = rmsWindow(kickBand,  sampleIdx, sr, classWindow)
-    const snareE = rmsWindow(snareBand, sampleIdx, sr, classWindow)
-    const hihatE = rmsWindow(hihatBand, sampleIdx, sr, classWindow)
-    const total  = kickE + snareE + hihatE
+    const subE    = rmsWindow(subBand,    sampleIdx, sr, classWindow)
+    const lowMidE = rmsWindow(lowMidBand, sampleIdx, sr, classWindow)
+    const midE    = rmsWindow(midBand,    sampleIdx, sr, classWindow)
+    const hiMidE  = rmsWindow(hiMidBand,  sampleIdx, sr, classWindow)
+    const highE   = rmsWindow(highBand,   sampleIdx, sr, classWindow)
+    const total   = subE + lowMidE + midE + hiMidE + highE || 1
 
-    let type: BeatType = 'other'
-    if (total > 0) {
-      const kR = kickE / total
-      const hR = hihatE / total
-      if      (kR > 0.45)  type = 'kick'
-      else if (hR > 0.38)  type = 'hihat'
-      else                  type = 'snare'
-    }
+    const subR    = subE / total
+    const lowMidR = lowMidE / total
+    const midR    = midE / total
+    const hiR     = (hiMidE + highE) / total
 
-    // Clap heuristic: snare with very high energy spike
-    if (type === 'snare') {
+    // Sustained high energy 60ms after onset → open-hihat or crash
+    const sustainHigh = rmsWindow(
+      highBand,
+      Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
+      sr, 0.08,
+    )
+    const attackHigh = rmsWindow(highBand, sampleIdx, sr, 0.025)
+    const highSustained = attackHigh > 0.003 && sustainHigh > attackHigh * 0.30
+
+    let natural: BeatType
+    if      (subR > 0.42)                                  natural = 'kick'
+    else if ((subR + lowMidR) > 0.50 && subR > 0.15)      natural = 'tom'
+    else if (hiR > 0.42 && highSustained)                  natural = 'crash'
+    else if (hiR > 0.42)                                   natural = 'hihat'
+    else if (hiR > 0.32 && highSustained)                  natural = 'open-hihat'
+    else if (midR > 0.45 && subR < 0.18)                   natural = 'rim'
+    else if (midR > 0.30 && subR < 0.28)                   natural = 'snare'
+    else                                                    natural = 'clap'
+
+    // High-energy snare → clap
+    if (natural === 'snare') {
       const frameIdx = Math.floor(sampleIdx / hopSize)
-      if (frameIdx < energy.length && energy[frameIdx] > 0.15) type = 'clap'
+      if (frameIdx < energy.length && energy[frameIdx] > 0.15) natural = 'clap'
     }
 
-    const vel = Math.min(1, Math.max(0.15,
-      onset[Math.floor(sampleIdx / hopSize)] * 40,
-    ))
+    // Map to nearest allowed type when set
+    let type: BeatType = natural
+    if (allowed && !allowed.has(natural)) {
+      type = TYPE_FALLBACKS[natural].find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other'
+    }
 
+    const vel = Math.min(1, Math.max(0.15, onset[Math.floor(sampleIdx / hopSize)] * 40))
     return { id: crypto.randomUUID(), time: t, type, velocity: vel }
   })
 
-  // Estimate tempo from the raw energy envelope (independent of onset picks)
+  // Estimate tempo from the raw energy envelope
   const envBpm = findTempoFromEnvelope(energy, sr, hopSize)
-  // 16th-note duration at detected tempo; fall back to 100 ms if tempo unknown
   const subdivSec = envBpm ? (60 / envBpm / 4) : 0.10
 
-  // Post-classification dedup: gaps are the larger of a physical minimum or
-  // one 16th note, so no single instrument fires faster than the musical grid.
+  // Post-classification dedup: no single instrument fires faster than musical grid
   const dedupGaps: Record<BeatType, number> = {
-    kick:  Math.max(0.18, subdivSec),
-    snare: Math.max(0.10, subdivSec),
-    hihat: Math.max(0.04, subdivSec / 2),  // hihats can subdivide further
-    clap:  Math.max(0.10, subdivSec),
-    other: Math.max(0.08, subdivSec),
+    kick:         Math.max(0.18, subdivSec),
+    snare:        Math.max(0.10, subdivSec),
+    hihat:        Math.max(0.04, subdivSec / 2),
+    'open-hihat': Math.max(0.10, subdivSec),
+    clap:         Math.max(0.10, subdivSec),
+    tom:          Math.max(0.15, subdivSec),
+    crash:        Math.max(0.40, subdivSec * 4),
+    rim:          Math.max(0.06, subdivSec / 2),
+    other:        Math.max(0.08, subdivSec),
   }
   const lastByType: Partial<Record<BeatType, number>> = {}
-  const dedupedHits = hits.filter(hit => {
+  let dedupedHits = hits.filter(hit => {
     const gap = dedupGaps[hit.type]
     const last = lastByType[hit.type] ?? -Infinity
     if (hit.time - last < gap) return false
@@ -234,7 +275,23 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
     return true
   })
 
-  // Pitch detection — sets note on hits where a clear fundamental is detected
+  // Grid-snap each hit to the nearest 16th-note at the detected BPM.
+  // Same type + same slot → keep highest velocity.
+  if (envBpm) {
+    const gridSec = 60 / envBpm / 4
+    const slotMap = new Map<string, BeatHit>()
+    for (const hit of dedupedHits) {
+      const slot = Math.round(hit.time / gridSec)
+      const key = `${hit.type}:${slot}`
+      const existing = slotMap.get(key)
+      if (!existing || hit.velocity > existing.velocity) {
+        slotMap.set(key, { ...hit, time: slot * gridSec })
+      }
+    }
+    dedupedHits = Array.from(slotMap.values()).sort((a, b) => a.time - b.time)
+  }
+
+  // Pitch detection for each hit
   for (const hit of dedupedHits) {
     const freq = detectPitch(audioBuffer, Math.floor(hit.time * sr), sr)
     if (freq !== null) {
@@ -245,118 +302,4 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
 
   const bpm = envBpm ?? estimateBPM(dedupedHits.map(h => h.time))
   return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
-}
-
-// ── Web Audio drum synthesis (no external samples needed for Phase 1) ────────
-
-export function synthKick(ctx: AudioContext, when: number, velocity = 1, maxDur = 0.45) {
-  const dur = Math.max(0.12, Math.min(0.45, maxDur))
-  const osc = ctx.createOscillator()
-  const gain = ctx.createGain()
-  osc.connect(gain)
-  gain.connect(ctx.destination)
-  osc.frequency.setValueAtTime(160, when)
-  osc.frequency.exponentialRampToValueAtTime(50, when + 0.12)
-  gain.gain.setValueAtTime(velocity * 0.9, when)
-  gain.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when)
-  osc.stop(when + dur + 0.05)
-}
-
-export function synthSnare(ctx: AudioContext, when: number, velocity = 1) {
-  const len = Math.floor(ctx.sampleRate * 0.18)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-  const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource()
-  noise.buffer = nBuf
-  const nFilt = ctx.createBiquadFilter()
-  nFilt.type = 'bandpass'
-  nFilt.frequency.value = 1800
-  nFilt.Q.value = 0.6
-  const nGain = ctx.createGain()
-  noise.connect(nFilt)
-  nFilt.connect(nGain)
-  nGain.connect(ctx.destination)
-  nGain.gain.setValueAtTime(velocity * 0.6, when)
-  nGain.gain.exponentialRampToValueAtTime(0.001, when + 0.18)
-  noise.start(when)
-  // Tone pop
-  const osc = ctx.createOscillator()
-  const tg = ctx.createGain()
-  osc.connect(tg)
-  tg.connect(ctx.destination)
-  osc.frequency.value = 185
-  tg.gain.setValueAtTime(velocity * 0.35, when)
-  tg.gain.exponentialRampToValueAtTime(0.001, when + 0.07)
-  osc.start(when)
-  osc.stop(when + 0.1)
-}
-
-export function synthHihat(ctx: AudioContext, when: number, velocity = 1, open = false) {
-  const dur = open ? 0.35 : 0.045
-  const len = Math.floor(ctx.sampleRate * dur)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-  const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource()
-  noise.buffer = nBuf
-  const filt = ctx.createBiquadFilter()
-  filt.type = 'highpass'
-  filt.frequency.value = 8000
-  const gain = ctx.createGain()
-  noise.connect(filt)
-  filt.connect(gain)
-  gain.connect(ctx.destination)
-  gain.gain.setValueAtTime(velocity * 0.3, when)
-  gain.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  noise.start(when)
-}
-
-export function synthClap(ctx: AudioContext, when: number, velocity = 1) {
-  // Three slightly offset noise bursts
-  for (const offset of [0, 0.01, 0.022]) {
-    const t = when + offset
-    const len = Math.floor(ctx.sampleRate * 0.06)
-    const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-    const nd = nBuf.getChannelData(0)
-    for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-    const noise = ctx.createBufferSource()
-    noise.buffer = nBuf
-    const filt = ctx.createBiquadFilter()
-    filt.type = 'bandpass'
-    filt.frequency.value = 1200
-    filt.Q.value = 0.8
-    const gain = ctx.createGain()
-    noise.connect(filt)
-    filt.connect(gain)
-    gain.connect(ctx.destination)
-    gain.gain.setValueAtTime(velocity * 0.5, t)
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.06)
-    noise.start(t)
-  }
-}
-
-export function synthOther(ctx: AudioContext, when: number, velocity = 1) {
-  const osc = ctx.createOscillator()
-  const gain = ctx.createGain()
-  osc.type = 'triangle'
-  osc.connect(gain)
-  gain.connect(ctx.destination)
-  osc.frequency.value = 440
-  gain.gain.setValueAtTime(velocity * 0.3, when)
-  gain.gain.exponentialRampToValueAtTime(0.001, when + 0.1)
-  osc.start(when)
-  osc.stop(when + 0.12)
-}
-
-export function triggerHit(ctx: AudioContext, hit: BeatHit, when: number) {
-  const v = hit.velocity
-  switch (hit.type) {
-    case 'kick':  return synthKick(ctx, when, v)
-    case 'snare': return synthSnare(ctx, when, v)
-    case 'hihat': return synthHihat(ctx, when, v)
-    case 'clap':  return synthClap(ctx, when, v)
-    default:      return synthOther(ctx, when, v)
-  }
 }
