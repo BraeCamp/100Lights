@@ -99,6 +99,29 @@ function detectPitch(buffer: AudioBuffer, startSample: number, sr: number): numb
   return sr / bestLag
 }
 
+// ── Tempo from energy-envelope autocorrelation ───────────────────────────────
+// More robust than IOI-from-peaks because it doesn't depend on correct
+// onset detection — it listens to the rhythm in the raw energy signal.
+
+function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number): number | null {
+  const envSr = sr / hopSize
+  const minPeriod = Math.floor(envSr * 60 / 220)  // max 220 BPM
+  const maxPeriod = Math.floor(envSr * 60 / 55)   // min 55 BPM
+  if (energy.length < maxPeriod * 2) return null
+
+  let bestPeriod = minPeriod, bestCorr = -1
+  for (let lag = minPeriod; lag <= Math.min(maxPeriod, Math.floor(energy.length / 2)); lag++) {
+    let sum = 0
+    for (let i = 0; i + lag < energy.length; i++) sum += energy[i] * energy[i + lag]
+    if (sum > bestCorr) { bestCorr = sum; bestPeriod = lag }
+  }
+
+  let bpm = 60 / (bestPeriod / envSr)
+  while (bpm < 60)  bpm *= 2
+  while (bpm > 220) bpm /= 2
+  return Math.round(bpm)
+}
+
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
 export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalysis> {
@@ -188,8 +211,20 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
     return { id: crypto.randomUUID(), time: t, type, velocity: vel }
   })
 
-  // Post-classification deduplication: remove same-type hits too close together
-  const dedupGaps: Record<BeatType, number> = { kick: 0.18, snare: 0.10, hihat: 0.03, clap: 0.08, other: 0.08 }
+  // Estimate tempo from the raw energy envelope (independent of onset picks)
+  const envBpm = findTempoFromEnvelope(energy, sr, hopSize)
+  // 16th-note duration at detected tempo; fall back to 100 ms if tempo unknown
+  const subdivSec = envBpm ? (60 / envBpm / 4) : 0.10
+
+  // Post-classification dedup: gaps are the larger of a physical minimum or
+  // one 16th note, so no single instrument fires faster than the musical grid.
+  const dedupGaps: Record<BeatType, number> = {
+    kick:  Math.max(0.18, subdivSec),
+    snare: Math.max(0.10, subdivSec),
+    hihat: Math.max(0.04, subdivSec / 2),  // hihats can subdivide further
+    clap:  Math.max(0.10, subdivSec),
+    other: Math.max(0.08, subdivSec),
+  }
   const lastByType: Partial<Record<BeatType, number>> = {}
   const dedupedHits = hits.filter(hit => {
     const gap = dedupGaps[hit.type]
@@ -208,7 +243,7 @@ export async function analyzeBeats(audioBuffer: AudioBuffer): Promise<BeatAnalys
     }
   }
 
-  const bpm = estimateBPM(dedupedHits.map(h => h.time))
+  const bpm = envBpm ?? estimateBPM(dedupedHits.map(h => h.time))
   return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
 }
 
