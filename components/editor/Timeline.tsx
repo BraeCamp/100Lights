@@ -160,12 +160,7 @@ export default function Timeline({
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   useEffect(() => { playbackRateRef.current = playbackRate }, [playbackRate])
 
-  useEffect(() => {
-    if (!showAddMenu) return
-    const close = () => setShowAddMenu(false)
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [showAddMenu])
+  // (close-outside is handled by the backdrop div rendered when showAddMenu is true)
 
   // Sync anchor whenever the parent delivers a new currentTime (video timeupdate / seek).
   useEffect(() => {
@@ -459,8 +454,9 @@ export default function Timeline({
         <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
 
         {/* Add track */}
-        <div style={{ position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
+        <div style={{ position: 'relative' }}>
           <button
+            onMouseDown={e => e.stopPropagation()}
             onClick={() => setShowAddMenu(v => !v)}
             className="flex items-center gap-1 px-2 py-1 rounded text-xs"
             style={{ color: 'var(--text-muted)' }}
@@ -468,7 +464,12 @@ export default function Timeline({
           >
             <Plus size={11} /> Add <ChevronDown size={9} />
           </button>
-          {showAddMenu && (
+          {showAddMenu && (<>
+            {/* Backdrop — catches outside clicks without a document listener */}
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+              onClick={() => setShowAddMenu(false)}
+            />
             <div style={{
               position: 'absolute', top: '100%', left: 0, zIndex: 100,
               background: 'var(--bg-surface)', border: '1px solid var(--border)',
@@ -476,8 +477,8 @@ export default function Timeline({
               overflow: 'hidden', marginTop: 2,
             }}>
               {[
-                { label: 'Media Track', type: undefined },
-                { label: 'Draw Focus Track', type: 'drawfocus' },
+                { label: 'Media Track', type: undefined as string | undefined },
+                { label: 'Draw Focus Track', type: 'drawfocus' as string | undefined },
               ].map(({ label, type }) => (
                 <button
                   key={label}
@@ -492,7 +493,7 @@ export default function Timeline({
                 >{label}</button>
               ))}
             </div>
-          )}
+          </>)}
         </div>
 
         <div className="flex-1" />

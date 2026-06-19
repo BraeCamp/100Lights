@@ -126,7 +126,6 @@ export const TOOLBAR_HEIGHT = 34
 
 export const DEFAULT_TRACKS: Track[] = [
   { id: 'v1', label: 'M1', type: 'media', height: TRACK_HEIGHT },
-  { id: 'a1', label: 'M2', type: 'media', height: TRACK_HEIGHT },
 ]
 
 // ── Modular project system ────────────────────────────────────
