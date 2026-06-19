@@ -2,11 +2,14 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2 } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2, Drum } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
+import BeatLab from './BeatLab'
 import ModuleSwitcher from './ModuleSwitcher'
 import type { Caption } from '@/lib/types'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
+
+type AudioTab = 'tracks' | 'beatlab'
 
 // ── AudioTrack extends the shared init type with runtime-only fields ──────────
 
@@ -41,6 +44,7 @@ export default function AudioEditor({
 }: AudioEditorProps) {
   const [localName, setLocalName]       = useState(initialName)
   const [editingName, setEditingName]   = useState(false)
+  const [audioTab, setAudioTab]         = useState<AudioTab>('tracks')
   const [tracks, setTracks]             = useState<AudioTrack[]>(initialTracks)
   const [selectedId, setSelectedId]     = useState<string | null>(initialTracks[0]?.id ?? null)
   const [isPlaying, setIsPlaying]       = useState(false)
@@ -248,6 +252,24 @@ export default function AudioEditor({
               {localName}
             </button>
           )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 16 }}>
+            {(['tracks', 'beatlab'] as AudioTab[]).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setAudioTab(tab)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
+                  fontSize: 11, fontWeight: audioTab === tab ? 600 : 400,
+                  background: audioTab === tab ? 'var(--accent-subtle)' : 'transparent',
+                  color: audioTab === tab ? 'var(--accent-light)' : 'var(--text-muted)',
+                }}
+              >
+                {tab === 'tracks' ? <Music size={11} /> : <Drum size={11} />}
+                {tab === 'tracks' ? 'Tracks' : 'Beat Lab'}
+              </button>
+            ))}
+          </div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             {saveStatus === 'saved' && <span style={{ fontSize: 11, color: '#4ade80', display: 'flex', alignItems: 'center', gap: 4 }}><CheckCircle2 size={11} /> Saved</span>}
             <button onClick={save} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
@@ -260,8 +282,15 @@ export default function AudioEditor({
         </div>
       )}
 
+      {/* ── Beat Lab ─────────────────────────────────────────── */}
+      {audioTab === 'beatlab' && (
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <BeatLab />
+        </div>
+      )}
+
       {/* ── Main layout ──────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: audioTab === 'tracks' ? 'flex' : 'none' }}>
 
         {/* Track list */}
         <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
