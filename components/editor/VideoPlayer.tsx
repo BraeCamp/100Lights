@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } fr
 import { Play, Pause, SkipBack, Mic, Film, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Caption, ContentType } from '@/lib/types'
 import type { VideoAdjustments } from '@/lib/editor-types'
+import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
 
 const PREPLAY_LEAD = 0.5
 const WAVEFORM = [30, 55, 80, 45, 70, 90, 60, 40, 75, 85, 50, 65, 95, 70, 45, 80, 60, 35, 70, 90, 55, 80, 65, 40, 75, 95, 50, 65, 80, 55, 70, 40]
@@ -79,6 +80,9 @@ interface Props {
   onFocusRecordStart?: () => void
   onFocusRecordEnd?: () => void
   isRecordingFocus?: boolean
+  focusKeyframes?: FocusKeyframe[]
+  focusClipStartTime?: number
+  onFocusKeyframeMove?: (index: number, x: number, y: number) => void
   onViewerZoomChange?: (z: number) => void
 }
 
@@ -188,6 +192,9 @@ export default function VideoPlayer({
   onFocusRecordStart,
   onFocusRecordEnd,
   isRecordingFocus = false,
+  focusKeyframes,
+  focusClipStartTime = 0,
+  onFocusKeyframeMove,
   onViewerZoomChange,
 }: Props) {
   // Tracks cumulative full-loop offsets so onTimeUpdate reports monotonically
@@ -198,6 +205,15 @@ export default function VideoPlayer({
   // Focus recording: local pointer-down state + live display position
   const focusPointerDownRef = useRef(false)
   const [focusLivePos, setFocusLivePos] = useState<{ x: number; y: number } | null>(null)
+  const focusLivePosRef = useRef<{ x: number; y: number } | null>(null)
+  // RAF-driven focus marker (bypasses React's 4Hz currentTime update cycle)
+  const focusMarkerRef = useRef<HTMLDivElement>(null)
+  const focusKeyframesRef = useRef(focusKeyframes)
+  const focusClipStartTimeRef = useRef(focusClipStartTime)
+  const activeFocusClipRef = useRef(activeFocusClip)
+  useEffect(() => { focusKeyframesRef.current = focusKeyframes }, [focusKeyframes])
+  useEffect(() => { focusClipStartTimeRef.current = focusClipStartTime }, [focusClipStartTime])
+  useEffect(() => { activeFocusClipRef.current = activeFocusClip }, [activeFocusClip])
 
   // Timecode editing
   const [editingTC, setEditingTC] = useState(false)
@@ -571,6 +587,48 @@ export default function VideoPlayer({
     return () => { if (vuRafRef.current) { cancelAnimationFrame(vuRafRef.current); vuRafRef.current = null } }
   }, [showVUMeter, src])
 
+  // RAF loop: drive focus marker at 60fps by reading video.currentTime directly,
+  // bypassing React's ~4Hz currentTime state updates.
+  useEffect(() => {
+    let rafId: number
+    const tick = () => {
+      const marker = focusMarkerRef.current
+      if (marker) {
+        const livePos = focusLivePosRef.current
+        if (livePos) {
+          // Recording: show live pointer position
+          marker.style.left = `${livePos.x * 100}%`
+          marker.style.top  = `${livePos.y * 100}%`
+          marker.style.display = 'block'
+        } else {
+          const kf = focusKeyframesRef.current
+          const video = src ? poolRef.current.get(src) : null
+          if (kf && kf.length > 0 && video) {
+            // Playback: interpolate at current video time
+            const tlTime = loopBaseRef.current + video.currentTime + timeOffset
+            const localTime = tlTime - focusClipStartTimeRef.current
+            const pos = interpolateFocusKF(kf, localTime)
+            marker.style.left = `${pos.x * 100}%`
+            marker.style.top  = `${pos.y * 100}%`
+            marker.style.display = 'block'
+          } else {
+            const fallback = activeFocusClipRef.current
+            if (fallback) {
+              marker.style.left = `${fallback.x * 100}%`
+              marker.style.top  = `${fallback.y * 100}%`
+              marker.style.display = 'block'
+            } else {
+              marker.style.display = 'none'
+            }
+          }
+        }
+      }
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [src, timeOffset]) // eslint-disable-line — reads via refs; src/timeOffset are the only deps that affect pool lookups
+
   const activeCaption = captions.find(c => currentTime >= c.start && currentTime <= c.end) ?? null
 
   function setPoolRef(s: string, el: HTMLVideoElement | null) {
@@ -830,42 +888,77 @@ export default function VideoPlayer({
           </div>
         )}
 
-        {/* Draw Focus point marker — single crosshair dot tracking the recorded path */}
-        {(activeFocusClip || focusLivePos) && (() => {
-          const fx = focusLivePos?.x ?? activeFocusClip!.x
-          const fy = focusLivePos?.y ?? activeFocusClip!.y
-          return (
-            <div style={{
+        {/* ── Draw Focus overlays ─────────────────────────────────── */}
+        {(activeFocusClip || (focusKeyframes && focusKeyframes.length > 0)) && (<>
+
+          {/* Smooth SVG path through all keyframes */}
+          {focusKeyframes && focusKeyframes.length > 1 && (
+            <svg
+              viewBox="0 0 1 1"
+              preserveAspectRatio="none"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 6, pointerEvents: 'none', overflow: 'visible' }}
+            >
+              <path
+                d={buildFocusSVGPath(focusKeyframes)}
+                fill="none"
+                stroke="rgba(167,139,250,0.4)"
+                strokeWidth="1.5"
+                vectorEffect="non-scaling-stroke"
+                strokeDasharray="5 3"
+              />
+            </svg>
+          )}
+
+          {/* Moving marker — positioned by RAF loop at 60fps, not React state */}
+          <div
+            ref={focusMarkerRef}
+            style={{
               position: 'absolute', zIndex: 7, pointerEvents: 'none',
-              left: `${fx * 100}%`, top: `${fy * 100}%`,
               transform: 'translate(-50%, -50%)',
-            }}>
-              {/* Outer ring */}
-              <div style={{
-                position: 'absolute',
-                width: 28, height: 28,
-                borderRadius: '50%',
-                border: '1.5px solid rgba(167,139,250,0.9)',
-                top: '50%', left: '50%',
-                transform: 'translate(-50%, -50%)',
-                boxShadow: '0 0 6px rgba(0,0,0,0.6)',
-              }} />
-              {/* Center dot */}
-              <div style={{
-                position: 'absolute',
-                width: 5, height: 5,
-                borderRadius: '50%',
-                background: 'rgba(167,139,250,1)',
-                top: '50%', left: '50%',
-                transform: 'translate(-50%, -50%)',
-              }} />
-              {/* Crosshair lines */}
-              <div style={{ position: 'absolute', width: 1, height: 16, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }} />
-              <div style={{ position: 'absolute', width: 16, height: 1, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }} />
-            </div>
-          )
-        })()}
-        {/* Focus pointer capture — active whenever a focus clip is selected */}
+              display: 'none', // RAF shows/hides
+            }}
+          >
+            <div style={{ position: 'absolute', width: 28, height: 28, borderRadius: '50%', border: '1.5px solid rgba(167,139,250,0.95)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', boxShadow: '0 0 8px rgba(0,0,0,0.7), 0 0 4px rgba(167,139,250,0.4)' }} />
+            <div style={{ position: 'absolute', width: 5, height: 5, borderRadius: '50%', background: 'rgba(167,139,250,1)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+            <div style={{ position: 'absolute', width: 1, height: 16, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+            <div style={{ position: 'absolute', width: 16, height: 1, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+          </div>
+
+          {/* Editable control points — draggable dots at each recorded keyframe */}
+          {focusKeyframes && onFocusKeyframeMove && focusKeyframes.map((kf, idx) => (
+            <div
+              key={idx}
+              style={{
+                position: 'absolute', zIndex: 9,
+                left: `${kf.x * 100}%`, top: `${kf.y * 100}%`,
+                transform: 'translate(-50%,-50%)',
+                width: 10, height: 10, borderRadius: '50%',
+                background: 'rgba(167,139,250,0.7)',
+                border: '1.5px solid rgba(255,255,255,0.7)',
+                cursor: 'grab', touchAction: 'none',
+              }}
+              onPointerDown={e => {
+                e.stopPropagation()
+                e.currentTarget.setPointerCapture(e.pointerId)
+                const rect = monitorRef.current!.getBoundingClientRect()
+                const onMove = (me: PointerEvent) => {
+                  onFocusKeyframeMove(idx,
+                    Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)),
+                    Math.max(0, Math.min(1, (me.clientY - rect.top) / rect.height)),
+                  )
+                }
+                const onUp = () => {
+                  e.currentTarget.removeEventListener('pointermove', onMove)
+                  e.currentTarget.removeEventListener('pointerup', onUp)
+                }
+                e.currentTarget.addEventListener('pointermove', onMove)
+                e.currentTarget.addEventListener('pointerup', onUp)
+              }}
+            />
+          ))}
+        </>)}
+
+        {/* Focus pointer capture for recording — behind editable points (zIndex 8 < 9) */}
         {onSetFocusPoint && (
           <div
             style={{
@@ -873,12 +966,15 @@ export default function VideoPlayer({
               cursor: isRecordingFocus ? 'crosshair' : 'default',
             }}
             onPointerDown={e => {
+              // Don't start recording if clicking a keyframe control point
+              if ((e.target as HTMLElement) !== e.currentTarget) return
               e.currentTarget.setPointerCapture(e.pointerId)
               focusPointerDownRef.current = true
               const rect = e.currentTarget.getBoundingClientRect()
               const x = (e.clientX - rect.left) / rect.width
               const y = (e.clientY - rect.top) / rect.height
-              setFocusLivePos({ x, y })
+              const pos = { x, y }
+              setFocusLivePos(pos); focusLivePosRef.current = pos
               onFocusRecordStart?.()
               onSetFocusPoint(x, y)
             }}
@@ -887,12 +983,13 @@ export default function VideoPlayer({
               const rect = e.currentTarget.getBoundingClientRect()
               const x = (e.clientX - rect.left) / rect.width
               const y = (e.clientY - rect.top) / rect.height
-              setFocusLivePos({ x, y })
+              const pos = { x, y }
+              setFocusLivePos(pos); focusLivePosRef.current = pos
               onSetFocusPoint(x, y)
             }}
             onPointerUp={() => {
               focusPointerDownRef.current = false
-              setFocusLivePos(null)
+              setFocusLivePos(null); focusLivePosRef.current = null
               onFocusRecordEnd?.()
             }}
           />

@@ -34,6 +34,7 @@ import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType }
 import type { ContextMenuItem } from './ContextMenu'
 import { useUpgradeModal } from '@/components/UpgradeModal'
 import posthog from 'posthog-js'
+import { interpolateFocusKF } from '@/lib/focus-utils'
 
 const CLIP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#9333ea']
 
@@ -1103,29 +1104,6 @@ export default function VideoEditor({
     return clipDur > loopCycleDur && loopCycleDur > 0 ? loopCycleDur : undefined
   }, [viewerClip?.id, viewerClip?.outPoint, viewerClip?.inPoint, mediaItems]) // eslint-disable-line
 
-  function interpolateFocusKF(
-    kf: Array<{ time: number; x: number; y: number }>,
-    localTime: number,
-  ): { x: number; y: number } {
-    if (localTime <= kf[0].time) return { x: kf[0].x, y: kf[0].y }
-    const last = kf[kf.length - 1]
-    if (localTime >= last.time) return { x: last.x, y: last.y }
-    let lo = 0, hi = kf.length - 1
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1
-      if (kf[mid].time <= localTime) lo = mid; else hi = mid
-    }
-    const t = (localTime - kf[lo].time) / (kf[hi].time - kf[lo].time)
-    // Catmull-Rom spline — clamp phantom points at ends to avoid overshoot
-    const p0 = kf[Math.max(0, lo - 1)]
-    const p1 = kf[lo]
-    const p2 = kf[hi]
-    const p3 = kf[Math.min(kf.length - 1, hi + 1)]
-    const cr = (a: number, b: number, c: number, d: number) =>
-      0.5 * ((2*b) + (-a + c)*t + (2*a - 5*b + 4*c - d)*t*t + (-a + 3*b - 3*c + d)*t*t*t)
-    return { x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y) }
-  }
-
   const selectedDrawFocusItem = useMemo(() => {
     const item = timelineItems.find(i => i.id === selectedId)
     if (!item) return null
@@ -1197,6 +1175,15 @@ export default function VideoEditor({
   }
 
   const isRecordingFocus = isPlaying && selectedDrawFocusItem !== null
+
+  function handleFocusKeyframeMove(index: number, x: number, y: number) {
+    if (!selectedDrawFocusItem?.focusKeyframes) return
+    handleClipChange(selectedDrawFocusItem.id, {
+      focusKeyframes: selectedDrawFocusItem.focusKeyframes.map((k, i) =>
+        i === index ? { ...k, x, y } : k
+      ),
+    })
+  }
 
   // When a signed URL expires mid-session, refresh it using the media item's r2Key
   async function handleMediaError() {
@@ -2848,6 +2835,9 @@ export default function VideoEditor({
                       onFocusRecordStart={handleFocusRecordStart}
                       onFocusRecordEnd={handleFocusRecordEnd}
                       isRecordingFocus={isRecordingFocus}
+                      focusKeyframes={selectedDrawFocusItem?.focusKeyframes}
+                      focusClipStartTime={selectedDrawFocusItem?.startTime}
+                      onFocusKeyframeMove={selectedDrawFocusItem ? handleFocusKeyframeMove : undefined}
                     />
                   </div>
                   <HResizeHandle onDelta={clampAudioH} />
@@ -2920,6 +2910,9 @@ export default function VideoEditor({
                       onFocusRecordStart={handleFocusRecordStart}
                       onFocusRecordEnd={handleFocusRecordEnd}
                       isRecordingFocus={isRecordingFocus}
+                      focusKeyframes={selectedDrawFocusItem?.focusKeyframes}
+                      focusClipStartTime={selectedDrawFocusItem?.startTime}
+                      onFocusKeyframeMove={selectedDrawFocusItem ? handleFocusKeyframeMove : undefined}
                     />
                   </div>
                   {showColorScopes && (
