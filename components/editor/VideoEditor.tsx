@@ -618,6 +618,8 @@ export default function VideoEditor({
 
   // Project loading state — true while fetching from API on mount
   const [isLoadingProject, setIsLoadingProject] = useState(!!projectId)
+  // Suppress dirty-tracking while loadCfproj is applying state changes
+  const isLoadingRef = useRef(false)
 
   // Save state
   const fileHandleRef      = useRef<FileSystemFileHandle | undefined>(undefined)
@@ -981,6 +983,9 @@ export default function VideoEditor({
   }, []) // eslint-disable-line
 
   async function loadCfproj(raw: string) {
+    // Block dirty-tracking while we apply the loaded state so that
+    // loading itself doesn't get treated as unsaved user changes.
+    isLoadingRef.current = true
     setIsLoadingProject(true)
     try {
       const cfproj = JSON.parse(raw) as import('@/lib/project-serializer').CfProjFile
@@ -1016,11 +1021,33 @@ export default function VideoEditor({
       setMediaItems(resolvedMedia)
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
+
+      // ── Recovery check ────────────────────────────────────────
+      // Show recovery only when the autosave is NEWER than the loaded
+      // project. This prevents spurious banners caused by the load itself.
+      const projectSavedAt = cfproj.savedAt ? new Date(cfproj.savedAt).getTime() : 0
+      const localSaved = readAutosave(savedProjectId)
+      const cloudSaved = pendingCloudAutosaveRef.current   // set by the fetch before loadCfproj is called
+      const localAt  = localSaved?.savedAt  ? new Date(localSaved.savedAt).getTime()  : 0
+      const cloudAt  = cloudSaved?.savedAt  ? new Date(cloudSaved.savedAt).getTime()  : 0
+
+      if (cloudAt > projectSavedAt && cloudSaved) {
+        setRecovery({ cfproj: cloudSaved, at: new Date(cloudAt), source: 'cloud' })
+      } else if (localAt > projectSavedAt && localSaved) {
+        setRecovery({ cfproj: localSaved, at: new Date(localAt), source: 'local' })
+      } else {
+        // Autosave is not newer — discard it so it can't resurface later
+        clearAutosave(savedProjectId)
+      }
     } catch {
       // Silently ignore corrupt/unreadable project
     } finally {
       setIsLoadingProject(false)
     }
+    // Clear the loading guard AFTER React has committed the state changes
+    // and run effects. setTimeout(0) fires in the next macrotask, after
+    // React's synchronous effect queue for this render is complete.
+    setTimeout(() => { isLoadingRef.current = false }, 0)
   }
 
   async function resolveR2Keys(media: import('@/lib/project-serializer').SerializedMedia[]): Promise<Map<string, string>> {
@@ -1038,22 +1065,8 @@ export default function VideoEditor({
     return map
   }
 
-  // ── Recovery check on mount ────────────────────────────────
-  // Compare local localStorage autosave vs cloud autosave (from GET response),
-  // and surface whichever is newer as a recovery banner.
-  useEffect(() => {
-    const localSaved = readAutosave(savedProjectId)
-    const cloudSaved = pendingCloudAutosaveRef.current
-    const localAt  = localSaved?.savedAt  ? new Date(localSaved.savedAt)  : null
-    const cloudAt  = cloudSaved?.savedAt  ? new Date(cloudSaved.savedAt)  : null
-
-    if (!localAt && !cloudAt) return
-    if (cloudAt && (!localAt || cloudAt > localAt)) {
-      setRecovery({ cfproj: cloudSaved!, at: cloudAt, source: 'cloud' })
-    } else {
-      setRecovery({ cfproj: localSaved!, at: localAt!, source: 'local' })
-    }
-  }, []) // eslint-disable-line
+  // Recovery check is now inside loadCfproj, which runs after the project
+  // data is available and can compare timestamps properly.
 
   // ── Dirty tracking + auto-save ─────────────────────────────
   // Sets the dirty flag and debounces a localStorage snapshot 5 s after the
@@ -1061,6 +1074,7 @@ export default function VideoEditor({
   const hasMountedRef = useRef(false)
   useEffect(() => {
     if (!hasMountedRef.current) { hasMountedRef.current = true; return }
+    if (isLoadingRef.current) return  // project load is applying state — not a user change
 
     setIsDirty(true)
 
