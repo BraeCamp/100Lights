@@ -64,7 +64,7 @@ import { detectPitchCurve, synthesizeFromPitchCurve } from '@/lib/pitch-detector
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
-const DEFAULT_ENABLED: BeatType[] = ['kick']
+const DEFAULT_ENABLED: BeatType[] = []
 
 type InstrumentFamily = 'drums' | 'guitar' | 'piano' | 'synth'
 const FAMILY_LABEL: Record<InstrumentFamily, string> = { drums: 'Drums', guitar: 'Guitar', piano: 'Piano', synth: 'Synth' }
@@ -484,7 +484,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [activeLaneType, setActiveLaneType] = useState<BeatType | null>('kick')
+  const [activeLaneType, setActiveLaneType] = useState<BeatType | null>(null)
   const [zoomLevel, setZoomLevel] = useState(1)
   const [laneMenu, setLaneMenu] = useState<{ type: BeatType; x: number; y: number } | null>(null)
   const [laneMenuEdit, setLaneMenuEdit] = useState<{ label: string; color: string } | null>(null)
