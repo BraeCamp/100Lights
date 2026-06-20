@@ -221,7 +221,7 @@ interface HitBlockProps {
   aiDeleteSuggestion?: boolean
   typeOverrides: TypeOverrides
   snapInterval?: number
-  onSelect: () => void
+  onSelect: (additive: boolean) => void
   onMove: (id: string, time: number, note: number) => void
   onDelete: () => void
   onRightClick: (e: React.MouseEvent, id: string) => void
@@ -239,7 +239,7 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDel
   function handlePointerDown(e: React.PointerEvent) {
     e.stopPropagation()
     e.preventDefault()
-    onSelect()
+    onSelect(e.shiftKey || e.metaKey || e.ctrlKey)
 
     const startX = e.clientX
     const startY = e.clientY
@@ -349,40 +349,27 @@ interface LaneProps {
   hits: BeatHit[]
   duration: number
   pxWidth: number
-  selectedId: string | null
+  selectedIds: Set<string>
   muted: boolean
   aiSuggestions?: Map<string, BeatType> | null
   aiDeletions?: Set<string>
   typeOverrides: TypeOverrides
   isCustom: boolean
+  isActiveLane: boolean
   snapInterval?: number
-  onSelect: (id: string) => void
+  onSelectHit: (id: string, additive: boolean) => void
+  onSelectLane: () => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
   onToggleMute: () => void
-  onRenameType: (label: string, color: string) => void
-  onDeleteLane: () => void
+  onLaneContextMenu: (e: React.MouseEvent) => void
   onHitRightClick: (e: React.MouseEvent, id: string) => void
 }
 
-function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, snapInterval, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onRenameType, onDeleteLane, onHitRightClick }: LaneProps) {
+function Lane({ type, hits, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
-
-  const [editing, setEditing]     = useState(false)
-  const [editLabel, setEditLabel] = useState('')
-  const [editColor, setEditColor] = useState('')
-
-  function startEdit() {
-    setEditLabel(label)
-    setEditColor(color)
-    setEditing(true)
-  }
-  function commitEdit() {
-    if (editLabel.trim()) onRenameType(editLabel.trim(), editColor)
-    setEditing(false)
-  }
 
   function calcLaneHit(e: React.MouseEvent<HTMLDivElement>): [number, number] {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -405,72 +392,25 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
 
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT, borderBottom: '1px solid var(--border)', opacity: muted ? 0.45 : 1 }}>
-      {/* Label — click to rename */}
-      <div style={{ width: 64, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
-        <button
-          onClick={startEdit}
-          title="Click to rename"
-          style={{
-            width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 3,
-            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-          }}
-        >
-          <div style={{ width: 7, height: 7, borderRadius: '50%', background: muted ? 'var(--border-light)' : color }} />
-          <span style={{ fontSize: 10, fontWeight: 600, color: muted ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 56, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {label}
-          </span>
-          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{hits.length}</span>
-        </button>
-
-        {/* Mute button */}
-        <button
-          onClick={e => { e.stopPropagation(); onToggleMute() }}
-          title={muted ? 'Unmute' : 'Mute'}
-          style={{ position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)', padding: 2, background: 'none', border: 'none', cursor: 'pointer', color: muted ? '#ef4444' : 'var(--text-muted)' }}
-        >
-          {muted ? <VolumeX size={10} /> : <Volume2 size={10} />}
-        </button>
-
-        {/* Rename popover */}
-        {editing && (
-          <>
-            <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setEditing(false)} />
-            <div style={{
-              position: 'absolute', left: 68, top: 0, zIndex: 100,
-              background: 'var(--bg-surface)', border: '1px solid var(--border)',
-              borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
-              minWidth: 180, boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-            }}>
-              <input
-                autoFocus
-                value={editLabel}
-                onChange={e => setEditLabel(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(false) }}
-                placeholder="Track name"
-                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
-              />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {CUSTOM_PALETTE.map(c => (
-                  <button
-                    key={c}
-                    onClick={() => setEditColor(c)}
-                    style={{ width: 18, height: 18, borderRadius: '50%', background: c, border: editColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', outline: editColor === c ? `2px solid ${c}` : 'none' }}
-                  />
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button onClick={commitEdit} style={{ flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Save</button>
-                <button onClick={() => setEditing(false)} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
-                {isCustom && (
-                  <button onClick={() => { setEditing(false); onDeleteLane() }} title="Delete this lane" style={{ padding: '4px 6px', borderRadius: 5, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer' }}>
-                    <Trash2 size={11} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </>
-        )}
+      {/* Label — left-click selects, right-click opens context menu */}
+      <div
+        onClick={onSelectLane}
+        onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
+        style={{
+          width: 64, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
+          background: isActiveLane ? 'var(--accent-subtle)' : 'var(--bg-surface)',
+          cursor: 'pointer', display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 3, userSelect: 'none',
+          borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
+        }}
+      >
+        <div style={{ width: 7, height: 7, borderRadius: '50%', background: muted ? 'var(--border-light)' : color }} />
+        <span style={{ fontSize: 10, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : muted ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 56, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {label}
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{hits.length}</span>
+        {/* Mute indicator */}
+        {muted && <VolumeX size={9} color="#ef4444" style={{ position: 'absolute', bottom: 4 }} />}
       </div>
 
       {/* Hit area — left-click adds, right-click adds (snapped) */}
@@ -490,13 +430,13 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
             hit={hit}
             duration={duration}
             pxWidth={pxWidth}
-            selected={hit.id === selectedId}
+            selected={selectedIds.has(hit.id)}
             muted={muted}
             aiSuggestion={aiSuggestions?.get(hit.id)}
             aiDeleteSuggestion={aiDeletions?.has(hit.id)}
             typeOverrides={typeOverrides}
             snapInterval={snapInterval}
-            onSelect={() => onSelect(hit.id)}
+            onSelect={additive => onSelectHit(hit.id, additive)}
             onMove={onMoveHit}
             onDelete={() => onDeleteHit(hit.id)}
             onRightClick={onHitRightClick}
@@ -541,7 +481,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [activeLaneType, setActiveLaneType] = useState<BeatType | null>(null)
+  const [zoomLevel, setZoomLevel] = useState(1)
+  const [laneMenu, setLaneMenu] = useState<{ type: BeatType; x: number; y: number } | null>(null)
+  const [laneMenuEdit, setLaneMenuEdit] = useState<{ label: string; color: string } | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [recordingTime, setRecordingTime] = useState(0)
@@ -899,7 +843,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   const deleteHit = useCallback((id: string) => {
     setHits(prev => prev.filter(h => h.id !== id))
-    setSelectedId(null)
+    setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n })
   }, [])
 
   // ── Hit property editing (from right-click context menu) ──────────────────
@@ -935,25 +879,34 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (phase !== 'editing') return
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
         e.preventDefault()
-        deleteHit(selectedId)
+        selectedIds.forEach(id => deleteHit(id))
+        setSelectedIds(new Set())
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [phase, selectedId, deleteHit])
+  }, [phase, selectedIds, deleteHit])
+
+  function selectHit(id: string, additive: boolean) {
+    if (additive) {
+      setSelectedIds(prev => { const n = new Set(prev); prev.has(id) ? n.delete(id) : n.add(id); return n })
+    } else {
+      setSelectedIds(new Set([id]))
+    }
+  }
 
   function addHit(type: BeatType, t: number, note: number) {
     const newHit: BeatHit = { id: crypto.randomUUID(), time: t, type, velocity: 0.7, note }
     setHits(prev => [...prev, newHit].sort((a, b) => a.time - b.time))
-    setSelectedId(newHit.id)
+    setSelectedIds(new Set([newHit.id]))
   }
 
   function changeSelectedType(type: BeatType) {
-    if (!selectedId) return
+    if (selectedIds.size === 0) return
     setHits(prev => prev.map(h => {
-      if (h.id !== selectedId) return h
+      if (!selectedIds.has(h.id)) return h
       if (type !== h.type && h.spectral) {
         correctionsAdd({
           id:          crypto.randomUUID(),
@@ -994,7 +947,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   function acceptAiDeleteForHit(hitId: string) {
     setHits(prev => prev.filter(h => h.id !== hitId))
     setAiDeletions(prev => { const next = new Set(prev); next.delete(hitId); return next })
-    if (selectedId === hitId) setSelectedId(null)
+    setSelectedIds(prev => { const n = new Set(prev); n.delete(hitId); return n })
   }
 
   function rejectAiDeleteForHit(hitId: string) {
@@ -1285,7 +1238,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setAnalysis(null)
     setBpm(null)
     setDuration(0)
-    setSelectedId(null)
+    setSelectedIds(new Set())
+    setActiveLaneType(null)
+    setZoomLevel(1)
     setPlayhead(0)
     setError(null)
     setAudioBuf(null)
@@ -1353,7 +1308,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     return map
   }, [hits, activeLaneTypes])
 
-  const selectedHit = hits.find(h => h.id === selectedId) ?? null
+  // For the toolbar, show info for whichever single hit is selected (or the first if multiple)
+  const selectedHit = selectedIds.size === 1 ? (hits.find(h => selectedIds.has(h.id)) ?? null) : null
   const activeHitCount = hits.filter(h => !mutedTypes.has(h.type)).length
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -1406,6 +1362,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </div>
             )}
 
+            {/* Multi-select badge */}
+            {selectedIds.size > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
+                <span style={{ fontSize: 11, color: 'var(--accent-light)' }}>{selectedIds.size} selected</span>
+                <button onClick={() => { selectedIds.forEach(id => deleteHit(id)); setSelectedIds(new Set()) }}
+                  style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}>
+                  Delete all
+                </button>
+                <button onClick={() => setSelectedIds(new Set())}
+                  style={{ fontSize: 10, padding: '1px 4px', borderRadius: 3, background: 'none', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}>✕</button>
+              </div>
+            )}
+
             {/* Selected hit */}
             {selectedHit && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border)', marginLeft: 6 }}>
@@ -1450,7 +1419,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     </>
                   )}
                 </div>
-                <button onClick={() => selectedId && deleteHit(selectedId)} style={{ padding: '2px 5px', borderRadius: 4, background: 'transparent', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
+                <button onClick={() => { selectedIds.forEach(id => deleteHit(id)); setSelectedIds(new Set()) }} style={{ padding: '2px 5px', borderRadius: 4, background: 'transparent', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
                   <Trash2 size={11} />
                 </button>
               </div>
@@ -1480,6 +1449,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                 {activeHitCount} active{mutedTypes.size > 0 && ` · ${hits.length - activeHitCount} muted`}
               </span>
+              {/* Zoom controls */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
+                <button onClick={() => setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2)))} title="Zoom out" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>−</button>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 30, textAlign: 'center' }}>{zoomLevel === 1 ? '1×' : `${zoomLevel.toFixed(1)}×`}</span>
+                <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} title="Zoom in" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
+              </div>
               <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 <RefreshCw size={11} /> Re-record
               </button>
@@ -1880,75 +1855,86 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 ? { display: 'flex', flexDirection: 'column', position: 'relative', borderTop: '2px solid rgba(139,92,246,0.3)' }
                 : { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}
             >
-              <Playhead time={playhead} duration={duration} pxWidth={timelinePx} />
+              {/* Horizontal scroll wrapper for zoomed content */}
+              <div style={{ flex: inPortal ? undefined : 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {/* Fixed-width inner column at zoom level */}
+                <div style={{ width: 64 + (timelinePx * zoomLevel), minWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+                  <Playhead time={playhead} duration={duration} pxWidth={timelinePx * zoomLevel} />
 
-              {/* Ruler */}
-              <div style={{ paddingLeft: 88 }}>
-                <RulerTicks duration={duration} px={timelinePx} onSeek={handleSeek} />
-              </div>
-
-              {/* Waveform */}
-              {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx} />}
-
-              {/* Lanes */}
-              <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
-                {activeLaneTypes.map(type => (
-                  <div key={type} style={{ display: 'flex' }}>
-                    <NoteAxis />
-                    <Lane
-                      type={type}
-                      hits={hitsByType.get(type) ?? []}
-                      duration={duration}
-                      pxWidth={timelinePx}
-                      selectedId={selectedId}
-                      muted={mutedTypes.has(type)}
-                      aiSuggestions={aiSuggestions}
-                      aiDeletions={aiDeletions}
-                      typeOverrides={typeOverrides}
-                      isCustom={extraLaneIds.includes(type)}
-                      snapInterval={snapInterval}
-                      onSelect={setSelectedId}
-                      onMoveHit={moveHit}
-                      onDeleteHit={deleteHit}
-                      onAddHit={(t, note) => addHit(type, t, note)}
-                      onToggleMute={() => toggleMute(type)}
-                      onRenameType={(label, color) => renameType(type, label, color)}
-                      onDeleteLane={() => removeCustomLane(type)}
-                      onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
-                    />
+                  {/* Ruler */}
+                  <div style={{ paddingLeft: 64 }}>
+                    <RulerTicks duration={duration} px={timelinePx * zoomLevel} onSeek={handleSeek} />
                   </div>
-                ))}
-                {/* Add new lane */}
-                <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
-                  <button
-                    onClick={addCustomLane}
-                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                  >
-                    + Add track
-                  </button>
-                </div>
-              </div>
 
-              {/* Legend */}
-              <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                {activeLaneTypes.map(t => (
-                  <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColor(t, typeOverrides) }} />
-                    {typeLabel(t, typeOverrides)} ({hitsByType.get(t)?.length ?? 0})
-                  </span>
-                ))}
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {onAddTrack && hits.length > 0 && (
-                    <button
-                      onClick={addToProject}
-                      style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                    >
-                      + Add to Project
-                    </button>
-                  )}
-                  <span style={{ fontSize: 10, color: 'var(--border-light)' }}>
-                    Click / right-click lane to add · Drag to move · Right-click hit to edit · Dbl-click to delete
-                  </span>
+                  {/* Waveform */}
+                  {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx * zoomLevel} />}
+
+                  {/* Lanes */}
+                  <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
+                    {activeLaneTypes.map(type => (
+                      <div key={type} style={{ display: 'flex' }}>
+                        {/* NoteAxis: only shown for the active (selected) lane */}
+                        {activeLaneType === type
+                          ? <NoteAxis />
+                          : <div style={{ width: 24, flexShrink: 0 }} />
+                        }
+                        <Lane
+                          type={type}
+                          hits={hitsByType.get(type) ?? []}
+                          duration={duration}
+                          pxWidth={timelinePx * zoomLevel}
+                          selectedIds={selectedIds}
+                          muted={mutedTypes.has(type)}
+                          aiSuggestions={aiSuggestions}
+                          aiDeletions={aiDeletions}
+                          typeOverrides={typeOverrides}
+                          isCustom={extraLaneIds.includes(type)}
+                          isActiveLane={activeLaneType === type}
+                          snapInterval={snapInterval}
+                          onSelectHit={selectHit}
+                          onSelectLane={() => setActiveLaneType(type)}
+                          onMoveHit={moveHit}
+                          onDeleteHit={deleteHit}
+                          onAddHit={(t, note) => addHit(type, t, note)}
+                          onToggleMute={() => toggleMute(type)}
+                          onLaneContextMenu={e => setLaneMenu({ type, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 200) })}
+                          onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
+                        />
+                      </div>
+                    ))}
+                    {/* Add new lane */}
+                    <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
+                      <button
+                        onClick={addCustomLane}
+                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                      >
+                        + Add track
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Legend */}
+                  <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                    {activeLaneTypes.map(t => (
+                      <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColor(t, typeOverrides) }} />
+                        {typeLabel(t, typeOverrides)} ({hitsByType.get(t)?.length ?? 0})
+                      </span>
+                    ))}
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {onAddTrack && hits.length > 0 && (
+                        <button
+                          onClick={addToProject}
+                          style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                          + Add to Project
+                        </button>
+                      )}
+                      <span style={{ fontSize: 10, color: 'var(--border-light)' }}>
+                        Click lane to select · Right-click lane for options · Shift+click notes to multi-select
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2107,6 +2093,65 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </>
         )
       })()}
+
+      {/* ── Lane right-click context menu ─────────────────────────────────── */}
+      {laneMenu && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => { setLaneMenu(null); setLaneMenuEdit(null) }} onContextMenu={e => { e.preventDefault(); setLaneMenu(null); setLaneMenuEdit(null) }} />
+          <div style={{
+            position: 'fixed', left: laneMenu.x, top: laneMenu.y, zIndex: 300,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: 8, minWidth: 180, boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column', gap: 2,
+          }}>
+            {laneMenuEdit ? (
+              /* Rename form */
+              <div style={{ padding: '6px 4px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <input
+                  autoFocus
+                  value={laneMenuEdit.label}
+                  onChange={e => setLaneMenuEdit(m => m && ({ ...m, label: e.target.value }))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { renameType(laneMenu.type, laneMenuEdit.label, laneMenuEdit.color); setLaneMenu(null); setLaneMenuEdit(null) }
+                    if (e.key === 'Escape') setLaneMenuEdit(null)
+                  }}
+                  placeholder="Track name"
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
+                />
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {CUSTOM_PALETTE.map(c => (
+                    <button key={c} onClick={() => setLaneMenuEdit(m => m && ({ ...m, color: c }))}
+                      style={{ width: 16, height: 16, borderRadius: '50%', background: c, border: laneMenuEdit.color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', outline: laneMenuEdit.color === c ? `2px solid ${c}` : 'none' }} />
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => { renameType(laneMenu.type, laneMenuEdit.label, laneMenuEdit.color); setLaneMenu(null); setLaneMenuEdit(null) }}
+                    style={{ flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Save</button>
+                  <button onClick={() => setLaneMenuEdit(null)}
+                    style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              /* Menu items */
+              <>
+                {[
+                  { label: 'Rename', action: () => setLaneMenuEdit({ label: typeLabel(laneMenu.type, typeOverrides), color: typeColor(laneMenu.type, typeOverrides) }) },
+                  { label: mutedTypes.has(laneMenu.type) ? 'Unmute' : 'Mute', action: () => { toggleMute(laneMenu.type); setLaneMenu(null) } },
+                  ...(extraLaneIds.includes(laneMenu.type)
+                    ? [{ label: 'Delete lane', action: () => { removeCustomLane(laneMenu.type); setLaneMenu(null) }, danger: true }]
+                    : []),
+                ].map(item => (
+                  <button key={item.label} onClick={item.action}
+                    style={{ width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 12, color: (item as {danger?: boolean}).danger ? '#ef4444' : 'var(--text-primary)', borderRadius: 6 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                  >{item.label}</button>
+                ))}
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
