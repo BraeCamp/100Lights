@@ -58,6 +58,7 @@ import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
+import { sampleGetAll } from '@/lib/sample-pack'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -572,6 +573,30 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setHits(prev => prev.filter(h => h.type !== id as BeatType))
   }
 
+  // Sample pack: loaded AudioBuffers keyed by BeatType, used for playback instead of synth
+  const [sampleBuffers, setSampleBuffers] = useState<Map<BeatType, AudioBuffer>>(new Map())
+
+  useEffect(() => {
+    async function loadSamples() {
+      try {
+        const entries = await sampleGetAll()
+        if (entries.length === 0) return
+        const ctx = new AudioContext()
+        const map = new Map<BeatType, AudioBuffer>()
+        await Promise.all(entries.map(async e => {
+          try {
+            const ab = await e.audioBlob.arrayBuffer()
+            const buf = await ctx.decodeAudioData(ab)
+            map.set(e.beatType, buf)
+          } catch { /* skip bad blobs */ }
+        }))
+        await ctx.close()
+        setSampleBuffers(map)
+      } catch { /* graceful degradation to synth */ }
+    }
+    loadSamples()
+  }, [])
+
   // Two-sided learning: reference sounds from Sound Library (Side A) + accepted corrections (Side B)
   const [referenceSounds, setReferenceSounds] = useState<ReferenceSound[]>([])
   useEffect(() => {
@@ -665,9 +690,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setLoopPlaying(false)
       setPhase('editing')
     } else {
+      // Universal mode: detect all types. Nearest-neighbour against the sample
+      // pack gives us the best type match across drums AND melodic sounds.
+      // If sample fingerprints are loaded as referenceSounds, the NN classifier
+      // handles the melodic/drum distinction automatically.
+      const allAllowed = instrumentFamily === 'drums'
+        ? Array.from(selectedTypes)
+        : undefined  // undefined = all types (universal)
+
       const opts = instrumentFamily !== 'drums'
         ? { melodicType: melodicVariant, stemMode: isStem }
-        : { allowedTypes: Array.from(selectedTypes), referenceSounds, stemMode: isStem }
+        : { allowedTypes: allAllowed, referenceSounds, stemMode: isStem }
+
       const result = await analyzeBeats(buf, opts)
       setAudioBuf(buf)
       setAnalysis(result)
@@ -678,9 +712,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setMutedTypes(new Set())
       setAiSuggestions(null)
       setPhase('editing')
-      if (instrumentFamily === 'drums' && result.hits.some(h => h.spectral)) {
+      if (result.hits.some(h => h.spectral)) {
         setAiLoading(true)
-        aiClassifyHits(result.hits, Array.from(selectedTypes), groundTruth.trim() || undefined).then(aiResult => {
+        const allowedForAi = instrumentFamily === 'drums' ? Array.from(selectedTypes) : undefined
+        aiClassifyHits(result.hits, allowedForAi ?? [], groundTruth.trim() || undefined).then(aiResult => {
           if (aiResult) {
             setAiSuggestions(aiResult.suggestions.size > 0 ? aiResult.suggestions : null)
             setAiDeletions(aiResult.deletions)
@@ -761,7 +796,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (hit.time < startFrom - 0.01) continue
       if (mutedTypes.has(hit.type)) continue
       const when = Math.max(now, now + (hit.time - startFrom))
-      if (MELODIC_TYPES.has(hit.type)) {
+
+      // Use sample pack buffer if available, else fall back to synth
+      const sampleBuf = sampleBuffers.get(hit.type)
+      if (sampleBuf) {
+        const src = ctx.createBufferSource()
+        src.buffer = sampleBuf
+        const gain = ctx.createGain()
+        gain.gain.value = hit.velocity
+        src.connect(gain)
+        gain.connect(ctx.destination)
+        src.start(when)
+      } else if (MELODIC_TYPES.has(hit.type)) {
         playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity)
       } else {
         const maxKickDur = hit.type === 'kick'
@@ -1277,7 +1323,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     })
   }
 
-  // Lanes: selected drum types + every type that has a hit + explicit custom lanes
+  // Lanes: detected hit types + selected drum types (when in drums mode) + custom lanes
   const activeLaneTypes = useMemo(() => {
     const set = new Set<BeatType>()
     if (instrumentFamily === 'drums') selectedTypes.forEach(t => set.add(t))
@@ -1288,7 +1334,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (ai !== -1 && bi !== -1) return ai - bi
       if (ai !== -1) return -1
       if (bi !== -1) return 1
-      return 0
+      return a.localeCompare(b)
     })
   }, [hits, instrumentFamily, selectedTypes, extraLaneIds])
 
@@ -1426,7 +1472,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             )}
 
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              {/* Two-sided learning status */}
+              {/* Sample pack / reference status */}
+              {sampleBuffers.size > 0 && (
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)' }} title="Sample pack loaded">
+                  ♪ {sampleBuffers.size} samples
+                </span>
+              )}
               {referenceSounds.length > 0 && (
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
                   ◈ {referenceSounds.length} ref

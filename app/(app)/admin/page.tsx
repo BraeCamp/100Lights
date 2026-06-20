@@ -1,6 +1,7 @@
 import { sql } from '@/lib/db'
 import AdminLogout from './AdminLogout'
 import CorrectionsPanel from './CorrectionsPanel'
+import SamplePackPanel from './SamplePackPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,6 +120,14 @@ export default async function AdminPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Sample pack — seed and manage per-type audio samples */}
+        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Sample Pack</h2>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+          One sample per sound type. "Seed all from synth" pre-renders the built-in synthesizer as baseline samples.
+          Upload real recordings to replace any slot — BeatLab will use these for playback instead of the synth.
+        </p>
+        <SamplePackPanel />
 
         {/* Beat Lab corrections — client-side IndexedDB */}
         <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Beat Lab corrections</h2>
