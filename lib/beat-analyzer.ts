@@ -227,21 +227,63 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
   'other':           ['snare', 'clap', 'kick', 'tom', 'hihat', 'rim', 'open-hihat', 'crash'],
 }
 
-// ── Main analysis entry point ─────────────────────────────────────────────────
+// ── Spectral distance for two-sided learning ─────────────────────────────────
+// Weighted L2 distance on normalized features. Used by the nearest-neighbor
+// classifier that runs before the hardcoded threshold rules.
+
+function spectralDistance(a: HitSpectral, b: HitSpectral): number {
+  // Band ratios already 0–1 — most discriminative features get highest weight
+  const bands =
+    2.0 * (a.sub    - b.sub)    ** 2 +
+    2.5 * (a.lowMid - b.lowMid) ** 2 +  // kick indicator
+    2.5 * (a.mid    - b.mid)    ** 2 +  // snare/clap indicator
+    2.0 * (a.hiMid  - b.hiMid)  ** 2 +  // hi-hat indicator
+    2.0 * (a.hi     - b.hi)     ** 2
+
+  // Temporal / psychoacoustic features (normalized to 0–1 range)
+  const temporal =
+    1.5 * (( a.attackTime    - b.attackTime   ) / 0.12) ** 2 +
+    1.2 * (  a.sustainLevel  - b.sustainLevel )         ** 2 +
+    1.0 * (( a.releaseTime   - b.releaseTime  ) / 0.30) ** 2 +
+    1.3 * (  a.harmonicRatio - b.harmonicRatio)         ** 2 +
+    1.3 * (  a.roughness     - b.roughness    )         ** 2 +
+    1.0 * (  a.brightness    - b.brightness   )         ** 2 +
+    1.0 * (  a.warmth        - b.warmth       )         ** 2
+
+  // MFCCs 1–4 (highly discriminative for timbre)
+  const mfccW = [1.5, 1.0, 0.8, 0.8]
+  let mfccSum = 0
+  for (let i = 0; i < 4; i++) {
+    mfccSum += mfccW[i] * (((a.mfcc[i + 1] ?? 0) - (b.mfcc[i + 1] ?? 0)) / 10) ** 2
+  }
+
+  const totalWeight = 11.0 + 7.3 + 4.1  // sum of all weights above
+  return Math.sqrt((bands + temporal + mfccSum) / totalWeight)
+}
+
+const NN_MAX_DIST = 0.38  // beyond this threshold, don't trust the nearest neighbour
 
 // ── Main analysis entry point ─────────────────────────────────────────────────
+
+export interface ReferenceSound {
+  category: BeatType
+  spectral:  HitSpectral
+}
 
 export async function analyzeBeats(
   audioBuffer: AudioBuffer,
   options?: {
-    allowedTypes?: BeatType[]
-    melodicType?: BeatType
+    allowedTypes?:       BeatType[]
+    melodicType?:        BeatType
+    referenceSounds?:    ReferenceSound[]   // Side A: Sound Library entries
+    learnedCorrections?: ReferenceSound[]   // Side B: accepted AI corrections
   },
 ): Promise<BeatAnalysis> {
-  const allowed = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
-  const melodicType = options?.melodicType ?? null
-  const sr = audioBuffer.sampleRate
-  const raw = audioBuffer.getChannelData(0)
+  const allowed      = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
+  const melodicType  = options?.melodicType ?? null
+  const references   = [...(options?.referenceSounds ?? []), ...(options?.learnedCorrections ?? [])]
+  const sr           = audioBuffer.sampleRate
+  const raw          = audioBuffer.getChannelData(0)
 
   // ── Step 1: Smoothed RMS energy envelope ─────────────────────────────────
   // Using a weighted 3-frame average removes single-sample noise spikes
@@ -264,6 +306,15 @@ export async function analyzeBeats(
     energy[i] = (a + 2 * b + c) / 4
   }
 
+  // ── Step 1b: Dynamic noise floor ─────────────────────────────────────────
+  // Use the 20th-percentile RMS across all frames as the ambient noise floor.
+  // Multiplying by 4× gives ~12 dB of headroom — enough to suppress room noise
+  // and breathing while keeping soft drum hits. Clamps to 0.003 minimum so a
+  // dead-silent room doesn't set the gate to zero.
+  const sortedForFloor = Array.from(rawEnergy).sort((a, b) => a - b)
+  const p20Floor       = sortedForFloor[Math.floor(sortedForFloor.length * 0.20)] ?? 0
+  const dynamicFloor   = Math.max(0.003, p20Floor * 4.0)
+
   // ── Step 2: Onset strength (2-frame energy rise, rectified) ──────────────
   // Skipping one frame reduces jitter from the smoothing above while still
   // catching sharp transients.
@@ -274,8 +325,7 @@ export async function analyzeBeats(
 
   // ── Step 3: Peak picking with adaptive threshold ──────────────────────────
   // Threshold = 80th-percentile of local onset window * 1.5 + noise floor.
-  // This adapts to the recording's dynamic range far better than 2.5×median,
-  // and the noise floor (0.003) prevents random mic noise from triggering hits.
+  // dynamicFloor replaces the old hardcoded 0.003 minimum.
   const smoothHalf = Math.max(1, Math.floor((0.35 * sr) / hopSize))
   const minGapFrames = Math.max(2, Math.floor((0.09 * sr) / hopSize))
   const pickedSamples: number[] = []
@@ -287,7 +337,7 @@ export async function analyzeBeats(
     const hi = Math.min(nFrames, i + smoothHalf + 1)
     const local = Array.from(onset.subarray(lo, hi)).sort((a, b) => a - b)
     const p80 = local[Math.floor(local.length * 0.8)]
-    const thresh = Math.max(0.003, p80 * 1.5)
+    const thresh = Math.max(dynamicFloor, p80 * 1.5)
 
     if (onset[i] > thresh) {
       const sampleIdx = i * hopSize
@@ -298,7 +348,34 @@ export async function analyzeBeats(
     }
   }
 
-  if (pickedSamples.length === 0) {
+  // ── Step 3b: Tail suppression ─────────────────────────────────────────────
+  // A sustained sound (bass note, open vowel) can ring long enough that the
+  // energy never drops below the onset threshold before the next legitimate hit.
+  // This causes the tail to be detected as a second hit. Fix: between any two
+  // consecutive candidates, check whether the energy dipped below 35% of the
+  // first candidate's peak. If it never did, the second pick is still inside
+  // the first sound's body and gets dropped.
+  const filteredSamples: number[] = []
+  for (let p = 0; p < pickedSamples.length; p++) {
+    if (filteredSamples.length === 0) {
+      filteredSamples.push(pickedSamples[p])
+      continue
+    }
+    const prevSample = filteredSamples[filteredSamples.length - 1]
+    const currSample = pickedSamples[p]
+    const prevFrame  = Math.floor(prevSample / hopSize)
+    const currFrame  = Math.floor(currSample  / hopSize)
+    const peakE      = energy[prevFrame]
+    const decayThreshold = peakE * 0.35
+    let decayed = false
+    for (let f = prevFrame + 1; f < currFrame; f++) {
+      if (energy[f] < decayThreshold) { decayed = true; break }
+    }
+    if (decayed) filteredSamples.push(currSample)
+    // else: energy never dipped — second pick is the same sound's tail, drop it
+  }
+
+  if (filteredSamples.length === 0) {
     return { hits: [], bpm: null, duration: audioBuffer.duration }
   }
 
@@ -306,7 +383,7 @@ export async function analyzeBeats(
   // Scaling by onset * 40 (previous approach) clips immediately for any
   // reasonable microphone level. Instead, normalize against the peak onset
   // in this recording so the loudest hit = 0.92 and softest scales down.
-  const pickedOnsets = pickedSamples.map(s => onset[Math.floor(s / hopSize)])
+  const pickedOnsets = filteredSamples.map(s => onset[Math.floor(s / hopSize)])
   const peakOnset = Math.max(...pickedOnsets, 0.001)
   function toVelocity(frameIdx: number) {
     return Math.min(0.92, Math.max(0.18, (onset[frameIdx] / peakOnset) * 0.90))
@@ -316,7 +393,7 @@ export async function analyzeBeats(
   let hits: BeatHit[]
 
   if (melodicType) {
-    hits = pickedSamples.map((sampleIdx) => ({
+    hits = filteredSamples.map((sampleIdx) => ({
       id: crypto.randomUUID(),
       time: sampleIdx / sr,
       type: melodicType,
@@ -328,7 +405,7 @@ export async function analyzeBeats(
     // computeHitFeatures returns all 30+ dimensions defined in lib/beat-features.ts.
     hits = []
     let prevSpectrum: Float32Array | null = null
-    for (const sampleIdx of pickedSamples) {
+    for (const sampleIdx of filteredSamples) {
       const { spectral, spectrum, highSustained } = computeHitFeatures(raw, sampleIdx, sr, prevSpectrum)
       prevSpectrum = spectrum
 
@@ -345,8 +422,25 @@ export async function analyzeBeats(
       const hasLongTail    = spectral.releaseTime > 0.12     // still ringing 60 ms+ later → crash
       const hasSustainBody = spectral.sustainLevel > 0.22    // energy at 60 ms post-onset → open-hat
 
+      // ── Nearest-neighbour classifier (two-sided learning) ──────────────────
+      // When Sound Library or accepted corrections are available, find the
+      // closest reference sound by weighted spectral distance. If confidence
+      // is high enough, skip the hardcoded rules entirely.
+      let nnOverride: BeatType | null = null
+      if (references.length > 0) {
+        let bestDist = Infinity
+        let bestType: BeatType | null = null
+        for (const ref of references) {
+          const d = spectralDistance(spectral, ref.spectral)
+          if (d < bestDist) { bestDist = d; bestType = ref.category }
+        }
+        if (bestType && bestDist < NN_MAX_DIST) nnOverride = bestType
+      }
+
       let natural: BeatType
-      if (hiR > 0.48) {
+      if (nnOverride) {
+        natural = nnOverride
+      } else if (hiR > 0.48) {
         // Strong high-frequency content — cymbal/hihat family
         if (highSustained || hasSustainBody) {
           natural = hasLongTail ? 'crash' : 'open-hihat'
@@ -468,7 +562,7 @@ export async function analyzeBeats(
   for (const h of dedupedHits) byType[h.type] = (byType[h.type] ?? 0) + 1
   console.log('[BeatLab] Analysis:', {
     duration: audioBuffer.duration.toFixed(2) + 's',
-    rawOnsets: pickedSamples.length,
+    rawOnsets: filteredSamples.length,
     afterDedup: dedupedHits.length,
     bpm,
     bpmSource: (hits.length >= 4 ? ioiBpm : null) != null ? 'IOI' : 'envelope',

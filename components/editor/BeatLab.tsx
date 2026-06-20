@@ -2,12 +2,13 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX } from 'lucide-react'
-import type { BeatHit, BeatAnalysis, BeatType } from '@/lib/beat-analyzer'
+import type { BeatHit, BeatAnalysis, BeatType, ReferenceSound } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
-import { correctionsAdd } from '@/lib/correction-store'
+import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
+import { libraryGetAll } from '@/lib/sound-library'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -395,6 +396,24 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [groundTruth, setGroundTruth] = useState('')
   const [showGroundTruth, setShowGroundTruth] = useState(false)
 
+  // Two-sided learning: reference sounds from Sound Library (Side A) + accepted corrections (Side B)
+  const [referenceSounds, setReferenceSounds] = useState<ReferenceSound[]>([])
+  useEffect(() => {
+    async function loadReferences() {
+      const [library, corrections] = await Promise.all([
+        libraryGetAll().catch(() => []),
+        correctionsGetAll().catch(() => []),
+      ])
+      const fromLibrary: ReferenceSound[] = library
+        .filter(e => e.spectral && e.category !== 'voice' && e.category !== 'custom')
+        .map(e => ({ category: e.category as BeatType, spectral: e.spectral! }))
+      const fromCorrections: ReferenceSound[] = corrections
+        .map(e => ({ category: e.correctedTo, spectral: e.spectral }))
+      setReferenceSounds([...fromLibrary, ...fromCorrections])
+    }
+    loadReferences()
+  }, [])
+
   const recorderRef    = useRef<MediaRecorder | null>(null)
   const startedSongRef = useRef(false)
   const chunksRef    = useRef<Blob[]>([])
@@ -481,7 +500,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       } else {
         const opts = instrumentFamily !== 'drums'
           ? { melodicType: melodicVariant }
-          : { allowedTypes: Array.from(selectedTypes) }
+          : { allowedTypes: Array.from(selectedTypes), referenceSounds }
         const result = await analyzeBeats(buf, opts)
         setAudioBuf(buf)
         setAnalysis(result)
@@ -829,6 +848,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             )}
 
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {/* Two-sided learning status */}
+              {referenceSounds.length > 0 && (
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                  ◈ {referenceSounds.length} ref
+                </span>
+              )}
               {/* AI status */}
               {aiLoading && (
                 <span style={{ fontSize: 10, color: 'var(--accent-light)', display: 'flex', alignItems: 'center', gap: 5 }}>
