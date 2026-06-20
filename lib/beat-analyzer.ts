@@ -153,6 +153,7 @@ export interface BeatHit {
   type: BeatType
   velocity: number  // 0–1
   note: number      // MIDI note — always set
+  duration?: number // seconds; undefined = short attack hit (~50ms default display)
   spectral?: HitSpectral // stored during drum classification for AI review
 }
 

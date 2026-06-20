@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
 import BeatLab from './BeatLab'
 import SoundLibrary from './SoundLibrary'
@@ -159,6 +159,7 @@ export default function AudioEditor({
 
   // Increment to trigger BeatLab to start recording (with song auto-play)
   const [singCount, setSingCount] = useState(0)
+  const [beatLabPhase, setBeatLabPhase] = useState<'idle' | 'recording' | 'analyzing' | 'editing'>('idle')
 
   const selectedTrack = tracks.find(t => t.id === selectedId) ?? null
 
@@ -223,18 +224,6 @@ export default function AudioEditor({
 
   function skipBack()    { seekTo(Math.max(0, currentTime - 5)) }
   function skipForward() { seekTo(Math.min(duration, currentTime + 5)) }
-
-  function singTheBeat() {
-    // Auto-select and play the first audio track if none selected
-    if (tracks.length > 0 && !selectedTrack) {
-      setSelectedId(tracks[0].id)
-    }
-    if (audioRef.current && selectedTrack) {
-      audioRef.current.play().catch(() => {})
-      setIsPlaying(true)
-    }
-    setSingCount(n => n + 1)
-  }
 
   // ── R2 upload ────────────────────────────────────────────────
 
@@ -470,21 +459,6 @@ export default function AudioEditor({
             )}
           </div>
 
-          {/* ── Sing the Beat CTA ───────────────────────────── */}
-          <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', padding: '10px 12px' }}>
-            <button
-              onClick={singTheBeat}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                width: '100%', padding: '10px 12px', borderRadius: 8,
-                background: 'rgba(220,38,38,0.1)', border: '1.5px solid rgba(220,38,38,0.35)',
-                color: '#dc2626', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-              }}
-            >
-              <Mic size={13} /> Sing the Beat
-            </button>
-          </div>
-
           {/* ── Sound Library ───────────────────────────────────── */}
           <SoundLibrary />
         </div>
@@ -492,8 +466,8 @@ export default function AudioEditor({
         {/* ── Right column: track timeline + BeatLab workspace + transport ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
-          {/* Track timeline — audio waveforms + beat track rows */}
-          <div style={{ flexShrink: 0, overflowY: 'auto', maxHeight: '42%', borderBottom: '1px solid var(--border)' }}>
+          {/* Track timeline — audio waveforms + beat track rows — fills all remaining space */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderBottom: '1px solid var(--border)' }}>
 
             {/* Empty placeholder when no tracks exist */}
             {tracks.length === 0 && beatTracks.length === 0 && (
@@ -554,11 +528,18 @@ export default function AudioEditor({
               ))}
           </div>
 
-          {/* BeatLab workspace */}
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {/* BeatLab panel — compact when idle, expands during recording/editing */}
+          <div style={{
+            flexShrink: 0,
+            height: beatLabPhase === 'idle' ? 56 : beatLabPhase === 'editing' ? '48%' : 220,
+            overflow: 'hidden',
+            transition: 'height 0.2s ease',
+            borderTop: '1px solid var(--border)',
+          }}>
             <BeatLab
               hasSong={tracks.length > 0}
               requestRecord={singCount}
+              onPhaseChange={p => setBeatLabPhase(p as 'idle' | 'recording' | 'analyzing' | 'editing')}
               onRequestSongPlay={() => {
                 if (audioRef.current && selectedTrack) {
                   audioRef.current.play().catch(() => {})

@@ -219,15 +219,20 @@ interface HitBlockProps {
   aiSuggestion?: BeatType
   aiDeleteSuggestion?: boolean
   typeOverrides: TypeOverrides
+  snapInterval?: number
   onSelect: () => void
   onMove: (id: string, time: number, note: number) => void
   onDelete: () => void
+  onRightClick: (e: React.MouseEvent, id: string) => void
 }
 
-function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDeleteSuggestion, typeOverrides, onSelect, onMove, onDelete }: HitBlockProps) {
+function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDeleteSuggestion, typeOverrides, snapInterval, onSelect, onMove, onDelete, onRightClick }: HitBlockProps) {
   const color = typeColor(hit.type, typeOverrides)
   const noteVal = hit.note ?? Math.round((NOTE_MIN + NOTE_MAX) / 2)
-  const left = (hit.time / duration) * pxWidth - 6
+  // Width: proportional to hit.duration when set, else narrow default
+  const hitDur = hit.duration ?? 0
+  const blockW = hitDur > 0 ? Math.max(8, Math.min(pxWidth * 0.4, (hitDur / duration) * pxWidth)) : 13
+  const left = (hit.time / duration) * pxWidth - (hitDur > 0 ? 0 : 6)
   const top = (1 - (noteVal - NOTE_MIN) / NOTE_RANGE) * (LANE_HEIGHT - 10) + 1
 
   function handlePointerDown(e: React.PointerEvent) {
@@ -241,11 +246,14 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDel
     const startNote = noteVal
     const capDur = duration
     const capPx = pxWidth
+    const snap = snapInterval
 
     function onGlobalMove(ev: PointerEvent) {
       const dx = ev.clientX - startX
       const dy = ev.clientY - startY
-      const newTime = Math.max(0, Math.min(capDur - 0.01, startTime + (dx / capPx) * capDur))
+      let newTime = Math.max(0, Math.min(capDur - 0.01, startTime + (dx / capPx) * capDur))
+      if (snap && snap > 0) newTime = Math.max(0, Math.min(capDur - 0.01, Math.round(newTime / snap) * snap))
+      // Vertical: snap to nearest semitone (already integer, just clamp)
       const newNote = Math.max(NOTE_MIN, Math.min(NOTE_MAX, Math.round(startNote - (dy / LANE_HEIGHT) * NOTE_RANGE)))
       onMove(hit.id, newTime, newNote)
     }
@@ -263,9 +271,10 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDel
         onPointerDown={handlePointerDown}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
-        title={aiDeleteSuggestion ? 'AI: delete (noise/false hit)' : aiSuggestion ? `AI: ${typeLabel(aiSuggestion, typeOverrides)}` : undefined}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onRightClick(e, hit.id) }}
+        title={aiDeleteSuggestion ? 'AI: delete (noise/false hit) · right-click to edit' : aiSuggestion ? `AI: ${typeLabel(aiSuggestion, typeOverrides)} · right-click to edit` : 'Right-click to edit'}
         style={{
-          width: 13, height: 8,
+          width: blockW, height: 8,
           background: muted ? 'var(--border-light)' : color,
           borderRadius: 2,
           opacity: muted ? 0.35 : selected ? 1 : 0.35 + 0.6 * hit.velocity,
@@ -345,6 +354,7 @@ interface LaneProps {
   aiDeletions?: Set<string>
   typeOverrides: TypeOverrides
   isCustom: boolean
+  snapInterval?: number
   onSelect: (id: string) => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
@@ -352,9 +362,10 @@ interface LaneProps {
   onToggleMute: () => void
   onRenameType: (label: string, color: string) => void
   onDeleteLane: () => void
+  onHitRightClick: (e: React.MouseEvent, id: string) => void
 }
 
-function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onRenameType, onDeleteLane }: LaneProps) {
+function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, snapInterval, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onRenameType, onDeleteLane, onHitRightClick }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -372,14 +383,23 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
     setEditing(false)
   }
 
-  function handleLaneClick(e: React.MouseEvent<HTMLDivElement>) {
+  function calcLaneHit(e: React.MouseEvent<HTMLDivElement>): [number, number] {
     const rect = e.currentTarget.getBoundingClientRect()
-    const t = ((e.clientX - rect.left) / rect.width) * duration
+    let t = ((e.clientX - rect.left) / rect.width) * duration
+    if (snapInterval && snapInterval > 0) t = Math.round(t / snapInterval) * snapInterval
     const note = Math.round(NOTE_MAX - ((e.clientY - rect.top) / rect.height) * NOTE_RANGE)
-    onAddHit(
-      Math.max(0, Math.min(duration - 0.01, t)),
-      Math.max(NOTE_MIN, Math.min(NOTE_MAX, note)),
-    )
+    return [Math.max(0, Math.min(duration - 0.01, t)), Math.max(NOTE_MIN, Math.min(NOTE_MAX, note))]
+  }
+
+  function handleLaneClick(e: React.MouseEvent<HTMLDivElement>) {
+    const [t, note] = calcLaneHit(e)
+    onAddHit(t, note)
+  }
+
+  function handleLaneRightClick(e: React.MouseEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const [t, note] = calcLaneHit(e)
+    onAddHit(t, note)
   }
 
   return (
@@ -452,9 +472,10 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
         )}
       </div>
 
-      {/* Hit area */}
+      {/* Hit area — left-click adds, right-click adds (snapped) */}
       <div
         onClick={handleLaneClick}
+        onContextMenu={handleLaneRightClick}
         style={{
           flex: 1, position: 'relative', cursor: muted ? 'default' : 'crosshair', height: LANE_HEIGHT,
           background: 'var(--bg-card)',
@@ -473,9 +494,11 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
             aiSuggestion={aiSuggestions?.get(hit.id)}
             aiDeleteSuggestion={aiDeletions?.has(hit.id)}
             typeOverrides={typeOverrides}
+            snapInterval={snapInterval}
             onSelect={() => onSelect(hit.id)}
             onMove={onMoveHit}
             onDelete={() => onDeleteHit(hit.id)}
+            onRightClick={onHitRightClick}
           />
         ))}
       </div>
@@ -506,9 +529,10 @@ interface BeatLabProps {
   onHitsChange?: (hits: BeatHit[], duration: number, bpm: number | null) => void
   onAddTrack?: (entry: BeatTrackEntry) => void
   requestRecord?: number  // increment to trigger recording (plays song automatically)
+  onPhaseChange?: (phase: Phase) => void
 }
 
-export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord }: BeatLabProps) {
+export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -842,6 +866,34 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setHits(prev => prev.filter(h => h.id !== id))
     setSelectedId(null)
   }, [])
+
+  // ── Hit property editing (from right-click context menu) ──────────────────
+  const [hitMenu, setHitMenu] = useState<{ hitId: string; x: number; y: number } | null>(null)
+
+  function changeHitType(id: string, newType: BeatType) {
+    setHits(prev => prev.map(h => {
+      if (h.id !== id) return h
+      if (newType !== h.type && h.spectral) {
+        correctionsAdd({ id: crypto.randomUUID(), spectral: h.spectral, detectedAs: h.type, correctedTo: newType, savedAt: new Date().toISOString() }).catch(() => {})
+      }
+      return { ...h, type: newType }
+    }))
+  }
+  function changeHitVelocity(id: string, v: number) {
+    setHits(prev => prev.map(h => h.id === id ? { ...h, velocity: v } : h))
+  }
+  function changeHitDuration(id: string, d: number) {
+    setHits(prev => prev.map(h => h.id === id ? { ...h, duration: d } : h))
+  }
+  function changeHitNote(id: string, note: number) {
+    setHits(prev => prev.map(h => h.id === id ? { ...h, note } : h))
+  }
+
+  // ── Phase change notification ─────────────────────────────────────────────
+  useEffect(() => { onPhaseChange?.(phase) }, [phase]) // eslint-disable-line
+
+  // ── Snap interval for quantized editing ──────────────────────────────────
+  const snapInterval = bpm && bpm > 0 ? 60 / bpm / 4 : duration > 0 ? duration / 32 : 0
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1804,6 +1856,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     aiDeletions={aiDeletions}
                     typeOverrides={typeOverrides}
                     isCustom={extraLaneIds.includes(type)}
+                    snapInterval={snapInterval}
                     onSelect={setSelectedId}
                     onMoveHit={moveHit}
                     onDeleteHit={deleteHit}
@@ -1811,6 +1864,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     onToggleMute={() => toggleMute(type)}
                     onRenameType={(label, color) => renameType(type, label, color)}
                     onDeleteLane={() => removeCustomLane(type)}
+                    onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
                   />
                 </div>
               ))}
@@ -1843,7 +1897,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   </button>
                 )}
                 <span style={{ fontSize: 10, color: 'var(--border-light)' }}>
-                  Click ruler to seek · Click lane to add · Drag X=time Y=pitch · Dbl-click to delete
+                  Click / right-click lane to add · Drag to move (snaps to grid) · Right-click hit to edit · Dbl-click to delete
                 </span>
               </div>
             </div>
@@ -1918,6 +1972,89 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </div>
         </>
       )}
+
+      {/* ── Hit right-click context menu ─────────────────────────────────── */}
+      {hitMenu && (() => {
+        const hit = hits.find(h => h.id === hitMenu.hitId)
+        if (!hit) return null
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setHitMenu(null)} onContextMenu={e => { e.preventDefault(); setHitMenu(null) }} />
+            <div style={{
+              position: 'fixed', left: hitMenu.x, top: hitMenu.y, zIndex: 300,
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 10, padding: '12px 14px', width: 240, boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+              display: 'flex', flexDirection: 'column', gap: 11,
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Edit Hit</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace' }}>@ {hit.time.toFixed(3)}s</span>
+              </div>
+
+              {/* Type */}
+              <div>
+                <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Sound Type</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {allAvailableTypes.map(t => (
+                    <button
+                      key={t}
+                      onClick={() => changeHitType(hit.id, t)}
+                      style={{
+                        fontSize: 10, padding: '3px 7px', borderRadius: 4, cursor: 'pointer', fontWeight: hit.type === t ? 700 : 400,
+                        background: hit.type === t ? `${typeColor(t, typeOverrides)}22` : 'var(--bg-card)',
+                        border: `1px solid ${hit.type === t ? typeColor(t, typeOverrides) : 'var(--border)'}`,
+                        color: hit.type === t ? typeColor(t, typeOverrides) : 'var(--text-muted)',
+                      }}
+                    >{typeLabel(t, typeOverrides)}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Velocity */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Velocity</p>
+                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{Math.round(hit.velocity * 100)}%</span>
+                </div>
+                <input type="range" min={0.05} max={1} step={0.05} value={hit.velocity}
+                  onChange={e => changeHitVelocity(hit.id, Number(e.target.value))}
+                  style={{ width: '100%' }} className="cf-slider" />
+              </div>
+
+              {/* Length */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Length</p>
+                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{Math.round((hit.duration ?? 0.05) * 1000)}ms</span>
+                </div>
+                <input type="range" min={0.02} max={0.6} step={0.01} value={hit.duration ?? 0.05}
+                  onChange={e => changeHitDuration(hit.id, Number(e.target.value))}
+                  style={{ width: '100%' }} className="cf-slider" />
+              </div>
+
+              {/* Pitch */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Pitch</p>
+                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{midiName(hit.note)}</span>
+                </div>
+                <input type="range" min={NOTE_MIN} max={NOTE_MAX} step={1} value={hit.note}
+                  onChange={e => changeHitNote(hit.id, Number(e.target.value))}
+                  style={{ width: '100%' }} className="cf-slider" />
+              </div>
+
+              {/* Delete */}
+              <button
+                onClick={() => { deleteHit(hit.id); setHitMenu(null) }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
+              >
+                <Trash2 size={12} /> Delete Hit
+              </button>
+            </div>
+          </>
+        )
+      })()}
     </div>
   )
 }
