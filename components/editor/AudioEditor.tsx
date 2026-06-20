@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum, Scissors } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
 import BeatLab from './BeatLab'
 import SoundLibrary from './SoundLibrary'
@@ -163,6 +163,9 @@ export default function AudioEditor({
   // Portal target: BeatLab renders its lane editor here (inside the main scroll area)
   const [beatLabLanesEl, setBeatLabLanesEl] = useState<HTMLDivElement | null>(null)
 
+  // Stem separation state per track id
+  const [stemJobs, setStemJobs] = useState<Record<string, { predId: string; status: 'running' | 'done' | 'error' }>>({})
+
   const selectedTrack = tracks.find(t => t.id === selectedId) ?? null
 
   useEffect(() => { setLocalName(initialName) }, [initialName])
@@ -283,6 +286,56 @@ export default function AudioEditor({
       el.addEventListener('error', () => resolve(0), { once: true })
       setTimeout(() => resolve(0), 4000)
     })
+  }
+
+  // ── Stem separation ──────────────────────────────────────────
+
+  async function separateStems(track: AudioTrack) {
+    setStemJobs(prev => ({ ...prev, [track.id]: { predId: '', status: 'running' } }))
+    try {
+      // Fetch the audio as a blob so we can POST it as multipart
+      const audioBlob = await fetch(track.url).then(r => r.blob())
+      const form = new FormData()
+      form.append('audio', audioBlob, track.name || 'audio.mp3')
+      const startRes = await fetch('/api/stems', { method: 'POST', body: form })
+      if (!startRes.ok) throw new Error(await startRes.text())
+      const { predictionId } = await startRes.json() as { predictionId: string; status: string }
+
+      setStemJobs(prev => ({ ...prev, [track.id]: { predId: predictionId, status: 'running' } }))
+
+      // Poll until done
+      let stems: Record<string, string> | null = null
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 5000))
+        const pollRes = await fetch(`/api/stems?id=${predictionId}`)
+        const data    = await pollRes.json() as { status: string; stems?: Record<string, string>; error?: string }
+        if (data.status === 'succeeded' && data.stems) { stems = data.stems; break }
+        if (data.status === 'failed' || data.status === 'canceled') throw new Error(data.error ?? 'Stem separation failed')
+      }
+      if (!stems) throw new Error('Timed out waiting for stems')
+
+      // Add each stem as a new track
+      const stemOrder = ['drums', 'bass', 'vocals', 'other']
+      const ordered = [...stemOrder.filter(k => stems![k]), ...Object.keys(stems).filter(k => !stemOrder.includes(k))]
+      const newTracks: AudioTrack[] = []
+      for (const name of ordered) {
+        const url = stems[name]
+        const dur = await getAudioDuration(url, 'audio/mpeg')
+        newTracks.push({
+          id: crypto.randomUUID(),
+          name: `${track.name.replace(/\.\w+$/, '')} — ${name}`,
+          url,
+          duration: dur,
+          contentType: 'audio/mpeg',
+          uploadStatus: 'uploaded',
+          savedAt: new Date().toISOString(),
+        })
+      }
+      setTracks(prev => [...prev, ...newTracks])
+      setStemJobs(prev => ({ ...prev, [track.id]: { predId: predictionId, status: 'done' } }))
+    } catch {
+      setStemJobs(prev => ({ ...prev, [track.id]: { ...prev[track.id], status: 'error' } }))
+    }
   }
 
   // ── Save ─────────────────────────────────────────────────────
@@ -495,6 +548,30 @@ export default function AudioEditor({
                       {track.name}
                     </span>
                     <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>{fmtTime(track.duration)}</span>
+                    {/* Separate stems button */}
+                    {(() => {
+                      const job = stemJobs[track.id]
+                      if (job?.status === 'running') return (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--accent-light)', flexShrink: 0 }}>
+                          <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} /> Separating…
+                        </span>
+                      )
+                      if (job?.status === 'done') return (
+                        <span style={{ fontSize: 9, color: 'var(--success)', flexShrink: 0 }}>✓ Stems added</span>
+                      )
+                      if (job?.status === 'error') return (
+                        <span style={{ fontSize: 9, color: 'var(--error)', flexShrink: 0 }}>Failed</span>
+                      )
+                      return (
+                        <button
+                          onClick={e => { e.stopPropagation(); separateStems(track) }}
+                          title="Separate into stems (drums, bass, vocals, other)"
+                          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          <Scissors size={8} /> Stems
+                        </button>
+                      )
+                    })()}
                   </div>
                   {/* Waveform row */}
                   <div style={{ height: 60, position: 'relative', overflow: 'hidden' }}>
