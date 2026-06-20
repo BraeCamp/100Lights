@@ -1396,14 +1396,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 <RefreshCw size={11} /> Re-record
               </button>
-              {onAddTrack && hits.length > 0 && (
-                <button
-                  onClick={addToProject}
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 10px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                >
-                  + Add to Project
-                </button>
-              )}
               {!userFeedbackMode ? (
                 <button
                   onClick={enterFeedbackMode}
@@ -1841,9 +1833,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   {typeLabel(t, typeOverrides)} ({hitsByType.get(t)?.length ?? 0})
                 </span>
               ))}
-              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--border-light)' }}>
-                Click ruler to seek · Click lane to add · Drag X=time Y=pitch · Dbl-click to delete
-              </span>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                {onAddTrack && hits.length > 0 && (
+                  <button
+                    onClick={addToProject}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    + Add to Project
+                  </button>
+                )}
+                <span style={{ fontSize: 10, color: 'var(--border-light)' }}>
+                  Click ruler to seek · Click lane to add · Drag X=time Y=pitch · Dbl-click to delete
+                </span>
+              </div>
             </div>
           </div>
         )}

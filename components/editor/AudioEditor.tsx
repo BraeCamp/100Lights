@@ -395,12 +395,7 @@ export default function AudioEditor({
           <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
 
             {/* Audio tracks */}
-            {tracks.length === 0 ? (
-              <div style={{ padding: '8px 12px' }}>
-                <p style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5 }}>Import audio or sing a beat to get started</p>
-              </div>
-            ) : (
-              tracks.map(track => {
+            {tracks.map(track => {
                 const isSelected = selectedId === track.id
                 const isExpanded = expandedAudioIds.has(track.id)
                 return (
@@ -452,8 +447,7 @@ export default function AudioEditor({
                     )}
                   </div>
                 )
-              })
-            )}
+              })}
 
             {/* Beat tracks */}
             {beatTracks.length > 0 && (
@@ -489,11 +483,6 @@ export default function AudioEditor({
             >
               <Mic size={13} /> Sing the Beat
             </button>
-            {tracks.length === 0 && (
-              <p style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center', marginTop: 5 }}>
-                Import audio first to play along
-              </p>
-            )}
           </div>
 
           {/* ── Sound Library ───────────────────────────────────── */}
@@ -504,8 +493,18 @@ export default function AudioEditor({
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
           {/* Track timeline — audio waveforms + beat track rows */}
-          {(tracks.length > 0 || beatTracks.length > 0) && (
-            <div style={{ flexShrink: 0, overflowY: 'auto', maxHeight: '42%', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ flexShrink: 0, overflowY: 'auto', maxHeight: '42%', borderBottom: '1px solid var(--border)' }}>
+
+            {/* Empty placeholder when no tracks exist */}
+            {tracks.length === 0 && beatTracks.length === 0 && (
+              <div style={{ borderBottom: '1px solid var(--border)', opacity: 0.3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'var(--bg-surface)', borderLeft: '2px solid transparent', borderBottom: '1px solid var(--border)' }}>
+                  <Music size={9} color="var(--text-muted)" />
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1 }}>Empty track</span>
+                </div>
+                <div style={{ height: 40, background: 'var(--bg-card)' }} />
+              </div>
+            )}
 
               {/* Audio tracks */}
               {tracks.map(track => (
@@ -553,8 +552,7 @@ export default function AudioEditor({
                   <BeatTrackRow track={track} />
                 </div>
               ))}
-            </div>
-          )}
+          </div>
 
           {/* BeatLab workspace */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
