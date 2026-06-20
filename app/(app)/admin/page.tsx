@@ -124,8 +124,8 @@ export default async function AdminPage() {
         {/* Sample pack — seed and manage per-type audio samples */}
         <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Sample Pack</h2>
         <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-          One sample per sound type. "Seed all from synth" pre-renders the built-in synthesizer as baseline samples.
-          Upload real recordings to replace any slot — BeatLab will use these for playback instead of the synth.
+          Each type supports multiple variations — click ★ to set the active one. "Seed all from synth" adds a baseline for every type.
+          Upload real recordings as additional variations. BeatLab pitch-shifts the active sample to match each hit's MIDI note.
         </p>
         <SamplePackPanel />
 

@@ -58,7 +58,8 @@ import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
-import { sampleGetAll } from '@/lib/sample-pack'
+import { sampleGetAll, audioBufferToWav } from '@/lib/sample-pack'
+import { detectPitchCurve, synthesizeFromPitchCurve, midiToName as pitchMidiName } from '@/lib/pitch-detector'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -573,29 +574,79 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setHits(prev => prev.filter(h => h.type !== id as BeatType))
   }
 
-  // Sample pack: loaded AudioBuffers keyed by BeatType, used for playback instead of synth
+  // Sample pack: active AudioBuffer + rootNote per BeatType for pitch-shifted playback
   const [sampleBuffers, setSampleBuffers] = useState<Map<BeatType, AudioBuffer>>(new Map())
+  const [sampleRoots,   setSampleRoots]   = useState<Map<BeatType, number>>(new Map())
 
   useEffect(() => {
     async function loadSamples() {
       try {
-        const entries = await sampleGetAll()
-        if (entries.length === 0) return
-        const ctx = new AudioContext()
-        const map = new Map<BeatType, AudioBuffer>()
-        await Promise.all(entries.map(async e => {
+        const all = await sampleGetAll()
+        // Keep only the active entry per type (isActive or most recent for legacy entries)
+        const activeByType = new Map<BeatType, typeof all[0]>()
+        for (const e of all) {
+          if (e.isActive) { activeByType.set(e.beatType, e); continue }
+          if (!activeByType.has(e.beatType)) activeByType.set(e.beatType, e)
+        }
+        if (activeByType.size === 0) return
+        const ctx  = new AudioContext()
+        const bufs = new Map<BeatType, AudioBuffer>()
+        const roots = new Map<BeatType, number>()
+        await Promise.all([...activeByType.entries()].map(async ([type, e]) => {
           try {
-            const ab = await e.audioBlob.arrayBuffer()
+            const ab  = await e.audioBlob.arrayBuffer()
             const buf = await ctx.decodeAudioData(ab)
-            map.set(e.beatType, buf)
+            bufs.set(type, buf)
+            roots.set(type, e.rootNote ?? 60)
           } catch { /* skip bad blobs */ }
         }))
         await ctx.close()
-        setSampleBuffers(map)
+        setSampleBuffers(bufs)
+        setSampleRoots(roots)
       } catch { /* graceful degradation to synth */ }
     }
     loadSamples()
   }, [])
+
+  // Voice synth: pitch-follow recorded audio through a sample pack sound
+  const [voiceSynthOpen,      setVoiceSynthOpen]      = useState(false)
+  const [voiceSynthType,      setVoiceSynthType]       = useState<BeatType>('piano-grand')
+  const [voiceSynthRendering, setVoiceSynthRendering]  = useState(false)
+  const [voiceSynthUrl,       setVoiceSynthUrl]        = useState<string | null>(null)
+  const [voiceSynthNote,      setVoiceSynthNote]       = useState<string | null>(null) // detected dominant note
+
+  async function runVoiceSynth() {
+    if (!audioBuf) return
+    const sampleBuf  = sampleBuffers.get(voiceSynthType)
+    const sampleRoot = sampleRoots.get(voiceSynthType) ?? 60
+    if (!sampleBuf) {
+      alert(`No sample loaded for ${TYPE_LABELS[voiceSynthType] ?? voiceSynthType}. Seed it in Admin → Sample Pack first.`)
+      return
+    }
+    setVoiceSynthRendering(true)
+    setVoiceSynthUrl(null)
+    setVoiceSynthNote(null)
+    try {
+      const curve    = detectPitchCurve(audioBuf)
+      const voiced   = curve.filter(f => f.midi !== null)
+      if (voiced.length < 3) {
+        alert('Not enough pitched content detected. Try singing a clear, sustained note.')
+        return
+      }
+      // Find dominant note (mode)
+      const noteCounts = new Map<number, number>()
+      for (const f of voiced) { if (f.midi !== null) noteCounts.set(f.midi, (noteCounts.get(f.midi) ?? 0) + 1) }
+      const dominant = [...noteCounts.entries()].sort((a, b) => b[1] - a[1])[0][0]
+      setVoiceSynthNote(pitchMidiName(dominant))
+
+      const rendered  = await synthesizeFromPitchCurve(curve, sampleBuf, sampleRoot, audioBuf.duration)
+      const wavBlob   = audioBufferToWav(rendered)
+      if (voiceSynthUrl) URL.revokeObjectURL(voiceSynthUrl)
+      setVoiceSynthUrl(URL.createObjectURL(wavBlob))
+    } finally {
+      setVoiceSynthRendering(false)
+    }
+  }
 
   // Two-sided learning: reference sounds from Sound Library (Side A) + accepted corrections (Side B)
   const [referenceSounds, setReferenceSounds] = useState<ReferenceSound[]>([])
@@ -797,11 +848,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (mutedTypes.has(hit.type)) continue
       const when = Math.max(now, now + (hit.time - startFrom))
 
-      // Use sample pack buffer if available, else fall back to synth
-      const sampleBuf = sampleBuffers.get(hit.type)
+      // Use sample pack buffer if available, pitch-shifted to match the hit's MIDI note
+      const sampleBuf  = sampleBuffers.get(hit.type)
+      const sampleRoot = sampleRoots.get(hit.type) ?? 60
       if (sampleBuf) {
         const src = ctx.createBufferSource()
         src.buffer = sampleBuf
+        // Transpose sample to hit's actual note
+        const targetNote = hit.note ?? sampleRoot
+        src.playbackRate.value = Math.pow(2, (targetNote - sampleRoot) / 12)
         const gain = ctx.createGain()
         gain.gain.value = hit.velocity
         src.connect(gain)
@@ -1506,6 +1561,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 30, textAlign: 'center' }}>{zoomLevel === 1 ? '1×' : `${zoomLevel.toFixed(1)}×`}</span>
                 <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} title="Zoom in" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
               </div>
+              {audioBuf && sampleBuffers.size > 0 && (
+                <button
+                  onClick={() => setVoiceSynthOpen(v => !v)}
+                  title="Synthesize your recording as an instrument"
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: voiceSynthOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${voiceSynthOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: voiceSynthOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  🎙 Voice Synth
+                </button>
+              )}
               <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 <RefreshCw size={11} /> Re-record
               </button>
@@ -1537,6 +1601,45 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </>
         )}
       </div>
+
+      {/* ── Voice Synth Panel ─────────────────────────────────────────────── */}
+      {voiceSynthOpen && phase === 'editing' && audioBuf && (
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(139,92,246,0.06)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-light)' }}>Voice Synth</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Convert your recording to:</span>
+          <select
+            value={voiceSynthType}
+            onChange={e => { setVoiceSynthType(e.target.value as BeatType); setVoiceSynthUrl(null); setVoiceSynthNote(null) }}
+            style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}
+          >
+            {[...sampleBuffers.keys()].map(t => (
+              <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+            ))}
+          </select>
+          <button
+            onClick={runVoiceSynth}
+            disabled={voiceSynthRendering}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}
+          >
+            {voiceSynthRendering ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</> : '▶ Render'}
+          </button>
+          {voiceSynthNote && (
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Dominant pitch: <strong style={{ color: 'var(--text-primary)' }}>{voiceSynthNote}</strong></span>
+          )}
+          {voiceSynthUrl && (
+            <>
+              <audio src={voiceSynthUrl} controls style={{ height: 28, maxWidth: 220 }} />
+              <a
+                href={voiceSynthUrl}
+                download={`voice-synth-${voiceSynthType}.wav`}
+                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', textDecoration: 'none' }}
+              >
+                ↓ Download
+              </a>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Content ───────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
