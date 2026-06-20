@@ -126,13 +126,13 @@ export async function synthesizeFromPitchCurve(
   const len = Math.ceil(sr * totalDuration)
   const ctx = new OfflineAudioContext(1, len, sr)
 
-  const firstVoiced = pitchCurve.find(f => f.midi !== null)
-  if (!firstVoiced) return ctx.startRendering()
-
   // Sawtooth oscillator — continuous wave, inherently no attack transient
   const osc = ctx.createOscillator()
   osc.type = 'sawtooth'
-  osc.frequency.setValueAtTime(midiToFreq(firstVoiced.midi!), 0)
+
+  // Start at the first detected pitch, or C4 (60) if nothing was detected
+  const firstVoiced = pitchCurve.find(f => f.midi !== null)
+  osc.frequency.setValueAtTime(midiToFreq(firstVoiced?.midi ?? 60), 0)
 
   // Warm lowpass to soften the sawtooth into a synth-lead tone
   const filter = ctx.createBiquadFilter()
@@ -150,20 +150,19 @@ export async function synthesizeFromPitchCurve(
   osc.start(0)
   osc.stop(totalDuration + 0.05)
 
-  let lastMidi = firstVoiced.midi!
+  let lastMidi = firstVoiced?.midi ?? 60
 
   for (const frame of pitchCurve) {
     const t = frame.time
 
     if (frame.midi !== null) {
       lastMidi = frame.midi
-      // Smooth glide — linearRamp gives portamento between consecutive frames
       osc.frequency.linearRampToValueAtTime(midiToFreq(lastMidi), t + 0.012)
     }
 
-    const vol = frame.midi !== null
-      ? Math.min(0.72, frame.amplitude * 0.72)
-      : 0
+    // ALWAYS follow amplitude — silence only when the source is quiet.
+    // Never force to 0 because pitch was undetected; that creates "notey" gaps.
+    const vol = Math.min(0.72, frame.amplitude * 0.72)
     gain.gain.linearRampToValueAtTime(vol, t + 0.01)
   }
 

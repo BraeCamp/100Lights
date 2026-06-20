@@ -64,7 +64,7 @@ import { detectPitchCurve, synthesizeFromPitchCurve } from '@/lib/pitch-detector
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
-const DEFAULT_ENABLED: BeatType[] = ['kick', 'snare', 'hihat', 'clap']
+const DEFAULT_ENABLED: BeatType[] = ['kick']
 
 type InstrumentFamily = 'drums' | 'guitar' | 'piano' | 'synth'
 const FAMILY_LABEL: Record<InstrumentFamily, string> = { drums: 'Drums', guitar: 'Guitar', piano: 'Piano', synth: 'Synth' }
@@ -793,11 +793,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const audioCtxRef  = useRef<AudioContext | null>(null)
   const playRafRef   = useRef<number>(0)
   const playStartRef = useRef<{ wallTime: number; beatTime: number } | null>(null)
+  const durationRef  = useRef(duration)
   const loopSrcRef   = useRef<AudioBufferSourceNode | null>(null)
   const loopCtxRef   = useRef<AudioContext | null>(null)
   const timelineRef  = useRef<HTMLDivElement>(null)
   const [timelinePx, setTimelinePx] = useState(800)
 
+  // Keep durationRef current so the RAF closure doesn't stale-capture duration
+  useEffect(() => { durationRef.current = duration }, [duration])
 
   // 88px = 64px lane label + 24px note axis
   useEffect(() => {
@@ -807,20 +810,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     return () => ro.disconnect()
   }, [])
 
-  // RAF playhead
+  // RAF playhead — depends only on isPlaying; reads duration via durationRef
+  // to avoid restarting the animation loop every time a synth layer extends the timeline.
   useEffect(() => {
-    if (!isPlaying || duration <= 0) return
+    if (!isPlaying) return
     const tick = () => {
       if (!playStartRef.current) return
       const elapsed = (performance.now() - playStartRef.current.wallTime) / 1000
       const t = playStartRef.current.beatTime + elapsed
-      if (t >= duration) { stopPlayback(); return }
+      if (t >= durationRef.current) { stopPlayback(); setPlayhead(0); return }
       setPlayhead(t)
       playRafRef.current = requestAnimationFrame(tick)
     }
     playRafRef.current = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(playRafRef.current)
-  }, [isPlaying, duration]) // eslint-disable-line
+  }, [isPlaying]) // eslint-disable-line
 
   // ── Recording ──────────────────────────────────────────────────────────────
 
