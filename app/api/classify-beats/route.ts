@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     const s = h.spectral
     const mfcc1 = s.mfcc ? s.mfcc.slice(1, 5).map(v => v.toFixed(1)).join(' ') : '—'
     return [
-      `${String(i + 1).padStart(2)}. t=${h.time.toFixed(3)}s  cur=${h.type.padEnd(10)}  v=${h.velocity.toFixed(2)}`,
+      `${String(i + 1).padStart(2)}. t=${h.time.toFixed(3)}s  v=${h.velocity.toFixed(2)}`,
       `    bands  sub=${fmt(s.sub)} lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hiMid=${fmt(s.hiMid)} hi=${fmt(s.hi)}`,
       `    shape  centroid=${fmt(s.centroid,0)}Hz  rolloff=${fmt(s.rolloff,0)}Hz  flatness=${fmt(s.flatness)}  flux=${fmt(s.flux)}`,
       `    timbre mfcc[1-4]=[${mfcc1}]  brightness=${fmt(s.brightness)}  presence=${fmt(s.presence)}  warmth=${fmt(s.warmth)}`,
@@ -104,8 +104,11 @@ any hits that fall outside the declared types.
 
   const prompt = `You are an expert at classifying beatbox drum sounds from spectral data.
 
-A user beatboxed a drum pattern and the app detected ${hits.length} hits. Your job is to
-review the current classifications and fix mistakes using the spectral data.
+A user beatboxed a drum pattern and the app detected ${hits.length} sound events.
+Your job is to independently classify each one using ONLY the spectral data below.
+Do NOT anchor on any prior label — analyze each hit fresh from its acoustics.
+If a hit looks like noise, breath, or a false detection (very low velocity, no clear
+spectral peak, or inconsistent with any beatbox sound), classify it as "delete".
 ${groundTruthSection}
 CRITICAL BEATBOX FACTS:
 - Human mouths CANNOT produce real sub-bass (<100 Hz). Sub values will always be low.
@@ -140,9 +143,10 @@ ADDITIONAL FEATURE GUIDANCE:
 - dynamicRange > 20 dB = impulsive transient. dynamicRange < 10 dB = sustained or noise-floored
 - mfcc[1] strongly separates kick (negative) from hihat (positive) in most beatbox recordings
 
-Respond with ONLY a valid JSON array of exactly ${hits.length} type strings, in the same order as the input hits.
-Use only these labels: ${VALID_TYPES.join(', ')}
-Example format: ["kick","hihat","snare","hihat"]`
+Respond with ONLY a valid JSON array of exactly ${hits.length} strings, in the same order as the input hits.
+Use only these labels: ${VALID_TYPES.join(', ')}, delete
+"delete" means the hit is noise or a false detection that should be removed.
+Example format: ["kick","hihat","delete","snare","hihat"]`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -167,23 +171,28 @@ Example format: ["kick","hihat","snare","hihat"]`
   const text = (data.content.find(b => b.type === 'text')?.text ?? '').trim()
 
   // Parse JSON array from response
-  let types: BeatType[]
+  const VALID_WITH_DELETE = [...VALID_TYPES, 'delete'] as const
+  let raw: string[]
   try {
     const match = text.match(/\[[\s\S]*\]/)
     if (!match) throw new Error('no array')
-    types = JSON.parse(match[0])
-    if (!Array.isArray(types) || types.length !== hits.length) throw new Error('length mismatch')
-    // Validate each type
-    types = types.map((t, i) => VALID_TYPES.includes(t as BeatType) ? t as BeatType : hits[i].type)
+    raw = JSON.parse(match[0])
+    if (!Array.isArray(raw) || raw.length !== hits.length) throw new Error('length mismatch')
+    raw = raw.map((t, i) => (VALID_WITH_DELETE as readonly string[]).includes(t) ? t : hits[i].type)
   } catch {
     return Response.json({ error: 'Failed to parse AI response', raw: text }, { status: 500 })
   }
 
-  // Return map of hitId → aiType
+  // Split into reclassifications vs. deletions
   const corrections: Record<string, BeatType> = {}
+  const deletions: string[] = []
   hits.forEach((h, i) => {
-    if (types[i] !== h.type) corrections[h.id] = types[i]
+    if (raw[i] === 'delete') {
+      deletions.push(h.id)
+    } else if (raw[i] !== h.type) {
+      corrections[h.id] = raw[i] as BeatType
+    }
   })
 
-  return Response.json({ corrections, totalHits: hits.length })
+  return Response.json({ corrections, deletions, totalHits: hits.length })
 }

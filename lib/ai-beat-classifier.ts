@@ -1,13 +1,18 @@
 import type { BeatHit, BeatType } from './beat-analyzer'
 
+export interface AiClassifyResult {
+  suggestions: Map<string, BeatType>
+  deletions:   Set<string>
+}
+
 // Calls the /api/classify-beats route with hit spectral data.
-// Returns a map of hitId → corrected BeatType for hits that Claude would reclassify.
+// Returns suggestions (reclassifications) and deletions (noise/false hits to remove).
 // Returns null if the call fails or there's no spectral data.
 export async function aiClassifyHits(
   hits: BeatHit[],
   enabledTypes: BeatType[],
   groundTruth?: string,
-): Promise<Map<string, BeatType> | null> {
+): Promise<AiClassifyResult | null> {
   const hitsWithSpectral = hits.filter(h => h.spectral)
   if (hitsWithSpectral.length === 0) return null
 
@@ -30,10 +35,13 @@ export async function aiClassifyHits(
 
     if (!res.ok) return null
 
-    const data = await res.json() as { corrections?: Record<string, BeatType> }
-    if (!data.corrections) return null
+    const data = await res.json() as { corrections?: Record<string, BeatType>; deletions?: string[] }
+    if (!data.corrections && !data.deletions) return null
 
-    return new Map(Object.entries(data.corrections) as [string, BeatType][])
+    return {
+      suggestions: new Map(Object.entries(data.corrections ?? {}) as [string, BeatType][]),
+      deletions:   new Set(data.deletions ?? []),
+    }
   } catch {
     return null
   }
