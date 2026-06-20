@@ -6,6 +6,7 @@ import type { BeatHit, BeatAnalysis, BeatType, CalibrationMap } from '@/lib/beat
 import { analyzeBeats, buildCalibrationSample } from '@/lib/beat-analyzer'
 import { playDrumHit, playCalibrationBuffer } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
+import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -167,12 +168,13 @@ interface HitBlockProps {
   pxWidth: number
   selected: boolean
   muted: boolean
+  aiSuggestion?: BeatType
   onSelect: () => void
   onMove: (id: string, time: number, note: number) => void
   onDelete: () => void
 }
 
-function HitBlock({ hit, duration, pxWidth, selected, muted, onSelect, onMove, onDelete }: HitBlockProps) {
+function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, onSelect, onMove, onDelete }: HitBlockProps) {
   const color = TYPE_COLORS[hit.type] ?? '#6b7280'
   const noteVal = hit.note ?? Math.round((NOTE_MIN + NOTE_MAX) / 2)
   const left = (hit.time / duration) * pxWidth - 6
@@ -206,22 +208,37 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, onSelect, onMove, o
   }
 
   return (
-    <div
-      onPointerDown={handlePointerDown}
-      onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
-      style={{
-        position: 'absolute', left, top, width: 13, height: 8,
-        background: muted ? 'var(--border-light)' : color,
-        borderRadius: 2,
-        opacity: muted ? 0.35 : selected ? 1 : 0.35 + 0.6 * hit.velocity,
-        cursor: 'grab',
-        boxShadow: selected && !muted ? `0 0 0 1px #fff, 0 0 0 2px ${color}` : 'none',
-        zIndex: selected ? 10 : 1,
-        touchAction: 'none',
-        transition: 'box-shadow 0.1s',
-      }}
-    />
+    <div style={{ position: 'absolute', left, top, zIndex: selected ? 10 : 1 }}>
+      <div
+        onPointerDown={handlePointerDown}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
+        title={aiSuggestion ? `AI: ${aiSuggestion}` : undefined}
+        style={{
+          width: 13, height: 8,
+          background: muted ? 'var(--border-light)' : color,
+          borderRadius: 2,
+          opacity: muted ? 0.35 : selected ? 1 : 0.35 + 0.6 * hit.velocity,
+          cursor: 'grab',
+          boxShadow: selected && !muted
+            ? `0 0 0 1px #fff, 0 0 0 2px ${color}`
+            : aiSuggestion
+              ? '0 0 0 1.5px rgba(139,92,246,0.8)'
+              : 'none',
+          touchAction: 'none',
+          transition: 'box-shadow 0.1s',
+        }}
+      />
+      {/* AI suggestion marker — small purple dot above the hit */}
+      {aiSuggestion && !muted && (
+        <div style={{
+          position: 'absolute', top: -5, left: 3,
+          width: 5, height: 5, borderRadius: '50%',
+          background: 'rgba(139,92,246,0.9)',
+          pointerEvents: 'none',
+        }} />
+      )}
+    </div>
   )
 }
 
@@ -264,6 +281,7 @@ interface LaneProps {
   pxWidth: number
   selectedId: string | null
   muted: boolean
+  aiSuggestions?: Map<string, BeatType> | null
   onSelect: (id: string) => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
@@ -271,7 +289,7 @@ interface LaneProps {
   onToggleMute: () => void
 }
 
-function Lane({ type, hits, duration, pxWidth, selectedId, muted, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute }: LaneProps) {
+function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute }: LaneProps) {
   const color = TYPE_COLORS[type] ?? '#6b7280'
 
   function handleLaneClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -323,6 +341,7 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, onSelect, onMo
             pxWidth={pxWidth}
             selected={hit.id === selectedId}
             muted={muted}
+            aiSuggestion={aiSuggestions?.get(hit.id)}
             onSelect={() => onSelect(hit.id)}
             onMove={onMoveHit}
             onDelete={() => onDeleteHit(hit.id)}
@@ -379,6 +398,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [loopPlaying, setLoopPlaying] = useState(false)
 
   const [playSongDuringRec, setPlaySongDuringRec] = useState(false)
+
+  // AI classifier state
+  const [aiSuggestions, setAiSuggestions] = useState<Map<string, BeatType> | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
 
   // Calibration state
   const [calibrationMap, setCalibrationMap] = useState<CalibrationMap>(new Map())
@@ -495,7 +518,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         setDuration(result.duration)
         setPlayhead(0)
         setMutedTypes(new Set())
+        setAiSuggestions(null)
         setPhase('editing')
+        // Run AI classification in parallel — doesn't block the UI
+        if (instrumentFamily === 'drums' && result.hits.some(h => h.spectral)) {
+          setAiLoading(true)
+          aiClassifyHits(result.hits, Array.from(selectedTypes)).then(corrections => {
+            setAiSuggestions(corrections)
+            setAiLoading(false)
+          })
+        }
       }
     } catch {
       setError('Could not analyze audio. Try again with a clearer beatbox.')
@@ -772,6 +804,28 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setHits(prev => prev.map(h => ({ ...h, time: Math.round(h.time / beatLen) * beatLen })))
   }
 
+  function applyAiSuggestions() {
+    if (!aiSuggestions) return
+    setHits(prev => prev.map(h => {
+      const suggested = aiSuggestions.get(h.id)
+      return suggested ? { ...h, type: suggested } : h
+    }))
+    setAiSuggestions(null)
+  }
+
+  function acceptAiForHit(hitId: string) {
+    if (!aiSuggestions) return
+    const suggested = aiSuggestions.get(hitId)
+    if (!suggested) return
+    setHits(prev => prev.map(h => h.id === hitId ? { ...h, type: suggested } : h))
+    setAiSuggestions(prev => {
+      if (!prev) return null
+      const next = new Map(prev)
+      next.delete(hitId)
+      return next.size > 0 ? next : null
+    })
+  }
+
   function reset() {
     stopPlayback()
     setPhase('idle')
@@ -784,6 +838,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setError(null)
     setAudioBuf(null)
     setMutedTypes(new Set())
+    setAiSuggestions(null)
+    setAiLoading(false)
     stopLoopPlayback()
     setLoopBuffer(null)
     setLoopDetectedBpm(null)
@@ -909,6 +965,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   {TYPE_LABELS[selectedHit.type]} @ {selectedHit.time.toFixed(2)}s
                   {selectedHit.note !== undefined && <span style={{ marginLeft: 5, color: 'var(--accent-light)' }}>{midiName(selectedHit.note)}</span>}
                 </span>
+                {aiSuggestions?.get(selectedHit.id) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
+                    <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.8)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>AI</span>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: TYPE_COLORS[aiSuggestions.get(selectedHit.id)!] }} />
+                    <span style={{ fontSize: 10, color: 'var(--accent-light)' }}>{TYPE_LABELS[aiSuggestions.get(selectedHit.id)!]}</span>
+                    <button onClick={() => acceptAiForHit(selectedHit.id)} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>✓</button>
+                  </div>
+                )}
                 <div style={{ position: 'relative' }}>
                   <button onClick={() => setShowTypeMenu(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, padding: '2px 5px', borderRadius: 4, background: 'var(--border)', color: 'var(--text-secondary)', border: 'none', cursor: 'pointer' }}>
                     Change <ChevronDown size={10} />
@@ -936,6 +1000,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             )}
 
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {/* AI status */}
+              {aiLoading && (
+                <span style={{ fontSize: 10, color: 'var(--accent-light)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> AI checking…
+                </span>
+              )}
+              {aiSuggestions && aiSuggestions.size > 0 && !aiLoading && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)' }}>
+                  <span style={{ fontSize: 10, color: 'var(--accent-light)' }}>
+                    ✦ AI: {aiSuggestions.size} correction{aiSuggestions.size !== 1 ? 's' : ''}
+                  </span>
+                  <button onClick={applyAiSuggestions} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                    Apply all
+                  </button>
+                  <button onClick={() => setAiSuggestions(null)} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 4, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+                </div>
+              )}
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                 {activeHitCount} active{mutedTypes.size > 0 && ` · ${hits.length - activeHitCount} muted`}
               </span>
@@ -1323,6 +1404,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     pxWidth={timelinePx}
                     selectedId={selectedId}
                     muted={mutedTypes.has(type)}
+                    aiSuggestions={aiSuggestions}
                     onSelect={setSelectedId}
                     onMoveHit={moveHit}
                     onDeleteHit={deleteHit}

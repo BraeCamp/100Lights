@@ -41,12 +41,21 @@ export const DEFAULT_NOTES: Record<BeatType, number> = {
   other:             60,
 }
 
+export interface HitSpectral {
+  sub: number    // 0-150 Hz normalized ratio
+  lowMid: number // 150-600 Hz normalized ratio
+  mid: number    // 600-3000 Hz normalized ratio
+  hiMid: number  // 3000-8000 Hz normalized ratio
+  hi: number     // 8000+ Hz normalized ratio
+}
+
 export interface BeatHit {
   id: string
   time: number      // seconds from start of recording
   type: BeatType
   velocity: number  // 0–1
   note: number      // MIDI note — always set
+  spectral?: HitSpectral // stored during drum classification for AI review
 }
 
 export interface BeatAnalysis {
@@ -315,6 +324,15 @@ export async function analyzeBeats(
       const hiMidE  = rmsWindow(hiMidBand,  sampleIdx, sr, classWindow)
       const highE   = rmsWindow(highBand,   sampleIdx, sr, classWindow)
 
+      const total   = subE + lowMidE + midE + hiMidE + highE || 1
+      const spectral: HitSpectral = {
+        sub:    subE    / total,
+        lowMid: lowMidE / total,
+        mid:    midE    / total,
+        hiMid:  hiMidE  / total,
+        hi:     highE   / total,
+      }
+
       let natural: BeatType
 
       if (useCalibration) {
@@ -336,11 +354,10 @@ export async function analyzeBeats(
         // Hardcoded spectral rules — tuned for beatbox mouth sounds.
         // The human mouth cannot produce true sub-bass (<100 Hz), so beatbox
         // kicks peak in the 150–500 Hz (lowMid) band, not the sub band.
-        const total   = subE + lowMidE + midE + hiMidE + highE || 1
-        const subR    = subE / total
-        const lowMidR = lowMidE / total
-        const midR    = midE / total
-        const hiR     = (hiMidE + highE) / total
+        const subR    = spectral.sub
+        const lowMidR = spectral.lowMid
+        const midR    = spectral.mid
+        const hiR     = spectral.hiMid + spectral.hi
 
         const attackHigh  = rmsWindow(highBand, sampleIdx, sr, 0.025)
         const sustainHigh = rmsWindow(
@@ -378,6 +395,7 @@ export async function analyzeBeats(
         type,
         velocity: toVelocity(Math.floor(sampleIdx / hopSize)),
         note: DEFAULT_NOTES[type],
+        spectral,
       }
     })
   }
