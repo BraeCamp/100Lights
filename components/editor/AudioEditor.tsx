@@ -2,12 +2,15 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2 } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, Mic, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum, AudioWaveform as WaveIcon } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
 import BeatLab from './BeatLab'
+import SoundLibrary from './SoundLibrary'
 import ModuleSwitcher from './ModuleSwitcher'
 import type { Caption } from '@/lib/types'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
+
+type RecordMode = 'drums' | 'voice' | null
 
 // ── AudioTrack extends the shared init type with runtime-only fields ──────────
 
@@ -49,6 +52,8 @@ export default function AudioEditor({
   const [duration, setDuration]         = useState(0)
   const [volume, setVolume]             = useState(1)
   const [saveStatus, setSaveStatus]     = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [recordSectionOpen, setRecordSectionOpen] = useState(false)
+  const [recordMode, setRecordMode]     = useState<RecordMode>(null)
   const audioRef    = useRef<HTMLAudioElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rafRef      = useRef<number>(0)
@@ -270,7 +275,9 @@ export default function AudioEditor({
 
         {/* Track list sidebar */}
         <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+
+          {/* Tracks header */}
+          <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Tracks</span>
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -279,10 +286,12 @@ export default function AudioEditor({
               <Upload size={10} /> Import
             </button>
           </div>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
+
+          {/* Track list */}
+          <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
             {tracks.length === 0 && (
-              <div style={{ padding: '20px 12px', textAlign: 'center' }}>
-                <Mic size={24} color="var(--text-muted)" style={{ marginBottom: 10 }} />
+              <div style={{ padding: '16px 12px', textAlign: 'center' }}>
+                <Music size={20} color="var(--text-muted)" style={{ marginBottom: 8 }} />
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>Drop audio here or click Import</p>
               </div>
             )}
@@ -312,6 +321,62 @@ export default function AudioEditor({
               </button>
             ))}
           </div>
+
+          {/* ── Record section ──────────────────────────────────── */}
+          <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)' }}>
+            <button
+              onClick={() => setRecordSectionOpen(v => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              {recordSectionOpen
+                ? <ChevronDown size={10} color="var(--text-muted)" />
+                : <ChevronRight size={10} color="var(--text-muted)" />}
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: recordMode ? '#dc2626' : 'var(--text-muted)', animation: recordMode ? 'pulse 1s ease-in-out infinite' : 'none' }} />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: recordMode ? '#dc2626' : 'var(--text-muted)' }}>Record</span>
+            </button>
+
+            {recordSectionOpen && (
+              <div style={{ padding: '4px 10px 10px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {/* Beat Recording */}
+                <button
+                  onClick={() => setRecordMode(recordMode === 'drums' ? null : 'drums')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                    borderRadius: 7, border: `1.5px solid ${recordMode === 'drums' ? '#dc2626' : 'var(--border)'}`,
+                    background: recordMode === 'drums' ? 'rgba(220,38,38,0.08)' : 'var(--bg-card)',
+                    cursor: 'pointer', textAlign: 'left', width: '100%',
+                  }}
+                >
+                  <Drum size={13} color={recordMode === 'drums' ? '#dc2626' : 'var(--text-muted)'} />
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: recordMode === 'drums' ? '#dc2626' : 'var(--text-secondary)' }}>Beat Recording</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>Beatbox drums & percussion</div>
+                  </div>
+                </button>
+
+                {/* Voice Transcription */}
+                <button
+                  onClick={() => setRecordMode(recordMode === 'voice' ? null : 'voice')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                    borderRadius: 7, border: `1.5px solid ${recordMode === 'voice' ? 'var(--accent)' : 'var(--border)'}`,
+                    background: recordMode === 'voice' ? 'var(--accent-subtle)' : 'var(--bg-card)',
+                    cursor: 'pointer', textAlign: 'left', width: '100%',
+                  }}
+                >
+                  <Mic size={13} color={recordMode === 'voice' ? 'var(--accent-light)' : 'var(--text-muted)'} />
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: recordMode === 'voice' ? 'var(--accent-light)' : 'var(--text-secondary)' }}>Voice Transcription</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>Sing or hum → music notes</div>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Sound Library ───────────────────────────────────── */}
+          <SoundLibrary />
+
         </div>
 
         {/* Right column: waveform + beat lab + transport */}
@@ -343,6 +408,11 @@ export default function AudioEditor({
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <BeatLab
               hasSong={!!selectedTrack}
+              requestedFamily={
+                recordMode === 'drums' ? 'drums'
+                : recordMode === 'voice' ? 'piano'
+                : null
+              }
               onRequestSongPlay={() => {
                 if (audioRef.current && selectedTrack) {
                   audioRef.current.play().catch(() => {})

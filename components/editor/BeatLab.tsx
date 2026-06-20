@@ -353,9 +353,11 @@ interface BeatLabProps {
   hasSong?: boolean
   onRequestSongPlay?: () => void
   onRequestSongStop?: () => void
+  // When set by parent, switches the active instrument family (e.g. to enter melodic / voice mode)
+  requestedFamily?: InstrumentFamily | null
 }
 
-export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop }: BeatLabProps) {
+export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -371,7 +373,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [audioBuf, setAudioBuf] = useState<AudioBuffer | null>(null)
   const [selectedTypes, setSelectedTypes] = useState<Set<BeatType>>(new Set(DEFAULT_ENABLED))
   const [instrumentFamily, setInstrumentFamily] = useState<InstrumentFamily>('drums')
-  const [melodicVariant, setMelodicVariant] = useState<BeatType>('guitar-acoustic')
+  const [melodicVariant, setMelodicVariant] = useState<BeatType>('piano-grand')
+
+  // Let the parent switch modes (e.g. AudioEditor's "Voice Transcription" button)
+  useEffect(() => {
+    if (requestedFamily) setInstrumentFamily(requestedFamily)
+  }, [requestedFamily])
   const [recMode, setRecMode] = useState<RecMode>('hits')
   // Loop mode state
   const [loopBuffer, setLoopBuffer] = useState<AudioBuffer | null>(null)
