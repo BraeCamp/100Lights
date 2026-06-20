@@ -9,6 +9,7 @@ import SoundLibrary from './SoundLibrary'
 import ModuleSwitcher from './ModuleSwitcher'
 import type { Caption } from '@/lib/types'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
+import type { BeatHit } from '@/lib/beat-analyzer'
 
 type RecordMode = 'drums' | 'voice' | null
 
@@ -46,7 +47,7 @@ export default function AudioEditor({
   const [localName, setLocalName]       = useState(initialName)
   const [editingName, setEditingName]   = useState(false)
   const [tracks, setTracks]             = useState<AudioTrack[]>(initialTracks)
-  const [selectedId, setSelectedId]     = useState<string | null>(initialTracks[0]?.id ?? null)
+  const [selectedId, setSelectedId]     = useState<string | null>(initialTracks[0]?.id ?? '__beatlab__')
   const [isPlaying, setIsPlaying]       = useState(false)
   const [currentTime, setCurrentTime]   = useState(0)
   const [duration, setDuration]         = useState(0)
@@ -58,6 +59,12 @@ export default function AudioEditor({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rafRef      = useRef<number>(0)
 
+  const [beatLabHits, setBeatLabHits]           = useState<BeatHit[]>([])
+  const [beatLabDuration, setBeatLabDuration]   = useState(0)
+  const [beatLabBpm, setBeatLabBpm]             = useState<number | null>(null)
+  const [beatLabExpanded, setBeatLabExpanded]   = useState(false)
+  const [expandedTrackIds, setExpandedTrackIds] = useState<Set<string>>(new Set())
+
   useEffect(() => { setLocalName(initialName) }, [initialName])
 
   // Re-sync tracks when initialTracks changes (project loaded with cloud tracks)
@@ -68,7 +75,8 @@ export default function AudioEditor({
     }
   }, [initialTracks]) // eslint-disable-line
 
-  const selectedTrack = tracks.find(t => t.id === selectedId) ?? null
+  const isBeatLabSelected = selectedId === '__beatlab__'
+  const selectedTrack = isBeatLabSelected ? null : (tracks.find(t => t.id === selectedId) ?? null)
 
   // Audio element management
   useEffect(() => {
@@ -290,37 +298,118 @@ export default function AudioEditor({
 
           {/* Track list */}
           <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-            {tracks.length === 0 && (
-              <div style={{ padding: '16px 12px', textAlign: 'center' }}>
-                <Music size={20} color="var(--text-muted)" style={{ marginBottom: 8 }} />
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>Drop audio here or click Import</p>
-              </div>
-            )}
-            {tracks.map(track => (
+
+            {/* Beat Lab virtual track — always first */}
+            <div style={{ borderBottom: '1px solid var(--border)' }}>
               <button
-                key={track.id}
-                onClick={() => setSelectedId(track.id)}
+                onClick={() => setSelectedId('__beatlab__')}
                 style={{
-                  display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left',
-                  background: selectedId === track.id ? 'var(--accent-subtle)' : 'transparent',
-                  border: 'none', cursor: 'pointer',
-                  borderLeft: `2px solid ${selectedId === track.id ? 'var(--accent)' : 'transparent'}`,
+                  display: 'flex', alignItems: 'center', width: '100%', padding: '9px 12px',
+                  background: isBeatLabSelected ? 'var(--accent-subtle)' : 'transparent',
+                  border: 'none', cursor: 'pointer', textAlign: 'left',
+                  borderLeft: `2px solid ${isBeatLabSelected ? 'var(--accent)' : 'transparent'}`,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
-                  <Music size={11} color={selectedId === track.id ? 'var(--accent-light)' : 'var(--text-muted)'} />
-                  <span style={{ fontSize: 11, fontWeight: 500, color: selectedId === track.id ? 'var(--accent-light)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                    {track.name}
-                  </span>
-                  <UploadDot status={track.uploadStatus} />
+                <Drum size={11} color={isBeatLabSelected ? 'var(--accent-light)' : 'var(--text-muted)'} style={{ flexShrink: 0, marginRight: 7 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: isBeatLabSelected ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                    Beat Lab
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    {beatLabHits.length > 0
+                      ? `${beatLabHits.length} hits${beatLabBpm ? ` · ${beatLabBpm} BPM` : ''}`
+                      : 'No recording yet'}
+                  </div>
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 18, display: 'flex', gap: 6, alignItems: 'center' }}>
-                  {fmtTime(track.duration)}
-                  {track.uploadStatus === 'uploading' && <span style={{ color: 'var(--accent-light)' }}>uploading…</span>}
-                  {track.uploadStatus === 'error' && <span style={{ color: '#ef4444' }}>upload failed</span>}
-                </div>
+                {beatLabHits.length > 0 && (
+                  <button
+                    onClick={e => { e.stopPropagation(); setBeatLabExpanded(v => !v) }}
+                    title={beatLabExpanded ? 'Collapse' : 'Expand notes'}
+                    style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+                  >
+                    {beatLabExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                  </button>
+                )}
               </button>
-            ))}
+              {beatLabExpanded && beatLabHits.length > 0 && (
+                <div style={{ padding: '4px 12px 8px 30px', display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  {Object.entries(
+                    beatLabHits.reduce<Record<string, number>>((acc, h) => {
+                      acc[h.type] = (acc[h.type] ?? 0) + 1
+                      return acc
+                    }, {})
+                  ).map(([type, count]) => (
+                    <span key={type} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                      {type} ×{count}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Audio tracks */}
+            {tracks.length === 0 ? (
+              <div style={{ padding: '8px 12px' }}>
+                <p style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>Import audio to add tracks</p>
+              </div>
+            ) : (
+              tracks.map(track => {
+                const isSelected = selectedId === track.id
+                const isExpanded = expandedTrackIds.has(track.id)
+                return (
+                  <div key={track.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <button
+                      onClick={() => setSelectedId(track.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', width: '100%', padding: '9px 12px',
+                        background: isSelected ? 'var(--accent-subtle)' : 'transparent',
+                        border: 'none', cursor: 'pointer', textAlign: 'left',
+                        borderLeft: `2px solid ${isSelected ? 'var(--accent)' : 'transparent'}`,
+                      }}
+                    >
+                      <Music size={11} color={isSelected ? 'var(--accent-light)' : 'var(--text-muted)'} style={{ flexShrink: 0, marginRight: 7 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 500, color: isSelected ? 'var(--accent-light)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {track.name}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', gap: 5, alignItems: 'center' }}>
+                          {fmtTime(track.duration)}
+                          <UploadDot status={track.uploadStatus} />
+                          {track.uploadStatus === 'uploading' && <span style={{ color: 'var(--accent-light)' }}>uploading…</span>}
+                          {track.uploadStatus === 'error' && <span style={{ color: '#ef4444' }}>failed</span>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          setExpandedTrackIds(prev => {
+                            const n = new Set(prev)
+                            n.has(track.id) ? n.delete(track.id) : n.add(track.id)
+                            return n
+                          })
+                        }}
+                        title={isExpanded ? 'Collapse' : 'Show details'}
+                        style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+                      >
+                        {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                      </button>
+                    </button>
+                    {isExpanded && (
+                      <div style={{ padding: '4px 12px 8px 30px' }}>
+                        <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>
+                          {track.contentType || 'audio'} · {fmtTime(track.duration)}
+                        </p>
+                        {track.r2Key && (
+                          <p style={{ fontSize: 9, color: 'var(--border-light)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: '2px 0 0' }}>
+                            {track.r2Key}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
           </div>
 
           {/* ── Record section ──────────────────────────────────── */}
@@ -383,9 +472,9 @@ export default function AudioEditor({
         {/* Right column: waveform + beat lab + transport */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
-          {/* Song waveform */}
-          <div style={{ flex: '0 0 148px', overflow: 'hidden', position: 'relative', borderBottom: '1px solid var(--border)' }}>
-            {selectedTrack ? (
+          {/* Song waveform — only visible when an audio track is selected */}
+          {selectedTrack && (
+            <div style={{ flex: '0 0 148px', overflow: 'hidden', position: 'relative', borderBottom: '1px solid var(--border)' }}>
               <AudioWaveform
                 src={selectedTrack.url}
                 contentType="audio"
@@ -393,17 +482,8 @@ export default function AudioEditor({
                 duration={duration}
                 onSeek={seekTo}
               />
-            ) : (
-              <div
-                style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--text-muted)', cursor: 'pointer' }}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload size={32} strokeWidth={1} />
-                <p style={{ fontSize: 12, textAlign: 'center' }}>Drop audio here or click to import</p>
-                <p style={{ fontSize: 10, color: 'var(--border-light)' }}>MP3 · WAV · FLAC · AAC · M4A</p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Beat Lab */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -423,6 +503,11 @@ export default function AudioEditor({
               onRequestSongStop={() => {
                 audioRef.current?.pause()
                 setIsPlaying(false)
+              }}
+              onHitsChange={(h, dur, bpm) => {
+                setBeatLabHits(h)
+                setBeatLabDuration(dur)
+                setBeatLabBpm(bpm)
               }}
             />
           </div>
