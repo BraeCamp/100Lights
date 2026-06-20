@@ -22,7 +22,23 @@ interface HitInput {
   time: number
   type: BeatType
   velocity: number
-  spectral: { sub: number; lowMid: number; mid: number; hiMid: number; hi: number }
+  spectral: {
+    // 5-band ratios
+    sub: number; lowMid: number; mid: number; hiMid: number; hi: number
+    // Spectral shape
+    centroid?: number; spread?: number; rolloff?: number; flatness?: number; flux?: number
+    // MFCCs
+    mfcc?: number[]
+    // Temporal envelope
+    attackTime?: number; decayTime?: number; sustainLevel?: number
+    releaseTime?: number; zeroCrossingRate?: number
+    // Pitch
+    f0?: number; pitchConfidence?: number; harmonicRatio?: number
+    // Dynamics
+    peakAmplitude?: number; rmsAmplitude?: number; dynamicRange?: number
+    // Psychoacoustic
+    brightness?: number; warmth?: number; presence?: number; roughness?: number
+  }
 }
 
 const VALID_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
@@ -45,9 +61,18 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid request' }, { status: 400 })
   }
 
+  const fmt = (n?: number, d = 3) => n != null ? n.toFixed(d) : '—'
   const table = hits.map((h, i) => {
     const s = h.spectral
-    return `${String(i + 1).padStart(2)}. t=${h.time.toFixed(3)}s  cur=${h.type.padEnd(10)}  v=${h.velocity.toFixed(2)}  sub=${s.sub.toFixed(3)}  lowMid=${s.lowMid.toFixed(3)}  mid=${s.mid.toFixed(3)}  hiMid=${s.hiMid.toFixed(3)}  hi=${s.hi.toFixed(3)}`
+    const mfcc1 = s.mfcc ? s.mfcc.slice(1, 5).map(v => v.toFixed(1)).join(' ') : '—'
+    return [
+      `${String(i + 1).padStart(2)}. t=${h.time.toFixed(3)}s  cur=${h.type.padEnd(10)}  v=${h.velocity.toFixed(2)}`,
+      `    bands  sub=${fmt(s.sub)} lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hiMid=${fmt(s.hiMid)} hi=${fmt(s.hi)}`,
+      `    shape  centroid=${fmt(s.centroid,0)}Hz  rolloff=${fmt(s.rolloff,0)}Hz  flatness=${fmt(s.flatness)}  flux=${fmt(s.flux)}`,
+      `    timbre mfcc[1-4]=[${mfcc1}]  brightness=${fmt(s.brightness)}  presence=${fmt(s.presence)}  warmth=${fmt(s.warmth)}`,
+      `    tempo  attack=${fmt(s.attackTime,4)}s  decay=${fmt(s.decayTime,4)}s  sustain=${fmt(s.sustainLevel)}  roughness=${fmt(s.roughness)}`,
+      `    pitch  f0=${fmt(s.f0,1)}Hz  conf=${fmt(s.pitchConfidence)}  harmRatio=${fmt(s.harmonicRatio)}  dynRange=${fmt(s.dynamicRange,1)}dB`,
+    ].join('\n')
   }).join('\n')
 
   const groundTruthSection = groundTruth
@@ -87,6 +112,14 @@ CLASSIFICATION RULES OF THUMB:
 - mid is highest, sub low → snare or clap (snare has more lowMid body; clap is sharper)
 - mid > 0.45 and sub < 0.12 → rim
 - Look for rhythmic patterns: kicks on beats 1/3, snares on 2/4, hihats subdivide
+
+ADDITIONAL FEATURE GUIDANCE:
+- attackTime < 0.005s = sharp transient (kick, rimshot, clap). attackTime > 0.02s = soft onset (tom, open-hat)
+- roughness > 0.4 = buzzy/noisy (snare wire, clap layers). roughness < 0.1 = clean decay (kick body)
+- harmonicRatio > 0.5 = pitched sound (tom, rim). harmonicRatio < 0.2 = noise-dominant (snare, clap, hihat)
+- flatness > 0.5 = noise-like (hihat, snare wire). flatness < 0.1 = tonal (kick body, tom)
+- dynamicRange > 20 dB = impulsive transient. dynamicRange < 10 dB = sustained or noise-floored
+- mfcc[1] strongly separates kick (negative) from hihat (positive) in most beatbox recordings
 
 Respond with ONLY a valid JSON array of exactly ${hits.length} type strings, in the same order as the input hits.
 Use only these labels: ${VALID_TYPES.join(', ')}

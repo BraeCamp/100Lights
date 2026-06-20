@@ -143,13 +143,9 @@ export const DEFAULT_NOTES: Record<BeatType, number> = {
   other:             60,
 }
 
-export interface HitSpectral {
-  sub: number    // 0-150 Hz normalized ratio
-  lowMid: number // 150-600 Hz normalized ratio
-  mid: number    // 600-3000 Hz normalized ratio
-  hiMid: number  // 3000-8000 Hz normalized ratio
-  hi: number     // 8000+ Hz normalized ratio
-}
+export type { HitSpectral } from './beat-features'
+import type { HitSpectral } from './beat-features'
+import { computeHitFeatures } from './beat-features'
 
 export interface BeatHit {
   id: string
@@ -164,38 +160,6 @@ export interface BeatAnalysis {
   hits: BeatHit[]
   bpm: number | null
   duration: number
-}
-
-// ── Filtered energy bands ─────────────────────────────────────────────────────
-
-async function renderFiltered(
-  buf: AudioBuffer,
-  filterType: BiquadFilterType,
-  frequency: number,
-  q = 0.7,
-): Promise<Float32Array> {
-  const ctx = new OfflineAudioContext(1, buf.length, buf.sampleRate)
-  const src = ctx.createBufferSource()
-  src.buffer = buf
-  const filt = ctx.createBiquadFilter()
-  filt.type = filterType
-  filt.frequency.value = frequency
-  filt.Q.value = q
-  src.connect(filt)
-  filt.connect(ctx.destination)
-  src.start()
-  return (await ctx.startRendering()).getChannelData(0)
-}
-
-// ── RMS energy around a sample index ─────────────────────────────────────────
-
-function rmsWindow(data: Float32Array, center: number, sr: number, windowSec: number): number {
-  const half = Math.floor((windowSec * sr) / 2)
-  const start = Math.max(0, center - half)
-  const end = Math.min(data.length, center + half)
-  let sum = 0
-  for (let i = start; i < end; i++) sum += data[i] * data[i]
-  return Math.sqrt(sum / Math.max(1, end - start))
 }
 
 // ── BPM from inter-onset intervals (most reliable for short recordings) ───────
@@ -239,35 +203,6 @@ function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number
   while (bpm < 60)  bpm *= 2
   while (bpm > 220) bpm /= 2
   return Math.round(bpm)
-}
-
-// ── Pitch detection via normalized autocorrelation ───────────────────────────
-
-function detectPitch(buffer: AudioBuffer, startSample: number, sr: number): number | null {
-  const windowLen = Math.min(Math.floor(0.05 * sr), buffer.length - startSample)
-  if (windowLen < 128) return null
-  const frame = buffer.getChannelData(0).subarray(startSample, startSample + windowLen)
-
-  let energy = 0
-  for (let i = 0; i < windowLen; i++) energy += frame[i] * frame[i]
-  if (energy / windowLen < 2e-4) return null
-
-  const minLag = Math.ceil(sr / 1100)
-  const maxLag = Math.floor(sr / 70)
-  let bestLag = minLag, bestNsdf = -1
-
-  for (let tau = minLag; tau <= Math.min(maxLag, windowLen - 1); tau += 2) {
-    let num = 0, den = 0
-    for (let i = 0; i + tau < windowLen; i++) {
-      num += frame[i] * frame[i + tau]
-      den += frame[i] * frame[i] + frame[i + tau] * frame[i + tau]
-    }
-    const nsdf = den > 0 ? (2 * num) / den : 0
-    if (nsdf > bestNsdf) { bestNsdf = nsdf; bestLag = tau }
-  }
-
-  if (bestNsdf < 0.45) return null
-  return sr / bestLag
 }
 
 const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
@@ -389,53 +324,20 @@ export async function analyzeBeats(
       note: DEFAULT_NOTES[melodicType],
     }))
   } else {
-    // Five-band frequency analysis — used by both calibrated and hardcoded paths
-    const [subBand, lowMidBand, midBand, hiMidBand, highBand] = await Promise.all([
-      renderFiltered(audioBuffer, 'lowpass',  150, 0.7),
-      renderFiltered(audioBuffer, 'bandpass', 400, 1.2),
-      renderFiltered(audioBuffer, 'bandpass', 1400, 1.0),
-      renderFiltered(audioBuffer, 'bandpass', 5000, 1.0),
-      renderFiltered(audioBuffer, 'highpass', 9000, 0.7),
-    ])
+    // Full perceptual feature extraction via FFT (no OfflineAudioContext renders needed).
+    // computeHitFeatures returns all 30+ dimensions defined in lib/beat-features.ts.
+    hits = []
+    let prevSpectrum: Float32Array | null = null
+    for (const sampleIdx of pickedSamples) {
+      const { spectral, spectrum, highSustained } = computeHitFeatures(raw, sampleIdx, sr, prevSpectrum)
+      prevSpectrum = spectrum
 
-    const classWindow   = 0.06
-    const sustainOffset = Math.floor(0.06 * sr)
-
-    hits = pickedSamples.map((sampleIdx) => {
-      const t = sampleIdx / sr
-      const subE    = rmsWindow(subBand,    sampleIdx, sr, classWindow)
-      const lowMidE = rmsWindow(lowMidBand, sampleIdx, sr, classWindow)
-      const midE    = rmsWindow(midBand,    sampleIdx, sr, classWindow)
-      const hiMidE  = rmsWindow(hiMidBand,  sampleIdx, sr, classWindow)
-      const highE   = rmsWindow(highBand,   sampleIdx, sr, classWindow)
-
-      const total   = subE + lowMidE + midE + hiMidE + highE || 1
-      const spectral: HitSpectral = {
-        sub:    subE    / total,
-        lowMid: lowMidE / total,
-        mid:    midE    / total,
-        hiMid:  hiMidE  / total,
-        hi:     highE   / total,
-      }
-
-      let natural: BeatType
-
-      // Hardcoded spectral rules — tuned for beatbox mouth sounds.
-      // The human mouth cannot produce true sub-bass (<100 Hz), so beatbox
-      // kicks peak in the 150–500 Hz (lowMid) band, not the sub band.
       const subR    = spectral.sub
       const lowMidR = spectral.lowMid
       const midR    = spectral.mid
       const hiR     = spectral.hiMid + spectral.hi
 
-      const attackHigh  = rmsWindow(highBand, sampleIdx, sr, 0.025)
-      const sustainHigh = rmsWindow(
-        highBand,
-        Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
-        sr, 0.08,
-      )
-      const highSustained = attackHigh > 0.002 && sustainHigh > attackHigh * 0.28
-
+      let natural: BeatType
       if (hiR > 0.48) {
         natural = highSustained ? 'crash' : 'hihat'
       } else if (hiR > 0.38 && highSustained) {
@@ -457,15 +359,15 @@ export async function analyzeBeats(
         type = TYPE_FALLBACKS[natural].find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other'
       }
 
-      return {
+      hits.push({
         id: crypto.randomUUID(),
-        time: t,
+        time: sampleIdx / sr,
         type,
         velocity: toVelocity(Math.floor(sampleIdx / hopSize)),
         note: DEFAULT_NOTES[type],
         spectral,
-      }
-    })
+      })
+    }
   }
 
   // ── Step 6: BPM estimation ────────────────────────────────────────────────
@@ -532,10 +434,10 @@ export async function analyzeBeats(
     dedupedHits = Array.from(slotMap.values()).sort((a, b) => a.time - b.time)
   }
 
-  // ── Step 9: Pitch detection — refine note for melodic/voiced hits ─────────
+  // ── Step 9: Pitch refinement — use f0 already detected per-hit in spectral ──
   for (const hit of dedupedHits) {
-    const freq = detectPitch(audioBuffer, Math.floor(hit.time * sr), sr)
-    if (freq !== null) {
+    const freq = hit.spectral?.f0
+    if (freq && freq > 0 && (hit.spectral?.pitchConfidence ?? 0) >= 0.5) {
       const midi = Math.round(69 + 12 * Math.log2(freq / 440))
       if (midi >= 24 && midi <= 96) hit.note = midi
     }
