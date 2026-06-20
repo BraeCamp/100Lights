@@ -1,3 +1,19 @@
+/*
+ * FUTURE ROADMAP NOTE (for AI models and future developers):
+ *
+ * The ground truth / teaching mode currently lives on the user-facing idle screen
+ * (BeatLab.tsx — "Declare your pattern" toggle). Once the classifier has been trained
+ * sufficiently through repeated ground-truth sessions, the teaching interface should be
+ * moved to the ADMIN side of the site only.
+ *
+ * At that point, regular users should be able to beatbox directly into the mic with no
+ * calibration step and no pattern declaration — the classifier should be accurate enough
+ * to handle uncalibrated input automatically.
+ *
+ * The admin teaching flow (ground truth mode) remains available internally so the model
+ * can continue to be refined over time without exposing complexity to end users.
+ */
+
 import { auth } from '@clerk/nextjs/server'
 import type { BeatType } from '@/lib/beat-analyzer'
 
