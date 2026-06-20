@@ -2,13 +2,15 @@ import { sql } from '@/lib/db'
 import AdminLogout from './AdminLogout'
 import CorrectionsPanel from './CorrectionsPanel'
 
+export const dynamic = 'force-dynamic'
+
 async function getStats() {
   const [users, proUsers, newThisWeek, projects, projectsThisWeek, usageRows] = await Promise.all([
     sql`SELECT COUNT(*)::int AS cnt FROM subscriptions`,
     sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'pro' AND status = 'active'`,
     sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '7 days'`,
     sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL`,
-    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND created_at > NOW() - INTERVAL '7 days'`,
+    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND saved_at > NOW() - INTERVAL '7 days'`,
     sql`SELECT action, SUM(count)::int AS total FROM usage WHERE reset_at > NOW() GROUP BY action`,
   ])
   return {
