@@ -50,7 +50,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX, Send } from 'lucide-react'
-import type { BeatHit, BeatAnalysis, BeatType, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
+import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
@@ -504,9 +504,11 @@ interface BeatLabProps {
   onRequestSongStop?: () => void
   requestedFamily?: InstrumentFamily | null
   onHitsChange?: (hits: BeatHit[], duration: number, bpm: number | null) => void
+  onAddTrack?: (entry: BeatTrackEntry) => void
+  requestRecord?: number  // increment to trigger recording (plays song automatically)
 }
 
-export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange }: BeatLabProps) {
+export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -528,6 +530,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   useEffect(() => {
     if (requestedFamily) setInstrumentFamily(requestedFamily)
   }, [requestedFamily])
+
+  // External trigger: increment requestRecord to start a recording with song auto-playing
+  const prevRequestRecordRef = useRef(0)
+  useEffect(() => {
+    const cur = requestRecord ?? 0
+    if (cur <= prevRequestRecordRef.current) return
+    prevRequestRecordRef.current = cur
+    if (phase !== 'idle') return
+    onRequestSongPlay?.()
+    startedSongRef.current = true
+    void startRecording()
+  }, [requestRecord, phase]) // eslint-disable-line
   const [recMode, setRecMode] = useState<RecMode>('hits')
   // Loop mode state
   const [loopBuffer, setLoopBuffer] = useState<AudioBuffer | null>(null)
@@ -658,7 +672,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setPhase('recording')
       setRecordingTime(0)
       recTimerRef.current = setInterval(() => setRecordingTime(t => t + 0.1), 100)
-      if (playSongDuringRec && onRequestSongPlay) {
+      if (playSongDuringRec && onRequestSongPlay && !startedSongRef.current) {
         onRequestSongPlay()
         startedSongRef.current = true
       }
@@ -1018,6 +1032,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
+  // ── Add to project ───────────────────────────────────────────────────────
+
+  function addToProject() {
+    if (!onAddTrack || hits.length === 0) return
+    onAddTrack({
+      id:            crypto.randomUUID(),
+      name:          'Beat',
+      hits:          [...hits],
+      bpm,
+      duration,
+      typeOverrides: { ...typeOverrides },
+      createdAt:     new Date().toISOString(),
+    })
+    reset()
+  }
+
   // ── User-initiated feedback ───────────────────────────────────────────────
 
   function enterFeedbackMode() {
@@ -1252,7 +1282,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }}>
         {phase === 'idle' && (
           <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-            <Mic size={13} /> Record
+            <Mic size={13} /> Sing the Beat
           </button>
         )}
         {phase === 'recording' && (
@@ -1366,6 +1396,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 <RefreshCw size={11} /> Re-record
               </button>
+              {onAddTrack && hits.length > 0 && (
+                <button
+                  onClick={addToProject}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 10px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  + Add to Project
+                </button>
+              )}
               {!userFeedbackMode ? (
                 <button
                   onClick={enterFeedbackMode}
@@ -1523,7 +1561,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             )}
             {error && <p style={{ fontSize: 12, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
             <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 8, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
-              <Mic size={15} /> {recMode === 'loop' ? 'Start Loop Recording' : 'Start Recording'}
+              <Mic size={15} /> {recMode === 'loop' ? 'Record Loop' : 'Sing the Beat'}
             </button>
 
             {/* Ground truth — helps AI correct misclassifications */}

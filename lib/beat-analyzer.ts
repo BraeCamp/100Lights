@@ -162,6 +162,16 @@ export interface BeatAnalysis {
   duration: number
 }
 
+export interface BeatTrackEntry {
+  id: string
+  name: string
+  hits: BeatHit[]
+  bpm: number | null
+  duration: number
+  typeOverrides: Record<string, { label: string; color: string }>
+  createdAt: string
+}
+
 // ── BPM from inter-onset intervals (most reliable for short recordings) ───────
 
 function estimateBPMFromIOI(times: number[]): number | null {
