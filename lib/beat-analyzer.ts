@@ -337,19 +337,37 @@ export async function analyzeBeats(
       const midR    = spectral.mid
       const hiR     = spectral.hiMid + spectral.hi
 
+      // Perceptual booleans derived from the full feature set.
+      // These give the hardcoded rules the same richness the AI classifier uses.
+      const isPitched      = spectral.harmonicRatio > 0.40   // clear harmonic structure → tom, rim
+      const isSharp        = spectral.attackTime < 0.008     // impulsive transient → rim, clap, kick
+      const isBuzzy        = spectral.roughness > 0.30       // rapid AM → snare wire, clap layers
+      const hasLongTail    = spectral.releaseTime > 0.12     // still ringing 60 ms+ later → crash
+      const hasSustainBody = spectral.sustainLevel > 0.22    // energy at 60 ms post-onset → open-hat
+
       let natural: BeatType
       if (hiR > 0.48) {
-        natural = highSustained ? 'crash' : 'hihat'
+        // Strong high-frequency content — cymbal/hihat family
+        if (highSustained || hasSustainBody) {
+          natural = hasLongTail ? 'crash' : 'open-hihat'
+        } else {
+          natural = 'hihat'
+        }
       } else if (hiR > 0.38 && highSustained) {
-        natural = hiR > 0.50 ? 'crash' : 'open-hihat'
+        natural = (hasLongTail || hiR > 0.50) ? 'crash' : 'open-hihat'
       } else if (hiR > 0.38) {
         natural = 'hihat'
       } else if (subR > 0.30 || (lowMidR > 0.26 && hiR < 0.30 && subR + lowMidR > 0.36)) {
-        natural = midR > 0.30 ? 'tom' : 'kick'
+        // Low-frequency dominant — kick vs tom.
+        // Tom is more pitched and carries more mid body than a beatbox kick.
+        natural = (isPitched && midR > 0.25) ? 'tom' : 'kick'
       } else if (midR > 0.48 && subR < 0.12) {
-        natural = 'rim'
+        // Strong mid dominant with minimal sub — rim if pitched/sharp, else snare
+        natural = (isPitched || isSharp) ? 'rim' : 'snare'
       } else if (midR > 0.28 && subR < 0.25) {
-        natural = 'snare'
+        // Snare vs clap: snare has lowMid body from head resonance + buzzy wire decay;
+        // clap is brighter and purer noise with minimal low-end
+        natural = (lowMidR > 0.12 || isBuzzy) ? 'snare' : 'clap'
       } else {
         natural = 'clap'
       }
