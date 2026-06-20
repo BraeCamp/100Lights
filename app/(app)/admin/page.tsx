@@ -1,5 +1,6 @@
 import { sql } from '@/lib/db'
 import AdminLogout from './AdminLogout'
+import CorrectionsPanel from './CorrectionsPanel'
 
 async function getStats() {
   const [users, proUsers, newThisWeek, projects, projectsThisWeek, usageRows] = await Promise.all([
@@ -116,6 +117,10 @@ export default async function AdminPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Beat Lab corrections — client-side IndexedDB */}
+        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Beat Lab corrections</h2>
+        <CorrectionsPanel />
 
         {/* Quick links */}
         <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Quick links</h2>

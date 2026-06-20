@@ -7,6 +7,7 @@ import { analyzeBeats } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
+import { correctionsAdd } from '@/lib/correction-store'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -629,10 +630,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   function applyAiSuggestions() {
     if (!aiSuggestions) return
-    setHits(prev => prev.map(h => {
-      const suggested = aiSuggestions.get(h.id)
-      return suggested ? { ...h, type: suggested } : h
-    }))
+    setHits(prev => {
+      const updated = prev.map(h => {
+        const suggested = aiSuggestions.get(h.id)
+        if (!suggested || suggested === h.type) return h
+        if (h.spectral) {
+          correctionsAdd({
+            id:          crypto.randomUUID(),
+            spectral:    h.spectral,
+            detectedAs:  h.type,
+            correctedTo: suggested,
+            savedAt:     new Date().toISOString(),
+          }).catch(() => {})
+        }
+        return { ...h, type: suggested }
+      })
+      return updated
+    })
     setAiSuggestions(null)
   }
 
@@ -640,7 +654,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     if (!aiSuggestions) return
     const suggested = aiSuggestions.get(hitId)
     if (!suggested) return
-    setHits(prev => prev.map(h => h.id === hitId ? { ...h, type: suggested } : h))
+    setHits(prev => prev.map(h => {
+      if (h.id !== hitId) return h
+      if (h.spectral && suggested !== h.type) {
+        correctionsAdd({
+          id:          crypto.randomUUID(),
+          spectral:    h.spectral,
+          detectedAs:  h.type,
+          correctedTo: suggested,
+          savedAt:     new Date().toISOString(),
+        }).catch(() => {})
+      }
+      return { ...h, type: suggested }
+    }))
     setAiSuggestions(prev => {
       if (!prev) return null
       const next = new Map(prev)
