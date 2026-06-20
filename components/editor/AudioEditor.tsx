@@ -209,7 +209,8 @@ export default function AudioEditor({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT') return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.code === 'Space') { e.preventDefault(); togglePlay() }
       if (e.code === 'ArrowLeft') { e.preventDefault(); skipBack() }
       if (e.code === 'ArrowRight') { e.preventDefault(); skipForward() }
