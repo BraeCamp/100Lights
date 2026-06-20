@@ -118,11 +118,11 @@ export function detectPitchCurve(
 
 export async function synthesizeFromPitchCurve(
   pitchCurve:    PitchFrame[],
-  sampleBuffer:  AudioBuffer,   // kept for API compat; sample rate taken from here
-  _rootNote:     number,        // unused — oscillator uses Hz directly
+  sampleRate:    number,
+  _rootNote:     number,
   totalDuration: number,
 ): Promise<AudioBuffer> {
-  const sr  = sampleBuffer.sampleRate
+  const sr  = sampleRate
   const len = Math.ceil(sr * totalDuration)
   const ctx = new OfflineAudioContext(1, len, sr)
 

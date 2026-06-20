@@ -148,9 +148,9 @@ type Phase = 'idle' | 'recording' | 'analyzing' | 'editing'
 type RecMode = 'hits' | 'loop'
 
 async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
-  const ab = await blob.arrayBuffer()
+  const ab  = await blob.arrayBuffer()
   const ctx = new AudioContext()
-  return ctx.decodeAudioData(ab)
+  try { return await ctx.decodeAudioData(ab) } finally { ctx.close() }
 }
 
 // ── Waveform ─────────────────────────────────────────────────────────────────
@@ -673,16 +673,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   async function runVoiceSynth() {
     const source = vsAudioBuf ?? audioBuf
     if (!source) return
-    const sampleBuf  = sampleBuffers.get(voiceSynthType)
-    const sampleRoot = sampleRoots.get(voiceSynthType) ?? 60
-    if (!sampleBuf) {
-      alert(`No sample loaded for ${TYPE_LABELS[voiceSynthType] ?? voiceSynthType}. Seed it in Admin → Sample Pack first.`)
-      return
-    }
     setVoiceSynthRendering(true)
     try {
       const curve    = detectPitchCurve(source)
-      const rendered = await synthesizeFromPitchCurve(curve, sampleBuf, sampleRoot, source.duration)
+      const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration)
       const layer: SynthLayer = {
         id: crypto.randomUUID(),
         name: TYPE_LABELS[voiceSynthType] ?? voiceSynthType,
@@ -810,21 +804,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     return () => ro.disconnect()
   }, [])
 
-  // RAF playhead — depends only on isPlaying; reads duration via durationRef
-  // to avoid restarting the animation loop every time a synth layer extends the timeline.
-  useEffect(() => {
-    if (!isPlaying) return
-    const tick = () => {
-      if (!playStartRef.current) return
-      const elapsed = (performance.now() - playStartRef.current.wallTime) / 1000
-      const t = playStartRef.current.beatTime + elapsed
-      if (t >= durationRef.current) { stopPlayback(); setPlayhead(0); return }
-      setPlayhead(t)
-      playRafRef.current = requestAnimationFrame(tick)
-    }
-    playRafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(playRafRef.current)
-  }, [isPlaying]) // eslint-disable-line
+  // Cancel RAF on unmount to avoid dangling callbacks
+  useEffect(() => () => cancelAnimationFrame(playRafRef.current), [])
 
   // ── Recording ──────────────────────────────────────────────────────────────
 
@@ -1015,6 +996,28 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
     playStartRef.current = { wallTime: performance.now(), beatTime: startFrom }
     setIsPlaying(true)
+
+    // Manage RAF directly — NOT via useEffect — so seeking while playing
+    // always gets a fresh loop regardless of whether isPlaying state changed.
+    cancelAnimationFrame(playRafRef.current)
+    const tick = () => {
+      if (!playStartRef.current) return
+      const elapsed = (performance.now() - playStartRef.current.wallTime) / 1000
+      const t = playStartRef.current.beatTime + elapsed
+      if (t >= durationRef.current) {
+        playStartRef.current = null
+        setIsPlaying(false)
+        setPlayhead(0)
+        if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+          audioCtxRef.current.close()
+          audioCtxRef.current = null
+        }
+        return
+      }
+      setPlayhead(t)
+      playRafRef.current = requestAnimationFrame(tick)
+    }
+    playRafRef.current = requestAnimationFrame(tick)
   }
 
   function startPlayback() { startPlaybackFrom(playhead >= duration ? 0 : playhead) }
@@ -1764,15 +1767,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 )}
               </div>
 
-              {sampleBuffers.size > 0 && (
-                <button
-                  onClick={() => setVoiceSynthOpen(v => !v)}
-                  title="Record and synthesize any sound as an instrument layer"
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: voiceSynthOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${voiceSynthOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: voiceSynthOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
-                >
-                  🎙 Voice Synth
-                </button>
-              )}
+              <button
+                onClick={() => setVoiceSynthOpen(v => !v)}
+                title="Record and synthesize any sound as an instrument layer"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: voiceSynthOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${voiceSynthOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: voiceSynthOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
+              >
+                🎙 Voice Synth
+              </button>
               {!userFeedbackMode ? (
                 <button
                   onClick={enterFeedbackMode}
