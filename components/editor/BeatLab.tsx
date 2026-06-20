@@ -706,6 +706,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const laneRecChunksRef = useRef<Blob[]>([])
   const laneRecorderRef  = useRef<MediaRecorder | null>(null)
 
+  // Track the playhead at the moment recording starts so we can offset hits correctly
+  const laneRecStartPlayheadRef = useRef(0)
+
   async function startLaneRecording() {
     if (!activeLaneType) return
     setError(null)
@@ -716,9 +719,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       recorder.ondataavailable = e => { if (e.data.size > 0) laneRecChunksRef.current.push(e.data) }
       recorder.start(100)
       laneRecorderRef.current = recorder
+      laneRecStartPlayheadRef.current = playhead
       setLaneRecording(true)
       setLaneRecordingTime(0)
       laneRecTimerRef.current = setInterval(() => setLaneRecordingTime(t => t + 0.1), 100)
+      // Also start beat playback from current playhead so user can hear the existing beat while recording
+      startPlaybackFrom(playhead)
     } catch {
       setError('Microphone access denied.')
     }
@@ -731,9 +737,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     if (laneRecTimerRef.current) clearInterval(laneRecTimerRef.current)
     recorder.stop()
     recorder.stream.getTracks().forEach(t => t.stop())
+    stopPlayback()
     await new Promise<void>(res => { recorder.onstop = () => res() })
     setLaneRecording(false)
     const blob = new Blob(laneRecChunksRef.current, { type: laneRecChunksRef.current[0]?.type ?? 'audio/webm' })
+    const offset = laneRecStartPlayheadRef.current
     try {
       const buf    = await decodeAudio(blob)
       const result = await analyzeBeats(buf, {
@@ -741,14 +749,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         referenceSounds,
         stemMode:        false,
       })
-      // Merge new hits into the existing set — offset time by playhead position
-      const offset = playhead
       const newHits = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + offset, type }))
       setHits(prev => [...prev, ...newHits])
-      // Extend duration if the new recording goes past the current end
       if (result.duration + offset > duration) {
         setDuration(result.duration + offset)
-        setAudioBuf(null)  // original waveform no longer covers full duration
+        setAudioBuf(null)
       }
     } catch {
       setError('Could not analyze the lane recording. Try again.')

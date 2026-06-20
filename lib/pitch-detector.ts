@@ -112,45 +112,57 @@ export function detectPitchCurve(
 }
 
 // ── Public: synthesize voice pitch curve as instrument ────────────────────────
-// Takes a pitch curve and a sample AudioBuffer, renders a new AudioBuffer
-// where the sample plays at each detected pitch (pitch-shifted via playbackRate).
+// ONE continuously looping source whose playbackRate and gain are automated to
+// follow the detected pitch and amplitude curve — no per-frame grain restarts,
+// so the output is a single smooth continuous sound, not a burst of notes.
 
 export async function synthesizeFromPitchCurve(
-  pitchCurve:   PitchFrame[],
-  sampleBuffer: AudioBuffer,
-  rootNote:     number,
+  pitchCurve:    PitchFrame[],
+  sampleBuffer:  AudioBuffer,
+  rootNote:      number,
   totalDuration: number,
 ): Promise<AudioBuffer> {
   const sr  = sampleBuffer.sampleRate
   const len = Math.ceil(sr * totalDuration)
   const ctx = new OfflineAudioContext(1, len, sr)
 
-  const hopSec = pitchCurve.length > 1 ? (pitchCurve[1].time - pitchCurve[0].time) : 0.05
-  const grainLen = hopSec * 2.2  // slight overlap between grains
+  const src  = ctx.createBufferSource()
+  src.buffer  = sampleBuffer
+  src.loop    = true
+  src.loopEnd = sampleBuffer.duration
+
+  const gain = ctx.createGain()
+  src.connect(gain)
+  gain.connect(ctx.destination)
+
+  // Seed initial values so ramps have a starting point
+  const firstVoiced = pitchCurve.find(f => f.midi !== null)
+  const initRate = firstVoiced
+    ? Math.pow(2, (firstVoiced.midi! - rootNote) / 12)
+    : 1
+  src.playbackRate.setValueAtTime(initRate, 0)
+  gain.gain.setValueAtTime(0, 0)
+
+  let lastMidi = firstVoiced?.midi ?? rootNote
 
   for (const frame of pitchCurve) {
-    if (frame.midi === null || frame.amplitude < 0.04) continue
+    const t = frame.time
 
-    const rate = Math.pow(2, (frame.midi - rootNote) / 12)
-    const src  = ctx.createBufferSource()
-    src.buffer         = sampleBuffer
-    src.playbackRate.value = rate
-    src.loop           = true   // loop sample if shorter than grain
-    src.loopEnd        = sampleBuffer.duration
+    // Pitch: hold previous note during unvoiced gaps (don't jump to silence)
+    if (frame.midi !== null) lastMidi = frame.midi
+    const rate = Math.pow(2, (lastMidi - rootNote) / 12)
+    src.playbackRate.setValueAtTime(rate, t)
 
-    const gain = ctx.createGain()
-    const v    = Math.min(1, frame.amplitude)
-    // Short fade in/out per grain to avoid clicks
-    gain.gain.setValueAtTime(0, frame.time)
-    gain.gain.linearRampToValueAtTime(v, frame.time + 0.005)
-    gain.gain.setValueAtTime(v, frame.time + grainLen - 0.01)
-    gain.gain.linearRampToValueAtTime(0, frame.time + grainLen)
-
-    src.connect(gain)
-    gain.connect(ctx.destination)
-    src.start(frame.time)
-    src.stop(frame.time + grainLen)
+    // Amplitude: follow RMS envelope; silence during unvoiced gaps
+    const vol = frame.midi !== null ? Math.min(0.95, frame.amplitude) : 0
+    gain.gain.linearRampToValueAtTime(vol, t + 0.008)  // 8ms smoothing prevents zipper noise
   }
+
+  // Fade out at the end
+  gain.gain.linearRampToValueAtTime(0, totalDuration)
+
+  src.start(0)
+  src.stop(totalDuration + 0.05)
 
   return ctx.startRendering()
 }
