@@ -629,6 +629,20 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setSelectedId(null)
   }, [])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (phase !== 'editing') return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        e.preventDefault()
+        deleteHit(selectedId)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [phase, selectedId, deleteHit])
+
   function addHit(type: BeatType, t: number, note: number) {
     const newHit: BeatHit = { id: crypto.randomUUID(), time: t, type, velocity: 0.7, note }
     setHits(prev => [...prev, newHit].sort((a, b) => a.time - b.time))
@@ -637,8 +651,43 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   function changeSelectedType(type: BeatType) {
     if (!selectedId) return
-    setHits(prev => prev.map(h => h.id === selectedId ? { ...h, type } : h))
+    setHits(prev => prev.map(h => {
+      if (h.id !== selectedId) return h
+      if (type !== h.type && h.spectral) {
+        correctionsAdd({
+          id:          crypto.randomUUID(),
+          spectral:    h.spectral,
+          detectedAs:  h.type,
+          correctedTo: type,
+          savedAt:     new Date().toISOString(),
+        }).catch(() => {})
+      }
+      return { ...h, type }
+    }))
     setShowTypeMenu(false)
+  }
+
+  function rejectAiForHit(hitId: string) {
+    if (!aiSuggestions) return
+    const suggested = aiSuggestions.get(hitId)
+    if (!suggested) return
+    // Save inverse: AI said X, but the current label Y is correct
+    const hit = hits.find(h => h.id === hitId)
+    if (hit && hit.spectral && suggested !== hit.type) {
+      correctionsAdd({
+        id:          crypto.randomUUID(),
+        spectral:    hit.spectral,
+        detectedAs:  suggested,
+        correctedTo: hit.type,
+        savedAt:     new Date().toISOString(),
+      }).catch(() => {})
+    }
+    setAiSuggestions(prev => {
+      if (!prev) return null
+      const next = new Map(prev)
+      next.delete(hitId)
+      return next.size > 0 ? next : null
+    })
   }
 
   function applyAiSuggestions() {
@@ -815,10 +864,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 </span>
                 {aiSuggestions?.get(selectedHit.id) && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
-                    <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.8)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>AI</span>
+                    <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.8)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>AI says</span>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: TYPE_COLORS[aiSuggestions.get(selectedHit.id)!] }} />
                     <span style={{ fontSize: 10, color: 'var(--accent-light)' }}>{TYPE_LABELS[aiSuggestions.get(selectedHit.id)!]}</span>
-                    <button onClick={() => acceptAiForHit(selectedHit.id)} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>✓</button>
+                    <button onClick={() => acceptAiForHit(selectedHit.id)} title="Accept — AI is right" style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700 }}>✓</button>
+                    <button onClick={() => rejectAiForHit(selectedHit.id)} title="Reject — current label is correct" style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
                   </div>
                 )}
                 <div style={{ position: 'relative' }}>
@@ -865,10 +915,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   <span style={{ fontSize: 10, color: 'var(--accent-light)' }}>
                     ✦ AI: {aiSuggestions.size} correction{aiSuggestions.size !== 1 ? 's' : ''}
                   </span>
-                  <button onClick={applyAiSuggestions} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                  <button onClick={applyAiSuggestions} title="Accept all — saves corrections for learning" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                     Apply all
                   </button>
-                  <button onClick={() => setAiSuggestions(null)} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 4, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+                  <button onClick={() => setAiSuggestions(null)} title="Dismiss — ignore suggestions without saving" style={{ fontSize: 10, padding: '2px 5px', borderRadius: 4, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Dismiss</button>
                 </div>
               )}
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
