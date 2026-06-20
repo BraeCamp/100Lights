@@ -998,6 +998,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     cancelAnimationFrame(playRafRef.current)
     setIsPlaying(false)
     playStartRef.current = null
+    stopVoiceSynth()
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close()
       audioCtxRef.current = null
@@ -1780,7 +1781,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       {/* ── Content ───────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
-        {phase === 'idle' && (
+        {false && phase === 'idle' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: 40, overflowY: 'auto' }}>
             {/* Mode selector */}
             <div style={{ display: 'flex', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 3 }}>
@@ -2148,7 +2149,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {/* Horizontal scroll wrapper for zoomed content */}
               <div style={{ flex: inPortal ? undefined : 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {/* Fixed-width inner column at zoom level */}
-                <div style={{ width: 88 + (timelinePx * zoomLevel), minWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ width: 88 + (timelinePx * zoomLevel), minWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
                   <Playhead time={playhead} duration={duration} pxWidth={timelinePx * zoomLevel} />
 
                   {/* Ruler — offset 88px to align with hit area (64 label + 24 note axis) */}
@@ -2163,11 +2164,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
                     {activeLaneTypes.map(type => (
                       <div key={type} style={{ display: 'flex' }}>
-                        {/* NoteAxis: only shown for the active (selected) lane */}
-                        {activeLaneType === type
-                          ? <NoteAxis />
-                          : <div style={{ width: 24, flexShrink: 0 }} />
-                        }
+                        <div style={{ width: 24, flexShrink: 0 }} />
                         <Lane
                           type={type}
                           hits={hitsByType.get(type) ?? []}
@@ -2358,17 +2355,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 </div>
                 <input type="range" min={0.02} max={0.6} step={0.01} value={hit.duration ?? 0.05}
                   onChange={e => changeHitDuration(hit.id, Number(e.target.value))}
-                  style={{ width: '100%' }} className="cf-slider" />
-              </div>
-
-              {/* Pitch */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Pitch</p>
-                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{midiName(hit.note)}</span>
-                </div>
-                <input type="range" min={NOTE_MIN} max={NOTE_MAX} step={1} value={hit.note}
-                  onChange={e => changeHitNote(hit.id, Number(e.target.value))}
                   style={{ width: '100%' }} className="cf-slider" />
               </div>
 

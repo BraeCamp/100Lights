@@ -503,7 +503,7 @@ export default function AudioEditor({
           {/* BeatLab toolbar panel — always compact; lanes portal into the timeline above */}
           <div style={{
             flexShrink: 0,
-            height: beatLabPhase === 'idle' ? 340 : beatLabPhase === 'analyzing' ? 140 : beatLabPhase === 'recording' ? 180 : 52,
+            height: beatLabPhase === 'idle' ? 44 : beatLabPhase === 'analyzing' ? 140 : beatLabPhase === 'recording' ? 180 : 52,
             overflow: 'hidden',
             transition: 'height 0.2s ease',
             borderTop: '1px solid var(--border)',
