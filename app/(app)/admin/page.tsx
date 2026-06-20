@@ -1,8 +1,5 @@
-import { currentUser } from '@clerk/nextjs/server'
-import { notFound } from 'next/navigation'
 import { sql } from '@/lib/db'
-
-const ADMIN_EMAILS = ['braedancampbell@gmail.com', 'braedan@100lights.com']
+import AdminLogout from './AdminLogout'
 
 async function getStats() {
   const [users, proUsers, newThisWeek, projects, projectsThisWeek, usageRows] = await Promise.all([
@@ -44,10 +41,6 @@ function Stat({ label, value, sub }: { label: string; value: number | string; su
 }
 
 export default async function AdminPage() {
-  const user = await currentUser()
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? ''
-  if (!ADMIN_EMAILS.includes(email)) return notFound()
-
   const [stats, recentUsers] = await Promise.all([getStats(), getRecentUsers()])
   const conversionRate = stats.totalUsers > 0
     ? ((stats.proUsers / stats.totalUsers) * 100).toFixed(1)
@@ -62,6 +55,7 @@ export default async function AdminPage() {
             <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.3)' }}>
               Dev only
             </span>
+            <AdminLogout />
           </div>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Live stats — refreshes on page load</p>
         </div>
