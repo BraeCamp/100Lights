@@ -160,6 +160,8 @@ export default function AudioEditor({
   // Increment to trigger BeatLab to start recording (with song auto-play)
   const [singCount, setSingCount] = useState(0)
   const [beatLabPhase, setBeatLabPhase] = useState<'idle' | 'recording' | 'analyzing' | 'editing'>('idle')
+  // Portal target: BeatLab renders its lane editor here (inside the main scroll area)
+  const [beatLabLanesEl, setBeatLabLanesEl] = useState<HTMLDivElement | null>(null)
 
   const selectedTrack = tracks.find(t => t.id === selectedId) ?? null
 
@@ -526,12 +528,15 @@ export default function AudioEditor({
                   <BeatTrackRow track={track} />
                 </div>
               ))}
+
+              {/* BeatLab lane editor lives here when in editing phase — rendered via portal from BeatLab */}
+              <div ref={el => setBeatLabLanesEl(el)} />
           </div>
 
-          {/* BeatLab panel — compact when idle, expands during recording/editing */}
+          {/* BeatLab toolbar panel — always compact; lanes portal into the timeline above */}
           <div style={{
             flexShrink: 0,
-            height: beatLabPhase === 'idle' ? 56 : beatLabPhase === 'editing' ? '48%' : 220,
+            height: beatLabPhase === 'idle' ? 56 : beatLabPhase === 'analyzing' ? 140 : beatLabPhase === 'recording' ? 180 : 52,
             overflow: 'hidden',
             transition: 'height 0.2s ease',
             borderTop: '1px solid var(--border)',
@@ -539,6 +544,7 @@ export default function AudioEditor({
             <BeatLab
               hasSong={tracks.length > 0}
               requestRecord={singCount}
+              lanesContainer={beatLabLanesEl}
               onPhaseChange={p => setBeatLabPhase(p as 'idle' | 'recording' | 'analyzing' | 'editing')}
               onRequestSongPlay={() => {
                 if (audioRef.current && selectedTrack) {

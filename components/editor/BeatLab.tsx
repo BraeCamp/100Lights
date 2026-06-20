@@ -49,6 +49,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX, Send } from 'lucide-react'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
@@ -530,9 +531,10 @@ interface BeatLabProps {
   onAddTrack?: (entry: BeatTrackEntry) => void
   requestRecord?: number  // increment to trigger recording (plays song automatically)
   onPhaseChange?: (phase: Phase) => void
+  lanesContainer?: Element | null  // when set, lane editor renders into this element via portal
 }
 
-export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange }: BeatLabProps) {
+export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -1827,82 +1829,92 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </div>
         )}
 
-        {phase === 'editing' && recMode === 'hits' && duration > 0 && (
-          <div ref={timelineRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+        {phase === 'editing' && recMode === 'hits' && duration > 0 && (() => {
+          // Render inside AudioEditor's timeline when lanesContainer is provided (portal),
+          // otherwise render inline inside the BeatLab panel.
+          const inPortal = !!lanesContainer
+          const content = (
+            <div
+              ref={timelineRef}
+              style={inPortal
+                ? { display: 'flex', flexDirection: 'column', position: 'relative', borderTop: '2px solid rgba(139,92,246,0.3)' }
+                : { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}
+            >
+              <Playhead time={playhead} duration={duration} pxWidth={timelinePx} />
 
-            <Playhead time={playhead} duration={duration} pxWidth={timelinePx} />
-
-            {/* Ruler */}
-            <div style={{ paddingLeft: 88 }}>
-              <RulerTicks duration={duration} px={timelinePx} onSeek={handleSeek} />
-            </div>
-
-            {/* Waveform */}
-            {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx} />}
-
-            {/* Lanes */}
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {activeLaneTypes.map(type => (
-                <div key={type} style={{ display: 'flex' }}>
-                  <NoteAxis />
-                  <Lane
-                    type={type}
-                    hits={hitsByType.get(type) ?? []}
-                    duration={duration}
-                    pxWidth={timelinePx}
-                    selectedId={selectedId}
-                    muted={mutedTypes.has(type)}
-                    aiSuggestions={aiSuggestions}
-                    aiDeletions={aiDeletions}
-                    typeOverrides={typeOverrides}
-                    isCustom={extraLaneIds.includes(type)}
-                    snapInterval={snapInterval}
-                    onSelect={setSelectedId}
-                    onMoveHit={moveHit}
-                    onDeleteHit={deleteHit}
-                    onAddHit={(t, note) => addHit(type, t, note)}
-                    onToggleMute={() => toggleMute(type)}
-                    onRenameType={(label, color) => renameType(type, label, color)}
-                    onDeleteLane={() => removeCustomLane(type)}
-                    onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
-                  />
-                </div>
-              ))}
-              {/* Add new lane */}
-              <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
-                <button
-                  onClick={addCustomLane}
-                  style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                >
-                  + Add track
-                </button>
+              {/* Ruler */}
+              <div style={{ paddingLeft: 88 }}>
+                <RulerTicks duration={duration} px={timelinePx} onSeek={handleSeek} />
               </div>
-            </div>
 
-            {/* Legend */}
-            <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-              {activeLaneTypes.map(t => (
-                <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
-                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColor(t, typeOverrides) }} />
-                  {typeLabel(t, typeOverrides)} ({hitsByType.get(t)?.length ?? 0})
-                </span>
-              ))}
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-                {onAddTrack && hits.length > 0 && (
+              {/* Waveform */}
+              {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx} />}
+
+              {/* Lanes */}
+              <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
+                {activeLaneTypes.map(type => (
+                  <div key={type} style={{ display: 'flex' }}>
+                    <NoteAxis />
+                    <Lane
+                      type={type}
+                      hits={hitsByType.get(type) ?? []}
+                      duration={duration}
+                      pxWidth={timelinePx}
+                      selectedId={selectedId}
+                      muted={mutedTypes.has(type)}
+                      aiSuggestions={aiSuggestions}
+                      aiDeletions={aiDeletions}
+                      typeOverrides={typeOverrides}
+                      isCustom={extraLaneIds.includes(type)}
+                      snapInterval={snapInterval}
+                      onSelect={setSelectedId}
+                      onMoveHit={moveHit}
+                      onDeleteHit={deleteHit}
+                      onAddHit={(t, note) => addHit(type, t, note)}
+                      onToggleMute={() => toggleMute(type)}
+                      onRenameType={(label, color) => renameType(type, label, color)}
+                      onDeleteLane={() => removeCustomLane(type)}
+                      onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
+                    />
+                  </div>
+                ))}
+                {/* Add new lane */}
+                <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
                   <button
-                    onClick={addToProject}
-                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    onClick={addCustomLane}
+                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
                   >
-                    + Add to Project
+                    + Add track
                   </button>
-                )}
-                <span style={{ fontSize: 10, color: 'var(--border-light)' }}>
-                  Click / right-click lane to add · Drag to move (snaps to grid) · Right-click hit to edit · Dbl-click to delete
-                </span>
+                </div>
+              </div>
+
+              {/* Legend */}
+              <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                {activeLaneTypes.map(t => (
+                  <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
+                    <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColor(t, typeOverrides) }} />
+                    {typeLabel(t, typeOverrides)} ({hitsByType.get(t)?.length ?? 0})
+                  </span>
+                ))}
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {onAddTrack && hits.length > 0 && (
+                    <button
+                      onClick={addToProject}
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      + Add to Project
+                    </button>
+                  )}
+                  <span style={{ fontSize: 10, color: 'var(--border-light)' }}>
+                    Click / right-click lane to add · Drag to move · Right-click hit to edit · Dbl-click to delete
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )
+          return inPortal ? createPortal(content, lanesContainer!) : content
+        })()}
 
       </div>
 
