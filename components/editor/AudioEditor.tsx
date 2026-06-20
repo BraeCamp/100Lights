@@ -115,7 +115,7 @@ export default function AudioEditor({
 
   // Increment to trigger BeatLab to start recording (with song auto-play)
   const [singCount, setSingCount] = useState(0)
-  const [beatLabPhase, setBeatLabPhase] = useState<'idle' | 'recording' | 'analyzing' | 'editing'>('idle')
+  const [beatLabPhase, setBeatLabPhase] = useState<'idle' | 'recording' | 'analyzing' | 'editing'>('editing')
   // Portal target: BeatLab renders its lane editor here (inside the main scroll area)
   const [beatLabLanesEl, setBeatLabLanesEl] = useState<HTMLDivElement | null>(null)
   // Stem URL to feed directly into BeatLab for analysis (bypasses mic)

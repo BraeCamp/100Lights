@@ -480,11 +480,11 @@ interface BeatLabProps {
 }
 
 export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [phase, setPhase] = useState<Phase>('editing')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [activeLaneType, setActiveLaneType] = useState<BeatType | null>(null)
+  const [activeLaneType, setActiveLaneType] = useState<BeatType | null>('kick')
   const [zoomLevel, setZoomLevel] = useState(1)
   const [laneMenu, setLaneMenu] = useState<{ type: BeatType; x: number; y: number } | null>(null)
   const [laneMenuEdit, setLaneMenuEdit] = useState<{ label: string; color: string } | null>(null)
@@ -494,7 +494,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [recordingTime, setRecordingTime] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [bpm, setBpm] = useState<number | null>(null)
-  const [duration, setDuration] = useState(0)
+  const [duration, setDuration] = useState(8)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
   const [mutedTypes, setMutedTypes] = useState<Set<BeatType>>(new Set())
   const [audioBuf, setAudioBuf] = useState<AudioBuffer | null>(null)
@@ -634,8 +634,45 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   interface SynthLayer { id: string; name: string; type: BeatType; buf: AudioBuffer; startTime: number; muted: boolean }
   const [synthLayers, setSynthLayers] = useState<SynthLayer[]>([])
 
+  // Voice Synth self-contained recorder (independent of the main beat recording)
+  const [vsRecording,  setVsRecording]  = useState(false)
+  const [vsRecTime,    setVsRecTime]    = useState(0)
+  const [vsAudioBuf,   setVsAudioBuf]   = useState<AudioBuffer | null>(null)
+  const vsRecTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const vsRecChunksRef = useRef<Blob[]>([])
+  const vsRecorderRef  = useRef<MediaRecorder | null>(null)
+
+  async function startVsRecording() {
+    try {
+      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
+      vsRecChunksRef.current = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) vsRecChunksRef.current.push(e.data) }
+      recorder.start(100)
+      vsRecorderRef.current = recorder
+      setVsRecording(true)
+      setVsRecTime(0)
+      setVsAudioBuf(null)
+      vsRecTimerRef.current = setInterval(() => setVsRecTime(t => t + 0.1), 100)
+    } catch { setError('Microphone access denied.') }
+  }
+
+  async function stopVsRecording() {
+    const recorder = vsRecorderRef.current
+    if (!recorder) return
+    if (vsRecTimerRef.current) clearInterval(vsRecTimerRef.current)
+    recorder.stop()
+    recorder.stream.getTracks().forEach(t => t.stop())
+    await new Promise<void>(res => { recorder.onstop = () => res() })
+    setVsRecording(false)
+    const blob = new Blob(vsRecChunksRef.current, { type: vsRecChunksRef.current[0]?.type ?? 'audio/webm' })
+    const buf  = await decodeAudio(blob).catch(() => null)
+    if (buf) setVsAudioBuf(buf)
+  }
+
   async function runVoiceSynth() {
-    if (!audioBuf) return
+    const source = vsAudioBuf ?? audioBuf
+    if (!source) return
     const sampleBuf  = sampleBuffers.get(voiceSynthType)
     const sampleRoot = sampleRoots.get(voiceSynthType) ?? 60
     if (!sampleBuf) {
@@ -644,8 +681,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
     setVoiceSynthRendering(true)
     try {
-      const curve    = detectPitchCurve(audioBuf)
-      const rendered = await synthesizeFromPitchCurve(curve, sampleBuf, sampleRoot, audioBuf.duration)
+      const curve    = detectPitchCurve(source)
+      const rendered = await synthesizeFromPitchCurve(curve, sampleBuf, sampleRoot, source.duration)
       const layer: SynthLayer = {
         id: crypto.randomUUID(),
         name: TYPE_LABELS[voiceSynthType] ?? voiceSynthType,
@@ -660,6 +697,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setVoiceSynthRendering(false)
     }
   }
+
+  // + Track popover state
+  const [addTrackOpen,   setAddTrackOpen]   = useState(false)
+  const [addTrackFamily, setAddTrackFamily] = useState<InstrumentFamily>('drums')
 
   // Per-lane recording — mic button in editing toolbar records into the active lane only
   const [laneRecording,     setLaneRecording]     = useState(false)
@@ -1470,10 +1511,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     })
   }
 
-  // Lanes: detected hit types + selected drum types (when in drums mode) + custom lanes
+  // Lanes: selected drum types (always) + hit types + extra/custom lanes
   const activeLaneTypes = useMemo(() => {
     const set = new Set<BeatType>()
-    if (instrumentFamily === 'drums') selectedTypes.forEach(t => set.add(t))
+    selectedTypes.forEach(t => set.add(t))
     hits.forEach(h => set.add(h.type))
     extraLaneIds.forEach(id => set.add(id as BeatType))
     return Array.from(set).sort((a, b) => {
@@ -1483,7 +1524,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (bi !== -1) return 1
       return a.localeCompare(b)
     })
-  }, [hits, instrumentFamily, selectedTypes, extraLaneIds])
+  }, [hits, selectedTypes, extraLaneIds])
 
   // All type IDs available in the Change dropdown (active lanes + empty custom lanes)
   const allAvailableTypes = useMemo(() => [
@@ -1668,18 +1709,66 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 30, textAlign: 'center' }}>{zoomLevel === 1 ? '1×' : `${zoomLevel.toFixed(1)}×`}</span>
                 <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} title="Zoom in" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
               </div>
-              {audioBuf && sampleBuffers.size > 0 && (
+              {/* + Track button */}
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setAddTrackOpen(v => !v)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: addTrackOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${addTrackOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: addTrackOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  + Track
+                </button>
+                {addTrackOpen && (
+                  <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setAddTrackOpen(false)} />
+                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, minWidth: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+                      {/* Family tabs */}
+                      <div style={{ display: 'flex', gap: 2, marginBottom: 8, background: 'var(--bg-surface)', borderRadius: 6, padding: 2 }}>
+                        {(['drums', 'guitar', 'piano', 'synth'] as InstrumentFamily[]).map(f => (
+                          <button key={f} onClick={() => setAddTrackFamily(f)}
+                            style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: 'none', cursor: 'pointer', background: addTrackFamily === f ? 'var(--border-light)' : 'transparent', color: addTrackFamily === f ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 10, fontWeight: addTrackFamily === f ? 600 : 400 }}>
+                            {FAMILY_LABEL[f]}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Types */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {addTrackFamily === 'drums'
+                          ? ALL_DRUM_TYPES.map(t => (
+                              <button key={t} onClick={() => { toggleSelectedType(t); }}
+                                style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', borderRadius: 5, border: 'none', cursor: 'pointer', background: selectedTypes.has(t) ? 'rgba(139,92,246,0.12)' : 'transparent', color: selectedTypes.has(t) ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11, textAlign: 'left' }}>
+                                <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] ?? 'var(--border)', flexShrink: 0 }} />
+                                {TYPE_LABELS[t] ?? t}
+                                {selectedTypes.has(t) && <span style={{ marginLeft: 'auto', fontSize: 9, opacity: 0.6 }}>✓</span>}
+                              </button>
+                            ))
+                          : FAMILY_VARIANTS[addTrackFamily as Exclude<InstrumentFamily, 'drums'>].map(t => {
+                              const already = activeLaneTypes.includes(t) || extraLaneIds.includes(t as string)
+                              return (
+                                <button key={t}
+                                  onClick={() => { if (!already) setExtraLaneIds(prev => [...prev, t as string]); setAddTrackOpen(false) }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', borderRadius: 5, border: 'none', cursor: already ? 'default' : 'pointer', background: already ? 'rgba(139,92,246,0.08)' : 'transparent', color: already ? 'var(--text-muted)' : 'var(--text-secondary)', fontSize: 11, textAlign: 'left', opacity: already ? 0.6 : 1 }}>
+                                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] ?? 'var(--border)', flexShrink: 0 }} />
+                                  {TYPE_LABELS[t] ?? t}
+                                  {already && <span style={{ marginLeft: 'auto', fontSize: 9, opacity: 0.6 }}>added</span>}
+                                </button>
+                              )
+                            })
+                        }
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {sampleBuffers.size > 0 && (
                 <button
                   onClick={() => setVoiceSynthOpen(v => !v)}
-                  title="Synthesize your recording as an instrument"
+                  title="Record and synthesize any sound as an instrument layer"
                   style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: voiceSynthOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${voiceSynthOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: voiceSynthOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
                 >
                   🎙 Voice Synth
                 </button>
               )}
-              <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <RefreshCw size={11} /> Re-record
-              </button>
               {!userFeedbackMode ? (
                 <button
                   onClick={enterFeedbackMode}
@@ -1710,27 +1799,45 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       </div>
 
       {/* ── Voice Synth Panel ─────────────────────────────────────────────── */}
-      {voiceSynthOpen && phase === 'editing' && audioBuf && (
+      {voiceSynthOpen && phase === 'editing' && (
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(139,92,246,0.06)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-light)' }}>Voice Synth</span>
-          <select
-            value={voiceSynthType}
-            onChange={e => setVoiceSynthType(e.target.value as BeatType)}
-            style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}
-          >
-            {[...sampleBuffers.keys()].map(t => (
-              <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
-            ))}
-          </select>
-          <button
-            onClick={runVoiceSynth}
-            disabled={voiceSynthRendering}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}
-          >
-            {voiceSynthRendering
-              ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</>
-              : '+ Add Layer'}
-          </button>
+
+          {/* Self-contained mic recorder */}
+          {vsRecording ? (
+            <>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', animation: 'pulse 0.8s ease-in-out infinite', flexShrink: 0 }} />
+              <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#dc2626', minWidth: 40 }}>{vsRecTime.toFixed(1)}s</span>
+              <button onClick={stopVsRecording}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600 }}>
+                <Square size={10} fill="currentColor" /> Stop
+              </button>
+            </>
+          ) : (
+            <button onClick={startVsRecording}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontWeight: 600 }}>
+              <Mic size={11} /> {vsAudioBuf ? `Re-record (${vsAudioBuf.duration.toFixed(1)}s)` : 'Record'}
+            </button>
+          )}
+
+          {/* Instrument + render — only enabled when we have audio */}
+          {vsAudioBuf && !vsRecording && (
+            <>
+              <select value={voiceSynthType} onChange={e => setVoiceSynthType(e.target.value as BeatType)}
+                style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                {[...sampleBuffers.keys()].map(t => (
+                  <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+                ))}
+              </select>
+              <button onClick={runVoiceSynth} disabled={voiceSynthRendering}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}>
+                {voiceSynthRendering
+                  ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</>
+                  : '+ Add Layer'}
+              </button>
+            </>
+          )}
+
           {synthLayers.length > 0 && (
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
               {synthLayers.length} layer{synthLayers.length !== 1 ? 's' : ''} · press Play to hear
