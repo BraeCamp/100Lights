@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum, Scissors } from 'lucide-react'
+import { ArrowLeft, Upload, Play, Pause, SkipBack, SkipForward, Volume2, Cloud, CheckCircle2, Music, AlertCircle, Loader2, ChevronDown, ChevronRight, Drum, Scissors, Zap } from 'lucide-react'
 import AudioWaveform from './AudioWaveform'
 import BeatLab from './BeatLab'
 import SoundLibrary from './SoundLibrary'
@@ -162,6 +162,9 @@ export default function AudioEditor({
   const [beatLabPhase, setBeatLabPhase] = useState<'idle' | 'recording' | 'analyzing' | 'editing'>('idle')
   // Portal target: BeatLab renders its lane editor here (inside the main scroll area)
   const [beatLabLanesEl, setBeatLabLanesEl] = useState<HTMLDivElement | null>(null)
+  // Stem URL to feed directly into BeatLab for analysis (bypasses mic)
+  const [analyzeStemUrl, setAnalyzeStemUrl] = useState<string | null>(null)
+  const [analyzeStemLabel, setAnalyzeStemLabel] = useState<string>('')
 
   // Stem separation state per track id
   const [stemJobs, setStemJobs] = useState<Record<string, { predId: string; status: 'running' | 'done' | 'error' }>>({})
@@ -314,9 +317,10 @@ export default function AudioEditor({
       }
       if (!stems) throw new Error('Timed out waiting for stems')
 
-      // Add each stem as a new track
-      const stemOrder = ['drums', 'bass', 'vocals', 'other']
-      const ordered = [...stemOrder.filter(k => stems![k]), ...Object.keys(stems).filter(k => !stemOrder.includes(k))]
+      // Add each stem as a new track, tagged with stemType
+      const stemOrder = ['drums', 'bass', 'vocals', 'other'] as const
+      type StemName = typeof stemOrder[number]
+      const ordered = [...stemOrder.filter(k => stems![k]), ...Object.keys(stems).filter(k => !(stemOrder as readonly string[]).includes(k))]
       const newTracks: AudioTrack[] = []
       for (const name of ordered) {
         const url = stems[name]
@@ -329,6 +333,7 @@ export default function AudioEditor({
           contentType: 'audio/mpeg',
           uploadStatus: 'uploaded',
           savedAt: new Date().toISOString(),
+          stemType: stemOrder.includes(name as StemName) ? (name as StemName) : undefined,
         })
       }
       setTracks(prev => [...prev, ...newTracks])
@@ -548,6 +553,16 @@ export default function AudioEditor({
                       {track.name}
                     </span>
                     <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>{fmtTime(track.duration)}</span>
+                    {/* Analyze drums stem in BeatLab */}
+                    {track.stemType === 'drums' && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setAnalyzeStemUrl(track.url); setAnalyzeStemLabel('drums stem') }}
+                        title="Send drums stem directly into BeatLab for accurate hit detection"
+                        style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)', color: 'var(--accent-light)', cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <Zap size={8} /> Analyze
+                      </button>
+                    )}
                     {/* Separate stems button */}
                     {(() => {
                       const job = stemJobs[track.id]
@@ -562,6 +577,7 @@ export default function AudioEditor({
                       if (job?.status === 'error') return (
                         <span style={{ fontSize: 9, color: 'var(--error)', flexShrink: 0 }}>Failed</span>
                       )
+                      if (track.stemType) return null  // no Stems button on stem tracks
                       return (
                         <button
                           onClick={e => { e.stopPropagation(); separateStems(track) }}
@@ -622,6 +638,9 @@ export default function AudioEditor({
               hasSong={tracks.length > 0}
               requestRecord={singCount}
               lanesContainer={beatLabLanesEl}
+              analyzeStemUrl={analyzeStemUrl}
+              stemLabel={analyzeStemLabel}
+              onStemAnalyzed={() => setAnalyzeStemUrl(null)}
               onPhaseChange={p => setBeatLabPhase(p as 'idle' | 'recording' | 'analyzing' | 'editing')}
               onRequestSongPlay={() => {
                 if (audioRef.current && selectedTrack) {

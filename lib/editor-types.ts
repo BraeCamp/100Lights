@@ -191,4 +191,5 @@ export interface AudioTrackInit {
   r2Key?: string        // set after upload completes
   uploadStatus?: 'uploading' | 'uploaded' | 'error'
   savedAt?: string      // ISO timestamp of last save
+  stemType?: 'drums' | 'bass' | 'vocals' | 'other'  // set for Demucs-separated stems
 }

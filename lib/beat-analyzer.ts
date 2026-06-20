@@ -288,11 +288,13 @@ export async function analyzeBeats(
     melodicType?:        BeatType
     referenceSounds?:    ReferenceSound[]   // Side A: Sound Library entries
     learnedCorrections?: ReferenceSound[]   // Side B: accepted AI corrections
+    stemMode?:           boolean            // true when input is a Demucs stem — cleaner signal, lower noise floor
   },
 ): Promise<BeatAnalysis> {
   const allowed      = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
   const melodicType  = options?.melodicType ?? null
   const references   = [...(options?.referenceSounds ?? []), ...(options?.learnedCorrections ?? [])]
+  const stemMode     = options?.stemMode ?? false
   const sr           = audioBuffer.sampleRate
   const raw          = audioBuffer.getChannelData(0)
 
@@ -324,7 +326,10 @@ export async function analyzeBeats(
   // dead-silent room doesn't set the gate to zero.
   const sortedForFloor = Array.from(rawEnergy).sort((a, b) => a - b)
   const p20Floor       = sortedForFloor[Math.floor(sortedForFloor.length * 0.20)] ?? 0
-  const dynamicFloor   = Math.max(0.003, p20Floor * 4.0)
+  // Stem mode: signal is already source-separated so the noise floor is much lower.
+  // Use a tighter multiplier (2.0 vs 4.0) to catch softer hits that a mic recording
+  // would otherwise swamp with bleed from other instruments.
+  const dynamicFloor   = Math.max(stemMode ? 0.001 : 0.003, p20Floor * (stemMode ? 2.0 : 4.0))
 
   // ── Step 2: Onset strength (2-frame energy rise, rectified) ──────────────
   // Skipping one frame reduces jitter from the smoothing above while still
@@ -445,7 +450,10 @@ export async function analyzeBeats(
           const d = spectralDistance(spectral, ref.spectral)
           if (d < bestDist) { bestDist = d; bestType = ref.category }
         }
-        if (bestType && bestDist < NN_MAX_DIST) nnOverride = bestType
+        // Stem mode: the signal is clean so spectral fingerprints are more reliable —
+        // trust the nearest neighbour at a slightly wider distance threshold.
+        const nnThreshold = stemMode ? NN_MAX_DIST * 1.35 : NN_MAX_DIST
+        if (bestType && bestDist < nnThreshold) nnOverride = bestType
       }
 
       let natural: BeatType

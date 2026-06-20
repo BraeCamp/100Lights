@@ -532,9 +532,12 @@ interface BeatLabProps {
   requestRecord?: number  // increment to trigger recording (plays song automatically)
   onPhaseChange?: (phase: Phase) => void
   lanesContainer?: Element | null  // when set, lane editor renders into this element via portal
+  analyzeStemUrl?: string | null   // when set, fetch + analyze this audio URL directly (bypasses mic)
+  stemLabel?: string               // display name for the stem being analyzed e.g. "drums stem"
+  onStemAnalyzed?: () => void      // called after stem analysis completes (or fails)
 }
 
-export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer }: BeatLabProps) {
+export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -707,6 +710,46 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
+  // Shared analysis pipeline — called from both stopRecording() and stem URL analysis.
+  async function runAnalysis(buf: AudioBuffer, isStem = false) {
+    if (recMode === 'loop') {
+      const result = await analyzeBeats(buf, { allowedTypes: ['kick', 'snare'], stemMode: isStem })
+      const detectedBpm = result.bpm ?? 120
+      setLoopBuffer(buf)
+      setLoopDetectedBpm(detectedBpm)
+      setLoopTargetBpm(detectedBpm)
+      setLoopPlaying(false)
+      setPhase('editing')
+    } else {
+      const opts = instrumentFamily !== 'drums'
+        ? { melodicType: melodicVariant, stemMode: isStem }
+        : { allowedTypes: Array.from(selectedTypes), referenceSounds, stemMode: isStem }
+      const result = await analyzeBeats(buf, opts)
+      setAudioBuf(buf)
+      setAnalysis(result)
+      setHits(result.hits)
+      setBpm(result.bpm)
+      setDuration(result.duration)
+      setPlayhead(0)
+      setMutedTypes(new Set())
+      setAiSuggestions(null)
+      setPhase('editing')
+      if (instrumentFamily === 'drums' && result.hits.some(h => h.spectral)) {
+        setAiLoading(true)
+        aiClassifyHits(result.hits, Array.from(selectedTypes), groundTruth.trim() || undefined).then(aiResult => {
+          if (aiResult) {
+            setAiSuggestions(aiResult.suggestions.size > 0 ? aiResult.suggestions : null)
+            setAiDeletions(aiResult.deletions)
+          } else {
+            setAiSuggestions(null)
+            setAiDeletions(new Set())
+          }
+          setAiLoading(false)
+        })
+      }
+    }
+  }
+
   async function stopRecording() {
     const recorder = recorderRef.current
     if (!recorder) return
@@ -722,49 +765,39 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const blob = new Blob(chunksRef.current, { type: chunksRef.current[0]?.type ?? 'audio/webm' })
     try {
       const buf = await decodeAudio(blob)
-      if (recMode === 'loop') {
-        // Loop mode: just detect BPM, store buffer, go to editing
-        const result = await analyzeBeats(buf, { allowedTypes: ['kick', 'snare'] })
-        const detectedBpm = result.bpm ?? 120
-        setLoopBuffer(buf)
-        setLoopDetectedBpm(detectedBpm)
-        setLoopTargetBpm(detectedBpm)
-        setLoopPlaying(false)
-        setPhase('editing')
-      } else {
-        const opts = instrumentFamily !== 'drums'
-          ? { melodicType: melodicVariant }
-          : { allowedTypes: Array.from(selectedTypes), referenceSounds }
-        const result = await analyzeBeats(buf, opts)
-        setAudioBuf(buf)
-        setAnalysis(result)
-        setHits(result.hits)
-        setBpm(result.bpm)
-        setDuration(result.duration)
-        setPlayhead(0)
-        setMutedTypes(new Set())
-        setAiSuggestions(null)
-        setPhase('editing')
-        // Run AI classification in parallel — doesn't block the UI
-        if (instrumentFamily === 'drums' && result.hits.some(h => h.spectral)) {
-          setAiLoading(true)
-          aiClassifyHits(result.hits, Array.from(selectedTypes), groundTruth.trim() || undefined).then(result => {
-            if (result) {
-              setAiSuggestions(result.suggestions.size > 0 ? result.suggestions : null)
-              setAiDeletions(result.deletions)
-            } else {
-              setAiSuggestions(null)
-              setAiDeletions(new Set())
-            }
-            setAiLoading(false)
-          })
-        }
-      }
+      await runAnalysis(buf, false)
     } catch {
       setError('Could not analyze audio. Try again with a clearer beatbox.')
       setPhase('idle')
     }
   }
+
+  // Stem URL analysis — triggered by parent passing analyzeStemUrl prop
+  const prevStemUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!analyzeStemUrl || analyzeStemUrl === prevStemUrlRef.current) return
+    if (phase !== 'idle') return
+    prevStemUrlRef.current = analyzeStemUrl
+    async function analyzeFromUrl() {
+      setError(null)
+      setPhase('analyzing')
+      try {
+        const res = await fetch(analyzeStemUrl!)
+        if (!res.ok) throw new Error(`Fetch failed (${res.status})`)
+        const ab  = await res.arrayBuffer()
+        const ctx = new AudioContext()
+        const buf = await ctx.decodeAudioData(ab)
+        await ctx.close()
+        await runAnalysis(buf, true)
+      } catch {
+        setError('Could not analyze stem. Make sure the URL is accessible.')
+        setPhase('idle')
+      } finally {
+        onStemAnalyzed?.()
+      }
+    }
+    void analyzeFromUrl()
+  }, [analyzeStemUrl, phase]) // eslint-disable-line
 
   // ── Playback ───────────────────────────────────────────────────────────────
 
@@ -1667,7 +1700,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         {phase === 'analyzing' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
             <RefreshCw size={32} color="var(--accent)" style={{ animation: 'spin 1s linear infinite' }} />
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Detecting hits and snapping to grid…</p>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              {stemLabel ? `Analyzing ${stemLabel}…` : 'Detecting hits and snapping to grid…'}
+            </p>
+            {stemLabel && (
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Stem mode — lower noise floor, tighter hit detection
+              </p>
+            )}
           </div>
         )}
 
