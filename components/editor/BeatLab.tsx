@@ -49,7 +49,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX } from 'lucide-react'
+import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX, Send } from 'lucide-react'
 import type { BeatHit, BeatAnalysis, BeatType, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -561,6 +561,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // AI feedback card
   const [showFeedbackCard, setShowFeedbackCard] = useState(false)
 
+  // User-initiated feedback mode
+  const [userFeedbackMode, setUserFeedbackMode]     = useState(false)
+  const [userFeedbackNotes, setUserFeedbackNotes]   = useState('')
+  const [feedbackSnapshot, setFeedbackSnapshot]     = useState<Map<string, BeatType> | null>(null)
+  const [feedbackSending, setFeedbackSending]       = useState(false)
+
   // Custom track types — label/color overrides for built-ins + new user-created lanes
   const [typeOverrides, setTypeOverrides] = useState<TypeOverrides>({})
   const [extraLaneIds, setExtraLaneIds]   = useState<string[]>([])
@@ -1012,6 +1018,71 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
+  // ── User-initiated feedback ───────────────────────────────────────────────
+
+  function enterFeedbackMode() {
+    setFeedbackSnapshot(new Map(hits.map(h => [h.id, h.type])))
+    setUserFeedbackMode(true)
+    setUserFeedbackNotes('')
+  }
+
+  function exitFeedbackMode(restore: boolean) {
+    if (restore && feedbackSnapshot) {
+      setHits(prev => prev.map(h => {
+        const orig = feedbackSnapshot.get(h.id)
+        return orig !== undefined ? { ...h, type: orig } : h
+      }))
+    }
+    setUserFeedbackMode(false)
+    setUserFeedbackNotes('')
+    setFeedbackSnapshot(null)
+  }
+
+  async function sendFeedback() {
+    if (feedbackSending) return
+    const now = new Date().toISOString()
+    const corrections: Array<{ time: number; machineLabel: string; finalLabel: string; spectral?: HitSpectral }> = []
+
+    for (const hit of hits) {
+      const original = feedbackSnapshot?.get(hit.id)
+      if (original !== undefined && original !== hit.type) {
+        if (hit.spectral) {
+          correctionsAdd({
+            id:          crypto.randomUUID(),
+            spectral:    hit.spectral,
+            detectedAs:  original,
+            correctedTo: hit.type,
+            savedAt:     now,
+          }).catch(() => {})
+        }
+        corrections.push({ time: hit.time, machineLabel: original, finalLabel: hit.type, spectral: hit.spectral })
+      }
+    }
+
+    const notes = userFeedbackNotes.trim()
+    if (corrections.length === 0 && !notes) {
+      exitFeedbackMode(false)
+      return
+    }
+
+    setFeedbackSending(true)
+    try {
+      const res = await fetch('/api/beat-reflection', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify({ corrections, userNotes: notes || undefined }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { reflection?: string }
+        if (data.reflection) setReflection(data.reflection)
+      }
+    } catch { /* swallow */ } finally {
+      setFeedbackSending(false)
+    }
+
+    exitFeedbackMode(false)
+  }
+
   function acceptAiForHit(hitId: string) {
     if (!aiSuggestions) return
     const suggested = aiSuggestions.get(hitId)
@@ -1109,6 +1180,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setFeedbackRetries(0)
     setReflection(null)
     setShowFeedbackCard(false)
+    setUserFeedbackMode(false)
+    setUserFeedbackNotes('')
+    setFeedbackSnapshot(null)
     stopLoopPlayback()
     setLoopBuffer(null)
     setLoopDetectedBpm(null)
@@ -1292,6 +1366,30 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <button onClick={reset} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 <RefreshCw size={11} /> Re-record
               </button>
+              {!userFeedbackMode ? (
+                <button
+                  onClick={enterFeedbackMode}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  Feedback
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={sendFeedback}
+                    disabled={feedbackSending}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: feedbackSending ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: feedbackSending ? 'var(--text-muted)' : '#fff', cursor: feedbackSending ? 'default' : 'pointer', fontWeight: 600 }}
+                  >
+                    <Send size={11} /> {feedbackSending ? 'Sending…' : 'Send Feedback'}
+                  </button>
+                  <button
+                    onClick={() => exitFeedbackMode(true)}
+                    style={{ fontSize: 11, padding: '4px 7px', borderRadius: 5, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  >
+                    cancel
+                  </button>
+                </>
+              )}
             </div>
           </>
         )}
@@ -1604,6 +1702,46 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent-light)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', marginTop: 1 }}>AI reflection</span>
             <span style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, flex: 1 }}>{reflection}</span>
             <button onClick={() => setReflection(null)} style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+          </div>
+        )}
+
+        {/* ── User feedback panel ───────────────────────────────────────────── */}
+        {userFeedbackMode && phase === 'editing' && (
+          <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Feedback for AI</span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Notes and/or correct any hits below, then press Send Feedback</span>
+            </div>
+            <textarea
+              value={userFeedbackNotes}
+              onChange={e => setUserFeedbackNotes(e.target.value)}
+              placeholder="Optional: describe what was wrong — e.g. &quot;the kick on beat 2 was labelled as snare&quot;"
+              rows={2}
+              style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 11, lineHeight: 1.5, resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
+            />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+              {hits.map(h => {
+                const original = feedbackSnapshot?.get(h.id)
+                const changed = original !== undefined && original !== h.type
+                return (
+                  <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 7px', borderRadius: 5, background: changed ? 'rgba(139,92,246,0.1)' : 'var(--bg-surface)', border: `1px solid ${changed ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, fontSize: 10 }}>
+                    <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>{h.time.toFixed(2)}s</span>
+                    {changed && (
+                      <span style={{ color: '#ef4444', textDecoration: 'line-through', fontSize: 9 }}>{typeLabel(original as BeatType, typeOverrides)}</span>
+                    )}
+                    <select
+                      value={h.type}
+                      onChange={e => setHits(prev => prev.map(p => p.id === h.id ? { ...p, type: e.target.value as BeatType } : p))}
+                      style={{ fontSize: 10, padding: '1px 3px', borderRadius: 3, background: 'transparent', color: changed ? 'var(--accent-light)' : typeColor(h.type, typeOverrides), border: 'none', cursor: 'pointer', fontWeight: changed ? 700 : 400 }}
+                    >
+                      {allAvailableTypes.map(t => (
+                        <option key={t} value={t}>{typeLabel(t, typeOverrides)}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
 

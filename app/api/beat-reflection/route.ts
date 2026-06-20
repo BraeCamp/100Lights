@@ -18,11 +18,12 @@ export async function POST(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return Response.json({ error: 'AI not configured' }, { status: 503 })
 
-  let corrections: CorrectionInput[]
+  let corrections: CorrectionInput[], userNotes: string | undefined
   try {
     const body = await req.json()
-    corrections = body.corrections
-    if (!Array.isArray(corrections) || corrections.length === 0) throw new Error()
+    corrections = body.corrections ?? []
+    userNotes = typeof body.userNotes === 'string' && body.userNotes.trim() ? body.userNotes.trim() : undefined
+    if (!Array.isArray(corrections) && !userNotes) throw new Error()
   } catch {
     return Response.json({ error: 'Invalid request' }, { status: 400 })
   }
@@ -38,18 +39,20 @@ export async function POST(req: Request) {
     ].filter(Boolean).join('\n')
   }).join('\n')
 
-  const prompt = `You are a beatbox classifier that just made some mistakes. A user corrected your classifications.
+  const noteSection = userNotes ? `\nUSER NOTES:\n"${userNotes}"\n` : ''
+  const correctionSection = corrections.length > 0
+    ? `Here are the corrections with spectral data:\n${lines}\n`
+    : 'No hit-level corrections were made.'
 
-Here are the corrections with the spectral data for each hit:
-${lines}
-
+  const prompt = `You are a beatbox classifier learning from user feedback.
+${noteSection}
+${correctionSection}
 In 2–4 sentences, reflect on:
-- What specific spectral feature patterns led to your wrong predictions
-- What you should look for differently next time to avoid the same mistake
+- What the user's feedback tells you about where your analysis went wrong
+- What specific spectral patterns or cues you should weight differently next time
 - If there's a pattern across multiple corrections, call it out
 
-Be concrete and reference the actual numbers (e.g. "the lowMid ratio of 0.34 was higher than typical for a snare").
-Do not be vague. Do not apologize. Just analyze what the data was telling you and what you missed.`
+Be concrete (reference actual numbers where available). Do not apologize. Just analyze what you missed and how to improve.`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:  'POST',
