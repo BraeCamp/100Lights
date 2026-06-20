@@ -3,6 +3,108 @@
  * Runs entirely in the browser via OfflineAudioContext — no server calls needed.
  */
 
+/*
+ * ══════════════════════════════════════════════════════════════════════════════
+ * ROADMAP: DUAL-SIDED MACHINE LEARNING FOR BEATBOX-TO-MUSIC RECONSTRUCTION
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * VISION:
+ * The machine should be able to hear someone sing or sloppily beatbox a song
+ * and reconstruct what that song would sound like if produced from scratch —
+ * separating it into clean individual instrument tracks automatically.
+ *
+ * This is achieved by teaching from two sides simultaneously:
+ *
+ * ── SIDE A: Music → Stems → Reference Library ────────────────────────────────
+ *   Feed real songs into a stem separation model (e.g. Demucs, running server-side).
+ *   This isolates: kick, snare, hi-hat, bass, melody, harmony, etc.
+ *   Each stem is analyzed across every perceptual dimension (see below) to build
+ *   a ground-truth dictionary of what each instrument "looks like" to a computer.
+ *   The machine learns the ideal form of every sound from real recordings.
+ *
+ * ── SIDE B: Sloppy Beatbox → Intended Sound Mapping ─────────────────────────
+ *   Feed beatbox recordings of the same songs. The machine already knows what
+ *   the song should sound like from Side A, so it can map each imprecise mouth
+ *   sound to the instrument it was intending to represent — even when acoustically
+ *   ambiguous, off-tempo, or poorly executed.
+ *   Over time it builds a model of "beatbox intention" that transcends spectral
+ *   heuristics entirely.
+ *
+ * ── ALIGNMENT (the hard part) ────────────────────────────────────────────────
+ *   Connecting a moment in the beatbox to the corresponding moment in the song
+ *   requires rhythm alignment. Approach: Dynamic Time Warping (DTW) on the onset
+ *   envelope. If beatbox tempo drifts, DTW warps the timeline to find the best
+ *   match. Badly out-of-tempo beatbox is the main failure case — needs a minimum
+ *   alignment confidence threshold before corrections are applied.
+ *
+ * ── IMPLEMENTATION PHASES ────────────────────────────────────────────────────
+ *   1. Stem separation server route (Demucs or similar) — independently useful now
+ *   2. Reference library: store per-stem perceptual fingerprints in the database
+ *   3. DTW alignment layer: match beatbox onset envelope to song onset envelope
+ *   4. Classifier retraining: use aligned beatbox+stem pairs to improve hit labels
+ *   5. Full reconstruction: given beatbox input, output a multi-track MIDI/audio project
+ *
+ * ── PERCEPTUAL DIMENSIONS TO CAPTURE ─────────────────────────────────────────
+ *   The current HitSpectral type captures 5 frequency bands. Future versions
+ *   should expand to include all of the following so the machine has richer data:
+ *
+ *   SPECTRAL (what frequencies are present):
+ *     - 5-band energy ratios (current: sub / lowMid / mid / hiMid / hi)
+ *     - Spectral centroid — perceived "brightness" (weighted mean frequency)
+ *     - Spectral spread — how wide the energy is distributed
+ *     - Spectral flux — how fast the spectrum is changing frame-to-frame
+ *     - Spectral rolloff — frequency below which 85% of energy sits
+ *     - Spectral flatness — tonal vs. noise-like (0=pure tone, 1=white noise)
+ *     - MFCCs (Mel-frequency cepstral coefficients) — 13–20 coefficients that
+ *       compactly describe timbre; the gold standard for instrument recognition
+ *
+ *   TEMPORAL (how the sound evolves over time):
+ *     - Attack time — how fast the hit reaches peak amplitude
+ *     - Decay time — how fast it falls from peak to sustain level
+ *     - Sustain level — steady-state amplitude after decay
+ *     - Release time — how long the tail fades out
+ *     - Onset sharpness — impulsive (drum) vs. soft (pad)
+ *     - Zero-crossing rate — relates to noisiness and pitch
+ *
+ *   PITCH / HARMONIC:
+ *     - Fundamental frequency (F0) — detected via autocorrelation or YIN algorithm
+ *     - Pitch confidence — how clearly pitched the sound is (0=unpitched noise)
+ *     - Harmonic-to-noise ratio (HNR) — voiced vs. unvoiced
+ *     - Inharmonicity — deviation of partials from ideal harmonic series
+ *     - Chord / key detection for sustained sections
+ *
+ *   RHYTHMIC / STRUCTURAL:
+ *     - Inter-onset interval (IOI) — time between consecutive hits
+ *     - Beat position — where in the bar this hit falls (quantized to 16th notes)
+ *     - Swing ratio — ratio of long to short IOIs in a pair
+ *     - Tempo stability — variance in IOIs over the recording
+ *     - Groove vector — systematic timing deviations relative to the grid
+ *
+ *   DYNAMIC / LOUDNESS:
+ *     - Peak amplitude
+ *     - RMS amplitude over the hit window
+ *     - Dynamic range (peak / RMS ratio)
+ *     - Perceptual loudness (LUFS / A-weighted)
+ *
+ *   PSYCHOACOUSTIC (how humans perceive the sound):
+ *     - Roughness — fast amplitude modulation creates dissonance/buzz
+ *     - Sharpness — high-frequency dominance (Zwicker model)
+ *     - Warmth — low-frequency body relative to mid
+ *     - Presence — upper-mid prominence (2–5 kHz region)
+ *
+ *   These dimensions together give the machine enough data to distinguish sounds
+ *   that look identical in a simple 5-band analysis — e.g. a snare and a clap
+ *   may have similar frequency distributions but differ sharply in attack time,
+ *   spectral flux, and MFCCs.
+ *
+ * ── NOTE ON DEPLOYMENT ────────────────────────────────────────────────────────
+ *   Once the classifier is trained sufficiently via the admin teaching interface,
+ *   users should be able to beatbox uncalibrated with no pattern declaration.
+ *   See also: app/api/classify-beats/route.ts for the AI correction layer and
+ *   its roadmap note on moving the teaching UI to admin-only.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+
 export type BeatType =
   // Drums
   'kick' | 'snare' | 'hihat' | 'open-hihat' | 'clap' | 'tom' | 'crash' | 'rim' |
