@@ -111,58 +111,63 @@ export function detectPitchCurve(
   return out
 }
 
-// ── Public: synthesize voice pitch curve as instrument ────────────────────────
-// ONE continuously looping source whose playbackRate and gain are automated to
-// follow the detected pitch and amplitude curve — no per-frame grain restarts,
-// so the output is a single smooth continuous sound, not a burst of notes.
+// ── Public: synthesize voice pitch curve as continuous sawtooth synth ─────────
+// Uses an OscillatorNode (not a sample) so the output is inherently continuous —
+// no per-note attack envelope, no grain restarts, no "notey" artifacts.
+// Pitch and amplitude are automated frame-by-frame via AudioParam scheduling.
 
 export async function synthesizeFromPitchCurve(
   pitchCurve:    PitchFrame[],
-  sampleBuffer:  AudioBuffer,
-  rootNote:      number,
+  sampleBuffer:  AudioBuffer,   // kept for API compat; sample rate taken from here
+  _rootNote:     number,        // unused — oscillator uses Hz directly
   totalDuration: number,
 ): Promise<AudioBuffer> {
   const sr  = sampleBuffer.sampleRate
   const len = Math.ceil(sr * totalDuration)
   const ctx = new OfflineAudioContext(1, len, sr)
 
-  const src  = ctx.createBufferSource()
-  src.buffer  = sampleBuffer
-  src.loop    = true
-  src.loopEnd = sampleBuffer.duration
-
-  const gain = ctx.createGain()
-  src.connect(gain)
-  gain.connect(ctx.destination)
-
-  // Seed initial values so ramps have a starting point
   const firstVoiced = pitchCurve.find(f => f.midi !== null)
-  const initRate = firstVoiced
-    ? Math.pow(2, (firstVoiced.midi! - rootNote) / 12)
-    : 1
-  src.playbackRate.setValueAtTime(initRate, 0)
+  if (!firstVoiced) return ctx.startRendering()
+
+  // Sawtooth oscillator — continuous wave, inherently no attack transient
+  const osc = ctx.createOscillator()
+  osc.type = 'sawtooth'
+  osc.frequency.setValueAtTime(midiToFreq(firstVoiced.midi!), 0)
+
+  // Warm lowpass to soften the sawtooth into a synth-lead tone
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.setValueAtTime(1400, 0)
+  filter.Q.setValueAtTime(0.6, 0)
+
+  // Gain for amplitude envelope
+  const gain = ctx.createGain()
   gain.gain.setValueAtTime(0, 0)
 
-  let lastMidi = firstVoiced?.midi ?? rootNote
+  osc.connect(filter)
+  filter.connect(gain)
+  gain.connect(ctx.destination)
+  osc.start(0)
+  osc.stop(totalDuration + 0.05)
+
+  let lastMidi = firstVoiced.midi!
 
   for (const frame of pitchCurve) {
     const t = frame.time
 
-    // Pitch: hold previous note during unvoiced gaps (don't jump to silence)
-    if (frame.midi !== null) lastMidi = frame.midi
-    const rate = Math.pow(2, (lastMidi - rootNote) / 12)
-    src.playbackRate.setValueAtTime(rate, t)
+    if (frame.midi !== null) {
+      lastMidi = frame.midi
+      // Smooth glide — linearRamp gives portamento between consecutive frames
+      osc.frequency.linearRampToValueAtTime(midiToFreq(lastMidi), t + 0.012)
+    }
 
-    // Amplitude: follow RMS envelope; silence during unvoiced gaps
-    const vol = frame.midi !== null ? Math.min(0.95, frame.amplitude) : 0
-    gain.gain.linearRampToValueAtTime(vol, t + 0.008)  // 8ms smoothing prevents zipper noise
+    const vol = frame.midi !== null
+      ? Math.min(0.72, frame.amplitude * 0.72)
+      : 0
+    gain.gain.linearRampToValueAtTime(vol, t + 0.01)
   }
 
-  // Fade out at the end
   gain.gain.linearRampToValueAtTime(0, totalDuration)
-
-  src.start(0)
-  src.stop(totalDuration + 0.05)
 
   return ctx.startRendering()
 }

@@ -403,16 +403,6 @@ export default function AudioEditor({
           {/* Track timeline — audio waveforms + beat track rows — fills all remaining space */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderBottom: '1px solid var(--border)' }}>
 
-            {/* Empty placeholder when no tracks exist */}
-            {tracks.length === 0 && beatTracks.length === 0 && (
-              <div style={{ borderBottom: '1px solid var(--border)', opacity: 0.3 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'var(--bg-surface)', borderLeft: '2px solid transparent', borderBottom: '1px solid var(--border)' }}>
-                  <Music size={9} color="var(--text-muted)" />
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1 }}>Empty track</span>
-                </div>
-                <div style={{ height: 40, background: 'var(--bg-card)' }} />
-              </div>
-            )}
 
               {/* Audio tracks */}
               {tracks.map(track => (

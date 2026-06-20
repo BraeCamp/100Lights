@@ -58,8 +58,8 @@ import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
-import { sampleGetAll, audioBufferToWav } from '@/lib/sample-pack'
-import { detectPitchCurve, synthesizeFromPitchCurve, midiToName as pitchMidiName } from '@/lib/pitch-detector'
+import { sampleGetAll } from '@/lib/sample-pack'
+import { detectPitchCurve, synthesizeFromPitchCurve } from '@/lib/pitch-detector'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -630,35 +630,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [voiceSynthOpen,      setVoiceSynthOpen]      = useState(false)
   const [voiceSynthType,      setVoiceSynthType]       = useState<BeatType>('piano-grand')
   const [voiceSynthRendering, setVoiceSynthRendering]  = useState(false)
-  const [voiceSynthBuf,       setVoiceSynthBuf]        = useState<AudioBuffer | null>(null)
-  const [voiceSynthUrl,       setVoiceSynthUrl]        = useState<string | null>(null)
-  const [voiceSynthNote,      setVoiceSynthNote]       = useState<string | null>(null)
-  const [voiceSynthPlaying,   setVoiceSynthPlaying]    = useState(false)
-  const voiceSynthSrcRef = useRef<AudioBufferSourceNode | null>(null)
-  const voiceSynthGainRef = useRef<GainNode | null>(null)
-
-  function stopVoiceSynth() {
-    try { voiceSynthSrcRef.current?.stop() } catch { /* already stopped */ }
-    voiceSynthSrcRef.current = null
-    setVoiceSynthPlaying(false)
-  }
-
-  function playVoiceSynth() {
-    if (!voiceSynthBuf) return
-    stopVoiceSynth()
-    const ctx = getAudioCtx()
-    const src = ctx.createBufferSource()
-    src.buffer = voiceSynthBuf
-    const gain = ctx.createGain()
-    gain.gain.value = 0.9
-    src.connect(gain)
-    gain.connect(ctx.destination)
-    src.onended = () => setVoiceSynthPlaying(false)
-    voiceSynthSrcRef.current = src
-    voiceSynthGainRef.current = gain
-    src.start()
-    setVoiceSynthPlaying(true)
-  }
+  // Synth layers — each render adds a continuous layer at the current playhead position
+  interface SynthLayer { id: string; name: string; type: BeatType; buf: AudioBuffer; startTime: number; muted: boolean }
+  const [synthLayers, setSynthLayers] = useState<SynthLayer[]>([])
 
   async function runVoiceSynth() {
     if (!audioBuf) return
@@ -668,32 +642,20 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       alert(`No sample loaded for ${TYPE_LABELS[voiceSynthType] ?? voiceSynthType}. Seed it in Admin → Sample Pack first.`)
       return
     }
-    stopVoiceSynth()
     setVoiceSynthRendering(true)
-    setVoiceSynthBuf(null)
-    setVoiceSynthNote(null)
-    if (voiceSynthUrl) { URL.revokeObjectURL(voiceSynthUrl); setVoiceSynthUrl(null) }
     try {
-      // Detect pitch curve from the raw recording (not the beat analysis)
-      const curve  = detectPitchCurve(audioBuf)
-      const voiced = curve.filter(f => f.midi !== null)
-
-      // Find dominant note for display
-      if (voiced.length > 0) {
-        const noteCounts = new Map<number, number>()
-        for (const f of voiced) { if (f.midi !== null) noteCounts.set(f.midi, (noteCounts.get(f.midi) ?? 0) + 1) }
-        const dominant = [...noteCounts.entries()].sort((a, b) => b[1] - a[1])[0][0]
-        setVoiceSynthNote(pitchMidiName(dominant))
-      }
-
-      // Render a single continuous AudioBuffer following the pitch + amplitude curve.
-      // synthesizeFromPitchCurve uses granular synthesis — each frame plays the
-      // sample at the detected pitch with short overlapping grains, producing one
-      // smooth, continuous output that sounds like the instrument following your voice.
+      const curve    = detectPitchCurve(audioBuf)
       const rendered = await synthesizeFromPitchCurve(curve, sampleBuf, sampleRoot, audioBuf.duration)
-      const wavBlob  = audioBufferToWav(rendered)
-      setVoiceSynthBuf(rendered)
-      setVoiceSynthUrl(URL.createObjectURL(wavBlob))
+      const layer: SynthLayer = {
+        id: crypto.randomUUID(),
+        name: TYPE_LABELS[voiceSynthType] ?? voiceSynthType,
+        type: voiceSynthType,
+        buf: rendered,
+        startTime: playhead,
+        muted: false,
+      }
+      setSynthLayers(prev => [...prev, layer])
+      if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
     } finally {
       setVoiceSynthRendering(false)
     }
@@ -988,6 +950,24 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }
     }
 
+    // Synth layers — play as continuous audio at their timeline position
+    for (const layer of synthLayers) {
+      if (layer.muted) continue
+      const layerEnd = layer.startTime + layer.buf.duration
+      if (layerEnd <= startFrom) continue
+      const src  = ctx.createBufferSource()
+      src.buffer = layer.buf
+      const gain = ctx.createGain()
+      gain.gain.value = 0.82
+      src.connect(gain)
+      gain.connect(ctx.destination)
+      if (layer.startTime >= startFrom) {
+        src.start(now + (layer.startTime - startFrom), 0)
+      } else {
+        src.start(now, startFrom - layer.startTime)
+      }
+    }
+
     playStartRef.current = { wallTime: performance.now(), beatTime: startFrom }
     setIsPlaying(true)
   }
@@ -998,7 +978,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     cancelAnimationFrame(playRafRef.current)
     setIsPlaying(false)
     playStartRef.current = null
-    stopVoiceSynth()
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close()
       audioCtxRef.current = null
@@ -1732,11 +1711,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
       {/* ── Voice Synth Panel ─────────────────────────────────────────────── */}
       {voiceSynthOpen && phase === 'editing' && audioBuf && (
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(139,92,246,0.06)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(139,92,246,0.06)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-light)' }}>Voice Synth</span>
           <select
             value={voiceSynthType}
-            onChange={e => { setVoiceSynthType(e.target.value as BeatType); stopVoiceSynth(); setVoiceSynthBuf(null); setVoiceSynthNote(null); if (voiceSynthUrl) URL.revokeObjectURL(voiceSynthUrl); setVoiceSynthUrl(null) }}
+            onChange={e => setVoiceSynthType(e.target.value as BeatType)}
             style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
             {[...sampleBuffers.keys()].map(t => (
@@ -1748,32 +1727,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             disabled={voiceSynthRendering}
             style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}
           >
-            {voiceSynthRendering ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</> : 'Render'}
+            {voiceSynthRendering
+              ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</>
+              : '+ Add Layer'}
           </button>
-          {voiceSynthNote && (
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Dominant: <strong style={{ color: 'var(--accent-light)' }}>{voiceSynthNote}</strong></span>
-          )}
-          {voiceSynthBuf && (
-            <>
-              <button
-                onClick={voiceSynthPlaying ? stopVoiceSynth : playVoiceSynth}
-                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 10px', borderRadius: 5, background: voiceSynthPlaying ? '#dc2626' : 'var(--bg-card)', border: '1px solid var(--border)', color: voiceSynthPlaying ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}
-              >
-                {voiceSynthPlaying ? <><Square size={10} fill="currentColor" /> Stop</> : <><Play size={10} fill="currentColor" style={{ marginLeft: 1 }} /> Preview</>}
-              </button>
-              {voiceSynthUrl && (
-                <a
-                  href={voiceSynthUrl}
-                  download={`voice-synth-${voiceSynthType}.wav`}
-                  style={{ fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', textDecoration: 'none' }}
-                >
-                  ↓ Download WAV
-                </a>
-              )}
-              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                {voiceSynthBuf.duration.toFixed(1)}s continuous
-              </span>
-            </>
+          {synthLayers.length > 0 && (
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              {synthLayers.length} layer{synthLayers.length !== 1 ? 's' : ''} · press Play to hear
+            </span>
           )}
         </div>
       )}
@@ -2159,6 +2120,50 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
                   {/* Waveform */}
                   {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx * zoomLevel} />}
+
+                  {/* Synth layers — continuous audio layers rendered by Voice Synth */}
+                  {synthLayers.map(layer => {
+                    const pxW  = timelinePx * zoomLevel
+                    const left = duration > 0 ? (layer.startTime / duration) * pxW : 0
+                    const wid  = duration > 0 ? Math.min((layer.buf.duration / duration) * pxW, pxW - left) : 0
+                    return (
+                      <div key={layer.id} style={{ display: 'flex', height: 36, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                        <div style={{ width: 24, flexShrink: 0, background: 'var(--bg-surface)' }} />
+                        <div style={{ width: 64, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3, padding: '0 6px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
+                          <button
+                            onClick={() => setSynthLayers(prev => prev.map(l => l.id === layer.id ? { ...l, muted: !l.muted } : l))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: layer.muted ? 'var(--text-muted)' : 'var(--accent-light)', flexShrink: 0 }}
+                          >
+                            {layer.muted ? <VolumeX size={9} /> : <Volume2 size={9} />}
+                          </button>
+                          <span style={{ flex: 1, fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: layer.muted ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+                            {layer.name}
+                          </span>
+                          <button
+                            onClick={() => setSynthLayers(prev => prev.filter(l => l.id !== layer.id))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-muted)', flexShrink: 0 }}
+                          >
+                            <Trash2 size={8} />
+                          </button>
+                        </div>
+                        <div style={{ flex: 1, position: 'relative', background: 'var(--bg-card)', overflow: 'hidden' }}>
+                          {wid > 0 && (
+                            <div style={{
+                              position: 'absolute', left, width: wid, top: 4, bottom: 4,
+                              borderRadius: 3,
+                              background: layer.muted ? 'rgba(80,80,100,0.1)' : 'rgba(139,92,246,0.22)',
+                              border: `1px solid ${layer.muted ? 'rgba(100,100,120,0.2)' : 'rgba(139,92,246,0.5)'}`,
+                              display: 'flex', alignItems: 'center', paddingLeft: 5, overflow: 'hidden',
+                            }}>
+                              <span style={{ fontSize: 8, color: layer.muted ? 'var(--text-muted)' : 'rgba(200,180,255,0.85)', whiteSpace: 'nowrap' }}>
+                                {layer.name} · {layer.buf.duration.toFixed(1)}s
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
 
                   {/* Lanes */}
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
