@@ -622,16 +622,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setShowTypeMenu(false)
   }
 
-  function quantize() {
-    if (!bpm) return
-    const beatLen = 60 / bpm
-    setHits(prev => prev.map(h => ({ ...h, time: Math.round(h.time / beatLen) * beatLen })))
-  }
-
   function applyAiSuggestions() {
     if (!aiSuggestions) return
+    const sixteenth = bpm ? (60 / bpm) / 4 : null
     setHits(prev => {
-      const updated = prev.map(h => {
+      let updated = prev.map(h => {
         const suggested = aiSuggestions.get(h.id)
         if (!suggested || suggested === h.type) return h
         if (h.spectral) {
@@ -645,6 +640,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         }
         return { ...h, type: suggested }
       })
+      if (sixteenth) {
+        updated = updated.map(h => ({ ...h, time: Math.round(h.time / sixteenth) * sixteenth }))
+      }
       return updated
     })
     setAiSuggestions(null)
@@ -785,9 +783,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>BPM</span>
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{bpm}</span>
-                <button onClick={quantize} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 4, background: 'var(--border)', color: 'var(--text-secondary)', border: 'none', cursor: 'pointer' }}>
-                  Quantize
-                </button>
               </div>
             )}
 
