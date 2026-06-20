@@ -75,13 +75,32 @@ export async function POST(req: Request) {
     ].join('\n')
   }).join('\n')
 
-  const groundTruthSection = groundTruth
-    ? `\nGROUND TRUTH — the user declared what they were beatboxing:
+  // Pre-parse the ground truth into tokens and cycle them across hits
+  // so the AI has a positional map rather than a free-form string to interpret.
+  let groundTruthSection = ''
+  if (groundTruth) {
+    const rawTokens = groundTruth
+      .toLowerCase()
+      .split(/[\s,|/]+/)
+      .map(t => t.trim())
+      .filter(Boolean)
+    const cycled = hits.map((_, i) => rawTokens[i % rawTokens.length])
+    const positionMap = cycled
+      .map((t, i) => `  hit ${String(i + 1).padStart(2)}: ${t}`)
+      .join('\n')
+
+    groundTruthSection = `
+GROUND TRUTH — the user declared their beatbox pattern:
 "${groundTruth}"
-This is authoritative. Use it to correct misclassifications. Match the hit sequence to the
-declared pattern (considering timing and rhythm), then correct the labels accordingly.
-Even if spectral data is ambiguous, the declared pattern takes priority.\n`
-    : ''
+
+Parsed as a ${rawTokens.length}-element cycle across ${hits.length} hits:
+${positionMap}
+
+This mapping IS the correct answer. Override any spectral-based guesses with it.
+The user's declared pattern is authoritative — spectral data is only for resolving
+any hits that fall outside the declared types.
+`
+  }
 
   const prompt = `You are an expert at classifying beatbox drum sounds from spectral data.
 
@@ -155,7 +174,7 @@ Example format: ["kick","hihat","snare","hihat"]`
     types = JSON.parse(match[0])
     if (!Array.isArray(types) || types.length !== hits.length) throw new Error('length mismatch')
     // Validate each type
-    types = types.map(t => VALID_TYPES.includes(t as BeatType) ? t as BeatType : hits[0].type)
+    types = types.map((t, i) => VALID_TYPES.includes(t as BeatType) ? t as BeatType : hits[i].type)
   } catch {
     return Response.json({ error: 'Failed to parse AI response', raw: text }, { status: 500 })
   }
