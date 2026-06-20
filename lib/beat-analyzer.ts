@@ -20,14 +20,14 @@ export const DRUM_BEAT_TYPES: BeatType[] = [
 ]
 
 export const DEFAULT_NOTES: Record<BeatType, number> = {
-  kick:            40,
-  snare:           57,
-  hihat:           67,
-  'open-hihat':    67,
-  clap:            55,
-  tom:             50,
-  crash:           65,
-  rim:             62,
+  kick:              40,
+  snare:             57,
+  hihat:             67,
+  'open-hihat':      67,
+  clap:              55,
+  tom:               50,
+  crash:             65,
+  rim:               62,
   'guitar-acoustic': 64,
   'guitar-electric': 64,
   'guitar-nylon':    64,
@@ -38,15 +38,15 @@ export const DEFAULT_NOTES: Record<BeatType, number> = {
   'synth-pad':       60,
   'synth-bass':      48,
   'synth-arp':       72,
-  other:           60,
+  other:             60,
 }
 
 export interface BeatHit {
   id: string
-  time: number       // seconds from start of recording
+  time: number      // seconds from start of recording
   type: BeatType
-  velocity: number   // 0–1
-  note: number       // MIDI note — always set (defaults to DEFAULT_NOTES[type])
+  velocity: number  // 0–1
+  note: number      // MIDI note — always set
 }
 
 export interface BeatAnalysis {
@@ -55,7 +55,7 @@ export interface BeatAnalysis {
   duration: number
 }
 
-// ── Utility: render audio through a biquad filter ────────────────────────────
+// ── Filtered energy bands ─────────────────────────────────────────────────────
 
 async function renderFiltered(
   buf: AudioBuffer,
@@ -76,7 +76,7 @@ async function renderFiltered(
   return (await ctx.startRendering()).getChannelData(0)
 }
 
-// ── RMS energy in a window around a sample index ─────────────────────────────
+// ── RMS energy around a sample index ─────────────────────────────────────────
 
 function rmsWindow(data: Float32Array, center: number, sr: number, windowSec: number): number {
   const half = Math.floor((windowSec * sr) / 2)
@@ -87,20 +87,45 @@ function rmsWindow(data: Float32Array, center: number, sr: number, windowSec: nu
   return Math.sqrt(sum / Math.max(1, end - start))
 }
 
-// ── BPM from inter-onset intervals ───────────────────────────────────────────
+// ── BPM from inter-onset intervals (most reliable for short recordings) ───────
 
-function estimateBPM(times: number[]): number | null {
+function estimateBPMFromIOI(times: number[]): number | null {
   if (times.length < 4) return null
   const iois: number[] = []
   for (let i = 1; i < times.length; i++) {
     const d = times[i] - times[i - 1]
-    if (d >= 0.1 && d <= 2.0) iois.push(d)
+    if (d >= 0.08 && d <= 2.0) iois.push(d)
   }
   if (iois.length < 2) return null
   const sorted = [...iois].sort((a, b) => a - b)
   const median = sorted[Math.floor(sorted.length / 2)]
   let bpm = 60 / median
   while (bpm < 60) bpm *= 2
+  while (bpm > 220) bpm /= 2
+  return Math.round(bpm)
+}
+
+// ── BPM from energy-envelope autocorrelation (good for longer recordings) ────
+
+function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number): number | null {
+  const envSr = sr / hopSize
+  const minPeriod = Math.floor(envSr * 60 / 220)
+  const maxPeriod = Math.floor(envSr * 60 / 55)
+  if (energy.length < maxPeriod * 2) return null
+
+  // Normalize energy before autocorrelation
+  const mean = energy.reduce((s, v) => s + v, 0) / energy.length
+  const centered = energy.map(v => v - mean)
+
+  let bestPeriod = minPeriod, bestCorr = -Infinity
+  for (let lag = minPeriod; lag <= Math.min(maxPeriod, Math.floor(energy.length / 2)); lag++) {
+    let corr = 0
+    for (let i = 0; i + lag < centered.length; i++) corr += centered[i] * centered[i + lag]
+    if (corr > bestCorr) { bestCorr = corr; bestPeriod = lag }
+  }
+
+  let bpm = 60 / (bestPeriod / envSr)
+  while (bpm < 60)  bpm *= 2
   while (bpm > 220) bpm /= 2
   return Math.round(bpm)
 }
@@ -134,27 +159,6 @@ function detectPitch(buffer: AudioBuffer, startSample: number, sr: number): numb
   return sr / bestLag
 }
 
-// ── Tempo from energy-envelope autocorrelation ───────────────────────────────
-
-function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number): number | null {
-  const envSr = sr / hopSize
-  const minPeriod = Math.floor(envSr * 60 / 220)
-  const maxPeriod = Math.floor(envSr * 60 / 55)
-  if (energy.length < maxPeriod * 2) return null
-
-  let bestPeriod = minPeriod, bestCorr = -1
-  for (let lag = minPeriod; lag <= Math.min(maxPeriod, Math.floor(energy.length / 2)); lag++) {
-    let sum = 0
-    for (let i = 0; i + lag < energy.length; i++) sum += energy[i] * energy[i + lag]
-    if (sum > bestCorr) { bestCorr = sum; bestPeriod = lag }
-  }
-
-  let bpm = 60 / (bestPeriod / envSr)
-  while (bpm < 60)  bpm *= 2
-  while (bpm > 220) bpm /= 2
-  return Math.round(bpm)
-}
-
 const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
   'kick':            ['tom', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
   'tom':             ['kick', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
@@ -182,8 +186,8 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
 export async function analyzeBeats(
   audioBuffer: AudioBuffer,
   options?: {
-    allowedTypes?: BeatType[]   // drum mode: which types to classify into
-    melodicType?: BeatType       // melodic mode: all hits = this type, skip drum classification
+    allowedTypes?: BeatType[]
+    melodicType?: BeatType
   },
 ): Promise<BeatAnalysis> {
   const allowed = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
@@ -191,42 +195,56 @@ export async function analyzeBeats(
   const sr = audioBuffer.sampleRate
   const raw = audioBuffer.getChannelData(0)
 
-  // Step 1: energy envelope (RMS per frame)
+  // ── Step 1: Smoothed RMS energy envelope ─────────────────────────────────
+  // Using a weighted 3-frame average removes single-sample noise spikes
+  // while preserving transient shape.
   const frameSize = 512
   const hopSize = 256
   const nFrames = Math.floor((raw.length - frameSize) / hopSize)
-  const energy = new Float32Array(nFrames)
+  const rawEnergy = new Float32Array(nFrames)
   for (let i = 0; i < nFrames; i++) {
     let s = 0
     const base = i * hopSize
     for (let j = 0; j < frameSize; j++) { const x = raw[base + j]; s += x * x }
-    energy[i] = Math.sqrt(s / frameSize)
+    rawEnergy[i] = Math.sqrt(s / frameSize)
+  }
+  const energy = new Float32Array(nFrames)
+  for (let i = 0; i < nFrames; i++) {
+    const a = i > 0   ? rawEnergy[i - 1] : rawEnergy[i]
+    const b = rawEnergy[i]
+    const c = i < nFrames - 1 ? rawEnergy[i + 1] : rawEnergy[i]
+    energy[i] = (a + 2 * b + c) / 4
   }
 
-  // Step 2: onset strength
+  // ── Step 2: Onset strength (2-frame energy rise, rectified) ──────────────
+  // Skipping one frame reduces jitter from the smoothing above while still
+  // catching sharp transients.
   const onset = new Float32Array(nFrames)
-  for (let i = 1; i < nFrames; i++) onset[i] = Math.max(0, energy[i] - energy[i - 1])
+  for (let i = 2; i < nFrames; i++) {
+    onset[i] = Math.max(0, energy[i] - energy[i - 2])
+  }
 
-  // Step 3: adaptive threshold + peak picking
-  const smoothHalf = Math.max(1, Math.floor((0.4 * sr) / hopSize))
-  const minGap = Math.max(2, Math.floor((0.09 * sr) / hopSize))
+  // ── Step 3: Peak picking with adaptive threshold ──────────────────────────
+  // Threshold = 80th-percentile of local onset window * 1.5 + noise floor.
+  // This adapts to the recording's dynamic range far better than 2.5×median,
+  // and the noise floor (0.003) prevents random mic noise from triggering hits.
+  const smoothHalf = Math.max(1, Math.floor((0.35 * sr) / hopSize))
+  const minGapFrames = Math.max(2, Math.floor((0.09 * sr) / hopSize))
   const pickedSamples: number[] = []
 
-  for (let i = 1; i < nFrames - 1; i++) {
+  for (let i = 2; i < nFrames - 1; i++) {
+    if (onset[i] <= onset[i - 1] || onset[i] < onset[i + 1]) continue
+
     const lo = Math.max(0, i - smoothHalf)
     const hi = Math.min(nFrames, i + smoothHalf + 1)
-    const window = Array.from(onset.subarray(lo, hi)).sort((a, b) => a - b)
-    const med = window[Math.floor(window.length / 2)]
-    const thresh = Math.max(0.002, 2.5 * med)
+    const local = Array.from(onset.subarray(lo, hi)).sort((a, b) => a - b)
+    const p80 = local[Math.floor(local.length * 0.8)]
+    const thresh = Math.max(0.003, p80 * 1.5)
 
-    if (
-      onset[i] > thresh &&
-      onset[i] > onset[i - 1] &&
-      onset[i] >= onset[i + 1]
-    ) {
+    if (onset[i] > thresh) {
       const sampleIdx = i * hopSize
-      const last = pickedSamples[pickedSamples.length - 1] ?? -Infinity
-      if (sampleIdx - last >= minGap * hopSize) {
+      const lastSample = pickedSamples[pickedSamples.length - 1] ?? -Infinity
+      if (sampleIdx - lastSample >= minGapFrames * hopSize) {
         pickedSamples.push(sampleIdx)
       }
     }
@@ -236,18 +254,31 @@ export async function analyzeBeats(
     return { hits: [], bpm: null, duration: audioBuffer.duration }
   }
 
-  // Step 4: classify hits
+  // ── Step 4: Velocity — normalized to recording's dynamic range ────────────
+  // Scaling by onset * 40 (previous approach) clips immediately for any
+  // reasonable microphone level. Instead, normalize against the peak onset
+  // in this recording so the loudest hit = 0.92 and softest scales down.
+  const pickedOnsets = pickedSamples.map(s => onset[Math.floor(s / hopSize)])
+  const peakOnset = Math.max(...pickedOnsets, 0.001)
+  function toVelocity(frameIdx: number) {
+    return Math.min(0.92, Math.max(0.18, (onset[frameIdx] / peakOnset) * 0.90))
+  }
+
+  // ── Step 5: Classify hits ─────────────────────────────────────────────────
   let hits: BeatHit[]
 
   if (melodicType) {
-    // Melodic mode: all onsets get the selected instrument type; pitch detection fills note
-    hits = pickedSamples.map((sampleIdx) => {
-      const t = sampleIdx / sr
-      const vel = Math.min(1, Math.max(0.15, onset[Math.floor(sampleIdx / hopSize)] * 40))
-      return { id: crypto.randomUUID(), time: t, type: melodicType, velocity: vel, note: DEFAULT_NOTES[melodicType] }
-    })
+    hits = pickedSamples.map((sampleIdx) => ({
+      id: crypto.randomUUID(),
+      time: sampleIdx / sr,
+      type: melodicType,
+      velocity: toVelocity(Math.floor(sampleIdx / hopSize)),
+      note: DEFAULT_NOTES[melodicType],
+    }))
   } else {
-    // Drum mode: five-band classification
+    // Five-band frequency classification, tuned for beatbox mouth sounds.
+    // Key insight: the human mouth cannot produce true sub-bass (<100 Hz),
+    // so beatbox kicks peak in the 150–500 Hz range (lowMid band), not sub.
     const [subBand, lowMidBand, midBand, hiMidBand, highBand] = await Promise.all([
       renderFiltered(audioBuffer, 'lowpass',  150, 0.7),
       renderFiltered(audioBuffer, 'bandpass', 400, 1.2),
@@ -256,7 +287,7 @@ export async function analyzeBeats(
       renderFiltered(audioBuffer, 'highpass', 9000, 0.7),
     ])
 
-    const classWindow = 0.06
+    const classWindow  = 0.06
     const sustainOffset = Math.floor(0.06 * sr)
 
     hits = pickedSamples.map((sampleIdx) => {
@@ -268,32 +299,52 @@ export async function analyzeBeats(
       const highE   = rmsWindow(highBand,   sampleIdx, sr, classWindow)
       const total   = subE + lowMidE + midE + hiMidE + highE || 1
 
-      const subR  = subE / total
+      const subR    = subE / total
       const lowMidR = lowMidE / total
-      const midR  = midE / total
-      const hiR   = (hiMidE + highE) / total
+      const midR    = midE / total
+      const hiR     = (hiMidE + highE) / total
 
+      // Sustained high-frequency check for open/crash (long vs short decay)
+      const attackHigh  = rmsWindow(highBand, sampleIdx, sr, 0.025)
       const sustainHigh = rmsWindow(
         highBand,
         Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
         sr, 0.08,
       )
-      const attackHigh = rmsWindow(highBand, sampleIdx, sr, 0.025)
-      const highSustained = attackHigh > 0.003 && sustainHigh > attackHigh * 0.30
+      const highSustained = attackHigh > 0.002 && sustainHigh > attackHigh * 0.28
 
       let natural: BeatType
-      if      (subR > 0.42)                                 natural = 'kick'
-      else if ((subR + lowMidR) > 0.50 && subR > 0.15)     natural = 'tom'
-      else if (hiR > 0.42 && highSustained)                 natural = 'crash'
-      else if (hiR > 0.42)                                  natural = 'hihat'
-      else if (hiR > 0.32 && highSustained)                 natural = 'open-hihat'
-      else if (midR > 0.45 && subR < 0.18)                  natural = 'rim'
-      else if (midR > 0.30 && subR < 0.28)                  natural = 'snare'
-      else                                                   natural = 'clap'
 
-      if (natural === 'snare') {
-        const frameIdx = Math.floor(sampleIdx / hopSize)
-        if (frameIdx < energy.length && energy[frameIdx] > 0.15) natural = 'clap'
+      // 1. High-frequency dominant → hihat family
+      if (hiR > 0.48) {
+        natural = highSustained ? 'crash' : 'hihat'
+
+      // 2. Moderate-high with sustain → open hihat or crash
+      } else if (hiR > 0.38 && highSustained) {
+        natural = hiR > 0.50 ? 'crash' : 'open-hihat'
+
+      // 3. High-mid without sustain → closed hihat
+      } else if (hiR > 0.38) {
+        natural = 'hihat'
+
+      // 4. Low-end dominant → kick or tom
+      // Beatbox kicks have: high lowMid, moderate sub, low hiR
+      // Toms have: more mid-range body than kicks
+      } else if (subR > 0.30 || (lowMidR > 0.26 && hiR < 0.30 && subR + lowMidR > 0.36)) {
+        // Tom has more mid energy riding on top of the bass thump
+        natural = midR > 0.30 ? 'tom' : 'kick'
+
+      // 5. Mid-range sharp attack, minimal bass → rim shot
+      } else if (midR > 0.48 && subR < 0.12) {
+        natural = 'rim'
+
+      // 6. Mid-range with some body → snare
+      } else if (midR > 0.28 && subR < 0.25) {
+        natural = 'snare'
+
+      // 7. Everything else → clap (broadband noise, moderate everything)
+      } else {
+        natural = 'clap'
       }
 
       let type: BeatType = natural
@@ -301,24 +352,36 @@ export async function analyzeBeats(
         type = TYPE_FALLBACKS[natural].find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other'
       }
 
-      const vel = Math.min(1, Math.max(0.15, onset[Math.floor(sampleIdx / hopSize)] * 40))
-      return { id: crypto.randomUUID(), time: t, type, velocity: vel, note: DEFAULT_NOTES[type] }
+      return {
+        id: crypto.randomUUID(),
+        time: t,
+        type,
+        velocity: toVelocity(Math.floor(sampleIdx / hopSize)),
+        note: DEFAULT_NOTES[type],
+      }
     })
   }
 
-  // Estimate tempo
-  const envBpm = findTempoFromEnvelope(energy, sr, hopSize)
-  const subdivSec = envBpm ? (60 / envBpm / 4) : 0.10
+  // ── Step 6: BPM estimation ────────────────────────────────────────────────
+  // IOI (inter-onset interval) median is the most reliable estimate for short
+  // recordings (< 10s). Envelope autocorrelation works better for long loops
+  // with fewer distinct hits. Use IOI when we have enough data points.
+  const hitTimes = hits.map(h => h.time)
+  const ioiBpm  = estimateBPMFromIOI(hitTimes)
+  const envBpm  = findTempoFromEnvelope(energy, sr, hopSize)
+  // Prefer IOI if we have ≥ 4 hits (enough intervals), otherwise envelope
+  const bpmEstimate = (hits.length >= 4 ? ioiBpm : null) ?? envBpm
 
-  // Dedup
+  // ── Step 7: Dedup (per-type minimum gap) ─────────────────────────────────
+  const subdivSec = bpmEstimate ? (60 / bpmEstimate / 4) : 0.10
   const dedupGaps: Record<BeatType, number> = {
-    kick:              Math.max(0.18, subdivSec),
-    snare:             Math.max(0.10, subdivSec),
+    kick:              Math.max(0.15, subdivSec),
+    snare:             Math.max(0.09, subdivSec),
     hihat:             Math.max(0.04, subdivSec / 2),
-    'open-hihat':      Math.max(0.10, subdivSec),
-    clap:              Math.max(0.10, subdivSec),
-    tom:               Math.max(0.15, subdivSec),
-    crash:             Math.max(0.40, subdivSec * 4),
+    'open-hihat':      Math.max(0.09, subdivSec),
+    clap:              Math.max(0.09, subdivSec),
+    tom:               Math.max(0.13, subdivSec),
+    crash:             Math.max(0.35, subdivSec * 4),
     rim:               Math.max(0.06, subdivSec / 2),
     'guitar-acoustic': Math.max(0.06, subdivSec / 2),
     'guitar-electric': Math.max(0.06, subdivSec / 2),
@@ -327,10 +390,10 @@ export async function analyzeBeats(
     'piano-electric':  Math.max(0.05, subdivSec / 2),
     'piano-rhodes':    Math.max(0.05, subdivSec / 2),
     'synth-lead':      Math.max(0.05, subdivSec / 2),
-    'synth-pad':       Math.max(0.10, subdivSec),
-    'synth-bass':      Math.max(0.08, subdivSec / 2),
+    'synth-pad':       Math.max(0.09, subdivSec),
+    'synth-bass':      Math.max(0.07, subdivSec / 2),
     'synth-arp':       Math.max(0.04, subdivSec / 4),
-    other:             Math.max(0.08, subdivSec),
+    other:             Math.max(0.07, subdivSec),
   }
   const lastByType: Partial<Record<BeatType, number>> = {}
   let dedupedHits = hits.filter(hit => {
@@ -341,22 +404,29 @@ export async function analyzeBeats(
     return true
   })
 
-  // Grid-snap to 16th notes
-  if (envBpm) {
-    const gridSec = 60 / envBpm / 4
+  // ── Step 8: Grid snap — with tolerance ───────────────────────────────────
+  // Only snap a hit if it's within 30% of the nearest grid slot. A hit that
+  // falls between two slots is either a genuine off-grid beat (swing, rush)
+  // or indicates a bad BPM estimate — either way, don't move it far.
+  if (bpmEstimate) {
+    const gridSec = 60 / bpmEstimate / 4
+    const snapTolerance = 0.30  // fraction of one grid cell
     const slotMap = new Map<string, BeatHit>()
     for (const hit of dedupedHits) {
       const slot = Math.round(hit.time / gridSec)
+      const snapped = slot * gridSec
+      const dist = Math.abs(hit.time - snapped) / gridSec
+      const snappedTime = dist <= snapTolerance ? snapped : hit.time
       const key = `${hit.type}:${slot}`
       const existing = slotMap.get(key)
       if (!existing || hit.velocity > existing.velocity) {
-        slotMap.set(key, { ...hit, time: slot * gridSec })
+        slotMap.set(key, { ...hit, time: snappedTime })
       }
     }
     dedupedHits = Array.from(slotMap.values()).sort((a, b) => a.time - b.time)
   }
 
-  // Pitch detection — refine note from default when a clear pitch is found
+  // ── Step 9: Pitch detection — refine note for melodic/voiced hits ─────────
   for (const hit of dedupedHits) {
     const freq = detectPitch(audioBuffer, Math.floor(hit.time * sr), sr)
     if (freq !== null) {
@@ -365,6 +435,20 @@ export async function analyzeBeats(
     }
   }
 
-  const bpm = envBpm ?? estimateBPM(dedupedHits.map(h => h.time))
+  const bpm = bpmEstimate ?? estimateBPMFromIOI(dedupedHits.map(h => h.time))
+
+  // Debug output — open browser DevTools console to see this after recording
+  const byType: Record<string, number> = {}
+  for (const h of dedupedHits) byType[h.type] = (byType[h.type] ?? 0) + 1
+  console.log('[BeatLab] Analysis:', {
+    duration: audioBuffer.duration.toFixed(2) + 's',
+    rawOnsets: pickedSamples.length,
+    afterDedup: dedupedHits.length,
+    bpm,
+    bpmSource: (hits.length >= 4 ? ioiBpm : null) != null ? 'IOI' : 'envelope',
+    byType,
+    hits: dedupedHits.map(h => ({ t: h.time.toFixed(3), type: h.type, vel: h.velocity.toFixed(2) })),
+  })
+
   return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
 }

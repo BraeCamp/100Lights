@@ -4,12 +4,21 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX } from 'lucide-react'
 import type { BeatHit, BeatAnalysis, BeatType } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
-import { playDrumHit, DRUM_PACKS, type PackId } from '@/lib/drum-samples'
+import { playDrumHit } from '@/lib/drum-samples'
+import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const ALL_BEAT_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
+const ALL_DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
 const DEFAULT_ENABLED: BeatType[] = ['kick', 'snare', 'hihat', 'clap']
+
+type InstrumentFamily = 'drums' | 'guitar' | 'piano' | 'synth'
+const FAMILY_LABEL: Record<InstrumentFamily, string> = { drums: 'Drums', guitar: 'Guitar', piano: 'Piano', synth: 'Synth' }
+const FAMILY_VARIANTS: Record<Exclude<InstrumentFamily, 'drums'>, BeatType[]> = {
+  guitar: ['guitar-acoustic', 'guitar-electric', 'guitar-nylon'],
+  piano:  ['piano-grand', 'piano-electric', 'piano-rhodes'],
+  synth:  ['synth-lead', 'synth-pad', 'synth-bass', 'synth-arp'],
+}
 
 const TYPE_COLORS: Record<BeatType, string> = {
   kick:              '#7c3aed',
@@ -339,10 +348,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [bpm, setBpm] = useState<number | null>(null)
   const [duration, setDuration] = useState(0)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
-  const [packId, setPackId] = useState<PackId>('synth')
   const [mutedTypes, setMutedTypes] = useState<Set<BeatType>>(new Set())
   const [audioBuf, setAudioBuf] = useState<AudioBuffer | null>(null)
   const [selectedTypes, setSelectedTypes] = useState<Set<BeatType>>(new Set(DEFAULT_ENABLED))
+  const [instrumentFamily, setInstrumentFamily] = useState<InstrumentFamily>('drums')
+  const [melodicVariant, setMelodicVariant] = useState<BeatType>('guitar-acoustic')
   const [recMode, setRecMode] = useState<RecMode>('hits')
   // Loop mode state
   const [loopBuffer, setLoopBuffer] = useState<AudioBuffer | null>(null)
@@ -435,7 +445,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         setLoopPlaying(false)
         setPhase('editing')
       } else {
-        const result = await analyzeBeats(buf, { allowedTypes: Array.from(selectedTypes) })
+        const opts = instrumentFamily !== 'drums'
+          ? { melodicType: melodicVariant }
+          : { allowedTypes: Array.from(selectedTypes) }
+        const result = await analyzeBeats(buf, opts)
         setAudioBuf(buf)
         setAnalysis(result)
         setHits(result.hits)
@@ -469,14 +482,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (hit.time < startFrom - 0.01) continue
       if (mutedTypes.has(hit.type)) continue
       const when = Math.max(now, now + (hit.time - startFrom))
-      const maxKickDur = hit.type === 'kick'
-        ? (() => {
-            const idx = kickTimes.indexOf(hit.time)
-            const next = kickTimes[idx + 1] ?? Infinity
-            return Math.min(0.45, next - hit.time - 0.01)
-          })()
-        : 0.45
-      playDrumHit(ctx, packId, hit.type, when, hit.velocity, hit.note, maxKickDur)
+      if (MELODIC_TYPES.has(hit.type)) {
+        playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity)
+      } else {
+        const maxKickDur = hit.type === 'kick'
+          ? (() => {
+              const idx = kickTimes.indexOf(hit.time)
+              const next = kickTimes[idx + 1] ?? Infinity
+              return Math.min(0.45, next - hit.time - 0.01)
+            })()
+          : 0.45
+        playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note, maxKickDur)
+      }
     }
 
     playStartRef.current = { wallTime: performance.now(), beatTime: startFrom }
@@ -602,14 +619,31 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     })
   }
 
-  // Lanes to show in editing: selected types + any types that have hits
-  const activeBeatTypes = ALL_BEAT_TYPES.filter(t =>
-    selectedTypes.has(t) || hits.some(h => h.type === t)
-  )
+  // Lanes: selected drum types + every type that actually has a hit
+  const activeLaneTypes = useMemo(() => {
+    const set = new Set<BeatType>()
+    if (instrumentFamily === 'drums') selectedTypes.forEach(t => set.add(t))
+    hits.forEach(h => set.add(h.type))
+    return Array.from(set).sort((a, b) => {
+      const ai = ALL_DRUM_TYPES.indexOf(a), bi = ALL_DRUM_TYPES.indexOf(b)
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return 0
+    })
+  }, [hits, instrumentFamily, selectedTypes])
+
+  const hitsByType = useMemo(() => {
+    const map = new Map<BeatType, BeatHit[]>()
+    for (const t of activeLaneTypes) map.set(t, [])
+    for (const h of hits) {
+      if (!map.has(h.type)) map.set(h.type, [])
+      map.get(h.type)!.push(h)
+    }
+    return map
+  }, [hits, activeLaneTypes])
+
   const selectedHit = hits.find(h => h.id === selectedId) ?? null
-  const hitsByType = Object.fromEntries(
-    ALL_BEAT_TYPES.map(t => [t, hits.filter(h => h.type === t)])
-  ) as Record<BeatType, BeatHit[]>
   const activeHitCount = hits.filter(h => !mutedTypes.has(h.type)).length
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -649,14 +683,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {isPlaying ? <Pause size={13} fill="#fff" /> : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
             </button>
 
-            {/* Pack */}
-            <div style={{ display: 'flex', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: 2 }}>
-              {DRUM_PACKS.map(p => (
-                <button key={p.id} onClick={() => setPackId(p.id)} style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, border: 'none', cursor: 'pointer', background: packId === p.id ? 'var(--border-light)' : 'transparent', color: packId === p.id ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: packId === p.id ? 600 : 400 }}>
-                  {p.name}
-                </button>
-              ))}
-            </div>
+            {/* Instrument family badge */}
+            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+              {FAMILY_LABEL[instrumentFamily]}
+            </span>
 
             {/* BPM */}
             {bpm && (
@@ -684,8 +714,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   {showTypeMenu && (
                     <>
                       <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setShowTypeMenu(false)} />
-                      <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, overflow: 'hidden', minWidth: 110 }}>
-                        {ALL_BEAT_TYPES.map(t => (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, overflow: 'hidden', minWidth: 130, maxHeight: 280, overflowY: 'auto' }}>
+                        {activeLaneTypes.map(t => (
                           <button key={t} onClick={() => changeSelectedType(t)} style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', padding: '6px 10px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-primary)', textAlign: 'left' }}
                             onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
                             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
@@ -753,40 +783,81 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             </div>
 
             {/* Instrument selector — hits mode only */}
-            {recMode === 'hits' && <div style={{ width: '100%', maxWidth: 380 }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
-                Instruments to detect
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                {ALL_BEAT_TYPES.map(type => {
-                  const active = selectedTypes.has(type)
-                  const color = TYPE_COLORS[type]
-                  return (
-                    <button
-                      key={type}
-                      onClick={() => toggleSelectedType(type)}
-                      style={{
-                        padding: '8px 4px',
-                        borderRadius: 7,
-                        border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                        background: active ? `${color}18` : 'var(--bg-card)',
-                        cursor: 'pointer',
-                        color: active ? color : 'var(--text-muted)',
-                        fontSize: 11,
-                        fontWeight: active ? 700 : 400,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 5,
-                        transition: 'all 0.15s',
-                      }}
-                    >
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
-                      {TYPE_LABELS[type]}
-                    </button>
-                  )
-                })}
+            {recMode === 'hits' && <div style={{ width: '100%', maxWidth: 420 }}>
+              {/* Family tabs */}
+              <div style={{ display: 'flex', gap: 3, marginBottom: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 3 }}>
+                {(['drums', 'guitar', 'piano', 'synth'] as InstrumentFamily[]).map(f => (
+                  <button key={f} onClick={() => setInstrumentFamily(f)} style={{
+                    flex: 1, padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    background: instrumentFamily === f ? 'var(--border-light)' : 'transparent',
+                    color: instrumentFamily === f ? 'var(--text-primary)' : 'var(--text-muted)',
+                    fontSize: 12, fontWeight: instrumentFamily === f ? 600 : 400, transition: 'all 0.15s',
+                  }}>
+                    {FAMILY_LABEL[f]}
+                  </button>
+                ))}
               </div>
+
+              {/* Drums: sound type grid */}
+              {instrumentFamily === 'drums' && (
+                <>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
+                    Sounds to detect
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                    {ALL_DRUM_TYPES.map(type => {
+                      const active = selectedTypes.has(type)
+                      const color = TYPE_COLORS[type]
+                      return (
+                        <button key={type} onClick={() => toggleSelectedType(type)} style={{
+                          padding: '8px 4px', borderRadius: 7,
+                          border: `1.5px solid ${active ? color : 'var(--border)'}`,
+                          background: active ? `${color}18` : 'var(--bg-card)',
+                          cursor: 'pointer', color: active ? color : 'var(--text-muted)',
+                          fontSize: 11, fontWeight: active ? 700 : 400,
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+                          transition: 'all 0.15s',
+                        }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
+                          {TYPE_LABELS[type]}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Melodic: variant picker */}
+              {instrumentFamily !== 'drums' && (
+                <>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
+                    Select variant
+                  </p>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                    {FAMILY_VARIANTS[instrumentFamily as Exclude<InstrumentFamily, 'drums'>].map(type => {
+                      const active = melodicVariant === type
+                      const color = TYPE_COLORS[type]
+                      return (
+                        <button key={type} onClick={() => setMelodicVariant(type)} style={{
+                          padding: '10px 16px', borderRadius: 8, flex: 1,
+                          border: `1.5px solid ${active ? color : 'var(--border)'}`,
+                          background: active ? `${color}18` : 'var(--bg-card)',
+                          cursor: 'pointer', color: active ? color : 'var(--text-muted)',
+                          fontSize: 12, fontWeight: active ? 700 : 400,
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+                          transition: 'all 0.15s',
+                        }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
+                          {TYPE_LABELS[type]}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 10, lineHeight: 1.6 }}>
+                    Hum or play a melody — each note will be mapped to the {FAMILY_LABEL[instrumentFamily].toLowerCase()} sound
+                  </p>
+                </>
+              )}
             </div>}
 
             {hasSong && (
@@ -815,7 +886,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             <div style={{ textAlign: 'center' }}>
               <p style={{ fontSize: 32, fontFamily: 'monospace', fontWeight: 700, color: '#dc2626' }}>{recordingTime.toFixed(1)}s</p>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-                {recMode === 'loop' ? 'Recording loop…' : `Detecting: ${Array.from(selectedTypes).map(t => TYPE_LABELS[t]).join(', ')}`}
+                {recMode === 'loop'
+                  ? 'Recording loop…'
+                  : instrumentFamily === 'drums'
+                    ? `Detecting: ${Array.from(selectedTypes).map(t => TYPE_LABELS[t]).join(', ')}`
+                    : `Detecting melody → ${TYPE_LABELS[melodicVariant]} (${FAMILY_LABEL[instrumentFamily]})`}
               </p>
               {startedSongRef.current && (
                 <p style={{ fontSize: 11, color: 'var(--accent-light)', marginTop: 2 }}>♪ Song playing in background</p>
@@ -885,12 +960,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
             {/* Lanes */}
             <div style={{ flex: 1, overflowY: 'auto' }}>
-              {activeBeatTypes.map(type => (
+              {activeLaneTypes.map(type => (
                 <div key={type} style={{ display: 'flex' }}>
                   <NoteAxis />
                   <Lane
                     type={type}
-                    hits={hitsByType[type]}
+                    hits={hitsByType.get(type) ?? []}
                     duration={duration}
                     pxWidth={timelinePx}
                     selectedId={selectedId}
@@ -907,10 +982,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
             {/* Legend */}
             <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-              {activeBeatTypes.map(t => (
+              {activeLaneTypes.map(t => (
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
                   <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] }} />
-                  {TYPE_LABELS[t]} ({hitsByType[t].length})
+                  {TYPE_LABELS[t]} ({hitsByType.get(t)?.length ?? 0})
                 </span>
               ))}
               <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--border-light)' }}>
