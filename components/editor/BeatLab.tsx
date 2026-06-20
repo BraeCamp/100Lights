@@ -72,6 +72,22 @@ const NOTE_MAX = 84
 const NOTE_RANGE = NOTE_MAX - NOTE_MIN
 const LANE_HEIGHT = 88
 
+// ── Custom type helpers ────────────────────────────────────────────────────────
+
+type TypeOverrides = Record<string, { label: string; color: string }>
+
+const CUSTOM_PALETTE = [
+  '#7c3aed','#dc2626','#ca8a04','#0284c7','#059669',
+  '#db2777','#c2410c','#0891b2','#15803d','#9333ea','#6b7280',
+]
+
+function typeLabel(t: string, overrides: TypeOverrides): string {
+  return overrides[t]?.label ?? TYPE_LABELS[t as BeatType] ?? t
+}
+function typeColor(t: string, overrides: TypeOverrides): string {
+  return overrides[t]?.color ?? TYPE_COLORS[t as BeatType] ?? '#6b7280'
+}
+
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 function midiName(note: number) {
   return `${NOTE_NAMES[note % 12]}${Math.floor(note / 12) - 1}`
@@ -153,13 +169,14 @@ interface HitBlockProps {
   selected: boolean
   muted: boolean
   aiSuggestion?: BeatType
+  typeOverrides: TypeOverrides
   onSelect: () => void
   onMove: (id: string, time: number, note: number) => void
   onDelete: () => void
 }
 
-function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, onSelect, onMove, onDelete }: HitBlockProps) {
-  const color = TYPE_COLORS[hit.type] ?? '#6b7280'
+function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, typeOverrides, onSelect, onMove, onDelete }: HitBlockProps) {
+  const color = typeColor(hit.type, typeOverrides)
   const noteVal = hit.note ?? Math.round((NOTE_MIN + NOTE_MAX) / 2)
   const left = (hit.time / duration) * pxWidth - 6
   const top = (1 - (noteVal - NOTE_MIN) / NOTE_RANGE) * (LANE_HEIGHT - 10) + 1
@@ -197,7 +214,7 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, onSel
         onPointerDown={handlePointerDown}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
-        title={aiSuggestion ? `AI: ${aiSuggestion}` : undefined}
+        title={aiSuggestion ? `AI: ${typeLabel(aiSuggestion, typeOverrides)}` : undefined}
         style={{
           width: 13, height: 8,
           background: muted ? 'var(--border-light)' : color,
@@ -266,15 +283,34 @@ interface LaneProps {
   selectedId: string | null
   muted: boolean
   aiSuggestions?: Map<string, BeatType> | null
+  typeOverrides: TypeOverrides
+  isCustom: boolean
   onSelect: (id: string) => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
   onToggleMute: () => void
+  onRenameType: (label: string, color: string) => void
+  onDeleteLane: () => void
 }
 
-function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute }: LaneProps) {
-  const color = TYPE_COLORS[type] ?? '#6b7280'
+function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions, typeOverrides, isCustom, onSelect, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onRenameType, onDeleteLane }: LaneProps) {
+  const color = typeColor(type, typeOverrides)
+  const label = typeLabel(type, typeOverrides)
+
+  const [editing, setEditing]     = useState(false)
+  const [editLabel, setEditLabel] = useState('')
+  const [editColor, setEditColor] = useState('')
+
+  function startEdit() {
+    setEditLabel(label)
+    setEditColor(color)
+    setEditing(true)
+  }
+  function commitEdit() {
+    if (editLabel.trim()) onRenameType(editLabel.trim(), editColor)
+    setEditing(false)
+  }
 
   function handleLaneClick(e: React.MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -288,25 +324,74 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
 
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT, borderBottom: '1px solid var(--border)', opacity: muted ? 0.45 : 1 }}>
-      {/* Label */}
-      <div style={{
-        width: 64, flexShrink: 0,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', gap: 3,
-      }}>
-        <div style={{ width: 7, height: 7, borderRadius: '50%', background: muted ? 'var(--border-light)' : color }} />
-        <span style={{ fontSize: 10, fontWeight: 600, color: muted ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em' }}>
-          {TYPE_LABELS[type]}
-        </span>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{hits.length}</span>
+      {/* Label — click to rename */}
+      <div style={{ width: 64, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+        <button
+          onClick={startEdit}
+          title="Click to rename"
+          style={{
+            width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 3,
+            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+          }}
+        >
+          <div style={{ width: 7, height: 7, borderRadius: '50%', background: muted ? 'var(--border-light)' : color }} />
+          <span style={{ fontSize: 10, fontWeight: 600, color: muted ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 56, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {label}
+          </span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{hits.length}</span>
+        </button>
+
+        {/* Mute button */}
         <button
           onClick={e => { e.stopPropagation(); onToggleMute() }}
-          title={muted ? 'Unmute lane' : 'Mute lane'}
-          style={{ padding: 2, background: 'none', border: 'none', cursor: 'pointer', color: muted ? '#ef4444' : 'var(--text-muted)', marginTop: 1 }}
+          title={muted ? 'Unmute' : 'Mute'}
+          style={{ position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)', padding: 2, background: 'none', border: 'none', cursor: 'pointer', color: muted ? '#ef4444' : 'var(--text-muted)' }}
         >
           {muted ? <VolumeX size={10} /> : <Volume2 size={10} />}
         </button>
+
+        {/* Rename popover */}
+        {editing && (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setEditing(false)} />
+            <div style={{
+              position: 'absolute', left: 68, top: 0, zIndex: 100,
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+              minWidth: 180, boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+            }}>
+              <input
+                autoFocus
+                value={editLabel}
+                onChange={e => setEditLabel(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(false) }}
+                placeholder="Track name"
+                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {CUSTOM_PALETTE.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setEditColor(c)}
+                    style={{ width: 18, height: 18, borderRadius: '50%', background: c, border: editColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', outline: editColor === c ? `2px solid ${c}` : 'none' }}
+                  />
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button onClick={commitEdit} style={{ flex: 1, fontSize: 11, padding: '4px 0', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Save</button>
+                <button onClick={() => setEditing(false)} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                {isCustom && (
+                  <button onClick={() => { setEditing(false); onDeleteLane() }} title="Delete this lane" style={{ padding: '4px 6px', borderRadius: 5, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer' }}>
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
+
       {/* Hit area */}
       <div
         onClick={handleLaneClick}
@@ -326,6 +411,7 @@ function Lane({ type, hits, duration, pxWidth, selectedId, muted, aiSuggestions,
             selected={hit.id === selectedId}
             muted={muted}
             aiSuggestion={aiSuggestions?.get(hit.id)}
+            typeOverrides={typeOverrides}
             onSelect={() => onSelect(hit.id)}
             onMove={onMoveHit}
             onDelete={() => onDeleteHit(hit.id)}
@@ -409,6 +495,24 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [feedbackLoading, setFeedbackLoading]     = useState(false)
   const [reflection, setReflection]               = useState<string | null>(null)
   const MAX_RETRIES = 3
+
+  // Custom track types — label/color overrides for built-ins + new user-created lanes
+  const [typeOverrides, setTypeOverrides] = useState<TypeOverrides>({})
+  const [extraLaneIds, setExtraLaneIds]   = useState<string[]>([])
+
+  function renameType(typeId: string, label: string, color: string) {
+    setTypeOverrides(prev => ({ ...prev, [typeId]: { label, color } }))
+  }
+  function addCustomLane() {
+    const id = `cust_${Date.now()}`
+    setTypeOverrides(prev => ({ ...prev, [id]: { label: 'New Sound', color: '#6b7280' } }))
+    setExtraLaneIds(prev => [...prev, id])
+  }
+  function removeCustomLane(id: string) {
+    setTypeOverrides(prev => { const n = { ...prev }; delete n[id]; return n })
+    setExtraLaneIds(prev => prev.filter(x => x !== id))
+    setHits(prev => prev.filter(h => h.type !== id as BeatType))
+  }
 
   // Two-sided learning: reference sounds from Sound Library (Side A) + accepted corrections (Side B)
   const [referenceSounds, setReferenceSounds] = useState<ReferenceSound[]>([])
@@ -879,11 +983,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     })
   }
 
-  // Lanes: selected drum types + every type that actually has a hit
+  // Lanes: selected drum types + every type that has a hit + explicit custom lanes
   const activeLaneTypes = useMemo(() => {
     const set = new Set<BeatType>()
     if (instrumentFamily === 'drums') selectedTypes.forEach(t => set.add(t))
     hits.forEach(h => set.add(h.type))
+    extraLaneIds.forEach(id => set.add(id as BeatType))
     return Array.from(set).sort((a, b) => {
       const ai = ALL_DRUM_TYPES.indexOf(a), bi = ALL_DRUM_TYPES.indexOf(b)
       if (ai !== -1 && bi !== -1) return ai - bi
@@ -891,7 +996,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (bi !== -1) return 1
       return 0
     })
-  }, [hits, instrumentFamily, selectedTypes])
+  }, [hits, instrumentFamily, selectedTypes, extraLaneIds])
+
+  // All type IDs available in the Change dropdown (active lanes + empty custom lanes)
+  const allAvailableTypes = useMemo(() => [
+    ...activeLaneTypes,
+    ...extraLaneIds.filter(id => !activeLaneTypes.includes(id as BeatType)),
+  ] as BeatType[], [activeLaneTypes, extraLaneIds])
 
   const hitsByType = useMemo(() => {
     const map = new Map<BeatType, BeatHit[]>()
@@ -959,16 +1070,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             {/* Selected hit */}
             {selectedHit && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border)', marginLeft: 6 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_COLORS[selectedHit.type], flexShrink: 0 }} />
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: typeColor(selectedHit.type, typeOverrides), flexShrink: 0 }} />
                 <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                  {TYPE_LABELS[selectedHit.type]} @ {selectedHit.time.toFixed(2)}s
+                  {typeLabel(selectedHit.type, typeOverrides)} @ {selectedHit.time.toFixed(2)}s
                   {selectedHit.note !== undefined && <span style={{ marginLeft: 5, color: 'var(--accent-light)' }}>{midiName(selectedHit.note)}</span>}
                 </span>
                 {aiSuggestions?.get(selectedHit.id) && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
                     <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.8)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>AI says</span>
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: TYPE_COLORS[aiSuggestions.get(selectedHit.id)!] }} />
-                    <span style={{ fontSize: 10, color: 'var(--accent-light)' }}>{TYPE_LABELS[aiSuggestions.get(selectedHit.id)!]}</span>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: typeColor(aiSuggestions.get(selectedHit.id)!, typeOverrides) }} />
+                    <span style={{ fontSize: 10, color: 'var(--accent-light)' }}>{typeLabel(aiSuggestions.get(selectedHit.id)!, typeOverrides)}</span>
                     <button onClick={() => acceptAiForHit(selectedHit.id)} title="Accept — AI is right" style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700 }}>✓</button>
                     <button onClick={() => rejectAiForHit(selectedHit.id)} title="Reject — current label is correct" style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
                   </div>
@@ -981,12 +1092,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     <>
                       <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setShowTypeMenu(false)} />
                       <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, overflow: 'hidden', minWidth: 130, maxHeight: 280, overflowY: 'auto' }}>
-                        {activeLaneTypes.map(t => (
+                        {allAvailableTypes.map(t => (
                           <button key={t} onClick={() => changeSelectedType(t)} style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', padding: '6px 10px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-primary)', textAlign: 'left' }}
                             onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
                             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                           >
-                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t], flexShrink: 0 }} /> {TYPE_LABELS[t]}
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColor(t, typeOverrides), flexShrink: 0 }} /> {typeLabel(t, typeOverrides)}
                           </button>
                         ))}
                       </div>
@@ -1306,17 +1417,17 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {feedbackItems.map(f => (
                 <div key={f.hitId} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', fontSize: 11 }}>
                   <span style={{ color: 'var(--text-muted)' }}>{f.time.toFixed(2)}s</span>
-                  <span style={{ color: '#ef4444', textDecoration: 'line-through' }}>{TYPE_LABELS[f.original]}</span>
+                  <span style={{ color: '#ef4444', textDecoration: 'line-through' }}>{typeLabel(f.original, typeOverrides)}</span>
                   <span style={{ color: 'var(--text-muted)' }}>→</span>
                   {/* Editable type picker */}
                   <div style={{ position: 'relative' }}>
                     <select
                       value={f.current}
                       onChange={e => updateFeedbackType(f.hitId, e.target.value as BeatType)}
-                      style={{ fontSize: 11, padding: '1px 4px', borderRadius: 4, background: 'var(--bg-card)', color: TYPE_COLORS[f.current] ?? 'var(--text-primary)', border: `1px solid ${TYPE_COLORS[f.current] ?? 'var(--border)'}`, cursor: 'pointer', fontWeight: 600 }}
+                      style={{ fontSize: 11, padding: '1px 4px', borderRadius: 4, background: 'var(--bg-card)', color: typeColor(f.current, typeOverrides) ?? 'var(--text-primary)', border: `1px solid ${typeColor(f.current, typeOverrides) ?? 'var(--border)'}`, cursor: 'pointer', fontWeight: 600 }}
                     >
                       {ALL_DRUM_TYPES.map(t => (
-                        <option key={t} value={t}>{TYPE_LABELS[t]}</option>
+                        <option key={t} value={t}>{typeLabel(t, typeOverrides)}</option>
                       ))}
                     </select>
                   </div>
@@ -1370,22 +1481,35 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     selectedId={selectedId}
                     muted={mutedTypes.has(type)}
                     aiSuggestions={aiSuggestions}
+                    typeOverrides={typeOverrides}
+                    isCustom={extraLaneIds.includes(type)}
                     onSelect={setSelectedId}
                     onMoveHit={moveHit}
                     onDeleteHit={deleteHit}
                     onAddHit={(t, note) => addHit(type, t, note)}
                     onToggleMute={() => toggleMute(type)}
+                    onRenameType={(label, color) => renameType(type, label, color)}
+                    onDeleteLane={() => removeCustomLane(type)}
                   />
                 </div>
               ))}
+              {/* Add new lane */}
+              <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
+                <button
+                  onClick={addCustomLane}
+                  style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                >
+                  + Add track
+                </button>
+              </div>
             </div>
 
             {/* Legend */}
             <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
               {activeLaneTypes.map(t => (
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: mutedTypes.has(t) ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: mutedTypes.has(t) ? 0.5 : 1 }}>
-                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] }} />
-                  {TYPE_LABELS[t]} ({hitsByType.get(t)?.length ?? 0})
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: typeColor(t, typeOverrides) }} />
+                  {typeLabel(t, typeOverrides)} ({hitsByType.get(t)?.length ?? 0})
                 </span>
               ))}
               <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--border-light)' }}>
