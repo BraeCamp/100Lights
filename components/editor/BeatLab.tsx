@@ -2,9 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX } from 'lucide-react'
-import type { BeatHit, BeatAnalysis, BeatType } from '@/lib/beat-analyzer'
-import { analyzeBeats } from '@/lib/beat-analyzer'
-import { playDrumHit } from '@/lib/drum-samples'
+import type { BeatHit, BeatAnalysis, BeatType, CalibrationMap } from '@/lib/beat-analyzer'
+import { analyzeBeats, buildCalibrationSample } from '@/lib/beat-analyzer'
+import { playDrumHit, playCalibrationBuffer } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -74,8 +74,26 @@ function midiName(note: number) {
   return `${NOTE_NAMES[note % 12]}${Math.floor(note / 12) - 1}`
 }
 
-type Phase = 'idle' | 'recording' | 'analyzing' | 'editing'
+type Phase = 'idle' | 'recording' | 'analyzing' | 'editing' | 'calibrating'
 type RecMode = 'hits' | 'loop'
+
+// ── Calibration constants ─────────────────────────────────────────────────────
+
+const CALIB_DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
+const CALIB_BPM = 85
+const CALIB_COUNT_BEATS = 4   // metronome count-in before recording starts
+const CALIB_RECORD_BEATS = 8  // beats to record per sound
+
+const CALIB_PROMPTS: Record<string, { say: string; tip: string }> = {
+  kick:         { say: '"Boom" or "Buh"',   tip: 'Deep round thud — from your chest, not your throat' },
+  snare:        { say: '"Psh" or "Ka"',     tip: 'Sharp crack — like air escaping between your teeth' },
+  hihat:        { say: '"Ts" or "Tss"',     tip: 'Short tight hiss — close your teeth and hiss briefly' },
+  'open-hihat': { say: '"Tsss"',            tip: 'Like hi-hat but let it sustain for a beat' },
+  clap:         { say: '"Psh" or "Ksh"',   tip: 'Bright flat slap — hands together sound' },
+  tom:          { say: '"Duh" or "Buh"',   tip: 'Mid-tone thud — lower than snare, higher than kick' },
+  crash:        { say: '"Kashh"',           tip: 'Long wash — sustain the "sh" for the whole beat' },
+  rim:          { say: '"Tck"',             tip: 'Tongue click — sharp and very short' },
+}
 
 async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
   const ab = await blob.arrayBuffer()
@@ -362,6 +380,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   const [playSongDuringRec, setPlaySongDuringRec] = useState(false)
 
+  // Calibration state
+  const [calibrationMap, setCalibrationMap] = useState<CalibrationMap>(new Map())
+  const [calibStep, setCalibStep] = useState(0)
+  const [calibSubPhase, setCalibSubPhase] = useState<'intro' | 'countdown' | 'listening' | 'result'>('intro')
+  const [calibBeat, setCalibBeat] = useState(0)
+  const [calibHitCount, setCalibHitCount] = useState(0)
+  const [calibError, setCalibError] = useState<string | null>(null)
+
   const recorderRef    = useRef<MediaRecorder | null>(null)
   const startedSongRef = useRef(false)
   const chunksRef    = useRef<Blob[]>([])
@@ -373,6 +399,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const loopCtxRef   = useRef<AudioContext | null>(null)
   const timelineRef  = useRef<HTMLDivElement>(null)
   const [timelinePx, setTimelinePx] = useState(800)
+
+  // Calibration refs
+  const calibCtxRef       = useRef<AudioContext | null>(null)
+  const calibSchedulerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const calibTickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const calibNextBeatRef  = useRef(0)
+  const calibBeatCountRef = useRef(0)
+  const calibRecorderRef  = useRef<MediaRecorder | null>(null)
+  const calibChunksRef    = useRef<Blob[]>([])
+  const calibStreamRef    = useRef<MediaStream | null>(null)
 
   // 88px = 64px lane label + 24px note axis
   useEffect(() => {
@@ -447,7 +483,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       } else {
         const opts = instrumentFamily !== 'drums'
           ? { melodicType: melodicVariant }
-          : { allowedTypes: Array.from(selectedTypes) }
+          : {
+              allowedTypes: Array.from(selectedTypes),
+              calibrationMap: calibrationMap.size > 0 ? calibrationMap : undefined,
+            }
         const result = await analyzeBeats(buf, opts)
         setAudioBuf(buf)
         setAnalysis(result)
@@ -462,6 +501,149 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setError('Could not analyze audio. Try again with a clearer beatbox.')
       setPhase('idle')
     }
+  }
+
+  // ── Calibration ────────────────────────────────────────────────────────────
+
+  function startCalibMetronome(bpm: number) {
+    if (calibCtxRef.current) { calibCtxRef.current.close(); calibCtxRef.current = null }
+    const ctx = new AudioContext()
+    calibCtxRef.current = ctx
+    calibBeatCountRef.current = 0
+    calibNextBeatRef.current = ctx.currentTime + 0.05
+    const interval = 60 / bpm
+    const LOOKAHEAD = 0.12
+
+    function schedule() {
+      if (!calibCtxRef.current) return
+      while (calibNextBeatRef.current < calibCtxRef.current.currentTime + LOOKAHEAD) {
+        const when = calibNextBeatRef.current
+        const beat = calibBeatCountRef.current
+        const osc = calibCtxRef.current.createOscillator()
+        const g   = calibCtxRef.current.createGain()
+        osc.connect(g); g.connect(calibCtxRef.current.destination)
+        osc.frequency.value = beat % 4 === 0 ? 1100 : 750
+        g.gain.setValueAtTime(beat % 4 === 0 ? 0.5 : 0.3, when)
+        g.gain.exponentialRampToValueAtTime(0.001, when + 0.022)
+        osc.start(when); osc.stop(when + 0.03)
+        calibBeatCountRef.current++
+        calibNextBeatRef.current += interval
+      }
+    }
+    calibSchedulerRef.current = setInterval(schedule, 25)
+    schedule()
+  }
+
+  function stopCalibMetronome() {
+    if (calibSchedulerRef.current) { clearInterval(calibSchedulerRef.current); calibSchedulerRef.current = null }
+    if (calibTickRef.current)      { clearInterval(calibTickRef.current);      calibTickRef.current = null }
+    calibCtxRef.current?.close()
+    calibCtxRef.current = null
+  }
+
+  function abortCalibration() {
+    stopCalibMetronome()
+    if (calibRecorderRef.current) { try { calibRecorderRef.current.stop() } catch { /* */ }; calibRecorderRef.current = null }
+    calibStreamRef.current?.getTracks().forEach(t => t.stop()); calibStreamRef.current = null
+    setPhase('idle')
+  }
+
+  async function startCalibStep() {
+    setCalibError(null)
+    // Request mic permission in user-gesture context before starting interval
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    } catch {
+      setCalibError('Microphone access denied.')
+      return
+    }
+    calibStreamRef.current = stream
+
+    setCalibSubPhase('countdown')
+    setCalibBeat(0)
+    startCalibMetronome(CALIB_BPM)
+
+    const beatMs = (60 / CALIB_BPM) * 1000
+    let beat = 0
+
+    calibTickRef.current = setInterval(async () => {
+      beat++
+      setCalibBeat(beat)
+
+      if (beat === CALIB_COUNT_BEATS) {
+        setCalibSubPhase('listening')
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
+        const recorder = new MediaRecorder(stream, { mimeType })
+        calibChunksRef.current = []
+        recorder.ondataavailable = e => { if (e.data.size > 0) calibChunksRef.current.push(e.data) }
+        recorder.start(100)
+        calibRecorderRef.current = recorder
+      }
+
+      if (beat === CALIB_COUNT_BEATS + CALIB_RECORD_BEATS) {
+        clearInterval(calibTickRef.current!); calibTickRef.current = null
+        stopCalibMetronome()
+
+        const recorder = calibRecorderRef.current
+        if (recorder) {
+          recorder.stop()
+          stream.getTracks().forEach(t => t.stop())
+          calibStreamRef.current = null
+          await new Promise<void>(res => { recorder.onstop = () => res() })
+          await processCalibRecording()
+        }
+      }
+    }, beatMs)
+  }
+
+  async function processCalibRecording() {
+    const type = CALIB_DRUM_TYPES[calibStep]
+    const blob = new Blob(calibChunksRef.current, { type: calibChunksRef.current[0]?.type ?? 'audio/webm' })
+    try {
+      const ab = await blob.arrayBuffer()
+      const tmpCtx = new AudioContext()
+      const buf = await tmpCtx.decodeAudioData(ab)
+      tmpCtx.close()
+      const result = await buildCalibrationSample(buf, type)
+      if (result && result.hitCount > 0) {
+        setCalibHitCount(result.hitCount)
+        setCalibrationMap(prev => { const next = new Map(prev); next.set(type, result.sample); return next })
+      } else {
+        setCalibHitCount(0)
+      }
+    } catch {
+      setCalibHitCount(0)
+    }
+    setCalibSubPhase('result')
+  }
+
+  async function handleCalibNext() {
+    if (calibStep >= CALIB_DRUM_TYPES.length - 1) {
+      setPhase('idle')
+    } else {
+      setCalibStep(s => s + 1)
+      setCalibSubPhase('intro')
+      setCalibBeat(0)
+      setCalibHitCount(0)
+      setCalibError(null)
+    }
+  }
+
+  function handleCalibRetry() {
+    setCalibSubPhase('intro')
+    setCalibBeat(0)
+    setCalibHitCount(0)
+    setCalibError(null)
+  }
+
+  function startCalibration() {
+    setCalibStep(0)
+    setCalibSubPhase('intro')
+    setCalibBeat(0)
+    setCalibHitCount(0)
+    setCalibError(null)
+    setPhase('calibrating')
   }
 
   // ── Playback ───────────────────────────────────────────────────────────────
@@ -485,14 +667,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (MELODIC_TYPES.has(hit.type)) {
         playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity)
       } else {
-        const maxKickDur = hit.type === 'kick'
-          ? (() => {
-              const idx = kickTimes.indexOf(hit.time)
-              const next = kickTimes[idx + 1] ?? Infinity
-              return Math.min(0.45, next - hit.time - 0.01)
-            })()
-          : 0.45
-        playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note, maxKickDur)
+        const calibSample = calibrationMap.get(hit.type)
+        if (calibSample) {
+          playCalibrationBuffer(ctx, calibSample.buffer, when, hit.velocity)
+        } else {
+          const maxKickDur = hit.type === 'kick'
+            ? (() => {
+                const idx = kickTimes.indexOf(hit.time)
+                const next = kickTimes[idx + 1] ?? Infinity
+                return Math.min(0.45, next - hit.time - 0.01)
+              })()
+            : 0.45
+          playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note, maxKickDur)
+        }
       }
     }
 
@@ -668,6 +855,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             <span style={{ fontSize: 12, fontFamily: 'monospace', color: '#dc2626', minWidth: 52 }}>{recordingTime.toFixed(1)}s</span>
             <button onClick={stopRecording} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
               <Square size={11} fill="currentColor" /> Stop
+            </button>
+          </>
+        )}
+        {phase === 'calibrating' && (
+          <>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Calibrating — {CALIB_DRUM_TYPES[calibStep] ? TYPE_LABELS[CALIB_DRUM_TYPES[calibStep]] : ''}
+            </span>
+            {calibrationMap.size > 0 && (
+              <span style={{ fontSize: 10, color: 'var(--accent-light)', padding: '2px 7px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                {calibrationMap.size}/{CALIB_DRUM_TYPES.length} saved
+              </span>
+            )}
+            <button onClick={abortCalibration} style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              Exit
             </button>
           </>
         )}
@@ -875,6 +1077,157 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 8, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
               <Mic size={15} /> {recMode === 'loop' ? 'Start Loop Recording' : 'Start Recording'}
             </button>
+
+            {/* Calibration entry */}
+            <button
+              onClick={startCalibration}
+              style={{ fontSize: 12, color: calibrationMap.size > 0 ? 'var(--accent-light)' : 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }}
+            >
+              {calibrationMap.size > 0
+                ? `✓ Calibrated (${calibrationMap.size}/${CALIB_DRUM_TYPES.length} sounds) — recalibrate`
+                : '⚙ Calibrate to your voice for better detection'}
+            </button>
+          </div>
+        )}
+
+        {/* ── Calibration ────────────────────────────────────────────────── */}
+        {phase === 'calibrating' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24, padding: '40px 32px', position: 'relative', overflowY: 'auto' }}>
+
+            {/* Progress bar */}
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+              {CALIB_DRUM_TYPES.map((t, i) => (
+                <div key={t} title={TYPE_LABELS[t]} style={{
+                  width: i === calibStep ? 28 : 10,
+                  height: 10,
+                  borderRadius: 5,
+                  background: calibrationMap.has(t)
+                    ? TYPE_COLORS[t]
+                    : i === calibStep
+                      ? 'var(--accent)'
+                      : 'var(--border)',
+                  transition: 'all 0.25s',
+                  flexShrink: 0,
+                }} />
+              ))}
+            </div>
+
+            {/* Sound name */}
+            <div style={{ textAlign: 'center' }}>
+              <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: 6 }}>
+                Sound {calibStep + 1} of {CALIB_DRUM_TYPES.length}
+              </p>
+              <p style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-primary)' }}>
+                {TYPE_LABELS[CALIB_DRUM_TYPES[calibStep]]}
+              </p>
+            </div>
+
+            {/* Intro */}
+            {calibSubPhase === 'intro' && (
+              <div style={{ textAlign: 'center', maxWidth: 340 }}>
+                <p style={{ fontSize: 32, fontWeight: 800, color: 'var(--accent)', marginBottom: 10, letterSpacing: '-0.01em' }}>
+                  {CALIB_PROMPTS[CALIB_DRUM_TYPES[calibStep]].say}
+                </p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.75 }}>
+                  {CALIB_PROMPTS[CALIB_DRUM_TYPES[calibStep]].tip}
+                </p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.6 }}>
+                  A metronome will count you in (4 beats), then record you for 8 beats.
+                  Make the sound on every beat.
+                </p>
+                {calibError && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{calibError}</p>}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
+                  <button onClick={startCalibStep} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 24px', borderRadius: 8, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                    <Mic size={14} /> Start
+                  </button>
+                  <button onClick={handleCalibNext} style={{ padding: '10px 16px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>
+                    Skip →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Countdown */}
+            {calibSubPhase === 'countdown' && (
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Get ready…</p>
+                <p style={{ fontSize: 96, fontWeight: 900, fontFamily: 'monospace', color: 'var(--accent)', lineHeight: 1, minWidth: 80 }}>
+                  {Math.max(0, CALIB_COUNT_BEATS - calibBeat)}
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
+                  {[0,1,2,3].map(i => (
+                    <div key={i} style={{ width: 16, height: 16, borderRadius: '50%', background: calibBeat % 4 === i && calibBeat > 0 ? 'var(--accent)' : 'var(--border)', transition: 'background 0.06s' }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Listening */}
+            {calibSubPhase === 'listening' && (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'rgba(220,38,38,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid rgba(220,38,38,0.5)', animation: 'pulse 0.71s ease-in-out infinite', margin: '0 auto 14px' }}>
+                  <Mic size={32} color="#dc2626" />
+                </div>
+                <p style={{ fontSize: 20, fontWeight: 700, color: '#dc2626', marginBottom: 4 }}>
+                  {CALIB_PROMPTS[CALIB_DRUM_TYPES[calibStep]].say}
+                </p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Beat {Math.max(0, calibBeat - CALIB_COUNT_BEATS)} / {CALIB_RECORD_BEATS}
+                </p>
+                {/* Beat progress dots */}
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 14 }}>
+                  {Array.from({ length: CALIB_RECORD_BEATS }, (_, i) => (
+                    <div key={i} style={{ width: 12, height: 12, borderRadius: '50%', background: calibBeat - CALIB_COUNT_BEATS > i ? 'var(--accent)' : 'var(--border)', transition: 'background 0.1s' }} />
+                  ))}
+                </div>
+                {/* Metronome pulse */}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                  {[0,1,2,3].map(i => (
+                    <div key={i} style={{ width: 14, height: 14, borderRadius: '50%', background: calibBeat % 4 === i ? 'var(--accent)' : 'var(--border)', transition: 'background 0.06s' }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Result */}
+            {calibSubPhase === 'result' && (
+              <div style={{ textAlign: 'center' }}>
+                {calibHitCount > 0 ? (
+                  <>
+                    <div style={{ fontSize: 52, marginBottom: 6, lineHeight: 1 }}>✓</div>
+                    <p style={{ fontSize: 17, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                      Got it! Detected {calibHitCount} hit{calibHitCount !== 1 ? 's' : ''}
+                    </p>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      {TYPE_LABELS[CALIB_DRUM_TYPES[calibStep]]} fingerprint saved
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 52, marginBottom: 6, lineHeight: 1 }}>✗</div>
+                    <p style={{ fontSize: 17, fontWeight: 600, color: '#ef4444', marginBottom: 4 }}>No hits detected</p>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      Try louder — and make the sound on every beat of the metronome
+                    </p>
+                  </>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
+                  <button onClick={handleCalibRetry} style={{ padding: '9px 18px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13 }}>
+                    Retry
+                  </button>
+                  {calibHitCount > 0 && (
+                    <button onClick={handleCalibNext} style={{ padding: '9px 20px', borderRadius: 8, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                      {calibStep < CALIB_DRUM_TYPES.length - 1 ? 'Next Sound →' : 'Finish'}
+                    </button>
+                  )}
+                  {calibHitCount === 0 && (
+                    <button onClick={handleCalibNext} style={{ padding: '9px 18px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>
+                      Skip →
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

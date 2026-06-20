@@ -363,6 +363,22 @@ const DEFAULT_NOTE: Record<BeatType, number> = {
   other:             60,
 }
 
+// Play a raw AudioBuffer (a calibration recording) at the given time + velocity
+export function playCalibrationBuffer(
+  ctx: AudioContext,
+  buffer: AudioBuffer,
+  when: number,
+  velocity: number,
+): void {
+  const src = ctx.createBufferSource()
+  src.buffer = buffer
+  const g = ctx.createGain()
+  g.gain.value = Math.min(1, Math.max(0, velocity))
+  src.connect(g)
+  g.connect(ctx.destination)
+  src.start(when)
+}
+
 export function playDrumHit(
   ctx: AudioContext,
   pack: PackId,
