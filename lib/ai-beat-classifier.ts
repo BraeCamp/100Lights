@@ -6,6 +6,7 @@ import type { BeatHit, BeatType } from './beat-analyzer'
 export async function aiClassifyHits(
   hits: BeatHit[],
   enabledTypes: BeatType[],
+  groundTruth?: string,
 ): Promise<Map<string, BeatType> | null> {
   const hitsWithSpectral = hits.filter(h => h.spectral)
   if (hitsWithSpectral.length === 0) return null
@@ -23,6 +24,7 @@ export async function aiClassifyHits(
           spectral: h.spectral,
         })),
         enabledTypes,
+        groundTruth,
       }),
     })
 

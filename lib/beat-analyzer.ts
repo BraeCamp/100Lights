@@ -192,15 +192,6 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
 
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
-// ── Calibration types ─────────────────────────────────────────────────────────
-
-export interface CalibrationSample {
-  buffer: AudioBuffer       // ~300ms cropped hit — played back directly
-  fingerprint: Float32Array // normalized 5-band energy vector for classification
-}
-
-export type CalibrationMap = Map<BeatType, CalibrationSample>
-
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
 export async function analyzeBeats(
@@ -208,12 +199,10 @@ export async function analyzeBeats(
   options?: {
     allowedTypes?: BeatType[]
     melodicType?: BeatType
-    calibrationMap?: CalibrationMap
   },
 ): Promise<BeatAnalysis> {
   const allowed = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
   const melodicType = options?.melodicType ?? null
-  const calibrationMap = options?.calibrationMap ?? null
   const sr = audioBuffer.sampleRate
   const raw = audioBuffer.getChannelData(0)
 
@@ -310,12 +299,6 @@ export async function analyzeBeats(
     const classWindow   = 0.06
     const sustainOffset = Math.floor(0.06 * sr)
 
-    // Calibration path: if fingerprints exist, classify by cosine similarity
-    const calEntries = calibrationMap
-      ? [...calibrationMap.entries()].filter(([t]) => !allowed || allowed.has(t))
-      : []
-    const useCalibration = calEntries.length > 0
-
     hits = pickedSamples.map((sampleIdx) => {
       const t = sampleIdx / sr
       const subE    = rmsWindow(subBand,    sampleIdx, sr, classWindow)
@@ -335,53 +318,36 @@ export async function analyzeBeats(
 
       let natural: BeatType
 
-      if (useCalibration) {
-        // Normalize onset vector, then pick the stored fingerprint with max dot product
-        const vec = new Float32Array([subE, lowMidE, midE, hiMidE, highE])
-        let norm = 0
-        for (const v of vec) norm += v * v
-        norm = Math.sqrt(norm) || 1
-        for (let i = 0; i < vec.length; i++) vec[i] /= norm
+      // Hardcoded spectral rules — tuned for beatbox mouth sounds.
+      // The human mouth cannot produce true sub-bass (<100 Hz), so beatbox
+      // kicks peak in the 150–500 Hz (lowMid) band, not the sub band.
+      const subR    = spectral.sub
+      const lowMidR = spectral.lowMid
+      const midR    = spectral.mid
+      const hiR     = spectral.hiMid + spectral.hi
 
-        natural = calEntries[0][0]
-        let bestSim = -Infinity
-        for (const [tp, sample] of calEntries) {
-          let dot = 0
-          for (let i = 0; i < 5; i++) dot += vec[i] * sample.fingerprint[i]
-          if (dot > bestSim) { bestSim = dot; natural = tp }
-        }
+      const attackHigh  = rmsWindow(highBand, sampleIdx, sr, 0.025)
+      const sustainHigh = rmsWindow(
+        highBand,
+        Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
+        sr, 0.08,
+      )
+      const highSustained = attackHigh > 0.002 && sustainHigh > attackHigh * 0.28
+
+      if (hiR > 0.48) {
+        natural = highSustained ? 'crash' : 'hihat'
+      } else if (hiR > 0.38 && highSustained) {
+        natural = hiR > 0.50 ? 'crash' : 'open-hihat'
+      } else if (hiR > 0.38) {
+        natural = 'hihat'
+      } else if (subR > 0.30 || (lowMidR > 0.26 && hiR < 0.30 && subR + lowMidR > 0.36)) {
+        natural = midR > 0.30 ? 'tom' : 'kick'
+      } else if (midR > 0.48 && subR < 0.12) {
+        natural = 'rim'
+      } else if (midR > 0.28 && subR < 0.25) {
+        natural = 'snare'
       } else {
-        // Hardcoded spectral rules — tuned for beatbox mouth sounds.
-        // The human mouth cannot produce true sub-bass (<100 Hz), so beatbox
-        // kicks peak in the 150–500 Hz (lowMid) band, not the sub band.
-        const subR    = spectral.sub
-        const lowMidR = spectral.lowMid
-        const midR    = spectral.mid
-        const hiR     = spectral.hiMid + spectral.hi
-
-        const attackHigh  = rmsWindow(highBand, sampleIdx, sr, 0.025)
-        const sustainHigh = rmsWindow(
-          highBand,
-          Math.min(audioBuffer.length - 1, sampleIdx + sustainOffset),
-          sr, 0.08,
-        )
-        const highSustained = attackHigh > 0.002 && sustainHigh > attackHigh * 0.28
-
-        if (hiR > 0.48) {
-          natural = highSustained ? 'crash' : 'hihat'
-        } else if (hiR > 0.38 && highSustained) {
-          natural = hiR > 0.50 ? 'crash' : 'open-hihat'
-        } else if (hiR > 0.38) {
-          natural = 'hihat'
-        } else if (subR > 0.30 || (lowMidR > 0.26 && hiR < 0.30 && subR + lowMidR > 0.36)) {
-          natural = midR > 0.30 ? 'tom' : 'kick'
-        } else if (midR > 0.48 && subR < 0.12) {
-          natural = 'rim'
-        } else if (midR > 0.28 && subR < 0.25) {
-          natural = 'snare'
-        } else {
-          natural = 'clap'
-        }
+        natural = 'clap'
       }
 
       let type: BeatType = natural
@@ -491,57 +457,3 @@ export async function analyzeBeats(
   return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
 }
 
-// ── Calibration builder ───────────────────────────────────────────────────────
-
-// Record the user making a specific sound, run onset detection, crop the
-// loudest clean hit, compute a 5-band spectral fingerprint for classification.
-export async function buildCalibrationSample(
-  audioBuffer: AudioBuffer,
-  type: BeatType,
-): Promise<{ sample: CalibrationSample; hitCount: number } | null> {
-  // Detect onsets, forcing all hits to this type via allowedTypes
-  const result = await analyzeBeats(audioBuffer, { allowedTypes: [type] })
-  if (result.hits.length === 0) return null
-
-  const sr = audioBuffer.sampleRate
-  const raw = audioBuffer.getChannelData(0)
-
-  // Pick the hit with the highest velocity — clearest, most confident example
-  const best = result.hits.reduce((a, b) => b.velocity > a.velocity ? b : a)
-
-  // Crop a 300ms window starting 5ms before the onset
-  const startSample = Math.max(0, Math.floor(best.time * sr) - Math.floor(0.005 * sr))
-  const cropLen = Math.min(audioBuffer.length - startSample, Math.floor(0.30 * sr))
-
-  const offCtx = new OfflineAudioContext(1, cropLen, sr)
-  const cropped = offCtx.createBuffer(1, cropLen, sr)
-  cropped.getChannelData(0).set(raw.subarray(startSample, startSample + cropLen))
-
-  // Compute the same 5-band fingerprint used during classification
-  const [subBand, lowMidBand, midBand, hiMidBand, highBand] = await Promise.all([
-    renderFiltered(cropped, 'lowpass',  150, 0.7),
-    renderFiltered(cropped, 'bandpass', 400, 1.2),
-    renderFiltered(cropped, 'bandpass', 1400, 1.0),
-    renderFiltered(cropped, 'bandpass', 5000, 1.0),
-    renderFiltered(cropped, 'highpass', 9000, 0.7),
-  ])
-
-  function rms(data: Float32Array): number {
-    let s = 0
-    for (let i = 0; i < data.length; i++) s += data[i] * data[i]
-    return Math.sqrt(s / Math.max(1, data.length))
-  }
-
-  const fingerprint = new Float32Array([
-    rms(subBand), rms(lowMidBand), rms(midBand), rms(hiMidBand), rms(highBand),
-  ])
-  // Normalize to unit vector for cosine similarity
-  let norm = 0
-  for (const v of fingerprint) norm += v * v
-  norm = Math.sqrt(norm) || 1
-  for (let i = 0; i < fingerprint.length; i++) fingerprint[i] /= norm
-
-  console.log(`[Calibration] ${type}: ${result.hits.length} hits detected, fingerprint:`, fingerprint)
-
-  return { sample: { buffer: cropped, fingerprint }, hitCount: result.hits.length }
-}

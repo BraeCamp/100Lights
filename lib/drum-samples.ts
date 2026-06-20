@@ -1,7 +1,6 @@
 /**
- * Drum synthesis packs for Beat Lab.
- * "synth" = digital synthesis   "808" = TR-808-style richer synthesis
- * All functions accept a MIDI note so pitch-detected hits play at the correct frequency.
+ * Acoustic-style drum synthesis using layered Web Audio techniques.
+ * Each sound uses transient + body + texture layers to approximate real drums.
  */
 
 import type { BeatType } from './beat-analyzer'
@@ -14,329 +13,233 @@ export interface DrumPack {
 }
 
 export const DRUM_PACKS: DrumPack[] = [
-  { id: 'synth', name: 'Synth' },
-  { id: '808',   name: '808'   },
+  { id: 'synth', name: 'Acoustic' },
 ]
 
-function midiToHz(note: number): number {
-  return 440 * Math.pow(2, (note - 69) / 12)
-}
+// ── Kick ──────────────────────────────────────────────────────────────────────
 
-// ── Synth pack ────────────────────────────────────────────────────────────────
+function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number) {
+  const dur = Math.max(0.18, Math.min(0.55, maxDur))
 
-function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number, note: number) {
-  const base = midiToHz(Math.max(24, Math.min(60, note)))
-  const dur = Math.max(0.12, Math.min(0.45, maxDur))
-  const osc = ctx.createOscillator()
-  const g = ctx.createGain()
-  osc.connect(g); g.connect(ctx.destination)
-  osc.frequency.setValueAtTime(base * 6, when)
-  osc.frequency.exponentialRampToValueAtTime(base, when + 0.12)
-  g.gain.setValueAtTime(v * 0.9, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when); osc.stop(when + dur + 0.05)
-}
+  // Body — sine sweep from ~160 Hz down to ~42 Hz (the "whomp")
+  const body = ctx.createOscillator()
+  const bodyGain = ctx.createGain()
+  body.type = 'sine'
+  body.frequency.setValueAtTime(160, when)
+  body.frequency.exponentialRampToValueAtTime(42, when + 0.065)
+  bodyGain.gain.setValueAtTime(v * 1.0, when)
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  body.connect(bodyGain); bodyGain.connect(ctx.destination)
+  body.start(when); body.stop(when + dur + 0.05)
 
-function synthSnare(ctx: AudioContext, when: number, v: number, note: number) {
-  const toneHz = midiToHz(Math.max(36, Math.min(84, note)))
-  const len = Math.floor(ctx.sampleRate * 0.18)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
+  // Click — high-to-mid pitch sweep (the beater "thwack")
+  const click = ctx.createOscillator()
+  const clickGain = ctx.createGain()
+  click.type = 'sine'
+  click.frequency.setValueAtTime(650, when)
+  click.frequency.exponentialRampToValueAtTime(100, when + 0.028)
+  clickGain.gain.setValueAtTime(v * 0.85, when)
+  clickGain.gain.exponentialRampToValueAtTime(0.001, when + 0.048)
+  click.connect(clickGain); clickGain.connect(ctx.destination)
+  click.start(when); click.stop(when + 0.055)
+
+  // Noise transient — beater impact texture, low-passed
+  const nLen = Math.floor(ctx.sampleRate * 0.022)
+  const nBuf = ctx.createBuffer(1, nLen, ctx.sampleRate)
   const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource(); noise.buffer = nBuf
-  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 1800; nf.Q.value = 0.6
-  const ng = ctx.createGain()
-  noise.connect(nf); nf.connect(ng); ng.connect(ctx.destination)
-  ng.gain.setValueAtTime(v * 0.6, when)
-  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.18)
-  noise.start(when)
-  const osc = ctx.createOscillator(); const tg = ctx.createGain()
-  osc.connect(tg); tg.connect(ctx.destination)
-  osc.frequency.value = toneHz
-  tg.gain.setValueAtTime(v * 0.35, when)
-  tg.gain.exponentialRampToValueAtTime(0.001, when + 0.07)
-  osc.start(when); osc.stop(when + 0.1)
+  for (let i = 0; i < nLen; i++) nd[i] = (Math.random() * 2 - 1) * (1 - i / nLen)
+  const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf
+  const nFilt = ctx.createBiquadFilter(); nFilt.type = 'lowpass'; nFilt.frequency.value = 180
+  const nGain = ctx.createGain(); nGain.gain.value = v * 0.45
+  nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(ctx.destination)
+  nSrc.start(when)
 }
 
-function synthHihat(ctx: AudioContext, when: number, v: number, note: number) {
-  const scale = Math.pow(2, (note - 60) / 12)
-  const len = Math.floor(ctx.sampleRate * 0.055)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-  const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource(); noise.buffer = nBuf
-  const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 8000 * scale
-  const g = ctx.createGain()
-  noise.connect(f); f.connect(g); g.connect(ctx.destination)
-  g.gain.setValueAtTime(v * 0.3, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.055)
-  noise.start(when)
+// ── Snare ─────────────────────────────────────────────────────────────────────
+
+function synthSnare(ctx: AudioContext, when: number, v: number) {
+  // Wire buzz — the snare wire rattle (bandpass noise 1–8 kHz)
+  const wireLen = Math.floor(ctx.sampleRate * 0.19)
+  const wireBuf = ctx.createBuffer(1, wireLen, ctx.sampleRate)
+  const wd = wireBuf.getChannelData(0)
+  for (let i = 0; i < wireLen; i++) wd[i] = Math.random() * 2 - 1
+  const wireSrc = ctx.createBufferSource(); wireSrc.buffer = wireBuf
+  const wireHp = ctx.createBiquadFilter(); wireHp.type = 'highpass'; wireHp.frequency.value = 1100
+  const wireBp = ctx.createBiquadFilter(); wireBp.type = 'bandpass'; wireBp.frequency.value = 4500; wireBp.Q.value = 0.5
+  const wireGain = ctx.createGain()
+  wireGain.gain.setValueAtTime(v * 0.72, when)
+  wireGain.gain.exponentialRampToValueAtTime(0.001, when + 0.17)
+  wireSrc.connect(wireHp); wireHp.connect(wireBp); wireBp.connect(wireGain); wireGain.connect(ctx.destination)
+  wireSrc.start(when)
+
+  // Head tone — drum shell resonance (triangle sweep ~280→180 Hz)
+  const head = ctx.createOscillator()
+  const headGain = ctx.createGain()
+  head.type = 'triangle'
+  head.frequency.setValueAtTime(280, when)
+  head.frequency.exponentialRampToValueAtTime(185, when + 0.035)
+  headGain.gain.setValueAtTime(v * 0.5, when)
+  headGain.gain.exponentialRampToValueAtTime(0.001, when + 0.07)
+  head.connect(headGain); headGain.connect(ctx.destination)
+  head.start(when); head.stop(when + 0.08)
+
+  // Stick crack — very short broadband burst
+  const cLen = Math.floor(ctx.sampleRate * 0.004)
+  const cBuf = ctx.createBuffer(1, cLen, ctx.sampleRate)
+  const cd = cBuf.getChannelData(0)
+  for (let i = 0; i < cLen; i++) cd[i] = (Math.random() * 2 - 1) * (1 - i / cLen)
+  const cSrc = ctx.createBufferSource(); cSrc.buffer = cBuf
+  const cBp = ctx.createBiquadFilter(); cBp.type = 'bandpass'; cBp.frequency.value = 7000; cBp.Q.value = 0.4
+  const cGain = ctx.createGain(); cGain.gain.value = v * 0.65
+  cSrc.connect(cBp); cBp.connect(cGain); cGain.connect(ctx.destination)
+  cSrc.start(when)
 }
 
-function synthOpenHihat(ctx: AudioContext, when: number, v: number, note: number) {
-  const scale = Math.pow(2, (note - 60) / 12)
-  const dur = 0.38
-  const len = Math.floor(ctx.sampleRate * dur)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-  const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource(); noise.buffer = nBuf
-  const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 7500 * scale
-  const g = ctx.createGain()
-  noise.connect(f); f.connect(g); g.connect(ctx.destination)
-  g.gain.setValueAtTime(v * 0.28, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  noise.start(when)
-}
+// ── Hi-hat (closed) ───────────────────────────────────────────────────────────
+// Uses 6 metallic oscillators at cymbal-like frequency ratios — same technique
+// as the classic TR-808 which is the most realistic achievable in Web Audio.
 
-function synthClap(ctx: AudioContext, when: number, v: number, note: number) {
-  const toneHz = midiToHz(Math.max(36, Math.min(84, note)))
-  for (const off of [0, 0.01, 0.022]) {
-    const t = when + off
-    const len = Math.floor(ctx.sampleRate * 0.06)
-    const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-    const nd = nBuf.getChannelData(0)
-    for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-    const noise = ctx.createBufferSource(); noise.buffer = nBuf
-    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = toneHz * 2; f.Q.value = 0.8
-    const g = ctx.createGain()
-    noise.connect(f); f.connect(g); g.connect(ctx.destination)
-    g.gain.setValueAtTime(v * 0.5, t)
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.06)
-    noise.start(t)
+const HAT_FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7]
+
+function synthHihat(ctx: AudioContext, when: number, v: number) {
+  const dur = 0.062
+  const mix = ctx.createGain(); mix.gain.value = v * 0.07; mix.connect(ctx.destination)
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7800; hp.connect(mix)
+  const env = ctx.createGain(); env.connect(hp)
+  env.gain.setValueAtTime(1, when)
+  env.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  for (const f of HAT_FREQS) {
+    const osc = ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f
+    osc.connect(env); osc.start(when); osc.stop(when + dur + 0.005)
   }
 }
+
+// ── Hi-hat (open) ─────────────────────────────────────────────────────────────
+
+function synthOpenHihat(ctx: AudioContext, when: number, v: number) {
+  const dur = 0.42
+  const mix = ctx.createGain(); mix.gain.value = v * 0.065; mix.connect(ctx.destination)
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7200; hp.connect(mix)
+  const env = ctx.createGain(); env.connect(hp)
+  env.gain.setValueAtTime(1, when)
+  env.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  for (const f of HAT_FREQS) {
+    const osc = ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f
+    osc.connect(env); osc.start(when); osc.stop(when + dur + 0.01)
+  }
+}
+
+// ── Clap ──────────────────────────────────────────────────────────────────────
+// Real claps are 3–5 closely-spaced broadband noise bursts.
+
+function synthClap(ctx: AudioContext, when: number, v: number) {
+  const bursts: [number, number][] = [[0, 1.0], [0.011, 0.85], [0.024, 0.75], [0.042, 0.60]]
+  for (const [off, amp] of bursts) {
+    const t = when + off
+    const len = Math.floor(ctx.sampleRate * 0.065)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const d = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
+    const src = ctx.createBufferSource(); src.buffer = buf
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(v * amp * 0.68, t)
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.065)
+    src.connect(hp); hp.connect(g); g.connect(ctx.destination)
+    src.start(t)
+  }
+}
+
+// ── Tom ───────────────────────────────────────────────────────────────────────
 
 function synthTom(ctx: AudioContext, when: number, v: number, note: number) {
-  const base = midiToHz(Math.max(36, Math.min(72, note)))
-  const dur = 0.22
-  const osc = ctx.createOscillator()
-  const g = ctx.createGain()
-  osc.connect(g); g.connect(ctx.destination)
-  osc.frequency.setValueAtTime(base * 2.5, when)
-  osc.frequency.exponentialRampToValueAtTime(base, when + 0.06)
-  g.gain.setValueAtTime(v * 0.75, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when); osc.stop(when + dur + 0.02)
+  const fundamental = 440 * Math.pow(2, (note - 69) / 12)
+  const f0 = Math.max(60, Math.min(180, fundamental))
+  const dur = 0.26
+
+  // Body sine — pitched and decaying
+  const body = ctx.createOscillator()
+  const bodyGain = ctx.createGain()
+  body.type = 'sine'
+  body.frequency.setValueAtTime(f0 * 3.2, when)
+  body.frequency.exponentialRampToValueAtTime(f0, when + 0.04)
+  bodyGain.gain.setValueAtTime(v * 0.88, when)
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  body.connect(bodyGain); bodyGain.connect(ctx.destination)
+  body.start(when); body.stop(when + dur + 0.02)
+
+  // Stick transient
+  const cLen = Math.floor(ctx.sampleRate * 0.018)
+  const cBuf = ctx.createBuffer(1, cLen, ctx.sampleRate)
+  const cd = cBuf.getChannelData(0)
+  for (let i = 0; i < cLen; i++) cd[i] = (Math.random() * 2 - 1) * (1 - i / cLen)
+  const cSrc = ctx.createBufferSource(); cSrc.buffer = cBuf
+  const cLp = ctx.createBiquadFilter(); cLp.type = 'lowpass'; cLp.frequency.value = 300
+  const cGain = ctx.createGain(); cGain.gain.value = v * 0.4
+  cSrc.connect(cLp); cLp.connect(cGain); cGain.connect(ctx.destination)
+  cSrc.start(when)
 }
 
-function synthCrash(ctx: AudioContext, when: number, v: number, note: number) {
-  const scale = Math.pow(2, (note - 60) / 12)
-  const dur = 1.1
-  const len = Math.floor(ctx.sampleRate * dur)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
+// ── Crash cymbal ──────────────────────────────────────────────────────────────
+
+const CRASH_FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7, 1024.5, 1312.8]
+
+function synthCrash(ctx: AudioContext, when: number, v: number) {
+  const dur = 1.5
+
+  // Metallic oscillator cluster
+  const mix = ctx.createGain(); mix.gain.value = v * 0.052; mix.connect(ctx.destination)
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3800; hp.connect(mix)
+  const env = ctx.createGain(); env.connect(hp)
+  env.gain.setValueAtTime(1, when)
+  env.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  for (const f of CRASH_FREQS) {
+    const osc = ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f
+    osc.connect(env); osc.start(when); osc.stop(when + dur + 0.02)
+  }
+
+  // Broadband noise wash underneath
+  const nLen = Math.floor(ctx.sampleRate * 0.7)
+  const nBuf = ctx.createBuffer(1, nLen, ctx.sampleRate)
   const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource(); noise.buffer = nBuf
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3500 * scale
-  const g = ctx.createGain()
-  noise.connect(hp); hp.connect(g); g.connect(ctx.destination)
-  g.gain.setValueAtTime(v * 0.45, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  noise.start(when)
+  for (let i = 0; i < nLen; i++) nd[i] = Math.random() * 2 - 1
+  const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf
+  const nHp = ctx.createBiquadFilter(); nHp.type = 'highpass'; nHp.frequency.value = 5000
+  const nGain = ctx.createGain()
+  nGain.gain.setValueAtTime(v * 0.12, when)
+  nGain.gain.exponentialRampToValueAtTime(0.001, when + 0.7)
+  nSrc.connect(nHp); nHp.connect(nGain); nGain.connect(ctx.destination)
+  nSrc.start(when)
 }
 
-function synthRim(ctx: AudioContext, when: number, v: number, note: number) {
-  const hz = midiToHz(Math.max(48, Math.min(84, note)))
-  const dur = 0.038
-  const osc = ctx.createOscillator(); osc.type = 'square'
-  const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = hz * 3; f.Q.value = 2.5
-  const g = ctx.createGain()
-  osc.connect(f); f.connect(g); g.connect(ctx.destination)
-  osc.frequency.value = hz
-  g.gain.setValueAtTime(v * 0.65, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when); osc.stop(when + dur + 0.005)
-}
+// ── Rim shot ──────────────────────────────────────────────────────────────────
 
-function synthOther(ctx: AudioContext, when: number, v: number, note: number) {
-  const hz = midiToHz(Math.max(36, Math.min(84, note)))
-  const osc = ctx.createOscillator(); osc.type = 'triangle'
-  const g = ctx.createGain()
-  osc.connect(g); g.connect(ctx.destination)
-  osc.frequency.value = hz
-  g.gain.setValueAtTime(v * 0.35, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.12)
-  osc.start(when); osc.stop(when + 0.14)
-}
-
-// ── 808 pack ──────────────────────────────────────────────────────────────────
-
-function kick808(ctx: AudioContext, when: number, v: number, maxDur: number, note: number) {
-  const base = midiToHz(Math.max(24, Math.min(60, note)))
-  const dur = Math.max(0.15, Math.min(0.8, maxDur))
+function synthRim(ctx: AudioContext, when: number, v: number) {
+  // Sharp pitched click with quick decay
   const osc = ctx.createOscillator()
-  const g = ctx.createGain()
-  osc.connect(g); g.connect(ctx.destination)
-  osc.frequency.setValueAtTime(base * 8, when)
-  osc.frequency.exponentialRampToValueAtTime(base * 1.1, when + 0.04)
-  osc.frequency.exponentialRampToValueAtTime(base * 0.7, when + 0.22)
-  g.gain.setValueAtTime(v, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when); osc.stop(when + dur + 0.05)
-  const click = ctx.createOscillator(); click.type = 'square'; click.frequency.value = 1600
-  const cg = ctx.createGain()
-  click.connect(cg); cg.connect(ctx.destination)
-  cg.gain.setValueAtTime(v * 0.3, when)
-  cg.gain.exponentialRampToValueAtTime(0.001, when + 0.007)
-  click.start(when); click.stop(when + 0.01)
-}
+  const gain = ctx.createGain()
+  osc.type = 'square'
+  osc.frequency.setValueAtTime(1400, when)
+  osc.frequency.exponentialRampToValueAtTime(600, when + 0.008)
+  gain.gain.setValueAtTime(v * 0.55, when)
+  gain.gain.exponentialRampToValueAtTime(0.001, when + 0.032)
+  osc.connect(gain); gain.connect(ctx.destination)
+  osc.start(when); osc.stop(when + 0.038)
 
-function snare808(ctx: AudioContext, when: number, v: number, note: number) {
-  const toneHz = midiToHz(Math.max(36, Math.min(84, note)))
-  const len = Math.floor(ctx.sampleRate * 0.22)
-  const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
+  // Short noise burst for texture
+  const nLen = Math.floor(ctx.sampleRate * 0.006)
+  const nBuf = ctx.createBuffer(1, nLen, ctx.sampleRate)
   const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < len; i++) nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.28))
-  const noise = ctx.createBufferSource(); noise.buffer = nBuf
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 280
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000
-  const ng = ctx.createGain()
-  noise.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(ctx.destination)
-  ng.gain.setValueAtTime(v * 0.8, when)
-  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.22)
-  noise.start(when)
-  const osc = ctx.createOscillator(); const tg = ctx.createGain()
-  osc.connect(tg); tg.connect(ctx.destination)
-  osc.frequency.setValueAtTime(toneHz * 1.4, when)
-  osc.frequency.exponentialRampToValueAtTime(toneHz * 0.6, when + 0.1)
-  tg.gain.setValueAtTime(v * 0.5, when)
-  tg.gain.exponentialRampToValueAtTime(0.001, when + 0.1)
-  osc.start(when); osc.stop(when + 0.12)
+  for (let i = 0; i < nLen; i++) nd[i] = (Math.random() * 2 - 1) * (1 - i / nLen)
+  const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf
+  const nBp = ctx.createBiquadFilter(); nBp.type = 'bandpass'; nBp.frequency.value = 2500; nBp.Q.value = 1.2
+  const nGain = ctx.createGain(); nGain.gain.value = v * 0.45
+  nSrc.connect(nBp); nBp.connect(nGain); nGain.connect(ctx.destination)
+  nSrc.start(when)
 }
 
-function hihat808(ctx: AudioContext, when: number, v: number, note: number) {
-  const FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7]
-  const scale = Math.pow(2, (note - 60) / 12)
-  const dur = 0.065
-  const mix = ctx.createGain(); mix.gain.value = v * 0.065
-  mix.connect(ctx.destination)
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7500
-  hp.connect(mix)
-  const eg = ctx.createGain()
-  eg.connect(hp)
-  eg.gain.setValueAtTime(1, when)
-  eg.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  for (const f of FREQS) {
-    const osc = ctx.createOscillator(); osc.type = 'square'
-    osc.frequency.value = f * scale
-    osc.connect(eg)
-    osc.start(when); osc.stop(when + dur + 0.005)
-  }
-}
-
-function openHihat808(ctx: AudioContext, when: number, v: number, note: number) {
-  const FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7]
-  const scale = Math.pow(2, (note - 60) / 12)
-  const dur = 0.45
-  const mix = ctx.createGain(); mix.gain.value = v * 0.065
-  mix.connect(ctx.destination)
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000
-  hp.connect(mix)
-  const eg = ctx.createGain()
-  eg.connect(hp)
-  eg.gain.setValueAtTime(1, when)
-  eg.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  for (const f of FREQS) {
-    const osc = ctx.createOscillator(); osc.type = 'square'
-    osc.frequency.value = f * scale
-    osc.connect(eg)
-    osc.start(when); osc.stop(when + dur + 0.01)
-  }
-}
-
-function clap808(ctx: AudioContext, when: number, v: number, note: number) {
-  const toneHz = midiToHz(Math.max(36, Math.min(84, note)))
-  for (const [off, amp] of [[0, 1], [0.012, 0.8], [0.028, 0.7], [0.048, 0.5]] as [number, number][]) {
-    const t = when + off
-    const len = Math.floor(ctx.sampleRate * 0.08)
-    const nBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-    const nd = nBuf.getChannelData(0)
-    for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1
-    const noise = ctx.createBufferSource(); noise.buffer = nBuf
-    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = toneHz * 2; f.Q.value = 0.7
-    const g = ctx.createGain()
-    noise.connect(f); f.connect(g); g.connect(ctx.destination)
-    g.gain.setValueAtTime(v * amp * 0.65, t)
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.08)
-    noise.start(t)
-  }
-}
-
-function tom808(ctx: AudioContext, when: number, v: number, note: number) {
-  const base = midiToHz(Math.max(36, Math.min(72, note)))
-  const dur = 0.30
-  const osc = ctx.createOscillator()
-  const g = ctx.createGain()
-  osc.connect(g); g.connect(ctx.destination)
-  osc.frequency.setValueAtTime(base * 4, when)
-  osc.frequency.exponentialRampToValueAtTime(base * 1.2, when + 0.03)
-  osc.frequency.exponentialRampToValueAtTime(base * 0.9, when + 0.14)
-  g.gain.setValueAtTime(v * 0.85, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when); osc.stop(when + dur + 0.02)
-  // click
-  const ck = ctx.createOscillator(); ck.type = 'square'; ck.frequency.value = 1200
-  const cg = ctx.createGain()
-  ck.connect(cg); cg.connect(ctx.destination)
-  cg.gain.setValueAtTime(v * 0.2, when)
-  cg.gain.exponentialRampToValueAtTime(0.001, when + 0.008)
-  ck.start(when); ck.stop(when + 0.012)
-}
-
-function crash808(ctx: AudioContext, when: number, v: number, note: number) {
-  const FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7, 1024.5, 1312.8]
-  const scale = Math.pow(2, (note - 60) / 12)
-  const dur = 1.6
-  const mix = ctx.createGain(); mix.gain.value = v * 0.05
-  mix.connect(ctx.destination)
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4000
-  hp.connect(mix)
-  const eg = ctx.createGain()
-  eg.connect(hp)
-  eg.gain.setValueAtTime(1, when)
-  eg.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  for (const f of FREQS) {
-    const osc = ctx.createOscillator(); osc.type = 'square'
-    osc.frequency.value = f * scale
-    osc.connect(eg)
-    osc.start(when); osc.stop(when + dur + 0.02)
-  }
-  // noise body
-  const nlen = Math.floor(ctx.sampleRate * 0.6)
-  const nBuf = ctx.createBuffer(1, nlen, ctx.sampleRate)
-  const nd = nBuf.getChannelData(0)
-  for (let i = 0; i < nlen; i++) nd[i] = Math.random() * 2 - 1
-  const noise = ctx.createBufferSource(); noise.buffer = nBuf
-  const ng = ctx.createGain()
-  noise.connect(ng); ng.connect(ctx.destination)
-  ng.gain.setValueAtTime(v * 0.1, when)
-  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.6)
-  noise.start(when)
-}
-
-function rim808(ctx: AudioContext, when: number, v: number, note: number) {
-  const hz = midiToHz(Math.max(48, Math.min(84, note)))
-  const dur = 0.038
-  const osc = ctx.createOscillator(); osc.type = 'square'
-  const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = hz * 2.5; f.Q.value = 2.5
-  const g = ctx.createGain()
-  osc.connect(f); f.connect(g); g.connect(ctx.destination)
-  osc.frequency.value = hz
-  g.gain.setValueAtTime(v * 0.7, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  osc.start(when); osc.stop(when + dur + 0.005)
-}
-
-function other808(ctx: AudioContext, when: number, v: number, note: number) {
-  const hz = midiToHz(Math.max(36, Math.min(84, note)))
-  const osc = ctx.createOscillator(); osc.type = 'triangle'
-  const g = ctx.createGain()
-  osc.connect(g); g.connect(ctx.destination)
-  osc.frequency.value = hz
-  g.gain.setValueAtTime(v * 0.45, when)
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.18)
-  osc.start(when); osc.stop(when + 0.2)
+function synthOther(ctx: AudioContext, when: number, v: number) {
+  synthClap(ctx, when, v)
 }
 
 // ── Unified API ───────────────────────────────────────────────────────────────
@@ -363,22 +266,6 @@ const DEFAULT_NOTE: Record<BeatType, number> = {
   other:             60,
 }
 
-// Play a raw AudioBuffer (a calibration recording) at the given time + velocity
-export function playCalibrationBuffer(
-  ctx: AudioContext,
-  buffer: AudioBuffer,
-  when: number,
-  velocity: number,
-): void {
-  const src = ctx.createBufferSource()
-  src.buffer = buffer
-  const g = ctx.createGain()
-  g.gain.value = Math.min(1, Math.max(0, velocity))
-  src.connect(g)
-  g.connect(ctx.destination)
-  src.start(when)
-}
-
 export function playDrumHit(
   ctx: AudioContext,
   pack: PackId,
@@ -387,31 +274,17 @@ export function playDrumHit(
   velocity: number,
   note: number | undefined,
   maxKickDur = 0.45,
-) {
+): void {
   const n = note ?? DEFAULT_NOTE[type]
-  if (pack === '808') {
-    switch (type) {
-      case 'kick':        return kick808(ctx, when, velocity, maxKickDur, n)
-      case 'snare':       return snare808(ctx, when, velocity, n)
-      case 'hihat':       return hihat808(ctx, when, velocity, n)
-      case 'open-hihat':  return openHihat808(ctx, when, velocity, n)
-      case 'clap':        return clap808(ctx, when, velocity, n)
-      case 'tom':         return tom808(ctx, when, velocity, n)
-      case 'crash':       return crash808(ctx, when, velocity, n)
-      case 'rim':         return rim808(ctx, when, velocity, n)
-      default:            return other808(ctx, when, velocity, n)
-    }
-  } else {
-    switch (type) {
-      case 'kick':        return synthKick(ctx, when, velocity, maxKickDur, n)
-      case 'snare':       return synthSnare(ctx, when, velocity, n)
-      case 'hihat':       return synthHihat(ctx, when, velocity, n)
-      case 'open-hihat':  return synthOpenHihat(ctx, when, velocity, n)
-      case 'clap':        return synthClap(ctx, when, velocity, n)
-      case 'tom':         return synthTom(ctx, when, velocity, n)
-      case 'crash':       return synthCrash(ctx, when, velocity, n)
-      case 'rim':         return synthRim(ctx, when, velocity, n)
-      default:            return synthOther(ctx, when, velocity, n)
-    }
+  switch (type) {
+    case 'kick':       return synthKick(ctx, when, velocity, maxKickDur)
+    case 'snare':      return synthSnare(ctx, when, velocity)
+    case 'hihat':      return synthHihat(ctx, when, velocity)
+    case 'open-hihat': return synthOpenHihat(ctx, when, velocity)
+    case 'clap':       return synthClap(ctx, when, velocity)
+    case 'tom':        return synthTom(ctx, when, velocity, n)
+    case 'crash':      return synthCrash(ctx, when, velocity)
+    case 'rim':        return synthRim(ctx, when, velocity)
+    default:           return synthOther(ctx, when, velocity)
   }
 }

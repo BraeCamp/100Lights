@@ -18,11 +18,12 @@ export async function POST(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return Response.json({ error: 'AI not configured' }, { status: 503 })
 
-  let hits: HitInput[], enabledTypes: BeatType[]
+  let hits: HitInput[], enabledTypes: BeatType[], groundTruth: string | undefined
   try {
     const body = await req.json()
     hits = body.hits
     enabledTypes = body.enabledTypes ?? VALID_TYPES
+    groundTruth = typeof body.groundTruth === 'string' && body.groundTruth.trim() ? body.groundTruth.trim() : undefined
     if (!Array.isArray(hits) || hits.length === 0) throw new Error()
   } catch {
     return Response.json({ error: 'Invalid request' }, { status: 400 })
@@ -33,11 +34,19 @@ export async function POST(req: Request) {
     return `${String(i + 1).padStart(2)}. t=${h.time.toFixed(3)}s  cur=${h.type.padEnd(10)}  v=${h.velocity.toFixed(2)}  sub=${s.sub.toFixed(3)}  lowMid=${s.lowMid.toFixed(3)}  mid=${s.mid.toFixed(3)}  hiMid=${s.hiMid.toFixed(3)}  hi=${s.hi.toFixed(3)}`
   }).join('\n')
 
+  const groundTruthSection = groundTruth
+    ? `\nGROUND TRUTH — the user declared what they were beatboxing:
+"${groundTruth}"
+This is authoritative. Use it to correct misclassifications. Match the hit sequence to the
+declared pattern (considering timing and rhythm), then correct the labels accordingly.
+Even if spectral data is ambiguous, the declared pattern takes priority.\n`
+    : ''
+
   const prompt = `You are an expert at classifying beatbox drum sounds from spectral data.
 
 A user beatboxed a drum pattern and the app detected ${hits.length} hits. Your job is to
 review the current classifications and fix mistakes using the spectral data.
-
+${groundTruthSection}
 CRITICAL BEATBOX FACTS:
 - Human mouths CANNOT produce real sub-bass (<100 Hz). Sub values will always be low.
 - Beatbox KICKS peak in "lowMid" (150-600 Hz) — not sub. lowMid is the kick indicator.
