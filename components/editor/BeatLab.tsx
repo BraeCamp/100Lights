@@ -488,6 +488,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [zoomLevel, setZoomLevel] = useState(1)
   const [laneMenu, setLaneMenu] = useState<{ type: BeatType; x: number; y: number } | null>(null)
   const [laneMenuEdit, setLaneMenuEdit] = useState<{ label: string; color: string } | null>(null)
+  const [laneMenuChanging, setLaneMenuChanging] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [recordingTime, setRecordingTime] = useState(0)
@@ -574,6 +575,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setHits(prev => prev.filter(h => h.type !== id as BeatType))
   }
 
+  function removeLane(type: BeatType) {
+    // Works on any lane (built-in or custom); built-ins just disappear when they have no hits
+    setTypeOverrides(prev => { const n = { ...prev }; delete n[type as string]; return n })
+    setExtraLaneIds(prev => prev.filter(x => x !== type as string))
+    setHits(prev => prev.filter(h => h.type !== type))
+    if (activeLaneType === type) setActiveLaneType(null)
+  }
+
+  function reassignLane(fromType: BeatType, toType: BeatType) {
+    setHits(prev => prev.map(h => h.type === fromType ? { ...h, type: toType } : h))
+    setLaneMenu(null)
+    setLaneMenuEdit(null)
+    if (activeLaneType === fromType) setActiveLaneType(toType)
+  }
+
   // Sample pack: active AudioBuffer + rootNote per BeatType for pitch-shifted playback
   const [sampleBuffers, setSampleBuffers] = useState<Map<BeatType, AudioBuffer>>(new Map())
   const [sampleRoots,   setSampleRoots]   = useState<Map<BeatType, number>>(new Map())
@@ -645,6 +661,62 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setVoiceSynthUrl(URL.createObjectURL(wavBlob))
     } finally {
       setVoiceSynthRendering(false)
+    }
+  }
+
+  // Per-lane recording — mic button in editing toolbar records into the active lane only
+  const [laneRecording,     setLaneRecording]     = useState(false)
+  const [laneRecordingTime, setLaneRecordingTime]  = useState(0)
+  const laneRecTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const laneRecChunksRef = useRef<Blob[]>([])
+  const laneRecorderRef  = useRef<MediaRecorder | null>(null)
+
+  async function startLaneRecording() {
+    if (!activeLaneType) return
+    setError(null)
+    try {
+      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
+      laneRecChunksRef.current = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) laneRecChunksRef.current.push(e.data) }
+      recorder.start(100)
+      laneRecorderRef.current = recorder
+      setLaneRecording(true)
+      setLaneRecordingTime(0)
+      laneRecTimerRef.current = setInterval(() => setLaneRecordingTime(t => t + 0.1), 100)
+    } catch {
+      setError('Microphone access denied.')
+    }
+  }
+
+  async function stopLaneRecording() {
+    const recorder = laneRecorderRef.current
+    const type = activeLaneType
+    if (!recorder || !type) return
+    if (laneRecTimerRef.current) clearInterval(laneRecTimerRef.current)
+    recorder.stop()
+    recorder.stream.getTracks().forEach(t => t.stop())
+    await new Promise<void>(res => { recorder.onstop = () => res() })
+    setLaneRecording(false)
+    const blob = new Blob(laneRecChunksRef.current, { type: laneRecChunksRef.current[0]?.type ?? 'audio/webm' })
+    try {
+      const buf    = await decodeAudio(blob)
+      const result = await analyzeBeats(buf, {
+        allowedTypes:    [type],
+        referenceSounds,
+        stemMode:        false,
+      })
+      // Merge new hits into the existing set — offset time by playhead position
+      const offset = playhead
+      const newHits = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + offset, type }))
+      setHits(prev => [...prev, ...newHits])
+      // Extend duration if the new recording goes past the current end
+      if (result.duration + offset > duration) {
+        setDuration(result.duration + offset)
+        setAudioBuf(null)  // original waveform no longer covers full duration
+      }
+    } catch {
+      setError('Could not analyze the lane recording. Try again.')
     }
   }
 
@@ -1450,10 +1522,25 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {isPlaying ? <Pause size={13} fill="#fff" /> : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
             </button>
 
-            {/* Instrument family badge */}
-            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-              {FAMILY_LABEL[instrumentFamily]}
-            </span>
+            {/* Per-lane mic button */}
+            {activeLaneType && !laneRecording && (
+              <button
+                onClick={startLaneRecording}
+                title={`Record into ${typeLabel(activeLaneType, typeOverrides)}`}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}
+              >
+                <Mic size={11} /> Rec
+              </button>
+            )}
+            {laneRecording && (
+              <>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', animation: 'pulse 1s ease-in-out infinite', flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#dc2626', minWidth: 40 }}>{laneRecordingTime.toFixed(1)}s</span>
+                <button onClick={stopLaneRecording} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}>
+                  <Square size={10} fill="currentColor" /> Stop
+                </button>
+              </>
+            )}
 
             {/* BPM */}
             {bpm && (
@@ -2251,11 +2338,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       {/* ── Lane right-click context menu ─────────────────────────────────── */}
       {laneMenu && (
         <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => { setLaneMenu(null); setLaneMenuEdit(null) }} onContextMenu={e => { e.preventDefault(); setLaneMenu(null); setLaneMenuEdit(null) }} />
+          <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => { setLaneMenu(null); setLaneMenuEdit(null); setLaneMenuChanging(false) }} onContextMenu={e => { e.preventDefault(); setLaneMenu(null); setLaneMenuEdit(null); setLaneMenuChanging(false) }} />
           <div style={{
             position: 'fixed', left: laneMenu.x, top: laneMenu.y, zIndex: 300,
             background: 'var(--bg-surface)', border: '1px solid var(--border)',
-            borderRadius: 10, padding: 8, minWidth: 180, boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+            borderRadius: 10, padding: 8, minWidth: 190, boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
             display: 'flex', flexDirection: 'column', gap: 2,
           }}>
             {laneMenuEdit ? (
@@ -2285,14 +2372,32 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
                 </div>
               </div>
+            ) : laneMenuChanging ? (
+              /* Change type picker */
+              <div style={{ padding: '4px 2px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px 6px' }}>
+                  <button onClick={() => setLaneMenuChanging(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, fontSize: 14, lineHeight: 1 }}>‹</button>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Change instrument to…</span>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px' }}>
+                  {allAvailableTypes.filter(t => t !== laneMenu.type).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => { reassignLane(laneMenu.type, t); setLaneMenuChanging(false) }}
+                      style={{ fontSize: 10, padding: '3px 7px', borderRadius: 4, cursor: 'pointer', background: `${typeColor(t, typeOverrides)}15`, border: `1px solid ${typeColor(t, typeOverrides)}55`, color: typeColor(t, typeOverrides), fontWeight: 600 }}
+                    >{typeLabel(t, typeOverrides)}</button>
+                  ))}
+                </div>
+              </div>
             ) : (
-              /* Menu items */
+              /* Main menu items */
               <>
                 {[
                   { label: 'Rename', action: () => setLaneMenuEdit({ label: typeLabel(laneMenu.type, typeOverrides), color: typeColor(laneMenu.type, typeOverrides) }) },
+                  { label: 'Change instrument', action: () => setLaneMenuChanging(true) },
                   { label: mutedTypes.has(laneMenu.type) ? 'Unmute' : 'Mute', action: () => { toggleMute(laneMenu.type); setLaneMenu(null) } },
-                  ...(extraLaneIds.includes(laneMenu.type)
-                    ? [{ label: 'Delete lane', action: () => { removeCustomLane(laneMenu.type); setLaneMenu(null) }, danger: true }]
+                  ...(activeLaneTypes.length > 1
+                    ? [{ label: 'Delete lane', action: () => { removeLane(laneMenu.type); setLaneMenu(null) }, danger: true }]
                     : []),
                 ].map(item => (
                   <button key={item.label} onClick={item.action}
