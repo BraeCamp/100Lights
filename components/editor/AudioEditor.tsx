@@ -76,48 +76,6 @@ function BeatTrackRow({ track }: { track: BeatTrackEntry }) {
   )
 }
 
-// ── Beat track sidebar entry ──────────────────────────────────────────────────
-
-function BeatTrackSidebarEntry({ track, index, expanded, onToggle }: {
-  track: BeatTrackEntry
-  index: number
-  expanded: boolean
-  onToggle: () => void
-}) {
-  const typeCounts = track.hits.reduce<Record<string, number>>((acc, h) => {
-    acc[h.type] = (acc[h.type] ?? 0) + 1; return acc
-  }, {})
-  return (
-    <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '8px 12px', gap: 7 }}>
-        <Drum size={11} color="var(--text-muted)" style={{ flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)' }}>
-            Beat {index + 1}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-            {track.hits.length} hits{track.bpm ? ` · ${track.bpm} BPM` : ''}
-          </div>
-        </div>
-        <button
-          onClick={onToggle}
-          style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
-        >
-          {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-        </button>
-      </div>
-      {expanded && (
-        <div style={{ padding: '0 12px 8px 30px', display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-          {Object.entries(typeCounts).map(([type, count]) => (
-            <span key={type} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-card)', border: `1px solid ${beatColor(type, track.typeOverrides)}40`, color: beatColor(type, track.typeOverrides) }}>
-              {beatLabel(type, track.typeOverrides)} ×{count}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export interface AudioEditorProps {
   projectId?: string
@@ -153,9 +111,7 @@ export default function AudioEditor({
   const rafRef      = useRef<number>(0)
 
   // Beat tracks — committed recordings from BeatLab
-  const [beatTracks, setBeatTracks]           = useState<BeatTrackEntry[]>([])
-  const [expandedBeatIds, setExpandedBeatIds] = useState<Set<string>>(new Set())
-  const [expandedAudioIds, setExpandedAudioIds] = useState<Set<string>>(new Set())
+  const [beatTracks, setBeatTracks] = useState<BeatTrackEntry[]>([])
 
   // Increment to trigger BeatLab to start recording (with song auto-play)
   const [singCount, setSingCount] = useState(0)
@@ -426,101 +382,19 @@ export default function AudioEditor({
       {/* ── Unified layout ────────────────────────────────────── */}
       <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex' }}>
 
-        {/* ── Sidebar ─────────────────────────────────────────── */}
+        {/* ── Sidebar: Sounds & Samples ───────────────────────── */}
         <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-          {/* Tracks header */}
           <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Tracks</span>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Sounds &amp; Samples</span>
             <button
               onClick={() => fileInputRef.current?.click()}
               style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer' }}
+              title="Import audio file into timeline"
             >
               <Upload size={10} /> Import
             </button>
           </div>
-
-          {/* Track list */}
-          <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-
-            {/* Audio tracks */}
-            {tracks.map(track => {
-                const isSelected = selectedId === track.id
-                const isExpanded = expandedAudioIds.has(track.id)
-                return (
-                  <div key={track.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <button
-                      onClick={() => setSelectedId(track.id)}
-                      style={{
-                        display: 'flex', alignItems: 'center', width: '100%', padding: '9px 12px',
-                        background: isSelected ? 'var(--accent-subtle)' : 'transparent',
-                        border: 'none', cursor: 'pointer', textAlign: 'left',
-                        borderLeft: `2px solid ${isSelected ? 'var(--accent)' : 'transparent'}`,
-                      }}
-                    >
-                      <Music size={11} color={isSelected ? 'var(--accent-light)' : 'var(--text-muted)'} style={{ flexShrink: 0, marginRight: 7 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 500, color: isSelected ? 'var(--accent-light)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {track.name}
-                        </div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', gap: 5, alignItems: 'center' }}>
-                          {fmtTime(track.duration)}
-                          <UploadDot status={track.uploadStatus} />
-                          {track.uploadStatus === 'uploading' && <span style={{ color: 'var(--accent-light)' }}>uploading…</span>}
-                          {track.uploadStatus === 'error' && <span style={{ color: '#ef4444' }}>failed</span>}
-                        </div>
-                      </div>
-                      <button
-                        onClick={e => {
-                          e.stopPropagation()
-                          setExpandedAudioIds(prev => {
-                            const n = new Set(prev); n.has(track.id) ? n.delete(track.id) : n.add(track.id); return n
-                          })
-                        }}
-                        style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
-                      >
-                        {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                      </button>
-                    </button>
-                    {isExpanded && (
-                      <div style={{ padding: '4px 12px 8px 30px' }}>
-                        <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>
-                          {track.contentType || 'audio'} · {fmtTime(track.duration)}
-                        </p>
-                        {track.r2Key && (
-                          <p style={{ fontSize: 9, color: 'var(--border-light)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: '2px 0 0' }}>
-                            {track.r2Key}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-
-            {/* Beat tracks */}
-            {beatTracks.length > 0 && (
-              <>
-                <div style={{ padding: '6px 12px 4px', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Beat Tracks</span>
-                </div>
-                {beatTracks.map((track, i) => (
-                  <BeatTrackSidebarEntry
-                    key={track.id}
-                    track={track}
-                    index={i}
-                    expanded={expandedBeatIds.has(track.id)}
-                    onToggle={() => setExpandedBeatIds(prev => {
-                      const n = new Set(prev); n.has(track.id) ? n.delete(track.id) : n.add(track.id); return n
-                    })}
-                  />
-                ))}
-              </>
-            )}
-          </div>
-
-          {/* ── Sound Library ───────────────────────────────────── */}
-          <SoundLibrary />
+          <SoundLibrary embedded />
         </div>
 
         {/* ── Right column: track timeline + BeatLab workspace + transport ── */}

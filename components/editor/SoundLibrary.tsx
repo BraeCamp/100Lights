@@ -253,10 +253,9 @@ function AddSoundModal({ onClose, onAdded }: { onClose: () => void; onAdded: () 
 }
 
 // ── Main SoundLibrary panel ───────────────────────────────────────────────────
-export default function SoundLibrary() {
-  const [entries, setEntries]     = useState<LibraryEntry[]>([])
-  const [showAdd, setShowAdd]     = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
+export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
+  const [entries, setEntries] = useState<LibraryEntry[]>([])
+  const [showAdd, setShowAdd] = useState(false)
 
   const load = useCallback(async () => {
     const all = await libraryGetAll()
@@ -280,50 +279,57 @@ export default function SoundLibrary() {
     setEntries(prev => prev.map(e => e.id === id ? { ...e, category: cat } : e))
   }
 
-  return (
+  const content = (
     <>
-      {/* Section header */}
-      <div style={{ padding: '8px 12px 6px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <button onClick={() => setCollapsed(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          {collapsed ? <ChevronRight size={10} color="var(--text-muted)" /> : <ChevronDown size={10} color="var(--text-muted)" />}
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Library</span>
-          {entries.length > 0 && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>({entries.length})</span>}
-        </button>
+      {/* Add button row */}
+      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{entries.length} sound{entries.length !== 1 ? 's' : ''}</span>
         <button
           onClick={() => setShowAdd(true)}
-          title="Add sound to library"
-          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}
+          title="Record or upload a sound"
+          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '2px 7px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}
         >
-          <Plus size={9} /> Add
+          <Plus size={9} /> Add sound
         </button>
       </div>
 
       {/* Entries */}
-      {!collapsed && (
-        <div style={{ overflowY: 'auto', maxHeight: 220 }}>
-          {entries.length === 0 ? (
-            <div style={{ padding: '12px', textAlign: 'center' }}>
-              <p style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                No sounds yet. Add a recorded or uploaded sample.
-              </p>
-            </div>
-          ) : (
-            entries.map(entry => (
-              <EntryRow
-                key={entry.id}
-                entry={entry}
-                onDelete={handleDelete}
-                onRename={handleRename}
-                onCategoryChange={handleCategoryChange}
-              />
-            ))
-          )}
-        </div>
-      )}
+      <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+        {entries.length === 0 ? (
+          <div style={{ padding: '20px 14px', textAlign: 'center' }}>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+              No sounds yet.<br />Record or upload a sample to build your library.
+            </p>
+          </div>
+        ) : (
+          entries.map(entry => (
+            <EntryRow
+              key={entry.id}
+              entry={entry}
+              onDelete={handleDelete}
+              onRename={handleRename}
+              onCategoryChange={handleCategoryChange}
+            />
+          ))
+        )}
+      </div>
 
       {showAdd && (
         <AddSoundModal onClose={() => setShowAdd(false)} onAdded={load} />
       )}
     </>
+  )
+
+  if (embedded) {
+    return <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>{content}</div>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ padding: '8px 12px 6px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Sounds &amp; Samples</span>
+      </div>
+      {content}
+    </div>
   )
 }
