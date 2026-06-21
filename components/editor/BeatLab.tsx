@@ -186,25 +186,105 @@ function Waveform({ audioBuffer, pxWidth }: { audioBuffer: AudioBuffer; pxWidth:
 
 // ── Time ruler ────────────────────────────────────────────────────────────────
 
-function RulerTicks({ duration, px, onSeek }: { duration: number; px: number; onSeek?: (t: number) => void }) {
-  const step = duration <= 4 ? 0.5 : duration <= 10 ? 1 : 2
-  const ticks: number[] = []
-  for (let t = 0; t <= duration; t += step) ticks.push(t)
+function RulerTicks({
+  duration, px, bpm, abLoop, abLoopEnabled, onSeek, onAbLoopDrag,
+}: {
+  duration: number; px: number; bpm: number | null
+  abLoop: { start: number; end: number } | null
+  abLoopEnabled: boolean
+  onSeek?: (t: number) => void
+  onAbLoopDrag?: (loop: { start: number; end: number }) => void
+}) {
+  // If we have BPM, show bars+beats; otherwise fall back to time labels.
+  const beatSec  = bpm ? 60 / bpm : null
+  const barSec   = beatSec ? beatSec * 4 : null
+  const pxPerSec = px / duration
+
+  // Choose a sensible major-tick interval
+  let majSec: number
+  if (barSec && (pxPerSec * barSec) >= 40) {
+    majSec = barSec        // bar lines when bars are wide enough
+  } else if (barSec && (pxPerSec * barSec * 4) >= 40) {
+    majSec = barSec * 4   // every 4 bars
+  } else {
+    majSec = duration <= 4 ? 0.5 : duration <= 10 ? 1 : 2
+  }
+  // Show beat sub-ticks when individual beats are ≥ 12px apart
+  const showBeats = beatSec != null && pxPerSec * beatSec >= 12
+
+  const ticks: Array<{ t: number; major: boolean; label: string }> = []
+  for (let t = 0; t <= duration + 0.001; t += majSec) {
+    const sec = Math.round(t * 1000) / 1000
+    let label: string
+    if (barSec) {
+      const bar = Math.round(sec / barSec) + 1
+      label = `${bar}`
+    } else {
+      label = sec < 1 ? `${sec.toFixed(1)}s` : `${sec.toFixed(0)}s`
+    }
+    ticks.push({ t: sec, major: true, label })
+    // Beat sub-ticks between major ticks
+    if (showBeats && beatSec) {
+      for (let b = 1; b < majSec / beatSec - 0.01; b++) {
+        const bt = Math.round((sec + b * beatSec) * 1000) / 1000
+        if (bt < duration) ticks.push({ t: bt, major: false, label: '' })
+      }
+    }
+  }
+
+  function posFromEvent(e: React.MouseEvent): number {
+    const rect = e.currentTarget.getBoundingClientRect()
+    return Math.max(0, Math.min(duration, ((e.clientX - rect.left) / rect.width) * duration))
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    if (!onAbLoopDrag) { if (onSeek) onSeek(posFromEvent(e)); return }
+    // Shift+drag sets the AB loop region
+    if (e.shiftKey) {
+      e.preventDefault()
+      const startT = posFromEvent(e)
+      let endT = startT
+      onAbLoopDrag({ start: startT, end: endT })
+      const move = (me: MouseEvent) => {
+        const rect = (e.target as HTMLElement).closest<HTMLElement>('[data-ruler]')?.getBoundingClientRect()
+        if (!rect) return
+        endT = Math.max(0, Math.min(duration, ((me.clientX - rect.left) / rect.width) * duration))
+        const [s, en] = endT >= startT ? [startT, endT] : [endT, startT]
+        onAbLoopDrag({ start: s, end: en })
+      }
+      const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+      window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+    } else {
+      onSeek?.(posFromEvent(e))
+    }
+  }
+
   return (
     <div
-      style={{ position: 'relative', height: 18, borderBottom: '1px solid var(--border)', cursor: onSeek ? 'pointer' : 'default' }}
-      onClick={e => {
-        if (!onSeek) return
-        const rect = e.currentTarget.getBoundingClientRect()
-        onSeek(Math.max(0, Math.min(duration, ((e.clientX - rect.left) / rect.width) * duration)))
-      }}
+      data-ruler="1"
+      style={{ position: 'relative', height: 22, borderBottom: '1px solid var(--border)', cursor: onSeek ? 'pointer' : 'default', overflow: 'hidden' }}
+      onMouseDown={handleMouseDown}
     >
-      {ticks.map(t => (
+      {/* A/B loop region highlight */}
+      {abLoop && (
+        <div style={{
+          position: 'absolute',
+          left: (abLoop.start / duration) * px,
+          width: Math.max(2, ((abLoop.end - abLoop.start) / duration) * px),
+          top: 0, bottom: 0,
+          background: abLoopEnabled ? 'rgba(251,191,36,0.18)' : 'rgba(139,92,246,0.12)',
+          borderLeft: `1px solid ${abLoopEnabled ? 'rgba(251,191,36,0.6)' : 'rgba(139,92,246,0.4)'}`,
+          borderRight: `1px solid ${abLoopEnabled ? 'rgba(251,191,36,0.6)' : 'rgba(139,92,246,0.4)'}`,
+          pointerEvents: 'none',
+        }} />
+      )}
+      {/* Ticks */}
+      {ticks.map(({ t, major, label }) => (
         <div key={t} style={{ position: 'absolute', left: (t / duration) * px, top: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none' }}>
-          <span style={{ fontSize: 9, color: 'var(--text-muted)', userSelect: 'none', whiteSpace: 'nowrap' }}>
-            {t.toFixed(t < 1 ? 1 : 0)}s
-          </span>
-          <div style={{ width: 1, height: 5, background: 'var(--border-light)', marginTop: 2 }} />
+          {major && label && (
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', userSelect: 'none', whiteSpace: 'nowrap', transform: 'translateX(-50%)', lineHeight: '13px' }}>{label}</span>
+          )}
+          <div style={{ position: 'absolute', bottom: 0, width: 1, height: major ? 6 : 4, background: major ? 'var(--border-light)' : 'var(--border)' }} />
         </div>
       ))}
     </div>
@@ -1034,6 +1114,25 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   async function startLaneRecording() {
     setError(null)
     try {
+      // Count-in: play click track for 1 bar before recording
+      if (countIn) {
+        const ebpm    = effectiveBpmRef.current
+        const beatSec = 60 / ebpm
+        const barSec  = beatSec * 4
+        const ctx     = getAudioCtx()
+        for (let beat = 0; beat < 4; beat++) {
+          const when = ctx.currentTime + beat * beatSec
+          playMetronomeClick(ctx, when, beat === 0)
+        }
+        setCountingIn(true)
+        for (let beat = 1; beat <= 4; beat++) {
+          setCountInBeat(beat)
+          await new Promise<void>(res => setTimeout(res, beatSec * 1000))
+        }
+        setCountingIn(false)
+        setCountInBeat(0)
+      }
+
       const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
       laneRecChunksRef.current = []
@@ -1046,17 +1145,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       laneRecTimerRef.current = setInterval(() => {
         setLaneRecordingTime(t => {
           const newT = t + 0.1
-          // Keep timeline at least 2s ahead of the recording cursor so the RAF
-          // playhead never reaches the end and "resets" while still recording
           const projectedEnd = laneRecStartPlayheadRef.current + newT
           setDuration(prev => Math.max(prev, projectedEnd + 2))
           return newT
         })
       }, 100)
-      // Also start beat playback from current playhead so user can hear the existing beat while recording
       startPlaybackFrom(playhead)
     } catch {
       setError('Microphone access denied.')
+      setCountingIn(false)
+      setCountInBeat(0)
     }
   }
 
@@ -1113,6 +1211,75 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   useEffect(() => {
     onHitsChange?.(hits, duration, bpm)
   }, [hits, duration, bpm]) // eslint-disable-line
+
+  // ── Tier-1 DAW features ───────────────────────────────────────────────────
+  // Master BPM (user-set; detection overrides it when analysis runs)
+  const [masterBpm, setMasterBpm] = useState(120)
+  const [bpmEditing, setBpmEditing] = useState(false)
+  const [bpmInputVal, setBpmInputVal] = useState('120')
+  const tapTimesRef = useRef<number[]>([])
+  // Effective BPM = detected bpm (from analysis) ?? user-set master
+  // Used for metronome, count-in, and bar ruler labels.
+  const effectiveBpmRef = useRef(120)
+
+  // Metronome
+  const [metronomeOn, setMetronomeOn] = useState(false)
+  const metronomeOnRef = useRef(false)
+  useEffect(() => { metronomeOnRef.current = metronomeOn }, [metronomeOn])
+
+  // Count-in (bars before recording starts)
+  const [countIn, setCountIn] = useState(false)
+  const [countingIn, setCountingIn] = useState(false)
+  const [countInBeat, setCountInBeat] = useState(0) // 1-based beat display
+
+  // A/B loop
+  const [abLoop, setAbLoop] = useState<{ start: number; end: number } | null>(null)
+  const [abLoopEnabled, setAbLoopEnabled] = useState(false)
+  const abLoopRef = useRef<{ start: number; end: number } | null>(null)
+  const abLoopEnabledRef = useRef(false)
+  useEffect(() => { abLoopRef.current = abLoop }, [abLoop])
+  useEffect(() => { abLoopEnabledRef.current = abLoopEnabled }, [abLoopEnabled])
+
+  // Keep effectiveBpm ref current
+  useEffect(() => {
+    effectiveBpmRef.current = bpm ?? masterBpm
+    setBpmInputVal(String(bpm ?? masterBpm))
+  }, [bpm, masterBpm])
+
+  function tapTempo() {
+    const now = performance.now()
+    const taps = tapTimesRef.current
+    // Reset if last tap was more than 2 seconds ago
+    if (taps.length > 0 && now - taps[taps.length - 1] > 2000) taps.length = 0
+    taps.push(now)
+    if (taps.length > 8) taps.shift()
+    if (taps.length >= 2) {
+      const intervals = taps.slice(1).map((t, i) => t - taps[i])
+      const avg = intervals.reduce((a, b) => a + b) / intervals.length
+      const newBpm = Math.round(60000 / avg)
+      if (newBpm >= 20 && newBpm <= 300) {
+        setMasterBpm(newBpm)
+        setBpm(newBpm)
+      }
+    }
+  }
+
+  function commitBpmEdit(raw: string) {
+    const n = parseInt(raw, 10)
+    if (n >= 20 && n <= 300) { setMasterBpm(n); setBpm(n) }
+    setBpmEditing(false)
+  }
+
+  function playMetronomeClick(ctx: AudioContext, when: number, accent: boolean) {
+    const osc = ctx.createOscillator()
+    const g   = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = accent ? 1500 : 1000
+    g.gain.setValueAtTime(accent ? 0.5 : 0.3, when)
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.04)
+    osc.connect(g); g.connect(ctx.destination)
+    osc.start(when); osc.stop(when + 0.05)
+  }
 
   const recorderRef    = useRef<MediaRecorder | null>(null)
   const startedSongRef = useRef(false)
@@ -1171,7 +1338,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if ((e.code === 'Delete' || e.code === 'Backspace') && !inInput && selectedClipIdRef.current) {
         setAudioClips(prev => prev.filter(c => c.id !== selectedClipIdRef.current))
         setSelectedClipId(null)
+        return
       }
+      // T → tap tempo
+      if (e.code === 'KeyT' && !inInput) { tapTempo(); return }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -1426,6 +1596,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }
     }
 
+    // Metronome: schedule click sounds at every beat position
+    if (metronomeOnRef.current) {
+      const ebpm    = effectiveBpmRef.current
+      const beatSec = 60 / ebpm
+      const firstBeat = Math.ceil((startFrom / beatSec) + 0.0001) * beatSec
+      for (let t = firstBeat; t < duration + beatSec; t += beatSec) {
+        if (t > duration + 0.1) break
+        const when    = now + (t - startFrom)
+        const beatNum = Math.round(t / beatSec)
+        playMetronomeClick(ctx, Math.max(now, when), beatNum % 4 === 0)
+      }
+    }
+
     playStartRef.current = { wallTime: performance.now(), beatTime: startFrom }
     setIsPlaying(true)
 
@@ -1436,6 +1619,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (!playStartRef.current) return
       const elapsed = (performance.now() - playStartRef.current.wallTime) / 1000
       const t = playStartRef.current.beatTime + elapsed
+
+      // A/B loop: restart when playhead reaches loop end
+      if (abLoopEnabledRef.current && abLoopRef.current && t >= abLoopRef.current.end) {
+        startPlaybackFrom(abLoopRef.current.start)
+        return
+      }
+
       if (t >= durationRef.current) {
         playStartRef.current = null
         setIsPlaying(false)
@@ -2054,13 +2244,63 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </>
             )}
 
-            {/* BPM */}
-            {bpm && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>BPM</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{bpm}</span>
-              </div>
-            )}
+            {/* BPM — always visible, click to edit, T to tap */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 6px' }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>BPM</span>
+              {bpmEditing ? (
+                <input
+                  autoFocus
+                  type="number" min={20} max={300}
+                  value={bpmInputVal}
+                  onChange={e => setBpmInputVal(e.target.value)}
+                  onBlur={e => commitBpmEdit(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') commitBpmEdit(bpmInputVal); if (e.key === 'Escape') setBpmEditing(false) }}
+                  style={{ width: 40, fontSize: 12, fontWeight: 700, fontFamily: 'monospace', background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)' }}
+                />
+              ) : (
+                <span
+                  onClick={() => setBpmEditing(true)}
+                  style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace', cursor: 'text', minWidth: 28, textAlign: 'center' }}
+                  title="Click to edit BPM"
+                >{bpm ?? masterBpm}</span>
+              )}
+              <button
+                onClick={tapTempo}
+                title="Tap tempo (T)"
+                style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >TAP</button>
+            </div>
+
+            {/* Metronome toggle */}
+            <button
+              onClick={() => setMetronomeOn(v => !v)}
+              title="Metronome"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer', fontWeight: 600,
+                background: metronomeOn ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
+                borderColor: metronomeOn ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                color: metronomeOn ? 'var(--accent-light)' : 'var(--text-muted)' }}
+            >♩</button>
+
+            {/* Count-in toggle */}
+            <button
+              onClick={() => setCountIn(v => !v)}
+              title="1-bar count-in before recording"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+                background: countIn ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
+                borderColor: countIn ? 'rgba(251,191,36,0.5)' : 'var(--border)',
+                color: countIn ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
+            >{countingIn ? `${countInBeat}` : '1•2•3•4'}</button>
+
+            {/* A/B loop toggle */}
+            <button
+              onClick={() => setAbLoopEnabled(v => !v)}
+              title="Loop between A and B markers (Shift+drag ruler to set)"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 10, cursor: 'pointer', fontWeight: 700,
+                background: abLoopEnabled ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
+                borderColor: abLoopEnabled && abLoop ? 'rgba(251,191,36,0.5)' : 'var(--border)',
+                color: abLoopEnabled && abLoop ? 'rgb(251,191,36)' : 'var(--text-muted)',
+                opacity: !abLoop ? 0.5 : 1 }}
+            >A–B</button>
 
             {/* Multi-select badge */}
             {selectedIds.size > 1 && (
@@ -2655,14 +2895,29 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 : { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}
             >
               {/* Horizontal scroll wrapper for zoomed content */}
-              <div style={{ flex: inPortal ? undefined : 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div
+                style={{ flex: inPortal ? undefined : 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}
+                onWheel={e => {
+                  // Ctrl/Cmd+wheel → zoom; plain wheel scrolls horizontally
+                  if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault()
+                    setZoomLevel(z => Math.max(0.25, Math.min(8, z * (e.deltaY > 0 ? 0.85 : 1.18))))
+                  }
+                }}
+              >
                 {/* Fixed-width inner column at zoom level */}
                 <div style={{ width: 88 + (timelinePx * zoomLevel), minWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
                   <Playhead time={playhead} duration={duration} pxWidth={timelinePx * zoomLevel} />
 
                   {/* Ruler — offset 88px to align with hit area (64 label + 24 note axis) */}
                   <div style={{ paddingLeft: 88 }}>
-                    <RulerTicks duration={duration} px={timelinePx * zoomLevel} onSeek={handleSeek} />
+                    <RulerTicks
+                      duration={duration} px={timelinePx * zoomLevel}
+                      bpm={bpm ?? (masterBpm !== 120 ? masterBpm : null)}
+                      abLoop={abLoop} abLoopEnabled={abLoopEnabled}
+                      onSeek={handleSeek}
+                      onAbLoopDrag={loop => { setAbLoop(loop) }}
+                    />
                   </div>
 
                   {/* Waveform */}
