@@ -678,12 +678,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       const curve    = detectPitchCurve(source)
       const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration)
       const layer: SynthLayer = {
-        id: crypto.randomUUID(),
-        name: TYPE_LABELS[voiceSynthType] ?? voiceSynthType,
-        type: voiceSynthType,
-        buf: rendered,
+        id:        crypto.randomUUID(),
+        name:      'Synth',
+        type:      'custom' as BeatType,
+        buf:       rendered,
         startTime: playhead,
-        muted: false,
+        muted:     false,
       }
       setSynthLayers(prev => [...prev, layer])
       if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
@@ -709,7 +709,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const laneRecStartPlayheadRef = useRef(0)
 
   async function startLaneRecording() {
-    if (!activeLaneType) return
     setError(null)
     try {
       const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
@@ -731,8 +730,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   async function stopLaneRecording() {
     const recorder = laneRecorderRef.current
-    const type = activeLaneType
-    if (!recorder || !type) return
+    if (!recorder) return
     if (laneRecTimerRef.current) clearInterval(laneRecTimerRef.current)
     recorder.stop()
     recorder.stream.getTracks().forEach(t => t.stop())
@@ -742,20 +740,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const blob = new Blob(laneRecChunksRef.current, { type: laneRecChunksRef.current[0]?.type ?? 'audio/webm' })
     const offset = laneRecStartPlayheadRef.current
     try {
-      const buf    = await decodeAudio(blob)
-      const result = await analyzeBeats(buf, {
-        allowedTypes:    [type],
-        referenceSounds,
-        stemMode:        false,
-      })
-      const newHits = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + offset, type }))
-      setHits(prev => [...prev, ...newHits])
-      if (result.duration + offset > duration) {
-        setDuration(result.duration + offset)
-        setAudioBuf(null)
+      const buf = await decodeAudio(blob)
+      // Add the raw recorded audio directly as a voice layer — no beat detection.
+      // Beat detection converts voice to drum hit events played via drum synth,
+      // which is why recording produced snare sounds instead of the user's voice.
+      const layer: SynthLayer = {
+        id:        crypto.randomUUID(),
+        name:      'Voice',
+        type:      'custom' as BeatType,
+        buf,
+        startTime: offset,
+        muted:     false,
       }
+      setSynthLayers(prev => [...prev, layer])
+      if (buf.duration + offset > duration) setDuration(buf.duration + offset)
     } catch {
-      setError('Could not analyze the lane recording. Try again.')
+      setError('Could not decode the recording. Try again.')
     }
   }
 
@@ -1597,11 +1597,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {isPlaying ? <Pause size={13} fill="#fff" /> : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
             </button>
 
-            {/* Per-lane mic button */}
-            {activeLaneType && !laneRecording && (
+            {/* Record voice as audio clip — always available */}
+            {!laneRecording && (
               <button
                 onClick={startLaneRecording}
-                title={`Record into ${typeLabel(activeLaneType, typeOverrides)}`}
+                title="Record voice — adds as audio clip at playhead"
                 style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}
               >
                 <Mic size={11} /> Rec
@@ -1832,22 +1832,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             </button>
           )}
 
-          {/* Instrument + render — only enabled when we have audio */}
           {vsAudioBuf && !vsRecording && (
-            <>
-              <select value={voiceSynthType} onChange={e => setVoiceSynthType(e.target.value as BeatType)}
-                style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}>
-                {[...sampleBuffers.keys()].map(t => (
-                  <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
-                ))}
-              </select>
-              <button onClick={runVoiceSynth} disabled={voiceSynthRendering}
-                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}>
-                {voiceSynthRendering
-                  ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</>
-                  : '+ Add Layer'}
-              </button>
-            </>
+            <button onClick={runVoiceSynth} disabled={voiceSynthRendering}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}>
+              {voiceSynthRendering
+                ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</>
+                : '+ Add Synth Layer'}
+            </button>
           )}
 
           {synthLayers.length > 0 && (

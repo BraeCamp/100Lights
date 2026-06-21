@@ -159,11 +159,12 @@ export async function synthesizeFromPitchCurve(
   osc.start(0)
   osc.stop(totalDuration + 0.05)
 
-  // Volume envelope follows the source amplitude — this is what creates the rhythm
-  for (const frame of pitchCurve) {
-    const vol = Math.min(0.72, frame.amplitude * 0.72)
-    gain.gain.linearRampToValueAtTime(vol, frame.time + 0.01)
-  }
+  // Constant amplitude — 20ms fade-in and fade-out only.
+  // No per-frame volume changes; any dynamic shaping (even from the source
+  // amplitude) creates rhythmic bursts that the ear interprets as "notes."
+  gain.gain.setValueAtTime(0, 0)
+  gain.gain.linearRampToValueAtTime(0.72, 0.02)
+  gain.gain.setValueAtTime(0.72, Math.max(0.02, totalDuration - 0.02))
   gain.gain.linearRampToValueAtTime(0, totalDuration)
 
   return ctx.startRendering()
