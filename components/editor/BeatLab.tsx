@@ -2693,6 +2693,30 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, filterCutoff: Number(v) } } : c)
                   )}
 
+                  {sectionLabel('Pitch')}
+                  {chipGroup(
+                    [{ label: 'Steady', value: 'false' }, { label: 'Follow melody', value: 'true' }],
+                    String(o.followPitch),
+                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, followPitch: v === 'true' } } : c)
+                  )}
+                  {o.followPitch && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+                      Oscillator frequency follows detected pitch frame-by-frame. Best for singing or humming; may sound choppy on speech.
+                    </div>
+                  )}
+
+                  {sectionLabel('Volume')}
+                  {chipGroup(
+                    [{ label: 'Steady', value: 'false' }, { label: 'Follow dynamics', value: 'true' }],
+                    String(o.followDynamics),
+                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, followDynamics: v === 'true' } } : c)
+                  )}
+                  {o.followDynamics && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+                      Gain follows the RMS envelope of the source — louder moments in the recording become louder in the synth.
+                    </div>
+                  )}
+
                   {sectionLabel(`Pitch shift: ${o.pitchShift > 0 ? '+' : ''}${o.pitchShift} semitones`)}
                   <input
                     type="range" min={-12} max={12} step={1} value={o.pitchShift}

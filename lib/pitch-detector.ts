@@ -142,15 +142,19 @@ export async function detectPitchCurveAsync(
 // Pitch and amplitude are automated frame-by-frame via AudioParam scheduling.
 
 export interface SynthOptions {
-  waveform:    OscillatorType  // sawtooth | sine | square | triangle
-  filterCutoff: number         // Hz — controls brightness
-  pitchShift:  number          // semitones added to detected median pitch
+  waveform:       OscillatorType  // sawtooth | sine | square | triangle
+  filterCutoff:   number          // Hz — controls brightness
+  pitchShift:     number          // semitones added to detected pitch
+  followPitch:    boolean         // automate frequency per-frame from detected pitch
+  followDynamics: boolean         // automate gain per-frame from RMS envelope
 }
 
 export const DEFAULT_SYNTH_OPTIONS: SynthOptions = {
-  waveform:     'sawtooth',
-  filterCutoff: 1400,
-  pitchShift:   0,
+  waveform:       'sawtooth',
+  filterCutoff:   1400,
+  pitchShift:     0,
+  followPitch:    false,
+  followDynamics: false,
 }
 
 export async function synthesizeFromPitchCurve(
@@ -173,7 +177,26 @@ export async function synthesizeFromPitchCurve(
     .map(f => f.midi!)
     .sort((a, b) => a - b)
   const medianMidi = (midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60) + options.pitchShift
-  osc.frequency.setValueAtTime(midiToFreq(medianMidi), 0)
+  const medianFreq = midiToFreq(medianMidi)
+
+  if (options.followPitch) {
+    // Per-frame pitch automation. Only update on voiced frames (freq detected);
+    // hold the last known pitch on unvoiced/silent frames so the oscillator
+    // doesn't jump to an arbitrary frequency.
+    let lastFreq = medianFreq
+    osc.frequency.setValueAtTime(lastFreq, 0)
+    for (const frame of pitchCurve) {
+      if (frame.freq !== null && frame.amplitude > 0.04) {
+        const shifted = midiToFreq((frame.midi ?? medianMidi - options.pitchShift) + options.pitchShift)
+        // Ramp over the frame window so transitions are smooth, not click-y
+        osc.frequency.linearRampToValueAtTime(shifted, frame.time + 0.04)
+        lastFreq = shifted
+      }
+      // unvoiced: hold (no new schedule → param holds last value)
+    }
+  } else {
+    osc.frequency.setValueAtTime(medianFreq, 0)
+  }
 
   const filter = ctx.createBiquadFilter()
   filter.type = 'lowpass'
@@ -189,13 +212,22 @@ export async function synthesizeFromPitchCurve(
   osc.start(0)
   osc.stop(totalDuration + 0.05)
 
-  // Constant amplitude — 20ms fade-in and fade-out only.
-  // No per-frame volume changes; any dynamic shaping (even from the source
-  // amplitude) creates rhythmic bursts that the ear interprets as "notes."
-  gain.gain.setValueAtTime(0, 0)
-  gain.gain.linearRampToValueAtTime(0.72, 0.02)
-  gain.gain.setValueAtTime(0.72, Math.max(0.02, totalDuration - 0.02))
-  gain.gain.linearRampToValueAtTime(0, totalDuration)
+  if (options.followDynamics) {
+    // Follow the RMS envelope from the source. Use a 30ms ramp per frame to
+    // smooth the gain curve — without smoothing, rapid amplitude changes
+    // produce audible clicks/zipper noise.
+    gain.gain.setValueAtTime(0, 0)
+    for (const frame of pitchCurve) {
+      const target = Math.min(0.95, frame.amplitude * 0.9)
+      gain.gain.linearRampToValueAtTime(target, frame.time + 0.03)
+    }
+    gain.gain.linearRampToValueAtTime(0, totalDuration)
+  } else {
+    // Constant level — single 20ms fade in and out.
+    gain.gain.linearRampToValueAtTime(0.72, 0.02)
+    gain.gain.setValueAtTime(0.72, Math.max(0.02, totalDuration - 0.02))
+    gain.gain.linearRampToValueAtTime(0, totalDuration)
+  }
 
   return ctx.startRendering()
 }
