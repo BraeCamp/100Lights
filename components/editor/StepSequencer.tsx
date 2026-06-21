@@ -32,7 +32,7 @@ function stepTimes(numSteps: number, duration: number, swing: number): number[] 
   return times
 }
 
-type StepCell = { active: boolean; velocity: number }
+type StepCell = { active: boolean; velocity: number; probability: number }  // probability: 0–1, default 1
 
 interface StepSequencerProps {
   laneType: string
@@ -56,21 +56,22 @@ export default function StepSequencer({
   // grid[row][step] — row 0 = top (highest pitch for melodic)
   const [grid, setGrid] = useState<StepCell[][]>(() => initGrid(numSteps, numRows, hits, duration, isMelodic))
   const draggingVelRef = useRef<{ step: number; startY: number; startVel: number } | null>(null)
+  const draggingProbRef = useRef<{ step: number; startY: number; startProb: number } | null>(null)
 
   function initGrid(steps: number, rows: number, srcHits: BeatHit[], dur: number, melodic: boolean): StepCell[][] {
     const times = stepTimes(steps, dur, 0)
     const stepDur = dur / steps
     const g: StepCell[][] = Array.from({ length: rows }, () =>
-      Array.from({ length: steps }, () => ({ active: false, velocity: 0.75 }))
+      Array.from({ length: steps }, () => ({ active: false, velocity: 0.75, probability: 1 }))
     )
     for (const h of srcHits) {
       const closest = times.reduce((best, t, i) => Math.abs(h.time - t) < Math.abs(h.time - times[best]) ? i : best, 0)
       if (Math.abs(h.time - times[closest]) > stepDur * 0.6) continue
       if (melodic) {
         const row = NOTE_MAX_MELODIC - h.note
-        if (row >= 0 && row < rows) g[row][closest] = { active: true, velocity: h.velocity }
+        if (row >= 0 && row < rows) g[row][closest] = { active: true, velocity: h.velocity, probability: 1 }
       } else {
-        g[0][closest] = { active: true, velocity: h.velocity }
+        g[0][closest] = { active: true, velocity: h.velocity, probability: 1 }
       }
     }
     return g
@@ -88,7 +89,8 @@ export default function StepSequencer({
           id: crypto.randomUUID(),
           time: times[step],
           type: laneType as BeatType,
-          velocity: cell.velocity,
+          // probability < 1: velocity is scaled; playback engine filters by Math.random() < cell.probability
+          velocity: cell.probability < 1 ? cell.velocity * cell.probability : cell.velocity,
           note,
         })
       }
@@ -99,7 +101,12 @@ export default function StepSequencer({
   function toggleCell(row: number, step: number) {
     setGrid(prev => {
       const next = prev.map(r => r.map(c => ({ ...c })))
-      next[row][step] = { active: !next[row][step].active, velocity: next[row][step].velocity || 0.75 }
+      const wasActive = next[row][step].active
+      next[row][step] = {
+        active: !wasActive,
+        velocity: next[row][step].velocity || 0.75,
+        probability: wasActive ? next[row][step].probability : 1,
+      }
       emitHits(next, numSteps, swing)
       return next
     })
@@ -144,11 +151,67 @@ export default function StepSequencer({
     window.addEventListener('mouseup', up)
   }
 
+  function startProbDrag(step: number, e: React.MouseEvent) {
+    e.preventDefault()
+    const startY = e.clientY
+    const startProb = probabilityForStep(step)
+    let moved = false
+    draggingProbRef.current = { step, startY, startProb }
+    const move = (me: MouseEvent) => {
+      if (!draggingProbRef.current) return
+      const dy = draggingProbRef.current.startY - me.clientY
+      if (Math.abs(dy) < 3 && !moved) return
+      moved = true
+      const newProb = Math.max(0, Math.min(1, draggingProbRef.current.startProb + dy / 80))
+      setGrid(prev => {
+        const next = prev.map(r => r.map(c => ({ ...c })))
+        for (let row = 0; row < numRows; row++) {
+          if (next[row]?.[step]) next[row][step].probability = newProb
+        }
+        emitHits(next, numSteps, swing)
+        return next
+      })
+    }
+    const up = () => {
+      if (!moved) cycleProbability(step)
+      draggingProbRef.current = null
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
+
   function velocityForStep(step: number): number {
     for (let row = 0; row < numRows; row++) {
       if (grid[row]?.[step]?.active) return grid[row][step].velocity
     }
     return 0.75
+  }
+
+  function probabilityForStep(step: number): number {
+    for (let row = 0; row < numRows; row++) {
+      if (grid[row]?.[step]?.active) return grid[row][step].probability
+    }
+    return 1
+  }
+
+  function cycleProbability(step: number) {
+    setGrid(prev => {
+      const next = prev.map(r => r.map(c => ({ ...c })))
+      let currentProb = 1
+      for (let row = 0; row < numRows; row++) {
+        if (prev[row]?.[step]?.active) { currentProb = prev[row][step].probability; break }
+      }
+      const presets = [1, 0.75, 0.5, 0.25]
+      const idx = presets.findIndex(p => Math.abs(p - currentProb) < 0.01)
+      const nextPreset = idx >= 0 ? presets[(idx + 1) % presets.length] : 1
+      for (let row = 0; row < numRows; row++) {
+        if (next[row]?.[step]) next[row][step].probability = nextPreset
+      }
+      emitHits(next, numSteps, swing)
+      return next
+    })
   }
 
   function hasActiveInStep(step: number): boolean {
@@ -388,6 +451,56 @@ export default function StepSequencer({
                       minHeight: 3,
                     }} />
                   )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Probability strip */}
+        <div style={{
+          display: 'flex', flexShrink: 0,
+          borderTop: '2px solid var(--border)',
+          background: 'var(--bg-surface)',
+        }}>
+          {/* P% label (aligns with sticky labels above) */}
+          <div style={{
+            position: 'sticky', left: 0, zIndex: 2,
+            width: 52, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+            paddingRight: 6, fontSize: 8, color: 'var(--text-muted)', fontWeight: 700,
+            letterSpacing: '0.07em', textTransform: 'uppercase',
+            background: 'var(--bg-surface)', borderRight: '1px solid var(--border)',
+            height: 28,
+          }}>
+            P%
+          </div>
+          {/* Probability cells */}
+          <div style={{ display: 'flex', height: 28 }}>
+            {Array.from({ length: numSteps }, (_, step) => {
+              const hasActive = hasActiveInStep(step)
+              const prob = probabilityForStep(step)
+              const isBelow = hasActive && prob < 1
+              return (
+                <div
+                  key={step}
+                  onMouseDown={hasActive ? e => startProbDrag(step, e) : undefined}
+                  title={hasActive ? `Probability: ${Math.round(prob * 100)}%` : undefined}
+                  style={{
+                    width: CELL_W, height: 28,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRight: '1px solid var(--border)',
+                    cursor: hasActive ? 'pointer' : 'default',
+                    background: isBelow ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
+                    outline: isBelow ? '1px solid rgba(251,191,36,0.4)' : undefined,
+                    outlineOffset: '-1px',
+                    boxSizing: 'border-box',
+                    fontSize: 9, fontWeight: 700,
+                    color: isBelow ? 'rgb(251,191,36)' : 'var(--text-muted)',
+                    userSelect: 'none',
+                  }}
+                >
+                  {isBelow ? Math.round(prob * 100) : null}
                 </div>
               )
             })}

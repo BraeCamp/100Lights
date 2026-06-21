@@ -1,6 +1,7 @@
 'use client'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { BeatHit, BeatType } from '@/lib/beat-analyzer'
+import { SCALE_LABELS, ROOT_NOTES, isNoteInScale, snapToScale, type ScaleType, type RootNote } from '@/lib/scale-constants'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,9 @@ export default function PianoRoll({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [chordMode, setChordMode] = useState(false)
   const [chordType, setChordType] = useState('Major')
+  const [scaleRoot, setScaleRoot] = useState<RootNote>('C')
+  const [scaleType, setScaleType] = useState<ScaleType>('chromatic')
+  const scaleLocked = scaleType !== 'chromatic'
 
   // drag state stored in ref to avoid stale closures
   const drag = useRef<DragState>({ kind: 'none' })
@@ -261,6 +265,8 @@ export default function PianoRoll({
       }
     } else {
       // create
+      const rawNote = note
+      const snappedNote = scaleLocked ? snapToScale(rawNote, scaleRoot, scaleType) : rawNote
       if (chordMode) {
         const intervals = CHORD_INTERVALS[chordType] ?? [0, 4, 7]
         const newHits: BeatHit[] = intervals.map(interval => ({
@@ -268,7 +274,7 @@ export default function PianoRoll({
           time: snappedTime,
           type: laneType,
           velocity: 0.8,
-          note: clamp(note + interval, 0, 127),
+          note: clamp(snappedNote + interval, 0, 127),
           duration: snapDur,
         }))
         commit([...notes, ...newHits])
@@ -279,15 +285,15 @@ export default function PianoRoll({
           time: snappedTime,
           type: laneType,
           velocity: 0.8,
-          note,
+          note: snappedNote,
           duration: snapDur,
         }
-        drag.current = { kind: 'create', id, startX: x, startTime: snappedTime, note }
+        drag.current = { kind: 'create', id, startX: x, startTime: snappedTime, note: snappedNote }
         commit([...notes, newNote])
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notes, zoom, bpm, snapDiv, selectionMode, selectedIds, chordMode, chordType, laneType, commit])
+  }, [notes, zoom, bpm, snapDiv, selectionMode, selectedIds, chordMode, chordType, laneType, commit, scaleRoot, scaleType, scaleLocked])
 
   const onGridMouseMove = useCallback((e: React.MouseEvent) => {
     const d = drag.current
@@ -482,7 +488,10 @@ export default function PianoRoll({
             left: 0,
             width: PIANO_W,
             height: KEY_H,
-            background: isBlack ? '#1a1a2e' : '#e8e8f0',
+            background: (scaleLocked && !isNoteInScale(note, scaleRoot, scaleType))
+              ? 'rgba(139,92,246,0.15)'
+              : isBlack ? '#1a1a2e' : '#e8e8f0',
+            opacity: (scaleLocked && !isNoteInScale(note, scaleRoot, scaleType)) ? 0.3 : undefined,
             borderBottom: isBlack ? '1px solid #0d0d1a' : '1px solid #ccc',
             display: 'flex',
             alignItems: 'center',
@@ -604,6 +613,26 @@ export default function PianoRoll({
           ))}
         </div>
 
+        {/* Scale lock */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <select
+            value={scaleRoot}
+            onChange={e => setScaleRoot(e.target.value as RootNote)}
+            style={{ fontSize: 10, background: 'var(--bg-card)', border: `1px solid ${scaleLocked ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, color: scaleLocked ? 'rgba(167,139,250,1)' : 'var(--text-muted)', borderRadius: 3, padding: '2px 4px', cursor: 'pointer' }}
+          >
+            {ROOT_NOTES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <select
+            value={scaleType}
+            onChange={e => setScaleType(e.target.value as ScaleType)}
+            style={{ fontSize: 10, background: 'var(--bg-card)', border: `1px solid ${scaleLocked ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, color: scaleLocked ? 'rgba(167,139,250,1)' : 'var(--text-muted)', borderRadius: 3, padding: '2px 4px', cursor: 'pointer', maxWidth: 120 }}
+          >
+            {(Object.keys(SCALE_LABELS) as ScaleType[]).map(s => (
+              <option key={s} value={s}>{SCALE_LABELS[s]}</option>
+            ))}
+          </select>
+        </div>
+
         {/* Selection mode */}
         <HeaderBtn onClick={() => setSelectionMode(s => !s)} active={selectionMode}>
           ✦ Select
@@ -689,11 +718,26 @@ export default function PianoRoll({
             }}
           >
             <div style={{ position: 'relative', width: totalW, height: totalH }}>
-              {/* Background stripes for black keys */}
+              {/* Background stripes for black keys and scale highlighting */}
               {Array.from({ length: TOTAL_NOTES }, (_, i) => {
                 const note = 127 - i
                 const isBlack = BLACK_KEYS.has(note % 12)
-                if (!isBlack) return null
+                const inScale = scaleLocked ? isNoteInScale(note, scaleRoot, scaleType) : false
+                // Without scale lock: only render stripe for black keys
+                if (!scaleLocked && !isBlack) return null
+                let bg: string
+                let rowOpacity: number | undefined
+                if (scaleLocked && inScale) {
+                  bg = 'rgba(139,92,246,0.08)'
+                  rowOpacity = undefined
+                } else if (scaleLocked && !inScale) {
+                  bg = isBlack ? 'rgba(0,0,0,0.25)' : 'transparent'
+                  rowOpacity = 0.5
+                } else {
+                  // not scaleLocked, isBlack
+                  bg = 'rgba(0,0,0,0.25)'
+                  rowOpacity = undefined
+                }
                 return (
                   <div
                     key={note}
@@ -703,7 +747,8 @@ export default function PianoRoll({
                       left: 0,
                       width: '100%',
                       height: KEY_H,
-                      background: 'rgba(0,0,0,0.25)',
+                      background: bg,
+                      opacity: rowOpacity,
                       pointerEvents: 'none',
                     }}
                   />

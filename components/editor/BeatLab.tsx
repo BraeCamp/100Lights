@@ -48,7 +48,7 @@
  *   Once classifier is accurate enough, move it to admin-only (see classify-beats/route.ts note).
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX, Send } from 'lucide-react'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
@@ -60,9 +60,12 @@ import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
-import PianoRoll from './PianoRoll'
-import SessionView, { type SceneClip, type SessionLane, SCENE_COUNT } from './SessionView'
-import StepSequencer from './StepSequencer'
+import type { SceneClip, SessionLane } from './SessionView'
+const SCENE_COUNT = 8
+const PianoRoll               = lazy(() => import('./PianoRoll'))
+const SessionView             = lazy(() => import('./SessionView'))
+const StepSequencer           = lazy(() => import('./StepSequencer'))
+const ChordProgressionBuilder = lazy(() => import('./ChordProgressionBuilder'))
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -849,6 +852,7 @@ interface LaneProps {
   onSelectLane: () => void
   onOpenPianoRoll?: () => void
   onOpenStepSeq?: () => void
+  onOpenChordBuilder?: () => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
@@ -874,6 +878,7 @@ interface LaneProps {
   onFxRemove: (id: string) => void
   onFxToggleEnabled: (id: string) => void
   onFxParamChange: (id: string, key: string, val: number) => void
+  onFxRandomize: () => void
   // Automation
   automLanes: AutomLaneDef[]
   automOpen: boolean
@@ -886,9 +891,10 @@ interface LaneProps {
   onAutomPointAdd: (id: string, pt: AutomPoint) => void
   onAutomPointUpdate: (id: string, ptId: string, update: Partial<AutomPoint>) => void
   onAutomPointDelete: (id: string, ptId: string) => void
+  level?: number  // RMS 0–1 from AnalyserNode, updated during playback
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0 }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -981,6 +987,27 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                 background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
             >SS</button>
           )}
+          {onOpenChordBuilder && (
+            <button
+              onClick={e => { e.stopPropagation(); onOpenChordBuilder() }}
+              title="Open Chord Progression Builder"
+              style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
+                background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+            >Ch</button>
+          )}
+        </div>
+
+        {/* Level meter — thin VU bar, updates during playback */}
+        <div style={{ padding: '0 5px 2px' }}>
+          <div style={{ position: 'relative', height: 4, background: 'var(--bg-base)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{
+              position: 'absolute', left: 0, top: 0, bottom: 0,
+              width: `${Math.min(100, level * 400)}%`,
+              background: level > 0.7 ? '#ef4444' : level > 0.4 ? '#f59e0b' : color,
+              borderRadius: 2,
+              transition: 'width 60ms linear',
+            }} />
+          </div>
         </div>
 
         {/* Pan drag bar — double-click resets to 0 */}
@@ -1244,6 +1271,14 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               onRemove={() => onFxRemove(fx.id)}
               onParamChange={(key, val) => onFxParamChange(fx.id, key, val)} />
           ))}
+          {/* Rnd button */}
+          {effects.length > 0 && (
+            <button
+              onClick={e => { e.stopPropagation(); onFxRandomize() }}
+              title="Randomize enabled FX parameters"
+              style={{ fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, border: '1px solid rgba(139,92,246,0.35)', background: 'transparent', color: 'rgba(139,92,246,0.7)', cursor: 'pointer', whiteSpace: 'nowrap', margin: '0 4px', alignSelf: 'center' }}
+            >Rnd</button>
+          )}
           {/* Add FX button */}
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <button
@@ -1307,6 +1342,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [hits, setHits] = useState<BeatHit[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeLaneType, setActiveLaneType] = useState<BeatType | null>(null)
+  const activeLaneTypeRef = useRef<BeatType | null>(null)
+  useEffect(() => { activeLaneTypeRef.current = activeLaneType }, [activeLaneType])
   const [zoomLevel, setZoomLevel] = useState(1)
   const [laneMenu, setLaneMenu] = useState<{ type: BeatType; x: number; y: number } | null>(null)
   const [laneMenuEdit, setLaneMenuEdit] = useState<{ label: string; color: string } | null>(null)
@@ -1603,10 +1640,66 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [addTrackOpen,   setAddTrackOpen]   = useState(false)
   const [addTrackFamily, setAddTrackFamily] = useState<InstrumentFamily>('drums')
 
+  // ── Tap tempo ──────────────────────────────────────────────────────────────
+  function handleTapTempo() {
+    const now = Date.now()
+    tapTimesRef.current = [...tapTimesRef.current, now].filter(t => now - t < 3000).slice(-8)
+    const taps = tapTimesRef.current
+    if (taps.length >= 2) {
+      const intervals = taps.slice(1).map((t, i) => t - taps[i])
+      const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length
+      const detected = Math.round(60000 / avg)
+      if (detected >= 40 && detected <= 300) setBpm(detected)
+    }
+  }
+
+  // ── Live MIDI input ────────────────────────────────────────────────────────
+  const [midiEnabled, setMidiEnabled] = useState(false)
+  const midiAccessRef = useRef<MIDIAccess | null>(null)
+
+  useEffect(() => {
+    if (!midiEnabled) {
+      if (midiAccessRef.current) {
+        for (const input of midiAccessRef.current.inputs.values()) input.onmidimessage = null
+      }
+      return
+    }
+    if (!navigator.requestMIDIAccess) return
+    navigator.requestMIDIAccess().then(access => {
+      midiAccessRef.current = access
+      const handler = (e: MIDIMessageEvent) => {
+        if (!e.data) return
+        const status = e.data[0]; const note = e.data[1]; const velocity = e.data[2]
+        if ((status & 0xF0) !== 0x90 || velocity === 0) return  // note-on only
+        const targetType = activeLaneTypeRef.current ?? 'synth-lead'
+        const vel = velocity / 127
+        setHits(prev => [...prev, {
+          id: crypto.randomUUID(),
+          time: playStartRef.current
+            ? playStartRef.current.beatTime + (performance.now() - playStartRef.current.wallTime) / 1000
+            : playhead,
+          type: targetType as BeatType,
+          velocity: vel,
+          note,
+        }].sort((a, b) => a.time - b.time))
+      }
+      for (const input of access.inputs.values()) input.onmidimessage = handler
+      access.onstatechange = () => {
+        for (const input of access.inputs.values()) input.onmidimessage = handler
+      }
+    }).catch(() => setMidiEnabled(false))
+    return () => {
+      if (midiAccessRef.current) {
+        for (const input of midiAccessRef.current.inputs.values()) input.onmidimessage = null
+      }
+    }
+  }, [midiEnabled]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── View mode: Arrangement vs Session ────────────────────────────────────
   const [viewMode, setViewMode] = useState<'arrangement' | 'session'>('arrangement')
   const [pianoRollLane, setPianoRollLane] = useState<BeatType | null>(null)
   const [stepSeqLane, setStepSeqLane] = useState<BeatType | null>(null)
+  const [chordBuilderLane, setChordBuilderLane] = useState<BeatType | null>(null)
 
   // Session view clip grid: Record<laneType, (SceneClip | null)[]>
   const [sessionClips, setSessionClips] = useState<Record<string, (SceneClip | null)[]>>({})
@@ -1911,6 +2004,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const audioCtxRef  = useRef<AudioContext | null>(null)
   const playRafRef   = useRef<number>(0)
   const playStartRef = useRef<{ wallTime: number; beatTime: number } | null>(null)
+  const laneAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map())
+  const levelBufRef      = useRef(new Float32Array(512))
+  const levelFrameRef    = useRef(0)
+  const [laneLevels, setLaneLevels] = useState<Record<string, number>>({})
   const durationRef  = useRef(duration)
   const loopSrcRef   = useRef<AudioBufferSourceNode | null>(null)
   const loopCtxRef   = useRef<AudioContext | null>(null)
@@ -2321,7 +2418,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       const panner  = ctx.createStereoPanner(); panner.pan.value = lanePansRef.current[laneType] ?? 0
       const revSend = ctx.createGain(); revSend.gain.value = laneReverbRef.current[laneType] ?? 0
       const dlySend = ctx.createGain(); dlySend.gain.value = laneDelayRef.current[laneType] ?? 0
-      chainOut.connect(panner); panner.connect(masterGain)
+
+      // Level meter — create or reuse AnalyserNode, insert between panner and master
+      if (!laneAnalysersRef.current.has(laneType)) {
+        const an = ctx.createAnalyser(); an.fftSize = 512; an.smoothingTimeConstant = 0.75
+        laneAnalysersRef.current.set(laneType, an)
+      }
+      const analyser = laneAnalysersRef.current.get(laneType)!
+      chainOut.connect(panner); panner.connect(analyser); analyser.connect(masterGain)
       chainOut.connect(revSend); revSend.connect(reverb)
       chainOut.connect(dlySend); dlySend.connect(delay)
 
@@ -2571,6 +2675,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         return
       }
       setPlayhead(t)
+
+      // Level meters — read analysers every 6th frame (~10fps) to avoid thrashing React
+      levelFrameRef.current = (levelFrameRef.current + 1) % 6
+      if (levelFrameRef.current === 0 && laneAnalysersRef.current.size > 0) {
+        const levels: Record<string, number> = {}
+        const buf = levelBufRef.current
+        for (const [laneType, an] of laneAnalysersRef.current) {
+          an.getFloatTimeDomainData(buf)
+          let sum = 0
+          for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
+          levels[laneType] = Math.sqrt(sum / buf.length)
+        }
+        setLaneLevels(levels)
+      }
+
       playRafRef.current = requestAnimationFrame(tick)
     }
     playRafRef.current = requestAnimationFrame(tick)
@@ -3117,6 +3236,82 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     return map
   }, [hits, activeLaneTypes])
 
+  function exportMidi() {
+    if (!hits.length || !duration) return
+    const bps = (bpm ?? 120) / 60
+    const ticksPerBeat = 480
+    const tempo = Math.round(60_000_000 / (bpm ?? 120))
+
+    // Collect unique lane types (one MIDI track per lane)
+    const laneTypes = Array.from(new Set(hits.map(h => h.type)))
+
+    // Build raw MIDI bytes
+    const trackChunks: number[][] = []
+    for (const laneType of laneTypes) {
+      const laneHits = hits.filter(h => h.type === laneType).sort((a, b) => a.time - b.time)
+      const events: Array<{ tick: number; bytes: number[] }> = []
+      for (const h of laneHits) {
+        const tick = Math.round(h.time * bps * ticksPerBeat)
+        const vel = Math.round(Math.max(1, Math.min(127, h.velocity * 127)))
+        const note = Math.max(0, Math.min(127, h.note))
+        const durTick = Math.round((h.duration ?? 0.1) * bps * ticksPerBeat)
+        events.push({ tick, bytes: [0x90, note, vel] })
+        events.push({ tick: tick + Math.max(1, durTick), bytes: [0x80, note, 0] })
+      }
+      events.sort((a, b) => a.tick - b.tick)
+      const evBytes: number[] = []
+      let lastTick = 0
+      for (const ev of events) {
+        const delta = ev.tick - lastTick; lastTick = ev.tick
+        evBytes.push(...encodeVarLen(delta), ...ev.bytes)
+      }
+      // End of track
+      evBytes.push(0x00, 0xFF, 0x2F, 0x00)
+      trackChunks.push(evBytes)
+    }
+
+    function encodeVarLen(n: number): number[] {
+      if (n < 0x80) return [n]
+      const out: number[] = []
+      let v = n
+      out.unshift(v & 0x7F); v >>= 7
+      while (v > 0) { out.unshift((v & 0x7F) | 0x80); v >>= 7 }
+      return out
+    }
+
+    // Header chunk
+    const numTracks = trackChunks.length
+    const header = [
+      0x4D, 0x54, 0x68, 0x64,  // MThd
+      0, 0, 0, 6,               // length = 6
+      0, 1,                     // format 1 (multi-track)
+      (numTracks >> 8) & 0xFF, numTracks & 0xFF,
+      (ticksPerBeat >> 8) & 0xFF, ticksPerBeat & 0xFF,
+    ]
+
+    // Tempo track
+    const tempoTrack = [
+      0x00, 0xFF, 0x51, 0x03,
+      (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF,
+      0x00, 0xFF, 0x2F, 0x00,
+    ]
+    const tempoChunk = [0x4D, 0x54, 0x72, 0x6B, 0, 0, 0, tempoTrack.length, ...tempoTrack]
+
+    const allBytes: number[] = [...header, ...tempoChunk]
+    for (const track of trackChunks) {
+      const len = track.length
+      allBytes.push(0x4D, 0x54, 0x72, 0x6B)
+      allBytes.push((len >> 24) & 0xFF, (len >> 16) & 0xFF, (len >> 8) & 0xFF, len & 0xFF)
+      allBytes.push(...track)
+    }
+
+    const blob = new Blob([new Uint8Array(allBytes)], { type: 'audio/midi' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = 'beatlab-export.mid'
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
+
   async function exportStems() {
     if (!duration || duration <= 0) return
     const sr = 44100
@@ -3399,6 +3594,27 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 />
                 <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 24 }}>{Math.round(masterVolume * 100)}%</span>
               </div>
+              {/* Tap Tempo */}
+              <button
+                onClick={handleTapTempo}
+                title="Tap tempo (click in rhythm to set BPM)"
+                style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
+              >
+                Tap
+              </button>
+              {/* MIDI input toggle */}
+              {'requestMIDIAccess' in navigator && (
+                <button
+                  onClick={() => setMidiEnabled(v => !v)}
+                  title={midiEnabled ? 'MIDI input active — click to disable' : 'Enable MIDI keyboard input to active lane'}
+                  style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', letterSpacing: '0.04em',
+                    background: midiEnabled ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
+                    border: `1px solid ${midiEnabled ? 'rgba(139,92,246,0.6)' : 'var(--border)'}`,
+                    color: midiEnabled ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
+                >
+                  MIDI {midiEnabled ? '●' : '○'}
+                </button>
+              )}
               {/* Quantize */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
                 <button onClick={quantizeHits} title="Quantize hits to grid" style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
@@ -3415,6 +3631,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {/* Export Stems */}
               <button onClick={() => void exportStems()} title="Export each lane as a separate WAV file" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600 }}>
                 Stems
+              </button>
+              {/* MIDI Export */}
+              <button onClick={exportMidi} title="Export all lanes as a .mid file" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                MIDI
               </button>
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
@@ -3957,6 +4177,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   {/* Lanes — Arrangement or Session */}
                   {viewMode === 'session' ? (
                     <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+                      <Suspense fallback={null}>
                       <SessionView
                         bpm={effectiveBpmRef.current}
                         lanes={activeLaneTypes.map(type => ({
@@ -3999,6 +4220,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           setActiveLaneType(laneType as BeatType)
                         }}
                       />
+                      </Suspense>
                     </div>
                   ) : (
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
@@ -4023,6 +4245,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onSelectLane={() => setActiveLaneType(type)}
                           onOpenPianoRoll={MELODIC_TYPES.has(type) ? () => setPianoRollLane(type) : undefined}
                           onOpenStepSeq={() => setStepSeqLane(type)}
+                          onOpenChordBuilder={MELODIC_TYPES.has(type) ? () => setChordBuilderLane(type) : undefined}
+                          level={laneLevels[type] ?? 0}
                           pan={lanePans[type] ?? 0}
                           soloed={soloedLanes.has(type)}
                           anySoloed={soloedLanes.size > 0}
@@ -4038,6 +4262,26 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onFxRemove={id => removeLaneEffect(type, id)}
                           onFxToggleEnabled={id => updateLaneEffect(type, id, { enabled: !laneEffects[type]?.find(f => f.id === id)?.enabled })}
                           onFxParamChange={(id, key, val) => updateLaneEffectParam(type, id, key, val)}
+                          onFxRandomize={() => {
+                            setLaneEffects(prev => {
+                              const effects = prev[type] ?? []
+                              return {
+                                ...prev,
+                                [type]: effects.map(fx => {
+                                  if (!fx.enabled) return fx
+                                  const specs = FX_PARAM_SPECS[fx.type] ?? []
+                                  const newParams = { ...fx.params }
+                                  for (const spec of specs) {
+                                    const cur = fx.params[spec.key] ?? ((spec.min + spec.max) / 2)
+                                    const range = spec.max - spec.min
+                                    const jitter = (Math.random() - 0.5) * range * 0.4
+                                    newParams[spec.key] = Math.max(spec.min, Math.min(spec.max, cur + jitter))
+                                  }
+                                  return { ...fx, params: newParams }
+                                }),
+                              }
+                            })
+                          }}
                           automLanes={automLanes.filter(a => a.laneType === type)}
                           automOpen={automOpenLanes.has(type)}
                           automAddOpen={automAddOpen === type}
@@ -4557,6 +4801,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
       {/* ── Piano Roll overlay ─────────────────────────────────────────────── */}
       {pianoRollLane && (
+        <Suspense fallback={null}>
         <PianoRoll
           laneType={pianoRollLane}
           laneColor={typeColor(pianoRollLane, typeOverrides)}
@@ -4571,8 +4816,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             ])
           }}
         />
+        </Suspense>
       )}
       {stepSeqLane && (
+        <Suspense fallback={null}>
         <StepSequencer
           laneType={stepSeqLane}
           laneColor={typeColor(stepSeqLane, typeOverrides)}
@@ -4587,6 +4834,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             ])
           }}
         />
+        </Suspense>
+      )}
+      {chordBuilderLane && (
+        <Suspense fallback={null}>
+        <ChordProgressionBuilder
+          laneType={chordBuilderLane}
+          bpm={effectiveBpmRef.current}
+          duration={duration}
+          onClose={() => setChordBuilderLane(null)}
+          onHitsChange={nextHits => {
+            setHits(prev => [
+              ...prev.filter(h => h.type !== chordBuilderLane),
+              ...nextHits,
+            ])
+          }}
+        />
+        </Suspense>
       )}
     </div>
   )
