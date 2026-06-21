@@ -74,33 +74,58 @@ function detectPitchInFrame(frame: Float32Array, sampleRate: number): number | n
 
 // ── Public: extract pitch curve from a full AudioBuffer ───────────────────────
 
+function _buildPitchFrames(raw: Float32Array, sr: number, frameSize: number, hopSize: number): PitchFrame[] {
+  const out: PitchFrame[] = []
+  for (let offset = 0; offset + frameSize <= raw.length; offset += hopSize) {
+    const frame = raw.subarray(offset, offset + frameSize)
+    let sumSq = 0
+    for (let i = 0; i < frame.length; i++) sumSq += frame[i] ** 2
+    const amplitude = Math.sqrt(sumSq / frame.length)
+    const freq = amplitude > 0.008 ? detectPitchInFrame(frame as Float32Array, sr) : null
+    out.push({ time: offset / sr, freq, amplitude: Math.min(1, amplitude * 4), midi: freq ? freqToMidi(freq) : null })
+  }
+  for (let i = 1; i < out.length - 1; i++) {
+    if (out[i].midi === null && out[i - 1].midi !== null && out[i + 1].midi !== null) {
+      const med = Math.round(((out[i - 1].midi ?? 0) + (out[i + 1].midi ?? 0)) / 2)
+      out[i] = { ...out[i], midi: med, freq: midiToFreq(med) }
+    }
+  }
+  return out
+}
+
 export function detectPitchCurve(
   audioBuffer: AudioBuffer,
   frameSize = 2048,
   hopSize   = 512,
 ): PitchFrame[] {
-  const raw = audioBuffer.getChannelData(0)
-  const sr  = audioBuffer.sampleRate
+  return _buildPitchFrames(audioBuffer.getChannelData(0), audioBuffer.sampleRate, frameSize, hopSize)
+}
+
+// Async version — yields to the browser every 8 frames so the UI stays responsive.
+// The inner autocorrelation is O(n²) per frame; processing hundreds of frames
+// synchronously locks the main thread for several seconds on long recordings.
+export async function detectPitchCurveAsync(
+  audioBuffer: AudioBuffer,
+  frameSize = 2048,
+  hopSize   = 512,
+): Promise<PitchFrame[]> {
+  const raw   = audioBuffer.getChannelData(0)
+  const sr    = audioBuffer.sampleRate
   const out: PitchFrame[] = []
+  const yieldEvery = 8
 
-  for (let offset = 0; offset + frameSize <= raw.length; offset += hopSize) {
+  for (let offset = 0, frameIdx = 0; offset + frameSize <= raw.length; offset += hopSize, frameIdx++) {
+    if (frameIdx > 0 && frameIdx % yieldEvery === 0) {
+      await new Promise<void>(r => setTimeout(r, 0))
+    }
     const frame = raw.subarray(offset, offset + frameSize)
-
-    // RMS amplitude
     let sumSq = 0
     for (let i = 0; i < frame.length; i++) sumSq += frame[i] ** 2
     const amplitude = Math.sqrt(sumSq / frame.length)
-
     const freq = amplitude > 0.008 ? detectPitchInFrame(frame as Float32Array, sr) : null
-    out.push({
-      time:      offset / sr,
-      freq,
-      amplitude: Math.min(1, amplitude * 4),   // normalize to 0-1 range
-      midi:      freq ? freqToMidi(freq) : null,
-    })
+    out.push({ time: offset / sr, freq, amplitude: Math.min(1, amplitude * 4), midi: freq ? freqToMidi(freq) : null })
   }
 
-  // Smooth out single-frame pitch glitches (median filter over 3 frames)
   for (let i = 1; i < out.length - 1; i++) {
     if (out[i].midi === null && out[i - 1].midi !== null && out[i + 1].midi !== null) {
       const med = Math.round(((out[i - 1].midi ?? 0) + (out[i + 1].midi ?? 0)) / 2)
@@ -116,38 +141,43 @@ export function detectPitchCurve(
 // no per-note attack envelope, no grain restarts, no "notey" artifacts.
 // Pitch and amplitude are automated frame-by-frame via AudioParam scheduling.
 
+export interface SynthOptions {
+  waveform:    OscillatorType  // sawtooth | sine | square | triangle
+  filterCutoff: number         // Hz — controls brightness
+  pitchShift:  number          // semitones added to detected median pitch
+}
+
+export const DEFAULT_SYNTH_OPTIONS: SynthOptions = {
+  waveform:     'sawtooth',
+  filterCutoff: 1400,
+  pitchShift:   0,
+}
+
 export async function synthesizeFromPitchCurve(
   pitchCurve:    PitchFrame[],
   sampleRate:    number,
   _rootNote:     number,
   totalDuration: number,
+  options:       SynthOptions = DEFAULT_SYNTH_OPTIONS,
 ): Promise<AudioBuffer> {
   const sr  = sampleRate
   const len = Math.ceil(sr * totalDuration)
   if (len < 1) throw new Error('Recording too short to synthesize')
   const ctx = new OfflineAudioContext(1, len, sr)
 
-  // Sawtooth oscillator — continuous wave, no attack transient
   const osc = ctx.createOscillator()
-  osc.type = 'sawtooth'
+  osc.type = options.waveform
 
-  // Use the MEDIAN pitch across all voiced frames as a single constant frequency.
-  // Per-frame pitch updates cause "notey" artifacts: MPM returns garbage readings
-  // for broadband/percussive input even at high amplitude, so the oscillator jumps
-  // between random pitches on every beat transient. A constant median pitch
-  // eliminates this entirely — the output is one continuous tone whose volume
-  // envelope follows the input dynamics, which is what "voice synth" should sound like.
   const midiValues = pitchCurve
     .filter(f => f.midi !== null)
     .map(f => f.midi!)
     .sort((a, b) => a - b)
-  const medianMidi = midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60
+  const medianMidi = (midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60) + options.pitchShift
   osc.frequency.setValueAtTime(midiToFreq(medianMidi), 0)
 
-  // Warm lowpass to soften the sawtooth into a synth-lead tone
   const filter = ctx.createBiquadFilter()
   filter.type = 'lowpass'
-  filter.frequency.setValueAtTime(1400, 0)
+  filter.frequency.setValueAtTime(options.filterCutoff, 0)
   filter.Q.setValueAtTime(0.6, 0)
 
   const gain = ctx.createGain()

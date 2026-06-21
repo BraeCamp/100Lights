@@ -284,11 +284,12 @@ export interface ReferenceSound {
 export async function analyzeBeats(
   audioBuffer: AudioBuffer,
   options?: {
-    allowedTypes?:       BeatType[]
-    melodicType?:        BeatType
-    referenceSounds?:    ReferenceSound[]   // Side A: Sound Library entries
-    learnedCorrections?: ReferenceSound[]   // Side B: accepted AI corrections
-    stemMode?:           boolean            // true when input is a Demucs stem — cleaner signal, lower noise floor
+    allowedTypes?:          BeatType[]
+    melodicType?:           BeatType
+    referenceSounds?:       ReferenceSound[]
+    learnedCorrections?:    ReferenceSound[]
+    stemMode?:              boolean
+    sensitivityMultiplier?: number  // scales peak-pick threshold; <1 = more detections, >1 = fewer
   },
 ): Promise<BeatAnalysis> {
   const allowed      = options?.allowedTypes?.length ? new Set(options.allowedTypes) : null
@@ -353,7 +354,7 @@ export async function analyzeBeats(
     const hi = Math.min(nFrames, i + smoothHalf + 1)
     const local = Array.from(onset.subarray(lo, hi)).sort((a, b) => a - b)
     const p80 = local[Math.floor(local.length * 0.8)]
-    const thresh = Math.max(dynamicFloor, p80 * 1.5)
+    const thresh = Math.max(dynamicFloor, p80 * (options?.sensitivityMultiplier ?? 1.5))
 
     if (onset[i] > thresh) {
       const sampleIdx = i * hopSize

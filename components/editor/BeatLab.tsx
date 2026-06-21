@@ -59,7 +59,7 @@ import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
-import { detectPitchCurve, synthesizeFromPitchCurve } from '@/lib/pitch-detector'
+import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -488,15 +488,6 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               <span style={{ fontSize: 8, color: isConverting ? 'rgba(139,92,246,0.6)' : clip.muted ? 'var(--text-muted)' : 'rgba(210,190,255,0.9)', whiteSpace: 'nowrap', pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {clip.name} · {clip.buf.duration.toFixed(1)}s
               </span>
-              {!isConverting && wid > 28 && (
-                <button
-                  onMouseDown={e => e.stopPropagation()}
-                  onClick={e => { e.stopPropagation(); onClipDelete(clip.id) }}
-                  style={{ flexShrink: 0, width: 12, height: 12, borderRadius: '50%', border: 'none', background: 'rgba(239,68,68,0.7)', color: '#fff', cursor: 'pointer', fontSize: 8, lineHeight: '12px', textAlign: 'center', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                >
-                  ×
-                </button>
-              )}
             </div>
           )
         })}
@@ -689,6 +680,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   interface AudioClip { id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string }
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
+  type BeatSensitivity = 'low' | 'medium' | 'high'
+  const [convertCard, setConvertCard] = useState<{
+    clipId: string
+    mode: 'synth' | 'beats'
+    synthOpts: SynthOptions
+    sensitivity: BeatSensitivity
+  } | null>(null)
 
   // Voice Synth self-contained recorder (independent of the main beat recording)
   const [vsRecording,  setVsRecording]  = useState(false)
@@ -742,7 +740,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       laneType = newId
     }
     try {
-      const curve    = detectPitchCurve(source)
+      const curve    = await detectPitchCurveAsync(source)
       const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration)
       setAudioClips(prev => [...prev, { id: crypto.randomUUID(), laneType, buf: rendered, startTime: playhead, muted: false, name: 'Synth' }])
       if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
@@ -753,13 +751,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
-  async function convertClipToBeats(clipId: string) {
+  function openConvertCard(clipId: string, mode: 'synth' | 'beats') {
+    setClipMenu(null)
+    setConvertCard({ clipId, mode, synthOpts: { ...DEFAULT_SYNTH_OPTIONS }, sensitivity: 'medium' })
+  }
+
+  async function runConvertToBeats(clipId: string, sensitivity: BeatSensitivity) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
-    setClipMenu(null)
+    setConvertCard(null)
     setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
+    const multipliers: Record<BeatSensitivity, number> = { low: 2.5, medium: 1.5, high: 0.8 }
     try {
-      const result  = await analyzeBeats(clip.buf, { allowedTypes: [clip.laneType as BeatType], referenceSounds })
+      const result  = await analyzeBeats(clip.buf, { allowedTypes: [clip.laneType as BeatType], referenceSounds, sensitivityMultiplier: multipliers[sensitivity] })
       const newHits = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + clip.startTime, type: clip.laneType as BeatType }))
       setHits(prev => [...prev, ...newHits])
       setAudioClips(prev => prev.filter(c => c.id !== clipId))
@@ -770,15 +774,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
-  async function convertClipToSynth(clipId: string) {
+  async function runConvertToSynth(clipId: string, opts: SynthOptions) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
-    setClipMenu(null)
-    // Show in-progress state on the clip block
+    setConvertCard(null)
     setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
     try {
-      const curve    = detectPitchCurve(clip.buf)
-      const rendered = await synthesizeFromPitchCurve(curve, clip.buf.sampleRate, 60, clip.buf.duration)
+      const curve    = await detectPitchCurveAsync(clip.buf)
+      const rendered = await synthesizeFromPitchCurve(curve, clip.buf.sampleRate, 60, clip.buf.duration, opts)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth' } : c))
     } catch (e) {
       setError(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -2635,6 +2638,101 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         </>
       )}
 
+      {/* ── Convert card modal ────────────────────────────────────────────── */}
+      {convertCard && (() => {
+        const clip = audioClips.find(c => c.id === convertCard.clipId)
+        if (!clip) return null
+        const isSynth = convertCard.mode === 'synth'
+        const o = convertCard.synthOpts
+
+        const sectionLabel = (text: string) => (
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6, marginTop: 14 }}>{text}</div>
+        )
+        const chipGroup = (options: { label: string; value: string }[], current: string, set: (v: string) => void) => (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {options.map(opt => (
+              <button key={opt.value} onClick={() => set(opt.value)} style={{
+                padding: '5px 12px', borderRadius: 6, border: '1px solid',
+                fontSize: 12, cursor: 'pointer', fontWeight: current === opt.value ? 600 : 400,
+                background: current === opt.value ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
+                borderColor: current === opt.value ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                color: current === opt.value ? 'var(--accent-light)' : 'var(--text-secondary)',
+              }}>{opt.label}</button>
+            ))}
+          </div>
+        )
+
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)' }} onClick={() => setConvertCard(null)} />
+            <div style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              zIndex: 201, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 14, padding: 24, width: 340, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>
+                Convert to {isSynth ? 'Synth' : 'Beats'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                {clip.name} · {clip.buf.duration.toFixed(1)}s
+              </div>
+
+              {isSynth ? (
+                <>
+                  {sectionLabel('Waveform')}
+                  {chipGroup(
+                    [{ label: 'Sawtooth', value: 'sawtooth' }, { label: 'Sine', value: 'sine' }, { label: 'Square', value: 'square' }, { label: 'Triangle', value: 'triangle' }],
+                    o.waveform,
+                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, waveform: v as OscillatorType } } : c)
+                  )}
+
+                  {sectionLabel('Brightness')}
+                  {chipGroup(
+                    [{ label: 'Muffled', value: '400' }, { label: 'Warm', value: '1400' }, { label: 'Bright', value: '2800' }, { label: 'Full', value: '8000' }],
+                    String(o.filterCutoff),
+                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, filterCutoff: Number(v) } } : c)
+                  )}
+
+                  {sectionLabel(`Pitch shift: ${o.pitchShift > 0 ? '+' : ''}${o.pitchShift} semitones`)}
+                  <input
+                    type="range" min={-12} max={12} step={1} value={o.pitchShift}
+                    onChange={e => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, pitchShift: Number(e.target.value) } } : c)}
+                    style={{ width: '100%', accentColor: 'var(--accent)' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                    <span>-12</span><span>0</span><span>+12</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {sectionLabel('Sensitivity')}
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                    Higher sensitivity detects quieter hits; lower avoids false positives.
+                  </div>
+                  {chipGroup(
+                    [{ label: 'Low', value: 'low' }, { label: 'Medium', value: 'medium' }, { label: 'High', value: 'high' }],
+                    convertCard.sensitivity,
+                    v => setConvertCard(c => c ? { ...c, sensitivity: v as BeatSensitivity } : c)
+                  )}
+                </>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+                <button onClick={() => setConvertCard(null)} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13 }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => isSynth ? runConvertToSynth(convertCard.clipId, convertCard.synthOpts) : runConvertToBeats(convertCard.clipId, convertCard.sensitivity)}
+                  style={{ flex: 2, padding: '9px 0', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  Convert
+                </button>
+              </div>
+            </div>
+          </>
+        )
+      })()}
+
       {/* ── Audio clip right-click context menu ───────────────────────────── */}
       {clipMenu && (() => {
         const clip = audioClips.find(c => c.id === clipMenu.clipId)
@@ -2661,8 +2759,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </button>
               {clipMenu.convertOpen && (
                 <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', gap: 1, borderLeft: '2px solid var(--border)', paddingLeft: 6 }}>
-                  <button onClick={() => convertClipToSynth(clip.id)} style={btnStyle()}>Synth</button>
-                  <button onClick={() => convertClipToBeats(clip.id)} style={btnStyle()}>Beat</button>
+                  <button onClick={() => openConvertCard(clip.id, 'synth')} style={btnStyle()}>Synth</button>
+                  <button onClick={() => openConvertCard(clip.id, 'beats')} style={btnStyle()}>Beat</button>
                 </div>
               )}
 
