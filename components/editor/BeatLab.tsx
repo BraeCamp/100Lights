@@ -198,14 +198,19 @@ function Waveform({ audioBuffer, pxWidth }: { audioBuffer: AudioBuffer; pxWidth:
 
 // ── Time ruler ────────────────────────────────────────────────────────────────
 
+interface Locator { id: string; time: number; label: string }
+
 function RulerTicks({
-  duration, px, bpm, abLoop, abLoopEnabled, onSeek, onAbLoopDrag,
+  duration, px, bpm, abLoop, abLoopEnabled, onSeek, onAbLoopDrag, locators, onLocatorAdd, onLocatorRemove,
 }: {
   duration: number; px: number; bpm: number | null
   abLoop: { start: number; end: number } | null
   abLoopEnabled: boolean
   onSeek?: (t: number) => void
   onAbLoopDrag?: (loop: { start: number; end: number }) => void
+  locators?: Locator[]
+  onLocatorAdd?: (t: number) => void
+  onLocatorRemove?: (id: string) => void
 }) {
   // If we have BPM, show bars+beats; otherwise fall back to time labels.
   const beatSec  = bpm ? 60 / bpm : null
@@ -271,11 +276,17 @@ function RulerTicks({
     }
   }
 
+  function handleContextMenu(e: React.MouseEvent) {
+    e.preventDefault()
+    if (onLocatorAdd) onLocatorAdd(posFromEvent(e))
+  }
+
   return (
     <div
       data-ruler="1"
       style={{ position: 'relative', height: 22, borderBottom: '1px solid var(--border)', cursor: onSeek ? 'pointer' : 'default', overflow: 'hidden' }}
       onMouseDown={handleMouseDown}
+      onContextMenu={handleContextMenu}
     >
       {/* A/B loop region highlight */}
       {abLoop && (
@@ -297,6 +308,19 @@ function RulerTicks({
             <span style={{ fontSize: 9, color: 'var(--text-muted)', userSelect: 'none', whiteSpace: 'nowrap', transform: 'translateX(-50%)', lineHeight: '13px' }}>{label}</span>
           )}
           <div style={{ position: 'absolute', bottom: 0, width: 1, height: major ? 6 : 4, background: major ? 'var(--border-light)' : 'var(--border)' }} />
+        </div>
+      ))}
+      {/* Locators */}
+      {locators?.map(loc => (
+        <div
+          key={loc.id}
+          title={`${loc.label} (right-click to remove)`}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onLocatorRemove?.(loc.id) }}
+          style={{ position: 'absolute', left: (loc.time / duration) * px, top: 0, bottom: 0, cursor: 'pointer', pointerEvents: 'all' }}
+        >
+          <div style={{ position: 'absolute', top: 0, left: -5, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '8px solid #f59e0b' }} />
+          <div style={{ position: 'absolute', top: 8, left: 0, width: 1, height: 14, background: '#f59e0b', opacity: 0.7 }} />
+          <span style={{ position: 'absolute', top: 1, left: 7, fontSize: 8, color: '#f59e0b', whiteSpace: 'nowrap', userSelect: 'none' }}>{loc.label}</span>
         </div>
       ))}
     </div>
@@ -440,7 +464,7 @@ function NoteAxis() {
 
 interface WarpMarker { bufFrac: number; timeFrac: number }
 
-type LaneEffectType = 'eq3' | 'comp' | 'crush' | 'reverb' | 'delay'
+type LaneEffectType = 'eq3' | 'comp' | 'crush' | 'reverb' | 'delay' | 'chorus' | 'phaser' | 'flanger' | 'autofilter' | 'saturator'
 interface LaneEffect {
   id: string
   type: LaneEffectType
@@ -448,14 +472,20 @@ interface LaneEffect {
   params: Record<string, number>
 }
 const LANE_EFFECT_DEFAULTS: Record<LaneEffectType, Record<string, number>> = {
-  eq3:    { low: 0, mid: 0, high: 0, midFreq: 1000 },
-  comp:   { threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 6 },
-  crush:  { bits: 8 },
-  reverb: { wet: 0.3, decay: 2.0 },
-  delay:  { wet: 0.3, time: 0.25, feedback: 0.4 },
+  eq3:        { low: 0, mid: 0, high: 0, midFreq: 1000 },
+  comp:       { threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 6 },
+  crush:      { bits: 8 },
+  reverb:     { wet: 0.3, decay: 2.0 },
+  delay:      { wet: 0.3, time: 0.25, feedback: 0.4 },
+  chorus:     { wet: 0.5, rate: 1.2, depth: 0.003, delay: 0.025 },
+  phaser:     { wet: 0.5, rate: 0.5, depth: 1000 },
+  flanger:    { wet: 0.5, rate: 0.25, depth: 0.005, delay: 0.005, feedback: 0.5 },
+  autofilter: { wet: 1.0, freq: 800, Q: 1.5, lfoRate: 1.0, lfoDepth: 600, type: 0 },
+  saturator:  { drive: 3, wet: 1.0 },
 }
 const LANE_EFFECT_LABELS: Record<LaneEffectType, string> = {
   eq3: 'EQ3', comp: 'Comp', crush: 'Crush', reverb: 'Reverb', delay: 'Delay',
+  chorus: 'Chorus', phaser: 'Phaser', flanger: 'Flanger', autofilter: 'AutoFilt', saturator: 'Satur',
 }
 
 // ── Automation ──────────────────────────────────────────────────────────────
@@ -741,11 +771,16 @@ function AutomLaneView({ def, duration, pxWidth, onPointAdd, onPointUpdate, onPo
 type FxParamSpec = { key: string; label: string; min: number; max: number; step?: number; decimals?: number }
 
 const FX_PARAM_SPECS: Record<LaneEffectType, FxParamSpec[]> = {
-  eq3:    [{ key: 'low', label: 'Low', min: -12, max: 12, decimals: 0 }, { key: 'mid', label: 'Mid', min: -12, max: 12, decimals: 0 }, { key: 'high', label: 'Hi', min: -12, max: 12, decimals: 0 }, { key: 'midFreq', label: 'Freq', min: 200, max: 8000, step: 10, decimals: 0 }],
-  comp:   [{ key: 'threshold', label: 'Thr', min: -60, max: 0, decimals: 0 }, { key: 'ratio', label: 'Rat', min: 1, max: 20, decimals: 1 }, { key: 'attack', label: 'Att', min: 0, max: 0.5, step: 0.001, decimals: 3 }, { key: 'release', label: 'Rel', min: 0, max: 2, step: 0.01, decimals: 2 }],
-  crush:  [{ key: 'bits', label: 'Bits', min: 1, max: 16, decimals: 0 }],
-  reverb: [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'decay', label: 'Decay', min: 0.2, max: 8, step: 0.1, decimals: 1 }],
-  delay:  [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'time', label: 'Time', min: 0.01, max: 2, step: 0.01, decimals: 2 }, { key: 'feedback', label: 'FB', min: 0, max: 0.95, step: 0.01, decimals: 2 }],
+  eq3:        [{ key: 'low', label: 'Low', min: -12, max: 12, decimals: 0 }, { key: 'mid', label: 'Mid', min: -12, max: 12, decimals: 0 }, { key: 'high', label: 'Hi', min: -12, max: 12, decimals: 0 }, { key: 'midFreq', label: 'Freq', min: 200, max: 8000, step: 10, decimals: 0 }],
+  comp:       [{ key: 'threshold', label: 'Thr', min: -60, max: 0, decimals: 0 }, { key: 'ratio', label: 'Rat', min: 1, max: 20, decimals: 1 }, { key: 'attack', label: 'Att', min: 0, max: 0.5, step: 0.001, decimals: 3 }, { key: 'release', label: 'Rel', min: 0, max: 2, step: 0.01, decimals: 2 }],
+  crush:      [{ key: 'bits', label: 'Bits', min: 1, max: 16, decimals: 0 }],
+  reverb:     [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'decay', label: 'Decay', min: 0.2, max: 8, step: 0.1, decimals: 1 }],
+  delay:      [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'time', label: 'Time', min: 0.01, max: 2, step: 0.01, decimals: 2 }, { key: 'feedback', label: 'FB', min: 0, max: 0.95, step: 0.01, decimals: 2 }],
+  chorus:     [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'rate', label: 'Rate', min: 0.1, max: 8, step: 0.1, decimals: 1 }, { key: 'depth', label: 'Depth', min: 0.001, max: 0.02, step: 0.001, decimals: 3 }],
+  phaser:     [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'rate', label: 'Rate', min: 0.1, max: 8, step: 0.1, decimals: 1 }, { key: 'depth', label: 'Depth', min: 100, max: 4000, step: 10, decimals: 0 }],
+  flanger:    [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'rate', label: 'Rate', min: 0.05, max: 4, step: 0.05, decimals: 2 }, { key: 'depth', label: 'Depth', min: 0.001, max: 0.015, step: 0.001, decimals: 3 }, { key: 'feedback', label: 'FB', min: 0, max: 0.9, step: 0.01, decimals: 2 }],
+  autofilter: [{ key: 'freq', label: 'Freq', min: 80, max: 16000, step: 10, decimals: 0 }, { key: 'Q', label: 'Q', min: 0.5, max: 18, step: 0.1, decimals: 1 }, { key: 'lfoRate', label: 'LFO', min: 0.1, max: 16, step: 0.1, decimals: 1 }, { key: 'lfoDepth', label: 'Dpth', min: 0, max: 8000, step: 50, decimals: 0 }],
+  saturator:  [{ key: 'drive', label: 'Drive', min: 1, max: 20, step: 0.5, decimals: 1 }, { key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }],
 }
 
 function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange }: {
@@ -1209,7 +1244,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               <>
                 <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={onFxAddClose} />
                 <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 400, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, boxShadow: '0 6px 20px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 110 }}>
-                  {(['eq3', 'comp', 'crush', 'reverb', 'delay'] as LaneEffectType[]).map(t => (
+                  {(['eq3', 'comp', 'crush', 'reverb', 'delay', 'chorus', 'phaser', 'flanger', 'autofilter', 'saturator'] as LaneEffectType[]).map(t => (
                     <button key={t} onClick={() => onFxAdd(t)}
                       style={{ textAlign: 'left', padding: '5px 10px', borderRadius: 5, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-primary)' }}>
                       {LANE_EFFECT_LABELS[t]}
@@ -1570,6 +1605,37 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const existing = sessionClips[laneType]
     if (existing && existing.length === SCENE_COUNT) return existing
     return Array(SCENE_COUNT).fill(null)
+  }
+
+  // ── Locators ──────────────────────────────────────────────────────────────
+  const [locators, setLocators] = useState<Locator[]>([])
+  const locatorCountRef = useRef(0)
+
+  function addLocator(t: number) {
+    locatorCountRef.current += 1
+    const label = bpm
+      ? `${Math.round(t / (60 / bpm / 4) / 4) + 1}`
+      : `M${locatorCountRef.current}`
+    setLocators(prev => [...prev, { id: crypto.randomUUID(), time: t, label }].sort((a, b) => a.time - b.time))
+  }
+
+  function removeLocator(id: string) {
+    setLocators(prev => prev.filter(l => l.id !== id))
+  }
+
+  // ── Quantize / Groove ─────────────────────────────────────────────────────
+  const [quantizeSwing, setQuantizeSwing] = useState(0)
+
+  function quantizeHits() {
+    const grid = snapInterval > 0 ? snapInterval : (bpm ? 60 / bpm / 4 : 0)
+    if (!grid) return
+    const swing = quantizeSwing
+    setHits(prev => prev.map(h => {
+      const stepIdx = Math.round(h.time / grid)
+      const isOdd = stepIdx % 2 === 1
+      const swingOffset = isOdd ? grid * swing * 0.14 : 0
+      return { ...h, time: Math.max(0, stepIdx * grid + swingOffset) }
+    }).sort((a, b) => a.time - b.time))
   }
 
   // Per-lane recording — mic button in editing toolbar records into the active lane only
@@ -2129,6 +2195,95 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           const inp  = ctx.createGain(); const out = ctx.createGain()
           inp.connect(dryG); dryG.connect(out)
           inp.connect(wetG); wetG.connect(dly); dly.connect(out)
+          return { in: inp, out }
+        }
+        case 'chorus': {
+          const wet   = Math.max(0, Math.min(1, p.wet))
+          const rate  = Math.max(0.1, p.rate ?? 1.2)
+          const depth = Math.max(0.001, p.depth ?? 0.003)
+          const baseDelay = Math.max(0.01, p.delay ?? 0.025)
+          // Two detuned voices: LFO modulates delay time
+          const inp = ctx.createGain(); const out = ctx.createGain()
+          const dryG = ctx.createGain(); dryG.gain.value = 1 - wet
+          const wetG = ctx.createGain(); wetG.gain.value = wet
+          inp.connect(dryG); dryG.connect(out)
+          for (const sign of [1, -1]) {
+            const dly = ctx.createDelay(0.5); dly.delayTime.value = baseDelay
+            const lfo = ctx.createOscillator(); lfo.frequency.value = rate * (sign > 0 ? 1 : 1.1)
+            const lfoG = ctx.createGain(); lfoG.gain.value = depth
+            lfo.connect(lfoG); lfoG.connect(dly.delayTime)
+            lfo.start()
+            inp.connect(wetG); wetG.connect(dly); dly.connect(out)
+          }
+          return { in: inp, out }
+        }
+        case 'phaser': {
+          const wet   = Math.max(0, Math.min(1, p.wet))
+          const rate  = Math.max(0.1, p.rate ?? 0.5)
+          const depth = Math.max(100, p.depth ?? 1000)
+          const inp = ctx.createGain(); const out = ctx.createGain()
+          const dryG = ctx.createGain(); dryG.gain.value = 1 - wet
+          const wetG = ctx.createGain(); wetG.gain.value = wet
+          inp.connect(dryG); dryG.connect(out)
+          // 4-stage allpass chain with LFO sweeping center frequency
+          let prev: AudioNode = wetG
+          const lfo = ctx.createOscillator(); lfo.frequency.value = rate
+          const lfoG = ctx.createGain(); lfoG.gain.value = depth
+          lfo.connect(lfoG); lfo.start()
+          for (let i = 0; i < 4; i++) {
+            const ap = ctx.createBiquadFilter(); ap.type = 'allpass'
+            ap.frequency.value = 800 + i * 400
+            ap.Q.value = 8
+            lfoG.connect(ap.frequency)
+            prev.connect(ap); prev = ap
+          }
+          ;(prev as AudioNode).connect(out)
+          inp.connect(wetG)
+          return { in: inp, out }
+        }
+        case 'flanger': {
+          const wet      = Math.max(0, Math.min(1, p.wet))
+          const rate     = Math.max(0.05, p.rate ?? 0.25)
+          const depth    = Math.max(0.001, p.depth ?? 0.005)
+          const baseD    = Math.max(0.001, p.delay ?? 0.005)
+          const feedback = Math.max(0, Math.min(0.9, p.feedback ?? 0.5))
+          const inp  = ctx.createGain(); const out = ctx.createGain()
+          const dryG = ctx.createGain(); dryG.gain.value = 1 - wet
+          const wetG = ctx.createGain(); wetG.gain.value = wet
+          const dly  = ctx.createDelay(0.5); dly.delayTime.value = baseD
+          const fbG  = ctx.createGain(); fbG.gain.value = feedback
+          const lfo  = ctx.createOscillator(); lfo.frequency.value = rate
+          const lfoG = ctx.createGain(); lfoG.gain.value = depth
+          lfo.connect(lfoG); lfoG.connect(dly.delayTime); lfo.start()
+          inp.connect(dryG); dryG.connect(out)
+          inp.connect(wetG); wetG.connect(dly); dly.connect(out)
+          dly.connect(fbG); fbG.connect(dly)
+          return { in: inp, out }
+        }
+        case 'autofilter': {
+          const filt = ctx.createBiquadFilter()
+          filt.type = 'lowpass'
+          filt.frequency.value = Math.max(80, p.freq ?? 800)
+          filt.Q.value = Math.max(0.5, p.Q ?? 1.5)
+          const lfo  = ctx.createOscillator(); lfo.frequency.value = Math.max(0.1, p.lfoRate ?? 1)
+          const lfoG = ctx.createGain(); lfoG.gain.value = Math.max(0, p.lfoDepth ?? 600)
+          lfo.connect(lfoG); lfoG.connect(filt.frequency); lfo.start()
+          return { in: filt, out: filt }
+        }
+        case 'saturator': {
+          const drive = Math.max(1, Math.min(20, p.drive ?? 3))
+          const wet   = Math.max(0, Math.min(1, p.wet ?? 1))
+          const curve = new Float32Array(2048)
+          for (let i = 0; i < 2048; i++) {
+            const x = (i * 2 / 2047 - 1) * drive
+            curve[i] = Math.tanh(x) / Math.tanh(drive)
+          }
+          const ws   = ctx.createWaveShaper(); ws.curve = curve; ws.oversample = '4x'
+          const inp  = ctx.createGain(); const out = ctx.createGain()
+          const dryG = ctx.createGain(); dryG.gain.value = 1 - wet
+          const wetG = ctx.createGain(); wetG.gain.value = wet
+          inp.connect(dryG); dryG.connect(out)
+          inp.connect(wetG); wetG.connect(ws); ws.connect(out)
           return { in: inp, out }
         }
       }
@@ -2951,6 +3106,66 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     return map
   }, [hits, activeLaneTypes])
 
+  async function exportStems() {
+    if (!duration || duration <= 0) return
+    const sr = 44100
+    const allLaneTypes = Array.from(new Set(hits.map(h => h.type)))
+    for (const laneType of allLaneTypes) {
+      const laneHits = hits.filter(h => h.type === laneType)
+      if (!laneHits.length) continue
+      const offCtx = new OfflineAudioContext(2, Math.ceil(sr * (duration + 1)), sr)
+      const dest = offCtx.destination
+      for (const hit of laneHits) {
+        if (hit.time > duration) continue
+        try {
+          const { playDrumHit } = await import('@/lib/drum-samples')
+          const { playMelodicNote, MELODIC_TYPES } = await import('@/lib/instrument-synth')
+          if (MELODIC_TYPES.has(hit.type)) {
+            playMelodicNote(offCtx as unknown as AudioContext, hit.type, hit.note, hit.time, hit.velocity, dest)
+          } else {
+            playDrumHit(offCtx as unknown as AudioContext, 'synth', hit.type, hit.time, hit.velocity, hit.note, undefined, dest)
+          }
+        } catch { /* ignore per-hit errors */ }
+      }
+      try {
+        const rendered = await offCtx.startRendering()
+        const wavBlob = audioBufferToWav(rendered)
+        const url = URL.createObjectURL(wavBlob)
+        const a = document.createElement('a')
+        a.href = url; a.download = `stem-${laneType}.wav`
+        document.body.appendChild(a); a.click()
+        document.body.removeChild(a)
+        setTimeout(() => URL.revokeObjectURL(url), 5000)
+      } catch { /* ignore render errors */ }
+    }
+  }
+
+  function audioBufferToWav(buf: AudioBuffer): Blob {
+    const numCh = buf.numberOfChannels
+    const numSamples = buf.length
+    const sampleRate = buf.sampleRate
+    const byteCount = 44 + numSamples * numCh * 2
+    const ab = new ArrayBuffer(byteCount)
+    const view = new DataView(ab)
+    const writeStr = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)) }
+    const writeU16 = (o: number, v: number) => view.setUint16(o, v, true)
+    const writeU32 = (o: number, v: number) => view.setUint32(o, v, true)
+    writeStr(0, 'RIFF'); writeU32(4, byteCount - 8); writeStr(8, 'WAVE')
+    writeStr(12, 'fmt '); writeU32(16, 16); writeU16(20, 1); writeU16(22, numCh)
+    writeU32(24, sampleRate); writeU32(28, sampleRate * numCh * 2)
+    writeU16(32, numCh * 2); writeU16(34, 16)
+    writeStr(36, 'data'); writeU32(40, numSamples * numCh * 2)
+    let offset = 44
+    for (let i = 0; i < numSamples; i++) {
+      for (let c = 0; c < numCh; c++) {
+        const s = Math.max(-1, Math.min(1, buf.getChannelData(c)[i]))
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true)
+        offset += 2
+      }
+    }
+    return new Blob([ab], { type: 'audio/wav' })
+  }
+
   // For the toolbar, show info for whichever single hit is selected (or the first if multiple)
   const selectedHit = selectedIds.size === 1 ? (hits.find(h => selectedIds.has(h.id)) ?? null) : null
   const activeHitCount = hits.filter(h => !mutedTypes.has(h.type)).length
@@ -3173,6 +3388,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 />
                 <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 24 }}>{Math.round(masterVolume * 100)}%</span>
               </div>
+              {/* Quantize */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
+                <button onClick={quantizeHits} title="Quantize hits to grid" style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
+                <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', paddingLeft: 4 }}>Swing</span>
+                <input
+                  type="range" min={0} max={1} step={0.01} value={quantizeSwing}
+                  onChange={e => setQuantizeSwing(Number(e.target.value))}
+                  style={{ width: 44, accentColor: '#f59e0b', cursor: 'pointer' }}
+                  title={`Swing: ${Math.round(quantizeSwing * 100)}%`}
+                />
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 22 }}>{Math.round(quantizeSwing * 100)}%</span>
+              </div>
+              {/* Export Stems */}
+              <button onClick={() => void exportStems()} title="Export each lane as a separate WAV file" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                Stems
+              </button>
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <button onClick={() => setViewMode('arrangement')} title="Arrangement view" style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
@@ -3702,6 +3934,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                       abLoop={abLoop} abLoopEnabled={abLoopEnabled}
                       onSeek={handleSeek}
                       onAbLoopDrag={loop => { setAbLoop(loop) }}
+                      locators={locators}
+                      onLocatorAdd={addLocator}
+                      onLocatorRemove={removeLocator}
                     />
                   </div>
 

@@ -28,6 +28,8 @@ export interface SceneClip {
   name: string
   color: string | null
   durationBars: number
+  followAction?: 'none' | 'next' | 'loop' | 'random' | 'stop'
+  followActionBeats?: number
 }
 
 export interface SessionLane {
@@ -48,8 +50,11 @@ export interface SessionViewProps {
   onAddClip: (laneType: string, sceneIdx: number, clip: SceneClip) => void
   onRemoveClip: (laneType: string, sceneIdx: number) => void
   onEditClip: (laneType: string, sceneIdx: number) => void
+  onFollowActionChange?: (laneType: string, sceneIdx: number, action: SceneClip['followAction']) => void
   playing: Record<string, number | null>
   bpm?: number
+  launchQuantize?: 'none' | '1beat' | '1bar' | '2bar' | '4bar'
+  onLaunchQuantizeChange?: (q: SessionViewProps['launchQuantize']) => void
 }
 
 interface ContextMenuState {
@@ -135,13 +140,17 @@ export default function SessionView({
   onAddClip,
   onRemoveClip,
   onEditClip,
+  onFollowActionChange,
   playing,
   bpm: _bpm = 120,
+  launchQuantize = 'none',
+  onLaunchQuantizeChange,
 }: SessionViewProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  // Local color overrides keyed by `${laneType}-${sceneIdx}`
   const [clipColors, setClipColors] = useState<Record<string, string | null>>({})
+  const [pendingLaunch, setPendingLaunch] = useState<{ laneType: string; sceneIdx: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Inject CSS keyframes once into <head>
   useEffect(() => {
@@ -157,6 +166,10 @@ export default function SessionView({
       @keyframes sv-dot-pulse {
         0%,100% { opacity: 1;    transform: scale(1);    }
         50%      { opacity: 0.35; transform: scale(0.72); }
+      }
+      @keyframes sv-queue {
+        0%,100% { border-color: rgba(251,191,36,0.9); }
+        50%      { border-color: rgba(251,191,36,0.2); }
       }
     `
     document.head.appendChild(style)
@@ -181,6 +194,58 @@ export default function SessionView({
       document.removeEventListener('keydown', handleKey)
     }
   }, [contextMenu])
+
+  function launchClipWithQuantize(laneType: string, sceneIdx: number) {
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current)
+    if (launchQuantize === 'none') {
+      onLaunchClip(laneType, sceneIdx)
+      setPendingLaunch(null)
+      return
+    }
+    const bps = _bpm / 60
+    const beatMs = 1000 / bps
+    const delayMs =
+      launchQuantize === '1beat' ? beatMs :
+      launchQuantize === '1bar'  ? beatMs * 4 :
+      launchQuantize === '2bar'  ? beatMs * 8 :
+      beatMs * 16
+    setPendingLaunch({ laneType, sceneIdx })
+    pendingTimerRef.current = setTimeout(() => {
+      onLaunchClip(laneType, sceneIdx)
+      setPendingLaunch(null)
+    }, delayMs)
+  }
+
+  // Follow actions: when a clip finishes, trigger next action
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = []
+    for (const [laneType, sceneIdx] of Object.entries(playing)) {
+      if (sceneIdx == null) continue
+      const lane = lanes.find(l => l.type === laneType)
+      if (!lane) continue
+      const clip = lane.clips[sceneIdx]
+      if (!clip || !clip.followAction || clip.followAction === 'none') continue
+      const beats = clip.followActionBeats ?? clip.durationBars * 4
+      const ms = (beats / (_bpm / 60)) * 1000
+      const t = setTimeout(() => {
+        const fa = clip.followAction
+        if (fa === 'loop') onLaunchClip(laneType, sceneIdx)
+        else if (fa === 'next') {
+          const nextIdx = (sceneIdx + 1) % SCENE_COUNT
+          if (lane.clips[nextIdx]) onLaunchClip(laneType, nextIdx)
+          else onStopLane(laneType)
+        } else if (fa === 'random') {
+          const filled = lane.clips.map((c, i) => c ? i : -1).filter(i => i >= 0)
+          if (filled.length > 0) onLaunchClip(laneType, filled[Math.floor(Math.random() * filled.length)])
+        } else if (fa === 'stop') {
+          onStopLane(laneType)
+        }
+      }, ms)
+      timers.push(t)
+    }
+    return () => timers.forEach(clearTimeout)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing])
 
   // Resolve the effective display color for a clip (local override → clip.color → lane.color)
   function resolveClipColor(laneType: string, sceneIdx: number, clip: SceneClip, laneColor: string): string {
@@ -239,17 +304,25 @@ export default function SessionView({
           backgroundColor: 'var(--bg-surface)',
           borderBottom: '1px solid var(--border)',
         }}>
-          {/* "Session" label */}
-          <div style={{ width: LEFT_W, minWidth: LEFT_W, paddingLeft: 14 }}>
-            <span style={{
-              fontSize: 9,
-              fontWeight: 800,
-              letterSpacing: '0.14em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-            }}>
+          {/* "Session" label + launch quantize */}
+          <div style={{ width: LEFT_W, minWidth: LEFT_W, paddingLeft: 10, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
               Session
             </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Q</span>
+              <select
+                value={launchQuantize}
+                onChange={e => onLaunchQuantizeChange?.(e.target.value as SessionViewProps['launchQuantize'])}
+                style={{ fontSize: 9, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: 3, padding: '1px 2px', cursor: 'pointer' }}
+              >
+                <option value="none">none</option>
+                <option value="1beat">1 beat</option>
+                <option value="1bar">1 bar</option>
+                <option value="2bar">2 bar</option>
+                <option value="4bar">4 bar</option>
+              </select>
+            </div>
           </div>
 
           {/* Scene N column headers */}
@@ -356,6 +429,7 @@ export default function SessionView({
               {Array.from({ length: SCENE_COUNT }, (_, sceneIdx) => {
                 const clip = lane.clips[sceneIdx] ?? null
                 const isPlaying = playing[lane.type] === sceneIdx
+                const isQueued = pendingLaunch?.laneType === lane.type && pendingLaunch?.sceneIdx === sceneIdx
                 const effectiveColor = clip
                   ? resolveClipColor(lane.type, sceneIdx, clip, lane.color)
                   : lane.color
@@ -375,15 +449,17 @@ export default function SessionView({
                         role="button"
                         tabIndex={0}
                         aria-label={`${clip.name} — click to launch, right-click for options`}
-                        onClick={() => onLaunchClip(lane.type, sceneIdx)}
+                        onClick={() => launchClipWithQuantize(lane.type, sceneIdx)}
                         onContextMenu={e => handleClipRightClick(e, lane.type, sceneIdx)}
-                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onLaunchClip(lane.type, sceneIdx) }}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') launchClipWithQuantize(lane.type, sceneIdx) }}
                         style={{
                           flex: 1,
                           borderRadius: 6,
                           backgroundColor: hexToRgba(effectiveColor, 0.18),
                           border: isPlaying
                             ? `2px solid ${hexToRgba(effectiveColor, 0.95)}`
+                            : isQueued
+                            ? '2px solid rgba(251,191,36,0.9)'
                             : `1px solid ${hexToRgba(effectiveColor, 0.45)}`,
                           cursor: 'pointer',
                           padding: '5px 7px',
@@ -392,7 +468,7 @@ export default function SessionView({
                           justifyContent: 'space-between',
                           position: 'relative',
                           overflow: 'hidden',
-                          animation: isPlaying ? 'sv-pulse 1.4s ease-in-out infinite' : 'none',
+                          animation: isPlaying ? 'sv-pulse 1.4s ease-in-out infinite' : isQueued ? 'sv-queue 0.7s ease infinite' : 'none',
                           transition: 'border-color 0.15s ease, background-color 0.15s ease',
                           outline: 'none',
                         }}
@@ -573,6 +649,29 @@ export default function SessionView({
                 onClick={() => handleColorPick(contextMenu.laneType, contextMenu.sceneIdx, color)}
               />
             ))}
+          </div>
+
+          <div style={{ height: 1, backgroundColor: 'var(--border)', margin: '3px 0' }} />
+
+          {/* Follow Action */}
+          <div style={{ padding: '4px 14px 3px', fontSize: 9, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            Follow Action
+          </div>
+          <div style={{ padding: '2px 14px 8px' }}>
+            <select
+              value={ctxClip.followAction ?? 'none'}
+              onChange={e => {
+                onFollowActionChange?.(contextMenu.laneType, contextMenu.sceneIdx, e.target.value as SceneClip['followAction'])
+                setContextMenu(null)
+              }}
+              style={{ width: '100%', fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '3px 4px', cursor: 'pointer' }}
+            >
+              <option value="none">None</option>
+              <option value="next">Next clip</option>
+              <option value="loop">Loop</option>
+              <option value="random">Random</option>
+              <option value="stop">Stop</option>
+            </select>
           </div>
         </div>
       )}
