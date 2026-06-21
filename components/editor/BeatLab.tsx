@@ -346,9 +346,23 @@ function NoteAxis() {
 
 // ── Lane ──────────────────────────────────────────────────────────────────────
 
-interface AudioClipShape { id: string; startTime: number; buf: { duration: number; sampleRate: number; getChannelData(ch: number): Float32Array }; muted: boolean; name: string }
+interface AudioClipShape {
+  id: string; startTime: number; muted: boolean; name: string
+  buf: { duration: number; sampleRate: number; getChannelData(ch: number): Float32Array }
+  gain: number
+  stretchDuration: number | null
+  loopDuration:    number | null
+  gateThreshold:   number
+}
 
-function WaveformCanvas({ buf, color }: { buf: AudioClipShape['buf']; color: string }) {
+function clipEffectiveDuration(c: AudioClipShape) {
+  return c.loopDuration ?? c.stretchDuration ?? c.buf.duration
+}
+
+function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null }: {
+  buf: AudioClipShape['buf']; color: string
+  gain?: number; gateThreshold?: number; loopDuration?: number | null
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = ref.current
@@ -357,31 +371,106 @@ function WaveformCanvas({ buf, color }: { buf: AudioClipShape['buf']; color: str
     if (!parent) return
     const w = Math.max(1, Math.round(parent.clientWidth))
     const h = Math.max(1, Math.round(parent.clientHeight))
-    canvas.width  = w
-    canvas.height = h
+    canvas.width = w; canvas.height = h
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const raw  = buf.getChannelData(0)
-    const step = Math.max(1, Math.floor(raw.length / w))
-    const mid  = h / 2
+    const raw    = buf.getChannelData(0)
+    const mid    = h / 2
+    const maxAmp = Math.min(0.92, 0.88 * gain)
+
     ctx.clearRect(0, 0, w, h)
-    ctx.strokeStyle = color
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    for (let x = 0; x < w; x++) {
-      let mn = 0, mx = 0
-      const base = x * step
-      for (let i = 0; i < step && base + i < raw.length; i++) {
-        const v = raw[base + i]
-        if (v < mn) mn = v
-        if (v > mx) mx = v
+
+    const isLooped  = loopDuration != null && loopDuration > buf.duration
+    const cyclePx   = isLooped ? (buf.duration / loopDuration!) * w : w
+    const dimColor  = color.replace(/[\d.]+\)$/, '0.15)')
+
+    let startX = 0, loopIdx = 0
+    while (startX < w) {
+      // Loop divider
+      if (isLooped && loopIdx > 0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1
+        ctx.setLineDash([2, 3])
+        ctx.beginPath(); ctx.moveTo(startX + 0.5, 0); ctx.lineTo(startX + 0.5, h); ctx.stroke()
+        ctx.setLineDash([])
       }
-      ctx.moveTo(x + 0.5, mid + mn * mid * 0.88)
-      ctx.lineTo(x + 0.5, mid + mx * mid * 0.88)
+
+      // Precompute bars
+      const bars: { mn: number; mx: number; barAmp: number }[] = []
+      for (let x = 0; x < cyclePx && startX + x < w; x++) {
+        const frac = x / cyclePx
+        const base = Math.floor(frac * raw.length)
+        const step = Math.max(1, Math.ceil(raw.length / cyclePx))
+        let mn = 0, mx = 0
+        for (let i = 0; i < step && base + i < raw.length; i++) {
+          const v = raw[base + i]; if (v < mn) mn = v; if (v > mx) mx = v
+        }
+        bars.push({ mn, mx, barAmp: Math.max(Math.abs(mn), Math.abs(mx)) })
+      }
+
+      // Pass 1: active (above gate) bars
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath()
+      for (let x = 0; x < bars.length; x++) {
+        const { mn, mx, barAmp } = bars[x]
+        if (gateThreshold <= 0 || barAmp >= gateThreshold) {
+          const px = startX + x
+          ctx.moveTo(px + 0.5, mid + mn * mid * maxAmp)
+          ctx.lineTo(px + 0.5, mid + mx * mid * maxAmp)
+        }
+      }
+      ctx.stroke()
+
+      // Pass 2: gated (below threshold) bars — dimmed
+      if (gateThreshold > 0) {
+        ctx.strokeStyle = dimColor; ctx.lineWidth = 1; ctx.beginPath()
+        for (let x = 0; x < bars.length; x++) {
+          const { mn, mx, barAmp } = bars[x]
+          if (barAmp < gateThreshold) {
+            const px = startX + x
+            ctx.moveTo(px + 0.5, mid + mn * mid * maxAmp)
+            ctx.lineTo(px + 0.5, mid + mx * mid * maxAmp)
+          }
+        }
+        ctx.stroke()
+      }
+
+      if (!isLooped) break
+      startX += cyclePx; loopIdx++
+      if (loopIdx > 64) break
     }
-    ctx.stroke()
-  }, [buf, color])
+
+    // Midline
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke()
+
+    // Gate threshold lines
+    if (gateThreshold > 0) {
+      const threshPx = gateThreshold * mid * maxAmp
+      ctx.strokeStyle = 'rgba(251,191,36,0.6)'; ctx.lineWidth = 1
+      ctx.setLineDash([4, 3])
+      ctx.beginPath()
+      ctx.moveTo(0, mid - threshPx); ctx.lineTo(w, mid - threshPx)
+      ctx.moveTo(0, mid + threshPx); ctx.lineTo(w, mid + threshPx)
+      ctx.stroke(); ctx.setLineDash([])
+    }
+  }, [buf, color, gain, gateThreshold, loopDuration])
   return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+}
+
+function getClipZone(rx: number, ry: number, w: number, h: number): string {
+  const eW = Math.min(14, w * 0.18), eH = 7, midY = h / 2
+  if (ry < eH) return 'top-edge'
+  if (ry > h - eH) return 'bottom-edge'
+  if (rx < eW) return ry < midY ? 'left-loop' : 'left-stretch'
+  if (rx > w - eW) return ry < midY ? 'right-loop' : 'right-stretch'
+  if (Math.abs(ry - midY) < 5) return 'midline'
+  return 'move'
+}
+
+const ZONE_CURSOR: Record<string, string> = {
+  'top-edge': 'ns-resize', 'bottom-edge': 'ns-resize',
+  'left-loop': 'ew-resize', 'right-loop': 'ew-resize',
+  'left-stretch': 'ew-resize', 'right-stretch': 'ew-resize',
+  'midline': 'ns-resize', 'move': 'grab',
 }
 
 interface LaneProps {
@@ -407,11 +496,11 @@ interface LaneProps {
   onLaneContextMenu: (e: React.MouseEvent) => void
   onHitRightClick: (e: React.MouseEvent, id: string) => void
   onClipRightClick: (e: React.MouseEvent, clipId: string) => void
-  onClipMove: (clipId: string, newStart: number) => void
   onClipDelete: (clipId: string) => void
+  onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold'>>) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipMove, onClipDelete }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipUpdate }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -486,54 +575,100 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
             onRightClick={onHitRightClick}
           />
         ))}
-        {/* Audio clips — raw recordings and synth renders sitting on this lane */}
+        {/* Audio clips */}
         {clips.map(clip => {
-          const left = duration > 0 ? (clip.startTime / duration) * pxWidth : 0
-          const wid  = duration > 0 ? Math.min((clip.buf.duration / duration) * pxWidth, pxWidth - left) : 0
+          const effDur = clipEffectiveDuration(clip)
+          const left   = duration > 0 ? (clip.startTime / duration) * pxWidth : 0
+          const wid    = duration > 0 ? Math.min((effDur / duration) * pxWidth, pxWidth - left) : 0
           if (wid <= 0) return null
           const isConverting = clip.name === 'Converting…'
+          const waveColor    = clip.muted ? 'rgba(130,130,160,0.45)' : 'rgba(167,139,250,0.65)'
+
           return (
             <div
               key={clip.id}
               onClick={e => e.stopPropagation()}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onClipRightClick(e, clip.id) }}
+              onMouseMove={e => {
+                if (isConverting) return
+                const r = e.currentTarget.getBoundingClientRect()
+                const zone = getClipZone(e.clientX - r.left, e.clientY - r.top, r.width, r.height)
+                e.currentTarget.style.cursor = ZONE_CURSOR[zone] ?? 'grab'
+              }}
+              onMouseLeave={e => { e.currentTarget.style.cursor = isConverting ? 'wait' : 'grab' }}
               onMouseDown={e => {
-                if (e.button !== 0) return
-                e.stopPropagation()
-                e.preventDefault()
-                const startX = e.clientX
-                const startTime = clip.startTime
-                const handleMove = (me: MouseEvent) => {
-                  const dt = ((me.clientX - startX) / pxWidth) * duration
-                  onClipMove(clip.id, Math.max(0, startTime + dt))
+                if (e.button !== 0 || isConverting) return
+                e.stopPropagation(); e.preventDefault()
+                const r = e.currentTarget.getBoundingClientRect()
+                const zone = getClipZone(e.clientX - r.left, e.clientY - r.top, r.width, r.height)
+                const sx = e.clientX, sy = e.clientY
+                const pxPerSec = duration > 0 ? pxWidth / duration : 1
+
+                const drag = (mv: (me: MouseEvent) => void) => {
+                  const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up) }
+                  window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up)
                 }
-                const handleUp = () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp) }
-                window.addEventListener('mousemove', handleMove)
-                window.addEventListener('mouseup', handleUp)
+
+                if (zone === 'move') {
+                  const orig = clip.startTime
+                  drag(me => onClipUpdate(clip.id, { startTime: Math.max(0, orig + (me.clientX - sx) / pxPerSec) }))
+
+                } else if (zone === 'right-stretch') {
+                  const orig = clip.stretchDuration ?? clip.buf.duration
+                  drag(me => onClipUpdate(clip.id, { stretchDuration: Math.max(0.05, orig + (me.clientX - sx) / pxPerSec), loopDuration: null }))
+
+                } else if (zone === 'left-stretch') {
+                  // Move startTime while keeping end fixed
+                  const origStart = clip.startTime
+                  const origEnd   = origStart + (clip.stretchDuration ?? clip.buf.duration)
+                  drag(me => {
+                    const newStart = Math.max(0, Math.min(origEnd - 0.05, origStart + (me.clientX - sx) / pxPerSec))
+                    onClipUpdate(clip.id, { startTime: newStart, stretchDuration: origEnd - newStart, loopDuration: null })
+                  })
+
+                } else if (zone === 'right-loop') {
+                  const orig = clip.loopDuration ?? clip.buf.duration
+                  drag(me => onClipUpdate(clip.id, { loopDuration: Math.max(clip.buf.duration * 0.1, orig + (me.clientX - sx) / pxPerSec), stretchDuration: null }))
+
+                } else if (zone === 'left-loop') {
+                  const origLoop  = clip.loopDuration ?? clip.buf.duration
+                  const origStart = clip.startTime
+                  drag(me => {
+                    const dt      = (me.clientX - sx) / pxPerSec
+                    const newLoop = Math.max(clip.buf.duration * 0.1, origLoop - dt)
+                    const newStart = Math.max(0, origStart + dt)
+                    onClipUpdate(clip.id, { startTime: newStart, loopDuration: newLoop, stretchDuration: null })
+                  })
+
+                } else if (zone === 'midline') {
+                  const orig = clip.gain
+                  drag(me => onClipUpdate(clip.id, { gain: Math.max(0, Math.min(3, orig - (me.clientY - sy) / 60)) }))
+
+                } else if (zone === 'top-edge' || zone === 'bottom-edge') {
+                  const orig = clip.gateThreshold
+                  // Top edge: drag down = raise threshold (inward). Bottom edge: drag up = raise threshold (inward).
+                  const sign = zone === 'top-edge' ? 1 : -1
+                  drag(me => onClipUpdate(clip.id, { gateThreshold: Math.max(0, Math.min(0.98, orig + sign * (me.clientY - sy) / 80)) }))
+                }
               }}
               style={{
                 position: 'absolute', left, width: Math.max(wid, 8),
                 top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
                 background: isConverting ? 'rgba(139,92,246,0.08)' : clip.muted ? 'rgba(80,80,100,0.1)' : 'rgba(139,92,246,0.14)',
                 border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.5)'}`,
-                overflow: 'hidden',
-                cursor: isConverting ? 'wait' : 'grab',
+                overflow: 'hidden', cursor: isConverting ? 'wait' : 'grab',
               }}
             >
               {!isConverting && (
-                <WaveformCanvas
-                  buf={clip.buf}
-                  color={clip.muted ? 'rgba(130,130,160,0.45)' : 'rgba(167,139,250,0.65)'}
-                />
+                <WaveformCanvas buf={clip.buf} color={waveColor}
+                  gain={clip.gain} gateThreshold={clip.gateThreshold} loopDuration={clip.loopDuration} />
               )}
               <span style={{
-                position: 'absolute', top: 2, left: 5,
-                fontSize: 8, fontWeight: 500,
+                position: 'absolute', top: 2, left: 5, fontSize: 8, fontWeight: 500, pointerEvents: 'none',
                 color: isConverting ? 'rgba(139,92,246,0.6)' : clip.muted ? 'var(--text-muted)' : 'rgba(230,210,255,0.95)',
-                whiteSpace: 'nowrap', pointerEvents: 'none',
-                textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                textShadow: '0 1px 2px rgba(0,0,0,0.6)', whiteSpace: 'nowrap',
               }}>
-                {clip.name} · {clip.buf.duration.toFixed(1)}s
+                {clip.name} · {effDur.toFixed(1)}s{clip.loopDuration != null ? ' ↻' : clip.stretchDuration != null ? ' ⇔' : ''}
               </span>
             </div>
           )
@@ -724,7 +859,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [voiceSynthOpen,      setVoiceSynthOpen]      = useState(false)
   const [voiceSynthRendering, setVoiceSynthRendering]  = useState(false)
   // Audio clips — raw recordings and synth renders, stored per-lane and played as AudioBuffers
-  interface AudioClip { id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string }
+  interface AudioClip {
+    id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string
+    gain: number; stretchDuration: number | null; loopDuration: number | null; gateThreshold: number
+  }
+  function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
+    return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0 }
+  }
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
   type BeatSensitivity = 'low' | 'medium' | 'high'
@@ -789,7 +930,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     try {
       const curve    = await detectPitchCurveAsync(source)
       const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration)
-      setAudioClips(prev => [...prev, { id: crypto.randomUUID(), laneType, buf: rendered, startTime: playhead, muted: false, name: 'Synth' }])
+      setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneType, rendered, playhead, 'Synth')])
       if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
     } catch (e) {
       setError(`Voice synth failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -903,7 +1044,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         setActiveLaneType(newId as BeatType)
         laneType = newId
       }
-      setAudioClips(prev => [...prev, { id: crypto.randomUUID(), laneType, buf, startTime: offset, muted: false, name: 'Voice' }])
+      setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneType, buf, offset, 'Voice')])
       if (buf.duration + offset > duration) setDuration(buf.duration + offset)
     } catch {
       setError('Could not decode the recording. Try again.')
@@ -1134,21 +1275,72 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }
     }
 
-    // Audio clips — play raw recordings and synth renders at their lane positions
+    // Audio clips
     for (const clip of audioClips) {
       if (clip.muted) continue
-      const clipEnd = clip.startTime + clip.buf.duration
+      const effDur = clip.loopDuration ?? clip.stretchDuration ?? clip.buf.duration
+      const clipEnd = clip.startTime + effDur
       if (clipEnd <= startFrom) continue
+
+      // Apply gate: zero out samples below threshold (with 2ms ramps to avoid clicks)
+      let bufToPlay = clip.buf
+      if (clip.gateThreshold > 0) {
+        const sr = clip.buf.sampleRate
+        const raw = clip.buf.getChannelData(0)
+        const gated = new Float32Array(raw.length)
+        const ramp = Math.floor(sr * 0.002)
+        const hold = Math.floor(sr * 0.020)
+        let holdLeft = 0, gateOpen = false
+        for (let i = 0; i < raw.length; i++) {
+          if (Math.abs(raw[i]) >= clip.gateThreshold) { holdLeft = hold; gateOpen = true }
+          else if (holdLeft > 0) { holdLeft-- } else { gateOpen = false }
+          gated[i] = raw[i]
+        }
+        // Quick re-pass: smooth transitions
+        let env = 0
+        for (let i = 0; i < gated.length; i++) {
+          const target = Math.abs(raw[i]) >= clip.gateThreshold ? 1 : 0
+          env += (target - env) * (1 / ramp)
+          gated[i] = raw[i] * env
+        }
+        bufToPlay = new AudioBuffer({ numberOfChannels: 1, length: raw.length, sampleRate: sr })
+        bufToPlay.copyToChannel(gated, 0)
+      }
+
       const src  = ctx.createBufferSource()
-      src.buffer = clip.buf
-      const gain = ctx.createGain()
-      gain.gain.value = 0.82
-      src.connect(gain)
-      gain.connect(ctx.destination)
+      src.buffer = bufToPlay
+
+      // Time stretch: adjust playback rate so audio fills stretchDuration
+      const playRate = clip.stretchDuration != null ? clip.buf.duration / clip.stretchDuration : 1
+      src.playbackRate.value = playRate
+
+      // Loop
+      if (clip.loopDuration != null) {
+        src.loop = true
+        src.loopStart = 0
+        src.loopEnd = clip.buf.duration
+      }
+
+      const gainNode = ctx.createGain()
+      gainNode.gain.value = 0.82 * clip.gain
+      src.connect(gainNode); gainNode.connect(ctx.destination)
+
       if (clip.startTime >= startFrom) {
         src.start(now + (clip.startTime - startFrom), 0)
       } else {
-        src.start(now, startFrom - clip.startTime)
+        const elapsed = startFrom - clip.startTime
+        let bufOffset: number
+        if (clip.loopDuration != null) {
+          bufOffset = elapsed % clip.buf.duration
+        } else {
+          bufOffset = elapsed * playRate
+        }
+        src.start(now, Math.min(bufOffset, clip.buf.duration - 0.001))
+      }
+
+      // Schedule stop for loops (otherwise they'd run forever)
+      if (clip.loopDuration != null) {
+        src.stop(now + Math.max(0, clipEnd - startFrom))
       }
     }
 
@@ -2416,8 +2608,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
                           onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
-                          onClipMove={(clipId, newStart) => setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, startTime: newStart } : c))}
                           onClipDelete={clipId => setAudioClips(prev => prev.filter(c => c.id !== clipId))}
+                          onClipUpdate={(clipId, update) => setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, ...update } : c))}
                           onMoveHit={moveHit}
                           onDeleteHit={deleteHit}
                           onAddHit={(t, note) => addHit(type, t, note)}
