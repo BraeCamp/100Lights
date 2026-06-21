@@ -359,9 +359,9 @@ function clipEffectiveDuration(c: AudioClipShape) {
   return c.loopDuration ?? c.stretchDuration ?? c.buf.duration
 }
 
-function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null }: {
+function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null, stretchDuration = null }: {
   buf: AudioClipShape['buf']; color: string
-  gain?: number; gateThreshold?: number; loopDuration?: number | null
+  gain?: number; gateThreshold?: number; loopDuration?: number | null; stretchDuration?: number | null
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
@@ -380,8 +380,9 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
 
     ctx.clearRect(0, 0, w, h)
 
-    const isLooped  = loopDuration != null && loopDuration > buf.duration
-    const cyclePx   = isLooped ? (buf.duration / loopDuration!) * w : w
+    const cycleDur  = stretchDuration ?? buf.duration
+    const isLooped  = loopDuration != null && loopDuration > cycleDur
+    const cyclePx   = isLooped ? (cycleDur / loopDuration!) * w : w
     const dimColor  = color.replace(/[\d.]+\)$/, '0.15)')
 
     let startX = 0, loopIdx = 0
@@ -637,22 +638,24 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                   })
 
                 } else if (zone === 'right-loop') {
-                  const orig = clip.loopDuration ?? clip.buf.duration
-                  drag(me => onClipUpdate(clip.id, { loopDuration: Math.max(clip.buf.duration * 0.1, orig + (me.clientX - sx) / pxPerSec), stretchDuration: null }))
+                  const cycleDur = clip.stretchDuration ?? clip.buf.duration
+                  const orig = clip.loopDuration ?? cycleDur
+                  drag(me => onClipUpdate(clip.id, { loopDuration: Math.max(cycleDur * 0.1, orig + (me.clientX - sx) / pxPerSec) }))
 
                 } else if (zone === 'left-loop') {
-                  const origLoop  = clip.loopDuration ?? clip.buf.duration
+                  const cycleDur  = clip.stretchDuration ?? clip.buf.duration
+                  const origLoop  = clip.loopDuration ?? cycleDur
                   const origStart = clip.startTime
                   drag(me => {
                     const dt      = (me.clientX - sx) / pxPerSec
-                    const newLoop = Math.max(clip.buf.duration * 0.1, origLoop - dt)
+                    const newLoop = Math.max(cycleDur * 0.1, origLoop - dt)
                     const newStart = Math.max(0, origStart + dt)
-                    onClipUpdate(clip.id, { startTime: newStart, loopDuration: newLoop, stretchDuration: null })
+                    onClipUpdate(clip.id, { startTime: newStart, loopDuration: newLoop })
                   })
 
                 } else if (zone === 'midline') {
                   const orig = clip.gain
-                  drag(me => onClipUpdate(clip.id, { gain: Math.max(0, Math.min(3, orig - (me.clientY - sy) / 60)) }))
+                  drag(me => onClipUpdate(clip.id, { gain: Math.max(0, Math.min(8, orig - (me.clientY - sy) / 50)) }))
 
                 } else if (zone === 'top-edge' || zone === 'bottom-edge') {
                   const orig = clip.gateThreshold
@@ -672,7 +675,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
             >
               {!isConverting && (
                 <WaveformCanvas buf={clip.buf} color={waveColor}
-                  gain={clip.gain} gateThreshold={clip.gateThreshold} loopDuration={clip.loopDuration} />
+                  gain={clip.gain} gateThreshold={clip.gateThreshold}
+                  loopDuration={clip.loopDuration} stretchDuration={clip.stretchDuration} />
               )}
               <span style={{
                 position: 'absolute', top: 2, left: 5, fontSize: 8, fontWeight: 500, pointerEvents: 'none',
