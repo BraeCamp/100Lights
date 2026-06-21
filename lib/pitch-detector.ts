@@ -124,15 +124,25 @@ export async function synthesizeFromPitchCurve(
 ): Promise<AudioBuffer> {
   const sr  = sampleRate
   const len = Math.ceil(sr * totalDuration)
+  if (len < 1) throw new Error('Recording too short to synthesize')
   const ctx = new OfflineAudioContext(1, len, sr)
 
-  // Sawtooth oscillator — continuous wave, inherently no attack transient
+  // Sawtooth oscillator — continuous wave, no attack transient
   const osc = ctx.createOscillator()
   osc.type = 'sawtooth'
 
-  // Start at the first detected pitch, or C4 (60) if nothing was detected
-  const firstVoiced = pitchCurve.find(f => f.midi !== null)
-  osc.frequency.setValueAtTime(midiToFreq(firstVoiced?.midi ?? 60), 0)
+  // Use the MEDIAN pitch across all voiced frames as a single constant frequency.
+  // Per-frame pitch updates cause "notey" artifacts: MPM returns garbage readings
+  // for broadband/percussive input even at high amplitude, so the oscillator jumps
+  // between random pitches on every beat transient. A constant median pitch
+  // eliminates this entirely — the output is one continuous tone whose volume
+  // envelope follows the input dynamics, which is what "voice synth" should sound like.
+  const midiValues = pitchCurve
+    .filter(f => f.midi !== null)
+    .map(f => f.midi!)
+    .sort((a, b) => a - b)
+  const medianMidi = midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60
+  osc.frequency.setValueAtTime(midiToFreq(medianMidi), 0)
 
   // Warm lowpass to soften the sawtooth into a synth-lead tone
   const filter = ctx.createBiquadFilter()
@@ -140,7 +150,6 @@ export async function synthesizeFromPitchCurve(
   filter.frequency.setValueAtTime(1400, 0)
   filter.Q.setValueAtTime(0.6, 0)
 
-  // Gain for amplitude envelope
   const gain = ctx.createGain()
   gain.gain.setValueAtTime(0, 0)
 
@@ -150,26 +159,11 @@ export async function synthesizeFromPitchCurve(
   osc.start(0)
   osc.stop(totalDuration + 0.05)
 
-  let lastMidi = firstVoiced?.midi ?? 60
-
+  // Volume envelope follows the source amplitude — this is what creates the rhythm
   for (const frame of pitchCurve) {
-    const t = frame.time
-
-    // Only update pitch when the signal is loud enough to trust the MPM reading.
-    // Quiet/transient frames produce garbage pitch values; holding the last good
-    // pitch instead of jumping to random MIDI numbers prevents "notey" artifacts.
-    // The 100ms ramp smooths out semitone quantization so the pitch glides rather
-    // than snapping discretely, which also masks detector noise on louder frames.
-    if (frame.midi !== null && frame.amplitude >= 0.3) {
-      lastMidi = frame.midi
-      osc.frequency.linearRampToValueAtTime(midiToFreq(lastMidi), t + 0.1)
-    }
-
-    // Volume always follows amplitude regardless of voicing.
     const vol = Math.min(0.72, frame.amplitude * 0.72)
-    gain.gain.linearRampToValueAtTime(vol, t + 0.01)
+    gain.gain.linearRampToValueAtTime(vol, frame.time + 0.01)
   }
-
   gain.gain.linearRampToValueAtTime(0, totalDuration)
 
   return ctx.startRendering()

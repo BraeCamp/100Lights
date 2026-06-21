@@ -687,6 +687,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }
       setSynthLayers(prev => [...prev, layer])
       if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
+    } catch (e) {
+      setError(`Voice synth failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setVoiceSynthRendering(false)
     }
