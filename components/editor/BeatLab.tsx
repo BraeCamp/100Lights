@@ -59,7 +59,7 @@ import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
-import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
+import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -497,10 +497,12 @@ interface LaneProps {
   onHitRightClick: (e: React.MouseEvent, id: string) => void
   onClipRightClick: (e: React.MouseEvent, clipId: string) => void
   onClipDelete: (clipId: string) => void
+  onClipSelect: (clipId: string) => void
+  selectedClipId: string | null
   onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold'>>) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipUpdate }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -603,10 +605,18 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                 const zone = getClipZone(e.clientX - r.left, e.clientY - r.top, r.width, r.height)
                 const sx = e.clientX, sy = e.clientY
                 const pxPerSec = duration > 0 ? pxWidth / duration : 1
+                let moved = false
 
                 const drag = (mv: (me: MouseEvent) => void) => {
-                  const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up) }
-                  window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up)
+                  const track = (me: MouseEvent) => {
+                    if (Math.abs(me.clientX - sx) > 3 || Math.abs(me.clientY - sy) > 3) moved = true
+                    mv(me)
+                  }
+                  const up = () => {
+                    if (!moved && zone === 'move') onClipSelect(clip.id)
+                    window.removeEventListener('mousemove', track); window.removeEventListener('mouseup', up)
+                  }
+                  window.addEventListener('mousemove', track); window.addEventListener('mouseup', up)
                 }
 
                 if (zone === 'move') {
@@ -655,7 +665,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                 position: 'absolute', left, width: Math.max(wid, 8),
                 top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
                 background: isConverting ? 'rgba(139,92,246,0.08)' : clip.muted ? 'rgba(80,80,100,0.1)' : 'rgba(139,92,246,0.14)',
-                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.5)'}`,
+                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : selectedClipId === clip.id ? 'rgba(250,250,100,0.85)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.5)'}`,
+                boxShadow: selectedClipId === clip.id ? '0 0 0 1px rgba(250,250,100,0.4)' : 'none',
                 overflow: 'hidden', cursor: isConverting ? 'wait' : 'grab',
               }}
             >
@@ -862,18 +873,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   interface AudioClip {
     id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string
     gain: number; stretchDuration: number | null; loopDuration: number | null; gateThreshold: number
+    originalBuf: AudioBuffer | null  // preserved across conversions so re-converting re-derives from source
   }
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
-    return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0 }
+    return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null }
   }
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const clipboardRef = useRef<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
   type BeatSensitivity = 'low' | 'medium' | 'high'
+  type InstrumentPreset = 'piano' | 'strings' | 'bells' | 'bass' | 'organ'
   const [convertCard, setConvertCard] = useState<{
     clipId: string
-    mode: 'synth' | 'beats'
+    mode: 'synth' | 'beats' | 'instrument'
     synthOpts: SynthOptions
     sensitivity: BeatSensitivity
+    instrument: InstrumentPreset
   } | null>(null)
 
   // Voice Synth self-contained recorder (independent of the main beat recording)
@@ -939,9 +955,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
-  function openConvertCard(clipId: string, mode: 'synth' | 'beats') {
+  function openConvertCard(clipId: string, mode: 'synth' | 'beats' | 'instrument') {
     setClipMenu(null)
-    setConvertCard({ clipId, mode, synthOpts: { ...DEFAULT_SYNTH_OPTIONS }, sensitivity: 'medium' })
+    setConvertCard({ clipId, mode, synthOpts: { ...DEFAULT_SYNTH_OPTIONS }, sensitivity: 'medium', instrument: 'piano' })
   }
 
   async function runConvertToBeats(clipId: string, sensitivity: BeatSensitivity) {
@@ -967,13 +983,33 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     if (!clip) return
     setConvertCard(null)
     setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
+    const source = clip.originalBuf ?? clip.buf  // always derive from original recording
     try {
-      const curve    = await detectPitchCurveAsync(clip.buf)
-      const rendered = await synthesizeFromPitchCurve(curve, clip.buf.sampleRate, 60, clip.buf.duration, opts)
-      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth' } : c))
+      const curve    = await detectPitchCurveAsync(source)
+      const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration, opts)
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
     } catch (e) {
       setError(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
+    }
+  }
+
+  async function runConvertToInstrument(clipId: string, preset: InstrumentPreset) {
+    const clip = audioClips.find(c => c.id === clipId)
+    if (!clip) return
+    setConvertCard(null)
+    setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
+    const source = clip.originalBuf ?? clip.buf
+    try {
+      const curve  = await detectPitchCurveAsync(source)
+      const notes  = extractNoteEvents(curve)
+      if (notes.length === 0) throw new Error('No notes detected — try humming or singing a clear melody.')
+      const rendered = await synthesizeInstrument(notes, source.duration, source.sampleRate, preset)
+      const label: Record<InstrumentPreset, string> = { piano: 'Piano', strings: 'Strings', bells: 'Bells', bass: 'Bass', organ: 'Organ' }
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: label[preset], originalBuf: c.originalBuf ?? c.buf } : c))
+    } catch (e) {
+      setError(`Instrument conversion failed: ${e instanceof Error ? e.message : String(e)}`)
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: clip.name } : c))
     }
   }
 
@@ -1094,6 +1130,48 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   // Keep durationRef current so the RAF closure doesn't stale-capture duration
   useEffect(() => { durationRef.current = duration }, [duration])
+
+  // ── Keyboard shortcuts ───────────────────────────────────────────────────
+  const selectedClipIdRef = useRef<string | null>(null)
+  useEffect(() => { selectedClipIdRef.current = selectedClipId }, [selectedClipId])
+  const audioClipsRef = useRef<AudioClip[]>([])
+  useEffect(() => { audioClipsRef.current = audioClips }, [audioClips])
+  const playheadKbRef = useRef(0)
+  useEffect(() => { playheadKbRef.current = playhead }, [playhead])
+  const togglePlayRef = useRef<() => void>(() => {})
+  togglePlayRef.current = () => { if (isPlaying) stopPlayback(); else startPlayback() }
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      const inInput = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
+      if (e.code === 'Space' && !inInput) {
+        e.preventDefault()
+        togglePlayRef.current()
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && !inInput) {
+        const clip = audioClipsRef.current.find(c => c.id === selectedClipIdRef.current)
+        if (clip) clipboardRef.current = [clip]
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV' && !inInput) {
+        e.preventDefault()
+        const clips = clipboardRef.current
+        if (!clips.length) return
+        const minStart = Math.min(...clips.map(c => c.startTime))
+        const offset   = playheadKbRef.current - minStart
+        setAudioClips(prev => [...prev, ...clips.map(c => ({ ...c, id: crypto.randomUUID(), startTime: Math.max(0, c.startTime + offset) }))])
+        return
+      }
+      if ((e.code === 'Delete' || e.code === 'Backspace') && !inInput && selectedClipIdRef.current) {
+        setAudioClips(prev => prev.filter(c => c.id !== selectedClipIdRef.current))
+        setSelectedClipId(null)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, []) // stable — reads from refs
 
   // 88px = 64px lane label + 24px note axis
   useEffect(() => {
@@ -2608,8 +2686,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
                           onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
-                          onClipDelete={clipId => setAudioClips(prev => prev.filter(c => c.id !== clipId))}
-                          onClipUpdate={(clipId, update) => setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, ...update } : c))}
+                          onClipDelete={clipId => { setAudioClips(prev => prev.filter(c => c.id !== clipId)); if (selectedClipId === clipId) setSelectedClipId(null) }}
+                          onClipSelect={clipId => setSelectedClipId(prev => prev === clipId ? null : clipId)}
+                          selectedClipId={selectedClipId}
+                          onClipUpdate={(clipId, update) => {
+                            setAudioClips(prev => prev.map(c => {
+                              if (c.id !== clipId) return c
+                              const next = { ...c, ...update }
+                              const effEnd = next.startTime + (next.loopDuration ?? next.stretchDuration ?? next.buf.duration)
+                              setDuration(d => Math.max(d, effEnd + 0.5))
+                              return next
+                            }))
+                          }}
                           onMoveHit={moveHit}
                           onDeleteHit={deleteHit}
                           onAddHit={(t, note) => addHit(type, t, note)}
@@ -2881,8 +2969,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       {convertCard && (() => {
         const clip = audioClips.find(c => c.id === convertCard.clipId)
         if (!clip) return null
-        const isSynth = convertCard.mode === 'synth'
+        const mode = convertCard.mode
+        const isSynth = mode === 'synth'
+        const isInstrument = mode === 'instrument'
         const o = convertCard.synthOpts
+        const srcDur = (clip.originalBuf ?? clip.buf).duration
 
         const sectionLabel = (text: string) => (
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6, marginTop: 14 }}>{text}</div>
@@ -2910,10 +3001,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               borderRadius: 14, padding: 24, width: 340, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
             }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>
-                Convert to {isSynth ? 'Synth' : 'Beats'}
+                Convert to {isSynth ? 'Synth' : isInstrument ? 'Instrument' : 'Beats'}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
-                {clip.name} · {clip.buf.duration.toFixed(1)}s
+                {clip.name} · {srcDur.toFixed(1)}s{clip.originalBuf ? ' · from original' : ''}
               </div>
 
               {isSynth ? (
@@ -2966,6 +3057,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     <span>-12</span><span>0</span><span>+12</span>
                   </div>
                 </>
+              ) : isInstrument ? (
+                <>
+                  {sectionLabel('Instrument')}
+                  {chipGroup(
+                    [{ label: 'Piano', value: 'piano' }, { label: 'Strings', value: 'strings' }, { label: 'Bells', value: 'bells' }, { label: 'Bass', value: 'bass' }, { label: 'Organ', value: 'organ' }],
+                    convertCard.instrument,
+                    v => setConvertCard(c => c ? { ...c, instrument: v as InstrumentPreset } : c)
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.4 }}>
+                    Detects stable notes in your recording and renders each as a synthesized instrument. Hum or sing a melody for best results.
+                    {clip.originalBuf && <span style={{ color: 'var(--accent-light)' }}> Always re-converts from your original recording.</span>}
+                  </div>
+                </>
               ) : (
                 <>
                   {sectionLabel('Sensitivity')}
@@ -2985,7 +3089,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   Cancel
                 </button>
                 <button
-                  onClick={() => isSynth ? runConvertToSynth(convertCard.clipId, convertCard.synthOpts) : runConvertToBeats(convertCard.clipId, convertCard.sensitivity)}
+                  onClick={() => {
+                    if (isSynth) runConvertToSynth(convertCard.clipId, convertCard.synthOpts)
+                    else if (isInstrument) runConvertToInstrument(convertCard.clipId, convertCard.instrument)
+                    else runConvertToBeats(convertCard.clipId, convertCard.sensitivity)
+                  }}
                   style={{ flex: 2, padding: '9px 0', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
                 >
                   Convert
@@ -3023,6 +3131,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               {clipMenu.convertOpen && (
                 <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', gap: 1, borderLeft: '2px solid var(--border)', paddingLeft: 6 }}>
                   <button onClick={() => openConvertCard(clip.id, 'synth')} style={btnStyle()}>Synth</button>
+                  <button onClick={() => openConvertCard(clip.id, 'instrument')} style={btnStyle()}>Instrument</button>
                   <button onClick={() => openConvertCard(clip.id, 'beats')} style={btnStyle()}>Beat</button>
                 </div>
               )}

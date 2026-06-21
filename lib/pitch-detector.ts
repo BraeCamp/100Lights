@@ -249,6 +249,137 @@ export async function synthesizeFromPitchCurve(
   return ctx.startRendering()
 }
 
+// ── Note event extraction ─────────────────────────────────────────────────────
+// Converts a pitch curve into discrete note events by finding stable pitch
+// regions (runs where MIDI pitch doesn't change by more than 1 semitone).
+
+export interface NoteEvent { start: number; end: number; midi: number; amplitude: number }
+
+export function extractNoteEvents(pitchCurve: PitchFrame[], minDuration = 0.06): NoteEvent[] {
+  if (pitchCurve.length < 2) return []
+  const events: NoteEvent[] = []
+  let noteStart = -1, noteMidi = -1, ampSum = 0, ampCount = 0
+
+  const flush = (endTime: number) => {
+    if (noteStart >= 0 && endTime - noteStart >= minDuration)
+      events.push({ start: noteStart, end: endTime, midi: noteMidi, amplitude: Math.min(0.9, (ampSum / ampCount) * 0.9) })
+    noteStart = -1
+  }
+
+  for (const frame of pitchCurve) {
+    if (frame.midi !== null && frame.amplitude > 0.05) {
+      const r = Math.round(frame.midi)
+      if (noteStart < 0) { noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1 }
+      else if (Math.abs(r - noteMidi) <= 1) { ampSum += frame.amplitude; ampCount++ }
+      else { flush(frame.time); noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1 }
+    } else { flush(frame.time) }
+  }
+  flush(pitchCurve[pitchCurve.length - 1].time + 0.02)
+  return events
+}
+
+// ── Instrument synthesis ──────────────────────────────────────────────────────
+// Renders each NoteEvent as a synthesized instrument note into an AudioBuffer.
+
+export type InstrumentType = 'piano' | 'strings' | 'bells' | 'bass' | 'organ'
+
+export async function synthesizeInstrument(
+  notes: NoteEvent[], totalDuration: number, sampleRate: number, instrument: InstrumentType
+): Promise<AudioBuffer> {
+  const len = Math.ceil(sampleRate * totalDuration)
+  if (len < 1 || notes.length === 0) throw new Error('No notes to render')
+  const ctx = new OfflineAudioContext(1, len, sampleRate)
+
+  for (const evt of notes) {
+    const freq = midiToFreq(evt.midi)
+    const dur  = Math.max(0.05, evt.end - evt.start)
+    const amp  = evt.amplitude
+    const t0   = evt.start
+
+    if (instrument === 'piano') {
+      // Sawtooth + high harmonic, fast attack, exponential decay
+      const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = freq
+      const harm = ctx.createOscillator(); harm.type = 'sine'; harm.frequency.value = freq * 3
+      const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'
+      filt.frequency.setValueAtTime(5000 + freq * 3, t0)
+      filt.frequency.exponentialRampToValueAtTime(800, t0 + Math.min(1.2, dur))
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, t0)
+      g.gain.linearRampToValueAtTime(amp * 0.75, t0 + 0.006)
+      g.gain.exponentialRampToValueAtTime(amp * 0.12, t0 + Math.min(0.6, dur * 0.75))
+      g.gain.linearRampToValueAtTime(0, t0 + Math.min(dur + 0.15, 2))
+      const hg = ctx.createGain(); hg.gain.setValueAtTime(amp * 0.15, t0); hg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.08)
+      osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
+      harm.connect(hg); hg.connect(ctx.destination)
+      osc.start(t0); osc.stop(t0 + Math.min(dur + 0.2, 2.5))
+      harm.start(t0); harm.stop(t0 + 0.15)
+
+    } else if (instrument === 'strings') {
+      // Sawtooth, slow attack, vibrato, sustained
+      const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = freq
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 5.2
+      const lfoG = ctx.createGain()
+      lfoG.gain.setValueAtTime(0, t0)
+      lfoG.gain.linearRampToValueAtTime(freq * 0.012, t0 + Math.min(0.3, dur * 0.35))
+      lfo.connect(lfoG); lfoG.connect(osc.frequency)
+      const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 2400
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, t0)
+      g.gain.linearRampToValueAtTime(amp * 0.8, t0 + Math.min(0.28, dur * 0.4))
+      g.gain.setValueAtTime(amp * 0.75, t0 + dur - 0.06)
+      g.gain.linearRampToValueAtTime(0, t0 + dur + 0.04)
+      osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
+      lfo.start(t0); lfo.stop(t0 + dur + 0.1)
+      osc.start(t0); osc.stop(t0 + dur + 0.1)
+
+    } else if (instrument === 'bells') {
+      // Inharmonic partials, fast decay (bell series)
+      const partials = [1, 2.756, 5.404, 8.930, 13.34]
+      const vols     = [1.0, 0.55, 0.28, 0.14, 0.07]
+      for (let i = 0; i < partials.length; i++) {
+        const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq * partials[i]
+        const decay = Math.max(0.05, (0.8 - i * 0.12) * dur)
+        const g = ctx.createGain()
+        g.gain.setValueAtTime(0, t0)
+        g.gain.linearRampToValueAtTime(amp * vols[i], t0 + 0.003)
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + Math.min(decay + 0.1, dur + 0.5))
+        osc.connect(g); g.connect(ctx.destination)
+        osc.start(t0); osc.stop(t0 + Math.min(decay + 0.2, dur + 0.6))
+      }
+
+    } else if (instrument === 'bass') {
+      // Sine + triangle at sub-octave, punchy attack
+      const f = freq * 0.5
+      const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = f
+      const sub = ctx.createOscillator(); sub.type = 'triangle'; sub.frequency.value = f
+      const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(amp * 0.85, t0 + 0.015)
+      g.gain.setValueAtTime(amp * 0.72, t0 + dur - 0.04); g.gain.linearRampToValueAtTime(0, t0 + dur)
+      const sg = ctx.createGain(); sg.gain.setValueAtTime(amp * 0.2, t0); sg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.1)
+      osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
+      sub.connect(sg); sg.connect(ctx.destination)
+      osc.start(t0); osc.stop(t0 + dur + 0.05)
+      sub.start(t0); sub.stop(t0 + 0.2)
+
+    } else if (instrument === 'organ') {
+      // Hammond drawbar approximation: stacked sine harmonics, no attack/decay
+      const harmonics = [0.5, 1, 1.5, 2, 3, 4]
+      const vols2     = [0.25, 1.0, 0.7, 0.35, 0.18, 0.10]
+      for (let i = 0; i < harmonics.length; i++) {
+        const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq * harmonics[i]
+        const g = ctx.createGain()
+        g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(amp * vols2[i] * 0.28, t0 + 0.008)
+        g.gain.setValueAtTime(amp * vols2[i] * 0.28, t0 + dur - 0.008); g.gain.linearRampToValueAtTime(0, t0 + dur)
+        osc.connect(g); g.connect(ctx.destination)
+        osc.start(t0); osc.stop(t0 + dur + 0.05)
+      }
+    }
+  }
+
+  return ctx.startRendering()
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function freqToMidi(freq: number): number {
