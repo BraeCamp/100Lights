@@ -38,10 +38,12 @@ function detectPitchInFrame(frame: Float32Array, sampleRate: number): number | n
     nsdf[i] = m[i] > 0 ? (2 * r[i]) / m[i] : 0
   }
 
-  // Find all positive peaks above threshold
-  const THRESHOLD = 0.45
+  // Find all positive peaks above threshold.
+  // 0.30 is lower than the original 0.45 — catches more voiced frames in
+  // speech (short vowels, soft consonants) without introducing many false
+  // positives, because we still require a clear local maximum.
+  const THRESHOLD = 0.30
   let d = 1
-  // Skip past the initial peak at lag=0
   while (d < half - 1 && nsdf[d] > 0) d++
 
   let bestLag = -1
@@ -52,7 +54,6 @@ function detectPitchInFrame(frame: Float32Array, sampleRate: number): number | n
     const cur  = nsdf[i]
     const next = nsdf[i + 1]
     const prev = nsdf[i - 1]
-    // Local maximum crossing threshold
     if (cur > THRESHOLD && cur >= next && cur > prev && !prevPos) {
       if (cur > bestVal) { bestVal = cur; bestLag = i }
     }
@@ -180,19 +181,35 @@ export async function synthesizeFromPitchCurve(
   const medianFreq = midiToFreq(medianMidi)
 
   if (options.followPitch) {
-    // Per-frame pitch automation. Only update on voiced frames (freq detected);
-    // hold the last known pitch on unvoiced/silent frames so the oscillator
-    // doesn't jump to an arbitrary frequency.
-    let lastFreq = medianFreq
-    osc.frequency.setValueAtTime(lastFreq, 0)
-    for (const frame of pitchCurve) {
-      if (frame.freq !== null && frame.amplitude > 0.04) {
-        const shifted = midiToFreq((frame.midi ?? medianMidi - options.pitchShift) + options.pitchShift)
-        // Ramp over the frame window so transitions are smooth, not click-y
-        osc.frequency.linearRampToValueAtTime(shifted, frame.time + 0.04)
-        lastFreq = shifted
+    // 1. Fill gaps in the pitch curve via linear interpolation between voiced
+    //    frames. Without this the oscillator holds the last pitch through
+    //    unvoiced segments and then jumps, sounding like discrete notes.
+    const filled = pitchCurve.map(f => ({ ...f }))
+    let lastVoicedIdx = -1
+    for (let i = 0; i < filled.length; i++) {
+      if (filled[i].freq !== null) {
+        if (lastVoicedIdx >= 0 && i - lastVoicedIdx > 1) {
+          const fromFreq = filled[lastVoicedIdx].freq!
+          const toFreq   = filled[i].freq!
+          for (let j = lastVoicedIdx + 1; j < i; j++) {
+            const t = (j - lastVoicedIdx) / (i - lastVoicedIdx)
+            filled[j] = { ...filled[j], freq: fromFreq + (toFreq - fromFreq) * t }
+          }
+        }
+        lastVoicedIdx = i
       }
-      // unvoiced: hold (no new schedule → param holds last value)
+    }
+
+    // 2. Schedule one pitch target per hop so the oscillator stays in sync.
+    //    Use the actual detected frequency (float) rather than rounded MIDI so
+    //    microtonal glides between notes are smooth and accurate.
+    const hopSec = filled.length > 1 ? (filled[1].time - filled[0].time) : 0.012
+    const shift  = Math.pow(2, options.pitchShift / 12)
+    osc.frequency.setValueAtTime(medianFreq * shift, 0)
+    for (const frame of filled) {
+      if (frame.freq !== null) {
+        osc.frequency.linearRampToValueAtTime(frame.freq * shift, frame.time + hopSec)
+      }
     }
   } else {
     osc.frequency.setValueAtTime(medianFreq, 0)
