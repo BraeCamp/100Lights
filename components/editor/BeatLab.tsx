@@ -371,9 +371,11 @@ interface LaneProps {
   onLaneContextMenu: (e: React.MouseEvent) => void
   onHitRightClick: (e: React.MouseEvent, id: string) => void
   onClipRightClick: (e: React.MouseEvent, clipId: string) => void
+  onClipMove: (clipId: string, newStart: number) => void
+  onClipDelete: (clipId: string) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipMove, onClipDelete }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -453,23 +455,48 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           const left = duration > 0 ? (clip.startTime / duration) * pxWidth : 0
           const wid  = duration > 0 ? Math.min((clip.buf.duration / duration) * pxWidth, pxWidth - left) : 0
           if (wid <= 0) return null
+          const isConverting = clip.name === 'Converting…'
           return (
             <div
               key={clip.id}
               onClick={e => e.stopPropagation()}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onClipRightClick(e, clip.id) }}
+              onMouseDown={e => {
+                if (e.button !== 0) return
+                e.stopPropagation()
+                e.preventDefault()
+                const startX = e.clientX
+                const startTime = clip.startTime
+                const handleMove = (me: MouseEvent) => {
+                  const dt = ((me.clientX - startX) / pxWidth) * duration
+                  onClipMove(clip.id, Math.max(0, startTime + dt))
+                }
+                const handleUp = () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp) }
+                window.addEventListener('mousemove', handleMove)
+                window.addEventListener('mouseup', handleUp)
+              }}
               style={{
                 position: 'absolute', left, width: Math.max(wid, 8),
                 top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
-                background: clip.muted ? 'rgba(80,80,100,0.13)' : 'rgba(139,92,246,0.22)',
-                border: `1px solid ${clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.55)'}`,
-                display: 'flex', alignItems: 'center', paddingLeft: 5, overflow: 'hidden',
-                cursor: 'context-menu',
+                background: isConverting ? 'rgba(139,92,246,0.1)' : clip.muted ? 'rgba(80,80,100,0.13)' : 'rgba(139,92,246,0.22)',
+                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.55)'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                paddingLeft: 5, paddingRight: 3, overflow: 'hidden',
+                cursor: isConverting ? 'wait' : 'grab',
               }}
             >
-              <span style={{ fontSize: 8, color: clip.muted ? 'var(--text-muted)' : 'rgba(210,190,255,0.9)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+              <span style={{ fontSize: 8, color: isConverting ? 'rgba(139,92,246,0.6)' : clip.muted ? 'var(--text-muted)' : 'rgba(210,190,255,0.9)', whiteSpace: 'nowrap', pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {clip.name} · {clip.buf.duration.toFixed(1)}s
               </span>
+              {!isConverting && wid > 28 && (
+                <button
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); onClipDelete(clip.id) }}
+                  style={{ flexShrink: 0, width: 12, height: 12, borderRadius: '50%', border: 'none', background: 'rgba(239,68,68,0.7)', color: '#fff', cursor: 'pointer', fontSize: 8, lineHeight: '12px', textAlign: 'center', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  ×
+                </button>
+              )}
             </div>
           )
         })}
@@ -661,7 +688,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // Audio clips — raw recordings and synth renders, stored per-lane and played as AudioBuffers
   interface AudioClip { id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string }
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
-  const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number } | null>(null)
+  const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
 
   // Voice Synth self-contained recorder (independent of the main beat recording)
   const [vsRecording,  setVsRecording]  = useState(false)
@@ -730,24 +757,33 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
     setClipMenu(null)
+    setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
     try {
-      const result   = await analyzeBeats(clip.buf, { allowedTypes: [clip.laneType as BeatType], referenceSounds })
-      const newHits  = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + clip.startTime, type: clip.laneType as BeatType }))
+      const result  = await analyzeBeats(clip.buf, { allowedTypes: [clip.laneType as BeatType], referenceSounds })
+      const newHits = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + clip.startTime, type: clip.laneType as BeatType }))
       setHits(prev => [...prev, ...newHits])
       setAudioClips(prev => prev.filter(c => c.id !== clipId))
       if (result.duration + clip.startTime > duration) setDuration(result.duration + clip.startTime)
-    } catch { setError('Beat conversion failed.') }
+    } catch (e) {
+      setError(`Beat conversion failed: ${e instanceof Error ? e.message : String(e)}`)
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
+    }
   }
 
   async function convertClipToSynth(clipId: string) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
     setClipMenu(null)
+    // Show in-progress state on the clip block
+    setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
     try {
       const curve    = detectPitchCurve(clip.buf)
       const rendered = await synthesizeFromPitchCurve(curve, clip.buf.sampleRate, 60, clip.buf.duration)
-      setAudioClips(prev => prev.map(c => c.id !== clipId ? c : { ...c, buf: rendered, name: 'Synth' }))
-    } catch (e) { setError(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`) }
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth' } : c))
+    } catch (e) {
+      setError(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
+    }
   }
 
   // + Track popover state
@@ -776,7 +812,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       laneRecStartPlayheadRef.current = playhead
       setLaneRecording(true)
       setLaneRecordingTime(0)
-      laneRecTimerRef.current = setInterval(() => setLaneRecordingTime(t => t + 0.1), 100)
+      laneRecTimerRef.current = setInterval(() => {
+        setLaneRecordingTime(t => {
+          const newT = t + 0.1
+          // Keep timeline at least 2s ahead of the recording cursor so the RAF
+          // playhead never reaches the end and "resets" while still recording
+          const projectedEnd = laneRecStartPlayheadRef.current + newT
+          setDuration(prev => Math.max(prev, projectedEnd + 2))
+          return newT
+        })
+      }, 100)
       // Also start beat playback from current playhead so user can hear the existing beat while recording
       startPlaybackFrom(playhead)
     } catch {
@@ -2321,6 +2366,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
                           onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
+                          onClipMove={(clipId, newStart) => setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, startTime: newStart } : c))}
+                          onClipDelete={clipId => setAudioClips(prev => prev.filter(c => c.id !== clipId))}
                           onMoveHit={moveHit}
                           onDeleteHit={deleteHit}
                           onAddHit={(t, note) => addHit(type, t, note)}
@@ -2592,13 +2639,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       {clipMenu && (() => {
         const clip = audioClips.find(c => c.id === clipMenu.clipId)
         if (!clip) return null
-        const menuItems: ({ label: string; action: () => void } | null)[] = [
-          { label: 'Convert to Beats', action: () => convertClipToBeats(clip.id) },
-          { label: 'Convert to Synth', action: () => convertClipToSynth(clip.id) },
-          null,
-          { label: clip.muted ? 'Unmute' : 'Mute', action: () => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, muted: !c.muted } : c)); setClipMenu(null) } },
-          { label: 'Delete', action: () => { setAudioClips(prev => prev.filter(c => c.id !== clip.id)); setClipMenu(null) } },
-        ]
+        const btnStyle = (danger = false): React.CSSProperties => ({
+          textAlign: 'left', padding: '6px 10px', borderRadius: 6, border: 'none',
+          background: 'none', cursor: 'pointer', fontSize: 13, width: '100%',
+          color: danger ? '#ef4444' : 'var(--text-primary)',
+        })
         return (
           <>
             <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setClipMenu(null)} onContextMenu={e => { e.preventDefault(); setClipMenu(null) }} />
@@ -2606,10 +2651,28 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px 6px', fontWeight: 600 }}>
                 {clip.name} · {clip.buf.duration.toFixed(1)}s
               </div>
-              {menuItems.map((item, i) => item === null
-                ? <div key={i} style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
-                : <button key={item.label} onClick={item.action} style={{ textAlign: 'left', padding: '6px 10px', borderRadius: 6, border: 'none', background: 'none', color: item.label === 'Delete' ? '#ef4444' : 'var(--text-primary)', cursor: 'pointer', fontSize: 13 }}>{item.label}</button>
+
+              {/* Convert submenu */}
+              <button
+                onClick={() => setClipMenu(m => m ? { ...m, convertOpen: !m.convertOpen } : m)}
+                style={{ ...btnStyle(), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
+                Convert <span style={{ opacity: 0.5, fontSize: 10 }}>{clipMenu.convertOpen ? '▲' : '▶'}</span>
+              </button>
+              {clipMenu.convertOpen && (
+                <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', gap: 1, borderLeft: '2px solid var(--border)', paddingLeft: 6 }}>
+                  <button onClick={() => convertClipToSynth(clip.id)} style={btnStyle()}>Synth</button>
+                  <button onClick={() => convertClipToBeats(clip.id)} style={btnStyle()}>Beat</button>
+                </div>
               )}
+
+              <div style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
+              <button onClick={() => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, muted: !c.muted } : c)); setClipMenu(null) }} style={btnStyle()}>
+                {clip.muted ? 'Unmute' : 'Mute'}
+              </button>
+              <button onClick={() => { setAudioClips(prev => prev.filter(c => c.id !== clip.id)); setClipMenu(null) }} style={btnStyle(true)}>
+                Delete
+              </button>
             </div>
           </>
         )
