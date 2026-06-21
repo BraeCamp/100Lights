@@ -62,6 +62,7 @@ import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
 import PianoRoll from './PianoRoll'
 import SessionView, { type SceneClip, type SessionLane, SCENE_COUNT } from './SessionView'
+import StepSequencer from './StepSequencer'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -847,6 +848,7 @@ interface LaneProps {
   onSelectHit: (id: string, additive: boolean) => void
   onSelectLane: () => void
   onOpenPianoRoll?: () => void
+  onOpenStepSeq?: () => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
@@ -886,7 +888,7 @@ interface LaneProps {
   onAutomPointDelete: (id: string, ptId: string) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -971,6 +973,14 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               border: `1px solid ${automOpen || automLanes.length > 0 ? 'rgba(56,189,248,0.5)' : 'var(--border)'}`,
               color: automOpen || automLanes.length > 0 ? 'rgba(125,211,252,1)' : 'var(--text-muted)' }}
           >A</button>
+          {onOpenStepSeq && (
+            <button
+              onClick={e => { e.stopPropagation(); onOpenStepSeq() }}
+              title="Open Step Sequencer"
+              style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
+                background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+            >SS</button>
+          )}
         </div>
 
         {/* Pan drag bar — double-click resets to 0 */}
@@ -1596,6 +1606,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // ── View mode: Arrangement vs Session ────────────────────────────────────
   const [viewMode, setViewMode] = useState<'arrangement' | 'session'>('arrangement')
   const [pianoRollLane, setPianoRollLane] = useState<BeatType | null>(null)
+  const [stepSeqLane, setStepSeqLane] = useState<BeatType | null>(null)
 
   // Session view clip grid: Record<laneType, (SceneClip | null)[]>
   const [sessionClips, setSessionClips] = useState<Record<string, (SceneClip | null)[]>>({})
@@ -4011,6 +4022,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
                           onOpenPianoRoll={MELODIC_TYPES.has(type) ? () => setPianoRollLane(type) : undefined}
+                          onOpenStepSeq={() => setStepSeqLane(type)}
                           pan={lanePans[type] ?? 0}
                           soloed={soloedLanes.has(type)}
                           anySoloed={soloedLanes.size > 0}
@@ -4555,6 +4567,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           onHitsChange={nextHits => {
             setHits(prev => [
               ...prev.filter(h => h.type !== pianoRollLane),
+              ...nextHits,
+            ])
+          }}
+        />
+      )}
+      {stepSeqLane && (
+        <StepSequencer
+          laneType={stepSeqLane}
+          laneColor={typeColor(stepSeqLane, typeOverrides)}
+          hits={(hitsByType.get(stepSeqLane) ?? []).filter(h => h.type === stepSeqLane)}
+          duration={duration}
+          bpm={effectiveBpmRef.current}
+          onClose={() => setStepSeqLane(null)}
+          onHitsChange={nextHits => {
+            setHits(prev => [
+              ...prev.filter(h => h.type !== stepSeqLane),
               ...nextHits,
             ])
           }}
