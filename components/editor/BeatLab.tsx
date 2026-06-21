@@ -346,9 +346,12 @@ function NoteAxis() {
 
 // ── Lane ──────────────────────────────────────────────────────────────────────
 
+interface AudioClipShape { id: string; startTime: number; buf: { duration: number }; muted: boolean; name: string }
+
 interface LaneProps {
   type: BeatType
   hits: BeatHit[]
+  clips: AudioClipShape[]
   duration: number
   pxWidth: number
   selectedIds: Set<string>
@@ -367,9 +370,10 @@ interface LaneProps {
   onToggleMute: () => void
   onLaneContextMenu: (e: React.MouseEvent) => void
   onHitRightClick: (e: React.MouseEvent, id: string) => void
+  onClipRightClick: (e: React.MouseEvent, clipId: string) => void
 }
 
-function Lane({ type, hits, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -444,6 +448,31 @@ function Lane({ type, hits, duration, pxWidth, selectedIds, muted, aiSuggestions
             onRightClick={onHitRightClick}
           />
         ))}
+        {/* Audio clips — raw recordings and synth renders sitting on this lane */}
+        {clips.map(clip => {
+          const left = duration > 0 ? (clip.startTime / duration) * pxWidth : 0
+          const wid  = duration > 0 ? Math.min((clip.buf.duration / duration) * pxWidth, pxWidth - left) : 0
+          if (wid <= 0) return null
+          return (
+            <div
+              key={clip.id}
+              onClick={e => e.stopPropagation()}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onClipRightClick(e, clip.id) }}
+              style={{
+                position: 'absolute', left, width: Math.max(wid, 8),
+                top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
+                background: clip.muted ? 'rgba(80,80,100,0.13)' : 'rgba(139,92,246,0.22)',
+                border: `1px solid ${clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.55)'}`,
+                display: 'flex', alignItems: 'center', paddingLeft: 5, overflow: 'hidden',
+                cursor: 'context-menu',
+              }}
+            >
+              <span style={{ fontSize: 8, color: clip.muted ? 'var(--text-muted)' : 'rgba(210,190,255,0.9)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+                {clip.name} · {clip.buf.duration.toFixed(1)}s
+              </span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -628,11 +657,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // Completely independent of the hit/beat system — produces a single continuous
   // audio file that can be previewed and downloaded. Does NOT create hits.
   const [voiceSynthOpen,      setVoiceSynthOpen]      = useState(false)
-  const [voiceSynthType,      setVoiceSynthType]       = useState<BeatType>('piano-grand')
   const [voiceSynthRendering, setVoiceSynthRendering]  = useState(false)
-  // Synth layers — each render adds a continuous layer at the current playhead position
-  interface SynthLayer { id: string; name: string; type: BeatType; buf: AudioBuffer; startTime: number; muted: boolean }
-  const [synthLayers, setSynthLayers] = useState<SynthLayer[]>([])
+  // Audio clips — raw recordings and synth renders, stored per-lane and played as AudioBuffers
+  interface AudioClip { id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string }
+  const [audioClips, setAudioClips] = useState<AudioClip[]>([])
+  const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number } | null>(null)
 
   // Voice Synth self-contained recorder (independent of the main beat recording)
   const [vsRecording,  setVsRecording]  = useState(false)
@@ -674,24 +703,51 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const source = vsAudioBuf ?? audioBuf
     if (!source) return
     setVoiceSynthRendering(true)
+    // Determine target lane
+    let laneType: string
+    if (activeLaneType) {
+      laneType = activeLaneType
+    } else {
+      const newId = `cust_${Date.now()}`
+      setTypeOverrides(prev => ({ ...prev, [newId]: { label: 'Synth', color: '#8b5cf6' } }))
+      setExtraLaneIds(prev => [...prev, newId])
+      setActiveLaneType(newId as BeatType)
+      laneType = newId
+    }
     try {
       const curve    = detectPitchCurve(source)
       const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration)
-      const layer: SynthLayer = {
-        id:        crypto.randomUUID(),
-        name:      'Synth',
-        type:      'custom' as BeatType,
-        buf:       rendered,
-        startTime: playhead,
-        muted:     false,
-      }
-      setSynthLayers(prev => [...prev, layer])
+      setAudioClips(prev => [...prev, { id: crypto.randomUUID(), laneType, buf: rendered, startTime: playhead, muted: false, name: 'Synth' }])
       if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
     } catch (e) {
       setError(`Voice synth failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setVoiceSynthRendering(false)
     }
+  }
+
+  async function convertClipToBeats(clipId: string) {
+    const clip = audioClips.find(c => c.id === clipId)
+    if (!clip) return
+    setClipMenu(null)
+    try {
+      const result   = await analyzeBeats(clip.buf, { allowedTypes: [clip.laneType as BeatType], referenceSounds })
+      const newHits  = result.hits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + clip.startTime, type: clip.laneType as BeatType }))
+      setHits(prev => [...prev, ...newHits])
+      setAudioClips(prev => prev.filter(c => c.id !== clipId))
+      if (result.duration + clip.startTime > duration) setDuration(result.duration + clip.startTime)
+    } catch { setError('Beat conversion failed.') }
+  }
+
+  async function convertClipToSynth(clipId: string) {
+    const clip = audioClips.find(c => c.id === clipId)
+    if (!clip) return
+    setClipMenu(null)
+    try {
+      const curve    = detectPitchCurve(clip.buf)
+      const rendered = await synthesizeFromPitchCurve(curve, clip.buf.sampleRate, 60, clip.buf.duration)
+      setAudioClips(prev => prev.map(c => c.id !== clipId ? c : { ...c, buf: rendered, name: 'Synth' }))
+    } catch (e) { setError(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`) }
   }
 
   // + Track popover state
@@ -741,18 +797,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const offset = laneRecStartPlayheadRef.current
     try {
       const buf = await decodeAudio(blob)
-      // Add the raw recorded audio directly as a voice layer — no beat detection.
-      // Beat detection converts voice to drum hit events played via drum synth,
-      // which is why recording produced snare sounds instead of the user's voice.
-      const layer: SynthLayer = {
-        id:        crypto.randomUUID(),
-        name:      'Voice',
-        type:      'custom' as BeatType,
-        buf,
-        startTime: offset,
-        muted:     false,
+      // Determine target lane — use the active lane or auto-create one
+      let laneType: string
+      if (activeLaneType) {
+        laneType = activeLaneType
+      } else {
+        const newId = `cust_${Date.now()}`
+        setTypeOverrides(prev => ({ ...prev, [newId]: { label: 'Voice', color: '#8b5cf6' } }))
+        setExtraLaneIds(prev => [...prev, newId])
+        setActiveLaneType(newId as BeatType)
+        laneType = newId
       }
-      setSynthLayers(prev => [...prev, layer])
+      setAudioClips(prev => [...prev, { id: crypto.randomUUID(), laneType, buf, startTime: offset, muted: false, name: 'Voice' }])
       if (buf.duration + offset > duration) setDuration(buf.duration + offset)
     } catch {
       setError('Could not decode the recording. Try again.')
@@ -983,21 +1039,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }
     }
 
-    // Synth layers — play as continuous audio at their timeline position
-    for (const layer of synthLayers) {
-      if (layer.muted) continue
-      const layerEnd = layer.startTime + layer.buf.duration
-      if (layerEnd <= startFrom) continue
+    // Audio clips — play raw recordings and synth renders at their lane positions
+    for (const clip of audioClips) {
+      if (clip.muted) continue
+      const clipEnd = clip.startTime + clip.buf.duration
+      if (clipEnd <= startFrom) continue
       const src  = ctx.createBufferSource()
-      src.buffer = layer.buf
+      src.buffer = clip.buf
       const gain = ctx.createGain()
       gain.gain.value = 0.82
       src.connect(gain)
       gain.connect(ctx.destination)
-      if (layer.startTime >= startFrom) {
-        src.start(now + (layer.startTime - startFrom), 0)
+      if (clip.startTime >= startFrom) {
+        src.start(now + (clip.startTime - startFrom), 0)
       } else {
-        src.start(now, startFrom - layer.startTime)
+        src.start(now, startFrom - clip.startTime)
       }
     }
 
@@ -1506,6 +1562,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     stopLoopPlayback()
     setLoopBuffer(null)
     setLoopDetectedBpm(null)
+    setAudioClips([])
   }
 
   function toggleMute(type: BeatType) {
@@ -1525,12 +1582,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     })
   }
 
-  // Lanes: selected drum types (always) + hit types + extra/custom lanes
+  // Lanes: selected drum types + hit types + extra/custom lanes + lanes that have audio clips
   const activeLaneTypes = useMemo(() => {
     const set = new Set<BeatType>()
     selectedTypes.forEach(t => set.add(t))
     hits.forEach(h => set.add(h.type))
     extraLaneIds.forEach(id => set.add(id as BeatType))
+    audioClips.forEach(c => set.add(c.laneType as BeatType))
     return Array.from(set).sort((a, b) => {
       const ai = ALL_DRUM_TYPES.indexOf(a), bi = ALL_DRUM_TYPES.indexOf(b)
       if (ai !== -1 && bi !== -1) return ai - bi
@@ -1538,7 +1596,17 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (bi !== -1) return 1
       return a.localeCompare(b)
     })
-  }, [hits, selectedTypes, extraLaneIds])
+  }, [hits, selectedTypes, extraLaneIds, audioClips])
+
+  const audioClipsByLane = useMemo(() => {
+    const map = new Map<string, AudioClip[]>()
+    for (const clip of audioClips) {
+      const arr = map.get(clip.laneType) ?? []
+      arr.push(clip)
+      map.set(clip.laneType, arr)
+    }
+    return map
+  }, [audioClips])
 
   // All type IDs available in the Change dropdown (active lanes + empty custom lanes)
   const allAvailableTypes = useMemo(() => [
@@ -1841,9 +1909,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             </button>
           )}
 
-          {synthLayers.length > 0 && (
+          {audioClips.filter(c => c.name === 'Synth').length > 0 && (
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-              {synthLayers.length} layer{synthLayers.length !== 1 ? 's' : ''} · press Play to hear
+              {audioClips.filter(c => c.name === 'Synth').length} synth layer{audioClips.filter(c => c.name === 'Synth').length !== 1 ? 's' : ''} added · press Play to hear
             </span>
           )}
         </div>
@@ -2231,50 +2299,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   {/* Waveform */}
                   {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx * zoomLevel} />}
 
-                  {/* Synth layers — continuous audio layers rendered by Voice Synth */}
-                  {synthLayers.map(layer => {
-                    const pxW  = timelinePx * zoomLevel
-                    const left = duration > 0 ? (layer.startTime / duration) * pxW : 0
-                    const wid  = duration > 0 ? Math.min((layer.buf.duration / duration) * pxW, pxW - left) : 0
-                    return (
-                      <div key={layer.id} style={{ display: 'flex', height: 36, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-                        <div style={{ width: 24, flexShrink: 0, background: 'var(--bg-surface)' }} />
-                        <div style={{ width: 64, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3, padding: '0 6px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
-                          <button
-                            onClick={() => setSynthLayers(prev => prev.map(l => l.id === layer.id ? { ...l, muted: !l.muted } : l))}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: layer.muted ? 'var(--text-muted)' : 'var(--accent-light)', flexShrink: 0 }}
-                          >
-                            {layer.muted ? <VolumeX size={9} /> : <Volume2 size={9} />}
-                          </button>
-                          <span style={{ flex: 1, fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: layer.muted ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
-                            {layer.name}
-                          </span>
-                          <button
-                            onClick={() => setSynthLayers(prev => prev.filter(l => l.id !== layer.id))}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-muted)', flexShrink: 0 }}
-                          >
-                            <Trash2 size={8} />
-                          </button>
-                        </div>
-                        <div style={{ flex: 1, position: 'relative', background: 'var(--bg-card)', overflow: 'hidden' }}>
-                          {wid > 0 && (
-                            <div style={{
-                              position: 'absolute', left, width: wid, top: 4, bottom: 4,
-                              borderRadius: 3,
-                              background: layer.muted ? 'rgba(80,80,100,0.1)' : 'rgba(139,92,246,0.22)',
-                              border: `1px solid ${layer.muted ? 'rgba(100,100,120,0.2)' : 'rgba(139,92,246,0.5)'}`,
-                              display: 'flex', alignItems: 'center', paddingLeft: 5, overflow: 'hidden',
-                            }}>
-                              <span style={{ fontSize: 8, color: layer.muted ? 'var(--text-muted)' : 'rgba(200,180,255,0.85)', whiteSpace: 'nowrap' }}>
-                                {layer.name} · {layer.buf.duration.toFixed(1)}s
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-
                   {/* Lanes */}
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
                     {activeLaneTypes.map(type => (
@@ -2283,6 +2307,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                         <Lane
                           type={type}
                           hits={hitsByType.get(type) ?? []}
+                          clips={audioClipsByLane.get(type) ?? []}
                           duration={duration}
                           pxWidth={timelinePx * zoomLevel}
                           selectedIds={selectedIds}
@@ -2295,6 +2320,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           snapInterval={snapInterval}
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
+                          onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
                           onMoveHit={moveHit}
                           onDeleteHit={deleteHit}
                           onAddHit={(t, note) => addHit(type, t, note)}
@@ -2561,6 +2587,33 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </div>
         </>
       )}
+
+      {/* ── Audio clip right-click context menu ───────────────────────────── */}
+      {clipMenu && (() => {
+        const clip = audioClips.find(c => c.id === clipMenu.clipId)
+        if (!clip) return null
+        const menuItems: ({ label: string; action: () => void } | null)[] = [
+          { label: 'Convert to Beats', action: () => convertClipToBeats(clip.id) },
+          { label: 'Convert to Synth', action: () => convertClipToSynth(clip.id) },
+          null,
+          { label: clip.muted ? 'Unmute' : 'Mute', action: () => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, muted: !c.muted } : c)); setClipMenu(null) } },
+          { label: 'Delete', action: () => { setAudioClips(prev => prev.filter(c => c.id !== clip.id)); setClipMenu(null) } },
+        ]
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setClipMenu(null)} onContextMenu={e => { e.preventDefault(); setClipMenu(null) }} />
+            <div style={{ position: 'fixed', left: clipMenu.x, top: clipMenu.y, zIndex: 300, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 8, minWidth: 170, boxShadow: '0 8px 28px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px 6px', fontWeight: 600 }}>
+                {clip.name} · {clip.buf.duration.toFixed(1)}s
+              </div>
+              {menuItems.map((item, i) => item === null
+                ? <div key={i} style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
+                : <button key={item.label} onClick={item.action} style={{ textAlign: 'left', padding: '6px 10px', borderRadius: 6, border: 'none', background: 'none', color: item.label === 'Delete' ? '#ef4444' : 'var(--text-primary)', cursor: 'pointer', fontSize: 13 }}>{item.label}</button>
+              )}
+            </div>
+          </>
+        )
+      })()}
     </div>
   )
 }
