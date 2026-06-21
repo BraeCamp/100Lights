@@ -346,7 +346,43 @@ function NoteAxis() {
 
 // ── Lane ──────────────────────────────────────────────────────────────────────
 
-interface AudioClipShape { id: string; startTime: number; buf: { duration: number }; muted: boolean; name: string }
+interface AudioClipShape { id: string; startTime: number; buf: { duration: number; sampleRate: number; getChannelData(ch: number): Float32Array }; muted: boolean; name: string }
+
+function WaveformCanvas({ buf, color }: { buf: AudioClipShape['buf']; color: string }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const parent = canvas.parentElement
+    if (!parent) return
+    const w = Math.max(1, Math.round(parent.clientWidth))
+    const h = Math.max(1, Math.round(parent.clientHeight))
+    canvas.width  = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const raw  = buf.getChannelData(0)
+    const step = Math.max(1, Math.floor(raw.length / w))
+    const mid  = h / 2
+    ctx.clearRect(0, 0, w, h)
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (let x = 0; x < w; x++) {
+      let mn = 0, mx = 0
+      const base = x * step
+      for (let i = 0; i < step && base + i < raw.length; i++) {
+        const v = raw[base + i]
+        if (v < mn) mn = v
+        if (v > mx) mx = v
+      }
+      ctx.moveTo(x + 0.5, mid + mn * mid * 0.88)
+      ctx.lineTo(x + 0.5, mid + mx * mid * 0.88)
+    }
+    ctx.stroke()
+  }, [buf, color])
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+}
 
 interface LaneProps {
   type: BeatType
@@ -478,14 +514,25 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               style={{
                 position: 'absolute', left, width: Math.max(wid, 8),
                 top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
-                background: isConverting ? 'rgba(139,92,246,0.1)' : clip.muted ? 'rgba(80,80,100,0.13)' : 'rgba(139,92,246,0.22)',
-                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.55)'}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                paddingLeft: 5, paddingRight: 3, overflow: 'hidden',
+                background: isConverting ? 'rgba(139,92,246,0.08)' : clip.muted ? 'rgba(80,80,100,0.1)' : 'rgba(139,92,246,0.14)',
+                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.5)'}`,
+                overflow: 'hidden',
                 cursor: isConverting ? 'wait' : 'grab',
               }}
             >
-              <span style={{ fontSize: 8, color: isConverting ? 'rgba(139,92,246,0.6)' : clip.muted ? 'var(--text-muted)' : 'rgba(210,190,255,0.9)', whiteSpace: 'nowrap', pointerEvents: 'none', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {!isConverting && (
+                <WaveformCanvas
+                  buf={clip.buf}
+                  color={clip.muted ? 'rgba(130,130,160,0.45)' : 'rgba(167,139,250,0.65)'}
+                />
+              )}
+              <span style={{
+                position: 'absolute', top: 2, left: 5,
+                fontSize: 8, fontWeight: 500,
+                color: isConverting ? 'rgba(139,92,246,0.6)' : clip.muted ? 'var(--text-muted)' : 'rgba(230,210,255,0.95)',
+                whiteSpace: 'nowrap', pointerEvents: 'none',
+                textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+              }}>
                 {clip.name} · {clip.buf.duration.toFixed(1)}s
               </span>
             </div>

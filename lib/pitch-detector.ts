@@ -153,8 +153,8 @@ export const DEFAULT_SYNTH_OPTIONS: SynthOptions = {
   waveform:       'sawtooth',
   filterCutoff:   1400,
   pitchShift:     0,
-  followPitch:    false,
-  followDynamics: false,
+  followPitch:    true,
+  followDynamics: true,
 }
 
 export async function synthesizeFromPitchCurve(
@@ -213,12 +213,12 @@ export async function synthesizeFromPitchCurve(
   osc.stop(totalDuration + 0.05)
 
   if (options.followDynamics) {
-    // Follow the RMS envelope from the source. Use a 30ms ramp per frame to
-    // smooth the gain curve — without smoothing, rapid amplitude changes
-    // produce audible clicks/zipper noise.
+    // Normalize against peak amplitude so quiet recordings still sound full.
+    // 30ms ramps between frames prevent zipper noise on rapid amplitude changes.
+    const peakAmp = Math.max(...pitchCurve.map(f => f.amplitude), 0.001)
     gain.gain.setValueAtTime(0, 0)
     for (const frame of pitchCurve) {
-      const target = Math.min(0.95, frame.amplitude * 0.9)
+      const target = Math.min(0.9, (frame.amplitude / peakAmp) * 0.85)
       gain.gain.linearRampToValueAtTime(target, frame.time + 0.03)
     }
     gain.gain.linearRampToValueAtTime(0, totalDuration)
