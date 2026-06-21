@@ -60,6 +60,8 @@ import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
+import PianoRoll from './PianoRoll'
+import SessionView, { type SceneClip, type SessionLane, SCENE_COUNT } from './SessionView'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -436,6 +438,36 @@ function NoteAxis() {
 
 // ── Lane ──────────────────────────────────────────────────────────────────────
 
+interface WarpMarker { bufFrac: number; timeFrac: number }
+
+type LaneEffectType = 'eq3' | 'comp' | 'crush' | 'reverb' | 'delay'
+interface LaneEffect {
+  id: string
+  type: LaneEffectType
+  enabled: boolean
+  params: Record<string, number>
+}
+const LANE_EFFECT_DEFAULTS: Record<LaneEffectType, Record<string, number>> = {
+  eq3:    { low: 0, mid: 0, high: 0, midFreq: 1000 },
+  comp:   { threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 6 },
+  crush:  { bits: 8 },
+  reverb: { wet: 0.3, decay: 2.0 },
+  delay:  { wet: 0.3, time: 0.25, feedback: 0.4 },
+}
+const LANE_EFFECT_LABELS: Record<LaneEffectType, string> = {
+  eq3: 'EQ3', comp: 'Comp', crush: 'Crush', reverb: 'Reverb', delay: 'Delay',
+}
+
+// ── Automation ──────────────────────────────────────────────────────────────
+type AutomParam = 'volume' | 'pan'
+interface AutomPoint { id: string; time: number; value: number }
+interface AutomLaneDef { id: string; laneType: string; param: AutomParam; points: AutomPoint[] }
+
+const AUTOM_RANGE: Record<AutomParam, [number, number]> = { volume: [0, 1.5], pan: [-1, 1] }
+const AUTOM_DEFAULT: Record<AutomParam, number>          = { volume: 1, pan: 0 }
+const AUTOM_LABEL: Record<AutomParam, string>            = { volume: 'VOL', pan: 'PAN' }
+const AUTOM_H = 52
+
 interface AudioClipShape {
   id: string; startTime: number; muted: boolean; name: string
   buf: { duration: number; sampleRate: number; getChannelData(ch: number): Float32Array }
@@ -443,15 +475,21 @@ interface AudioClipShape {
   stretchDuration: number | null
   loopDuration:    number | null
   gateThreshold:   number
+  fadeIn:          number        // seconds
+  fadeOut:         number        // seconds
+  color:           string | null // null = default purple
+  reversed:        boolean
+  warpMarkers:     WarpMarker[]
 }
 
 function clipEffectiveDuration(c: AudioClipShape) {
   return c.loopDuration ?? c.stretchDuration ?? c.buf.duration
 }
 
-function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null, stretchDuration = null }: {
+function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null, stretchDuration = null, fadeIn = 0, fadeOut = 0, reversed = false, warpMarkers = [] }: {
   buf: AudioClipShape['buf']; color: string
   gain?: number; gateThreshold?: number; loopDuration?: number | null; stretchDuration?: number | null
+  fadeIn?: number; fadeOut?: number; reversed?: boolean; warpMarkers?: WarpMarker[]
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
@@ -471,13 +509,13 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
     ctx.clearRect(0, 0, w, h)
 
     const cycleDur  = stretchDuration ?? buf.duration
+    const effDur    = loopDuration ?? cycleDur
     const isLooped  = loopDuration != null && loopDuration > cycleDur
     const cyclePx   = isLooped ? (cycleDur / loopDuration!) * w : w
     const dimColor  = color.replace(/[\d.]+\)$/, '0.15)')
 
     let startX = 0, loopIdx = 0
     while (startX < w) {
-      // Loop divider
       if (isLooped && loopIdx > 0) {
         ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1
         ctx.setLineDash([2, 3])
@@ -485,7 +523,6 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
         ctx.setLineDash([])
       }
 
-      // Precompute bars
       const bars: { mn: number; mx: number; barAmp: number }[] = []
       for (let x = 0; x < cyclePx && startX + x < w; x++) {
         const frac = x / cyclePx
@@ -498,7 +535,6 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
         bars.push({ mn, mx, barAmp: Math.max(Math.abs(mn), Math.abs(mx)) })
       }
 
-      // Pass 1: active (above gate) bars
       ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath()
       for (let x = 0; x < bars.length; x++) {
         const { mn, mx, barAmp } = bars[x]
@@ -510,7 +546,6 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
       }
       ctx.stroke()
 
-      // Pass 2: gated (below threshold) bars — dimmed
       if (gateThreshold > 0) {
         ctx.strokeStyle = dimColor; ctx.lineWidth = 1; ctx.beginPath()
         for (let x = 0; x < bars.length; x++) {
@@ -543,12 +578,62 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
       ctx.moveTo(0, mid + threshPx); ctx.lineTo(w, mid + threshPx)
       ctx.stroke(); ctx.setLineDash([])
     }
-  }, [buf, color, gain, gateThreshold, loopDuration])
+
+    // Fade-in overlay: dark triangle on the left
+    if (fadeIn > 0 && effDur > 0) {
+      const fadeInPx = Math.min(w, (fadeIn / effDur) * w)
+      const grad = ctx.createLinearGradient(0, 0, fadeInPx, 0)
+      grad.addColorStop(0, 'rgba(0,0,0,0.72)')
+      grad.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = grad
+      ctx.fillRect(0, 0, fadeInPx, h)
+      // Handle triangle marker
+      ctx.fillStyle = 'rgba(255,255,255,0.7)'
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(10, 0); ctx.lineTo(0, 10); ctx.closePath(); ctx.fill()
+    }
+
+    // Fade-out overlay: dark triangle on the right
+    if (fadeOut > 0 && effDur > 0) {
+      const fadeOutPx = Math.min(w, (fadeOut / effDur) * w)
+      const grad = ctx.createLinearGradient(w - fadeOutPx, 0, w, 0)
+      grad.addColorStop(0, 'rgba(0,0,0,0)')
+      grad.addColorStop(1, 'rgba(0,0,0,0.72)')
+      ctx.fillStyle = grad
+      ctx.fillRect(w - fadeOutPx, 0, fadeOutPx, h)
+      ctx.fillStyle = 'rgba(255,255,255,0.7)'
+      ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w - 10, 0); ctx.lineTo(w, 10); ctx.closePath(); ctx.fill()
+    }
+
+    // Reversed indicator
+    if (reversed) {
+      ctx.fillStyle = 'rgba(250,200,80,0.22)'
+      ctx.fillRect(0, 0, w, h)
+    }
+
+    // Warp marker lines
+    for (const m of warpMarkers) {
+      const mx = m.timeFrac * w
+      ctx.strokeStyle = 'rgba(255,220,80,0.85)'; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(mx + 0.5, 0); ctx.lineTo(mx + 0.5, h); ctx.stroke()
+      // Diamond handle at top
+      ctx.fillStyle = 'rgba(255,220,80,0.95)'
+      ctx.beginPath()
+      ctx.moveTo(mx, 3); ctx.lineTo(mx + 5, 8); ctx.lineTo(mx, 13); ctx.lineTo(mx - 5, 8); ctx.closePath()
+      ctx.fill()
+    }
+  }, [buf, color, gain, gateThreshold, loopDuration, stretchDuration, fadeIn, fadeOut, reversed, warpMarkers])
   return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
 }
 
-function getClipZone(rx: number, ry: number, w: number, h: number): string {
+function getClipZone(rx: number, ry: number, w: number, h: number, warpMarkers: WarpMarker[] = []): string {
   const eW = Math.min(14, w * 0.18), eH = 7, midY = h / 2
+  // Warp markers — thin grab strip around each marker line
+  for (const m of warpMarkers) {
+    if (Math.abs(rx - m.timeFrac * w) < 5) return 'warp-marker'
+  }
+  // Fade handles — top 10px, outer 16px corners
+  if (ry < 10 && rx < 16) return 'fade-in'
+  if (ry < 10 && rx > w - 16) return 'fade-out'
   if (ry < eH) return 'top-edge'
   if (ry > h - eH) return 'bottom-edge'
   if (rx < eW) return ry < midY ? 'left-loop' : 'left-stretch'
@@ -562,6 +647,152 @@ const ZONE_CURSOR: Record<string, string> = {
   'left-loop': 'ew-resize', 'right-loop': 'ew-resize',
   'left-stretch': 'ew-resize', 'right-stretch': 'ew-resize',
   'midline': 'ns-resize', 'move': 'grab',
+  'fade-in': 'e-resize', 'fade-out': 'w-resize',
+  'warp-marker': 'ew-resize',
+}
+
+// ── AutomLaneView — draws one automation sub-lane ────────────────────────────
+
+function AutomLaneView({ def, duration, pxWidth, onPointAdd, onPointUpdate, onPointDelete, onRemove }: {
+  def: AutomLaneDef; duration: number; pxWidth: number
+  onPointAdd: (pt: AutomPoint) => void
+  onPointUpdate: (id: string, pt: Partial<AutomPoint>) => void
+  onPointDelete: (id: string) => void
+  onRemove: () => void
+}) {
+  const [min, max] = AUTOM_RANGE[def.param]
+  const defVal     = AUTOM_DEFAULT[def.param]
+
+  const timeToX = (t: number) => duration > 0 ? (t / duration) * pxWidth : 0
+  const xToTime = (x: number) => Math.max(0, Math.min(duration, duration > 0 ? (x / pxWidth) * duration : 0))
+  const valToY  = (v: number) => AUTOM_H - ((v - min) / (max - min)) * AUTOM_H
+  const yToVal  = (y: number) => Math.max(min, Math.min(max, min + (1 - y / AUTOM_H) * (max - min)))
+
+  const sorted = def.points.slice().sort((a, b) => a.time - b.time)
+  const defY   = valToY(defVal)
+
+  // Polyline: flat from 0 to first pt, then interpolated, then flat to end
+  const lineXY: [number, number][] = []
+  if (sorted.length === 0) {
+    lineXY.push([0, defY], [pxWidth, defY])
+  } else {
+    lineXY.push([0, valToY(sorted[0].value)])
+    for (const p of sorted) lineXY.push([timeToX(p.time), valToY(p.value)])
+    lineXY.push([pxWidth, valToY(sorted[sorted.length - 1].value)])
+  }
+
+  const handleBgDown = (e: React.MouseEvent<SVGElement>) => {
+    if (e.button !== 0) return
+    if ((e.target as Element).tagName.toLowerCase() === 'circle') return
+    const r = e.currentTarget.getBoundingClientRect()
+    const t = xToTime(e.clientX - r.left)
+    const v = yToVal(e.clientY - r.top)
+    onPointAdd({ id: Math.random().toString(36).slice(2), time: t, value: v })
+  }
+
+  const handlePtDown = (e: React.MouseEvent<SVGCircleElement>, pt: AutomPoint) => {
+    e.stopPropagation()
+    if (e.button !== 0) return
+    const sx = e.clientX, sy = e.clientY
+    const ox = timeToX(pt.time), oy = valToY(pt.value)
+    const track = (me: MouseEvent) => {
+      onPointUpdate(pt.id, { time: xToTime(ox + me.clientX - sx), value: yToVal(oy + me.clientY - sy) })
+    }
+    const up = () => { window.removeEventListener('mousemove', track); window.removeEventListener('mouseup', up) }
+    window.addEventListener('mousemove', track); window.addEventListener('mouseup', up)
+  }
+
+  const fillPts = `0,${AUTOM_H} ${lineXY.map(([x, y]) => `${x},${y}`).join(' ')} ${pxWidth},${AUTOM_H}`
+  const linePts = lineXY.map(([x, y]) => `${x},${y}`).join(' ')
+
+  return (
+    <div style={{ display: 'flex', height: AUTOM_H, borderTop: '1px solid rgba(139,92,246,0.12)', background: 'var(--bg-card)' }}>
+      {/* Label stub */}
+      <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px' }}>
+        <span style={{ fontSize: 8, fontWeight: 700, color: 'rgba(139,92,246,0.75)', letterSpacing: '0.07em' }}>{AUTOM_LABEL[def.param]}</span>
+        <span onClick={onRemove} style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1 }}>×</span>
+      </div>
+      {/* Timeline SVG */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: 'crosshair' }}>
+        <svg width={pxWidth} height={AUTOM_H} style={{ display: 'block', overflow: 'visible' }}
+          onMouseDown={handleBgDown}>
+          {/* Default value reference */}
+          <line x1={0} y1={defY} x2={pxWidth} y2={defY} stroke="rgba(255,255,255,0.08)" strokeWidth={1} strokeDasharray="3,3" />
+          {/* Fill */}
+          <polygon points={fillPts} fill="rgba(139,92,246,0.1)" />
+          {/* Curve line */}
+          <polyline points={linePts} fill="none" stroke="rgba(139,92,246,0.75)" strokeWidth={1.5} />
+          {/* Point handles */}
+          {sorted.map(pt => (
+            <circle key={pt.id} cx={timeToX(pt.time)} cy={valToY(pt.value)} r={4.5}
+              fill="rgba(139,92,246,1)" stroke="rgba(255,255,255,0.85)" strokeWidth={1.2}
+              style={{ cursor: 'grab' }}
+              onMouseDown={e => handlePtDown(e, pt)}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onPointDelete(pt.id) }} />
+          ))}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+// ── FxSlot — a single effect card inside the FX strip ────────────────────────
+
+type FxParamSpec = { key: string; label: string; min: number; max: number; step?: number; decimals?: number }
+
+const FX_PARAM_SPECS: Record<LaneEffectType, FxParamSpec[]> = {
+  eq3:    [{ key: 'low', label: 'Low', min: -12, max: 12, decimals: 0 }, { key: 'mid', label: 'Mid', min: -12, max: 12, decimals: 0 }, { key: 'high', label: 'Hi', min: -12, max: 12, decimals: 0 }, { key: 'midFreq', label: 'Freq', min: 200, max: 8000, step: 10, decimals: 0 }],
+  comp:   [{ key: 'threshold', label: 'Thr', min: -60, max: 0, decimals: 0 }, { key: 'ratio', label: 'Rat', min: 1, max: 20, decimals: 1 }, { key: 'attack', label: 'Att', min: 0, max: 0.5, step: 0.001, decimals: 3 }, { key: 'release', label: 'Rel', min: 0, max: 2, step: 0.01, decimals: 2 }],
+  crush:  [{ key: 'bits', label: 'Bits', min: 1, max: 16, decimals: 0 }],
+  reverb: [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'decay', label: 'Decay', min: 0.2, max: 8, step: 0.1, decimals: 1 }],
+  delay:  [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'time', label: 'Time', min: 0.01, max: 2, step: 0.01, decimals: 2 }, { key: 'feedback', label: 'FB', min: 0, max: 0.95, step: 0.01, decimals: 2 }],
+}
+
+function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange }: {
+  fx: LaneEffect
+  onToggleEnabled: () => void
+  onRemove: () => void
+  onParamChange: (key: string, val: number) => void
+}) {
+  const specs = FX_PARAM_SPECS[fx.type]
+
+  const startKnobDrag = (spec: FxParamSpec, e: React.MouseEvent) => {
+    e.stopPropagation(); e.preventDefault()
+    const startY = e.clientY
+    const startVal = fx.params[spec.key] ?? spec.min
+    const range = spec.max - spec.min
+    const sensitivity = range / 100
+    const track = (me: MouseEvent) => {
+      const delta = (startY - me.clientY) * sensitivity
+      const clamped = Math.max(spec.min, Math.min(spec.max, startVal + delta))
+      const stepped = spec.step ? Math.round(clamped / spec.step) * spec.step : clamped
+      onParamChange(spec.key, stepped)
+    }
+    const up = () => { window.removeEventListener('mousemove', track); window.removeEventListener('mouseup', up) }
+    window.addEventListener('mousemove', track); window.addEventListener('mouseup', up)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', borderRadius: 6, border: `1px solid ${fx.enabled ? 'rgba(139,92,246,0.35)' : 'var(--border)'}`, background: fx.enabled ? 'rgba(139,92,246,0.06)' : 'var(--bg-card)', padding: '5px 7px', marginRight: 6, minWidth: 80, flexShrink: 0, opacity: fx.enabled ? 1 : 0.5 }}>
+      {/* Header row: toggle + name + × */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+        <div onClick={onToggleEnabled} style={{ width: 10, height: 10, borderRadius: '50%', background: fx.enabled ? 'rgba(139,92,246,0.8)' : 'var(--border)', cursor: 'pointer', flexShrink: 0 }} />
+        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.06em', flex: 1 }}>{LANE_EFFECT_LABELS[fx.type]}</span>
+        <span onClick={onRemove} style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1 }}>×</span>
+      </div>
+      {/* Parameter knobs */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {specs.map(spec => (
+          <div key={spec.key} onMouseDown={e => startKnobDrag(spec, e)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'ns-resize', userSelect: 'none', gap: 1 }}>
+            <span style={{ fontSize: 7, color: 'var(--text-muted)', lineHeight: 1 }}>{spec.label}</span>
+            <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>
+              {(fx.params[spec.key] ?? spec.min).toFixed(spec.decimals ?? 1)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 interface LaneProps {
@@ -580,6 +811,7 @@ interface LaneProps {
   snapInterval?: number
   onSelectHit: (id: string, additive: boolean) => void
   onSelectLane: () => void
+  onOpenPianoRoll?: () => void
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
@@ -590,13 +822,36 @@ interface LaneProps {
   onClipDelete: (clipId: string) => void
   onClipSelect: (clipId: string) => void
   selectedClipId: string | null
-  onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold'>>) => void
+  onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold' | 'fadeIn' | 'fadeOut' | 'color' | 'reversed' | 'warpMarkers'>>) => void
   // Mixer
   pan: number; soloed: boolean; anySoloed: boolean
   onPanChange: (v: number) => void; onSoloToggle: () => void
+  // FX chain
+  effects: LaneEffect[]
+  fxOpen: boolean
+  fxAddOpen: boolean
+  onFxToggleOpen: () => void
+  onFxAddOpen: () => void
+  onFxAddClose: () => void
+  onFxAdd: (type: LaneEffectType) => void
+  onFxRemove: (id: string) => void
+  onFxToggleEnabled: (id: string) => void
+  onFxParamChange: (id: string, key: string, val: number) => void
+  // Automation
+  automLanes: AutomLaneDef[]
+  automOpen: boolean
+  automAddOpen: boolean
+  onAutomToggle: () => void
+  onAutomAddOpen: () => void
+  onAutomAddClose: () => void
+  onAutomAdd: (param: AutomParam) => void
+  onAutomRemove: (id: string) => void
+  onAutomPointAdd: (id: string, pt: AutomPoint) => void
+  onAutomPointUpdate: (id: string, ptId: string, update: Partial<AutomPoint>) => void
+  onAutomPointDelete: (id: string, ptId: string) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -630,7 +885,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
   const dimmed = muted || (anySoloed && !soloed)
 
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT, borderBottom: '1px solid var(--border)', opacity: dimmed ? 0.45 : 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', borderBottom: '1px solid var(--border)', opacity: dimmed ? 0.45 : 1 }}>
+    <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT }}>
       {/* Lane header: label + M/S + pan */}
       <div
         onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
@@ -641,8 +897,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
         }}
       >
-        {/* Label row */}
-        <div onClick={onSelectLane} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
+        {/* Label row — double-click opens Piano Roll on melodic lanes */}
+        <div onClick={onSelectLane} onDoubleClick={onOpenPianoRoll} title={onOpenPianoRoll ? 'Double-click to open Piano Roll' : undefined} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: dimmed ? 'var(--border-light)' : color }} />
           <span style={{ fontSize: 9, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : dimmed ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>
             {label}
@@ -650,7 +906,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           {hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
         </div>
 
-        {/* Mute + Solo buttons */}
+        {/* Mute + Solo + FX buttons */}
         <div style={{ display: 'flex', gap: 3, padding: '0 4px 3px', justifyContent: 'center' }}>
           <button
             onClick={e => { e.stopPropagation(); onToggleMute() }}
@@ -666,6 +922,20 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               border: `1px solid ${soloed ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
               color: soloed ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
           >S</button>
+          <button
+            onClick={e => { e.stopPropagation(); onFxToggleOpen() }}
+            style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
+              background: fxOpen || effects.length > 0 ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
+              border: `1px solid ${fxOpen || effects.length > 0 ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`,
+              color: fxOpen || effects.length > 0 ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
+          >FX</button>
+          <button
+            onClick={e => { e.stopPropagation(); onAutomToggle() }}
+            style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
+              background: automOpen || automLanes.length > 0 ? 'rgba(56,189,248,0.2)' : 'var(--bg-card)',
+              border: `1px solid ${automOpen || automLanes.length > 0 ? 'rgba(56,189,248,0.5)' : 'var(--border)'}`,
+              color: automOpen || automLanes.length > 0 ? 'rgba(125,211,252,1)' : 'var(--text-muted)' }}
+          >A</button>
         </div>
 
         {/* Pan drag bar — double-click resets to 0 */}
@@ -725,7 +995,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           const wid    = duration > 0 ? Math.min((effDur / duration) * pxWidth, pxWidth - left) : 0
           if (wid <= 0) return null
           const isConverting = clip.name === 'Converting…'
-          const waveColor    = clip.muted ? 'rgba(130,130,160,0.45)' : 'rgba(167,139,250,0.65)'
+          const clipBaseColor = clip.color ?? '#8b5cf6'
+          const waveColor = clip.muted ? 'rgba(130,130,160,0.45)' : `${clipBaseColor}a0`
 
           return (
             <div
@@ -735,7 +1006,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               onMouseMove={e => {
                 if (isConverting) return
                 const r = e.currentTarget.getBoundingClientRect()
-                const zone = getClipZone(e.clientX - r.left, e.clientY - r.top, r.width, r.height)
+                const zone = getClipZone(e.clientX - r.left, e.clientY - r.top, r.width, r.height, clip.warpMarkers)
                 e.currentTarget.style.cursor = ZONE_CURSOR[zone] ?? 'grab'
               }}
               onMouseLeave={e => { e.currentTarget.style.cursor = isConverting ? 'wait' : 'grab' }}
@@ -743,10 +1014,26 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                 if (e.button !== 0 || isConverting) return
                 e.stopPropagation(); e.preventDefault()
                 const r = e.currentTarget.getBoundingClientRect()
-                const zone = getClipZone(e.clientX - r.left, e.clientY - r.top, r.width, r.height)
+                const rx = e.clientX - r.left
+                const ry = e.clientY - r.top
+                const zone = getClipZone(rx, ry, r.width, r.height, clip.warpMarkers)
                 const sx = e.clientX, sy = e.clientY
                 const pxPerSec = duration > 0 ? pxWidth / duration : 1
                 let moved = false
+
+                // Alt+click in move zone: drop or remove a warp marker
+                if (e.altKey && zone === 'move') {
+                  const timeFrac = Math.max(0.01, Math.min(0.99, rx / r.width))
+                  const bufFrac  = timeFrac
+                  const existing = clip.warpMarkers.findIndex(m => Math.abs(m.timeFrac - timeFrac) < 0.04)
+                  if (existing >= 0) {
+                    onClipUpdate(clip.id, { warpMarkers: clip.warpMarkers.filter((_, i) => i !== existing) })
+                  } else {
+                    const updated = [...clip.warpMarkers, { bufFrac, timeFrac }].sort((a, b) => a.timeFrac - b.timeFrac)
+                    onClipUpdate(clip.id, { warpMarkers: updated })
+                  }
+                  return
+                }
 
                 const drag = (mv: (me: MouseEvent) => void) => {
                   const track = (me: MouseEvent) => {
@@ -769,7 +1056,6 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                   drag(me => onClipUpdate(clip.id, { stretchDuration: Math.max(0.05, orig + (me.clientX - sx) / pxPerSec), loopDuration: null }))
 
                 } else if (zone === 'left-stretch') {
-                  // Move startTime while keeping end fixed
                   const origStart = clip.startTime
                   const origEnd   = origStart + (clip.stretchDuration ?? clip.buf.duration)
                   drag(me => {
@@ -799,16 +1085,43 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
 
                 } else if (zone === 'top-edge' || zone === 'bottom-edge') {
                   const orig = clip.gateThreshold
-                  // Top edge: drag down = raise threshold (inward). Bottom edge: drag up = raise threshold (inward).
                   const sign = zone === 'top-edge' ? 1 : -1
                   drag(me => onClipUpdate(clip.id, { gateThreshold: Math.max(0, Math.min(0.98, orig + sign * (me.clientY - sy) / 80)) }))
+
+                } else if (zone === 'fade-in') {
+                  const origFade = clip.fadeIn
+                  const cEffDur = clipEffectiveDuration(clip)
+                  drag(me => {
+                    const newFadeIn = Math.max(0, Math.min(cEffDur * 0.9, origFade + (me.clientX - sx) / pxPerSec))
+                    onClipUpdate(clip.id, { fadeIn: newFadeIn })
+                  })
+
+                } else if (zone === 'fade-out') {
+                  const origFade = clip.fadeOut
+                  const cEffDur = clipEffectiveDuration(clip)
+                  drag(me => {
+                    const newFadeOut = Math.max(0, Math.min(cEffDur * 0.9, origFade - (me.clientX - sx) / pxPerSec))
+                    onClipUpdate(clip.id, { fadeOut: newFadeOut })
+                  })
+
+                } else if (zone === 'warp-marker') {
+                  const hitIdx = clip.warpMarkers.findIndex(m => Math.abs(m.timeFrac * r.width - rx) < 5)
+                  if (hitIdx >= 0) {
+                    const origTimeFrac = clip.warpMarkers[hitIdx].timeFrac
+                    drag(me => {
+                      const newTimeFrac = Math.max(0.01, Math.min(0.99, origTimeFrac + (me.clientX - sx) / r.width))
+                      const updated = [...clip.warpMarkers]
+                      updated[hitIdx] = { ...updated[hitIdx], timeFrac: newTimeFrac }
+                      onClipUpdate(clip.id, { warpMarkers: updated.sort((a, b) => a.timeFrac - b.timeFrac) })
+                    })
+                  }
                 }
               }}
               style={{
                 position: 'absolute', left, width: Math.max(wid, 8),
                 top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
-                background: isConverting ? 'rgba(139,92,246,0.08)' : clip.muted ? 'rgba(80,80,100,0.1)' : 'rgba(139,92,246,0.14)',
-                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : selectedClipId === clip.id ? 'rgba(250,250,100,0.85)' : clip.muted ? 'rgba(100,100,120,0.25)' : 'rgba(139,92,246,0.5)'}`,
+                background: isConverting ? 'rgba(139,92,246,0.08)' : clip.muted ? 'rgba(80,80,100,0.1)' : `${clipBaseColor}26`,
+                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : selectedClipId === clip.id ? 'rgba(250,250,100,0.85)' : clip.muted ? 'rgba(100,100,120,0.25)' : `${clipBaseColor}80`}`,
                 boxShadow: selectedClipId === clip.id ? '0 0 0 1px rgba(250,250,100,0.4)' : 'none',
                 overflow: 'hidden', cursor: isConverting ? 'wait' : 'grab',
               }}
@@ -816,19 +1129,99 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               {!isConverting && (
                 <WaveformCanvas buf={clip.buf} color={waveColor}
                   gain={clip.gain} gateThreshold={clip.gateThreshold}
-                  loopDuration={clip.loopDuration} stretchDuration={clip.stretchDuration} />
+                  loopDuration={clip.loopDuration} stretchDuration={clip.stretchDuration}
+                  fadeIn={clip.fadeIn} fadeOut={clip.fadeOut}
+                  reversed={clip.reversed} warpMarkers={clip.warpMarkers} />
               )}
               <span style={{
                 position: 'absolute', top: 2, left: 5, fontSize: 8, fontWeight: 500, pointerEvents: 'none',
                 color: isConverting ? 'rgba(139,92,246,0.6)' : clip.muted ? 'var(--text-muted)' : 'rgba(230,210,255,0.95)',
                 textShadow: '0 1px 2px rgba(0,0,0,0.6)', whiteSpace: 'nowrap',
               }}>
-                {clip.name} · {effDur.toFixed(1)}s{clip.loopDuration != null ? ' ↻' : clip.stretchDuration != null ? ' ⇔' : ''}
+                {clip.reversed ? '⟵ ' : ''}{clip.name} · {effDur.toFixed(1)}s{clip.loopDuration != null ? ' ↻' : clip.stretchDuration != null ? ' ⇔' : ''}
               </span>
             </div>
           )
         })}
       </div>
+    </div>
+
+    {/* Automation sub-lanes */}
+    {(automOpen || automLanes.length > 0) && (
+      <div style={{ display: 'flex', flexDirection: 'column', background: 'rgba(14,20,32,0.6)' }}>
+        {automLanes.map(al => (
+          <AutomLaneView key={al.id} def={al} duration={duration} pxWidth={pxWidth}
+            onPointAdd={pt => onAutomPointAdd(al.id, pt)}
+            onPointUpdate={(ptId, upd) => onAutomPointUpdate(al.id, ptId, upd)}
+            onPointDelete={ptId => onAutomPointDelete(al.id, ptId)}
+            onRemove={() => onAutomRemove(al.id)} />
+        ))}
+        {/* Add automation lane button */}
+        {automOpen && (
+          <div style={{ display: 'flex', alignItems: 'center', borderTop: automLanes.length > 0 ? '1px solid rgba(56,189,248,0.1)' : 'none' }}>
+            <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', height: '100%', background: 'var(--bg-base)' }} />
+            <div style={{ position: 'relative', padding: '4px 8px' }}>
+              <button
+                onClick={e => { e.stopPropagation(); onAutomAddOpen() }}
+                style={{ fontSize: 10, padding: '3px 10px', borderRadius: 5, border: '1px dashed rgba(56,189,248,0.35)', background: 'transparent', color: 'rgba(56,189,248,0.7)', cursor: 'pointer' }}
+              >+ Automation</button>
+              {automAddOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={onAutomAddClose} />
+                  <div style={{ position: 'absolute', top: '100%', left: 8, zIndex: 400, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, boxShadow: '0 6px 20px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 100 }}>
+                    {(['volume', 'pan'] as AutomParam[]).map(p => (
+                      <button key={p} onClick={() => onAutomAdd(p)}
+                        style={{ textAlign: 'left', padding: '5px 10px', borderRadius: 5, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-primary)' }}>
+                        {p === 'volume' ? 'Volume' : 'Pan'}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* FX chain strip */}
+    {fxOpen && (
+      <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-surface)', borderTop: '1px solid rgba(139,92,246,0.15)', minHeight: 80 }}>
+        {/* Left stub aligns with lane header */}
+        <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.7)', fontWeight: 700, letterSpacing: '0.08em' }}>FX</span>
+        </div>
+        {/* Horizontal chain of effect slots */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'stretch', gap: 0, overflowX: 'auto', padding: '6px 6px' }}>
+          {effects.map(fx => (
+            <FxSlot key={fx.id} fx={fx}
+              onToggleEnabled={() => onFxToggleEnabled(fx.id)}
+              onRemove={() => onFxRemove(fx.id)}
+              onParamChange={(key, val) => onFxParamChange(fx.id, key, val)} />
+          ))}
+          {/* Add FX button */}
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <button
+              onClick={e => { e.stopPropagation(); onFxAddOpen() }}
+              style={{ fontSize: 11, padding: '4px 10px', borderRadius: 5, border: '1px dashed rgba(139,92,246,0.35)', background: 'transparent', color: 'rgba(139,92,246,0.7)', cursor: 'pointer', whiteSpace: 'nowrap', margin: '0 4px' }}
+            >+ Add FX</button>
+            {fxAddOpen && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={onFxAddClose} />
+                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 400, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, boxShadow: '0 6px 20px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 110 }}>
+                  {(['eq3', 'comp', 'crush', 'reverb', 'delay'] as LaneEffectType[]).map(t => (
+                    <button key={t} onClick={() => onFxAdd(t)}
+                      style={{ textAlign: 'left', padding: '5px 10px', borderRadius: 5, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-primary)' }}>
+                      {LANE_EFFECT_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   )
 }
@@ -1018,9 +1411,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string
     gain: number; stretchDuration: number | null; loopDuration: number | null; gateThreshold: number
     originalBuf: AudioBuffer | null  // preserved across conversions so re-converting re-derives from source
+    fadeIn: number; fadeOut: number
+    color: string | null
+    reversed: boolean
+    warpMarkers: WarpMarker[]
   }
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
-    return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null }
+    return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null, fadeIn: 0, fadeOut: 0, color: null, reversed: false, warpMarkers: [] }
   }
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
@@ -1160,6 +1557,20 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // + Track popover state
   const [addTrackOpen,   setAddTrackOpen]   = useState(false)
   const [addTrackFamily, setAddTrackFamily] = useState<InstrumentFamily>('drums')
+
+  // ── View mode: Arrangement vs Session ────────────────────────────────────
+  const [viewMode, setViewMode] = useState<'arrangement' | 'session'>('arrangement')
+  const [pianoRollLane, setPianoRollLane] = useState<BeatType | null>(null)
+
+  // Session view clip grid: Record<laneType, (SceneClip | null)[]>
+  const [sessionClips, setSessionClips] = useState<Record<string, (SceneClip | null)[]>>({})
+  const [sessionPlaying, setSessionPlaying] = useState<Record<string, number | null>>({})
+
+  function getSessionLaneClips(laneType: string): (SceneClip | null)[] {
+    const existing = sessionClips[laneType]
+    if (existing && existing.length === SCENE_COUNT) return existing
+    return Array(SCENE_COUNT).fill(null)
+  }
 
   // Per-lane recording — mic button in editing toolbar records into the active lane only
   const [laneRecording,     setLaneRecording]     = useState(false)
@@ -1349,6 +1760,52 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   useEffect(() => { laneReverbRef.current  = laneReverb },  [laneReverb])
   useEffect(() => { laneDelayRef.current   = laneDelay },   [laneDelay])
   useEffect(() => { masterVolumeRef.current = masterVolume; if (masterGainNodeRef.current) masterGainNodeRef.current.gain.setTargetAtTime(masterVolume, audioCtxRef.current?.currentTime ?? 0, 0.02) }, [masterVolume])
+
+  // ── Tier 4: Per-lane FX chain ─────────────────────────────────────────────
+  const [laneEffects, setLaneEffects] = useState<Record<string, LaneEffect[]>>({})
+  const laneEffectsRef = useRef<Record<string, LaneEffect[]>>({})
+  useEffect(() => { laneEffectsRef.current = laneEffects }, [laneEffects])
+  const [fxOpenLanes, setFxOpenLanes] = useState<Set<string>>(new Set())
+  const [fxAddOpen, setFxAddOpen] = useState<string | null>(null)  // laneType with open "add" dropdown
+
+  // ── Tier 5: Automation lanes ────────────────────────────────────────────────
+  const [automLanes, setAutomLanes] = useState<AutomLaneDef[]>([])
+  const automLanesRef = useRef<AutomLaneDef[]>([])
+  useEffect(() => { automLanesRef.current = automLanes }, [automLanes])
+  const [automOpenLanes, setAutomOpenLanes] = useState<Set<string>>(new Set())
+  const [automAddOpen, setAutomAddOpen] = useState<string | null>(null)
+
+  function addAutomLane(laneType: string, param: AutomParam) {
+    setAutomLanes(prev => [...prev, { id: Math.random().toString(36).slice(2), laneType, param, points: [] }])
+    setAutomAddOpen(null)
+  }
+  function removeAutomLane(id: string) {
+    setAutomLanes(prev => prev.filter(a => a.id !== id))
+  }
+  function addAutomPoint(automId: string, pt: AutomPoint) {
+    setAutomLanes(prev => prev.map(a => a.id === automId ? { ...a, points: [...a.points, pt] } : a))
+  }
+  function updateAutomPoint(automId: string, ptId: string, update: Partial<AutomPoint>) {
+    setAutomLanes(prev => prev.map(a => a.id === automId ? { ...a, points: a.points.map(p => p.id === ptId ? { ...p, ...update } : p) } : a))
+  }
+  function deleteAutomPoint(automId: string, ptId: string) {
+    setAutomLanes(prev => prev.map(a => a.id === automId ? { ...a, points: a.points.filter(p => p.id !== ptId) } : a))
+  }
+
+  function addLaneEffect(laneType: string, type: LaneEffectType) {
+    const fx: LaneEffect = { id: Math.random().toString(36).slice(2), type, enabled: true, params: { ...LANE_EFFECT_DEFAULTS[type] } }
+    setLaneEffects(prev => ({ ...prev, [laneType]: [...(prev[laneType] ?? []), fx] }))
+    setFxAddOpen(null)
+  }
+  function removeLaneEffect(laneType: string, id: string) {
+    setLaneEffects(prev => ({ ...prev, [laneType]: (prev[laneType] ?? []).filter(f => f.id !== id) }))
+  }
+  function updateLaneEffect(laneType: string, id: string, update: Partial<LaneEffect>) {
+    setLaneEffects(prev => ({ ...prev, [laneType]: (prev[laneType] ?? []).map(f => f.id === id ? { ...f, ...update } : f) }))
+  }
+  function updateLaneEffectParam(laneType: string, id: string, key: string, val: number) {
+    setLaneEffects(prev => ({ ...prev, [laneType]: (prev[laneType] ?? []).map(f => f.id === id ? { ...f, params: { ...f.params, [key]: val } } : f) }))
+  }
 
   function toggleSolo(laneType: string) {
     setSoloedLanes(prev => {
@@ -1579,6 +2036,20 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     return audioCtxRef.current
   }
 
+  function interpAutom(sorted: AutomPoint[], t: number, def: number): number {
+    if (sorted.length === 0) return def
+    if (t <= sorted[0].time) return sorted[0].value
+    if (t >= sorted[sorted.length - 1].time) return sorted[sorted.length - 1].value
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const a = sorted[i], b = sorted[i + 1]
+      if (t >= a.time && t <= b.time) {
+        const frac = (t - a.time) / (b.time - a.time)
+        return a.value + frac * (b.value - a.value)
+      }
+    }
+    return def
+  }
+
   function startPlaybackFrom(startFrom: number) {
     if (duration <= 0) return
     const ctx = getAudioCtx()
@@ -1606,17 +2077,91 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     delay.connect(delayReturn); delayReturn.connect(masterGain)
 
     // per-lane panner + sends cache (created on first use per lane)
-    const laneInputs = new Map<string, GainNode>()
+    // Build a Web Audio node pair (input + output) for a single FX slot
+    function buildFxNodes(fx: LaneEffect): { in: AudioNode; out: AudioNode } | null {
+      const p = fx.params
+      switch (fx.type) {
+        case 'eq3': {
+          const low  = ctx.createBiquadFilter(); low.type  = 'lowshelf';  low.frequency.value  = 200;         low.gain.value  = p.low
+          const mid  = ctx.createBiquadFilter(); mid.type  = 'peaking';   mid.frequency.value  = p.midFreq;   mid.Q.value = 0.8; mid.gain.value = p.mid
+          const high = ctx.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 4000;        high.gain.value = p.high
+          low.connect(mid); mid.connect(high)
+          return { in: low, out: high }
+        }
+        case 'comp': {
+          const comp = ctx.createDynamicsCompressor()
+          comp.threshold.value = p.threshold
+          comp.ratio.value     = p.ratio
+          comp.attack.value    = p.attack
+          comp.release.value   = p.release
+          comp.knee.value      = p.knee
+          return { in: comp, out: comp }
+        }
+        case 'crush': {
+          const bits  = Math.max(1, Math.min(16, Math.round(p.bits)))
+          const steps = Math.pow(2, bits - 1)
+          const curve = new Float32Array(2048)
+          for (let i = 0; i < 2048; i++) {
+            const x = i * 2 / 2047 - 1
+            curve[i] = Math.round(x * steps) / steps
+          }
+          const ws = ctx.createWaveShaper(); ws.curve = curve; ws.oversample = 'none'
+          return { in: ws, out: ws }
+        }
+        case 'reverb': {
+          const wet = Math.max(0, Math.min(1, p.wet))
+          const ir = makeReverbIR(ctx, p.decay ?? 2, 2)
+          const conv = ctx.createConvolver(); conv.buffer = ir
+          const dryG = ctx.createGain(); dryG.gain.value = 1 - wet
+          const wetG = ctx.createGain(); wetG.gain.value = wet
+          const inp  = ctx.createGain(); const out = ctx.createGain()
+          inp.connect(dryG); dryG.connect(out)
+          inp.connect(wetG); wetG.connect(conv); conv.connect(out)
+          return { in: inp, out }
+        }
+        case 'delay': {
+          const wet = Math.max(0, Math.min(1, p.wet))
+          const dly = ctx.createDelay(5); dly.delayTime.value = Math.max(0.01, Math.min(5, p.time))
+          const fb  = ctx.createGain(); fb.gain.value = Math.max(0, Math.min(0.95, p.feedback))
+          dly.connect(fb); fb.connect(dly)
+          const dryG = ctx.createGain(); dryG.gain.value = 1 - wet
+          const wetG = ctx.createGain(); wetG.gain.value = wet
+          const inp  = ctx.createGain(); const out = ctx.createGain()
+          inp.connect(dryG); dryG.connect(out)
+          inp.connect(wetG); wetG.connect(dly); dly.connect(out)
+          return { in: inp, out }
+        }
+      }
+    }
+
+    const laneInputs    = new Map<string, GainNode>()
+    const laneAutoGains = new Map<string, GainNode>()
+    const lanePanners   = new Map<string, StereoPannerNode>()
+
     function getLaneInput(laneType: string): GainNode {
       if (laneInputs.has(laneType)) return laneInputs.get(laneType)!
-      const input   = ctx.createGain()
+      const input    = ctx.createGain()
+      const autoGain = ctx.createGain(); autoGain.gain.value = 1  // automation target
+      input.connect(autoGain)
+
+      // FX insert chain
+      let chainOut: AudioNode = autoGain
+      for (const fx of laneEffectsRef.current[laneType] ?? []) {
+        if (!fx.enabled) continue
+        const nodes = buildFxNodes(fx)
+        if (nodes) { chainOut.connect(nodes.in); chainOut = nodes.out }
+      }
+
       const panner  = ctx.createStereoPanner(); panner.pan.value = lanePansRef.current[laneType] ?? 0
       const revSend = ctx.createGain(); revSend.gain.value = laneReverbRef.current[laneType] ?? 0
       const dlySend = ctx.createGain(); dlySend.gain.value = laneDelayRef.current[laneType] ?? 0
-      input.connect(panner); panner.connect(masterGain)
-      input.connect(revSend); revSend.connect(reverb)
-      input.connect(dlySend); dlySend.connect(delay)
+      chainOut.connect(panner); panner.connect(masterGain)
+      chainOut.connect(revSend); revSend.connect(reverb)
+      chainOut.connect(dlySend); dlySend.connect(delay)
+
       laneInputs.set(laneType, input)
+      laneAutoGains.set(laneType, autoGain)
+      lanePanners.set(laneType, panner)
       return input
     }
 
@@ -1652,13 +2197,35 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
 
     // ── Audio clips ───────────────────────────────────────────────────────────
-    for (const clip of audioClips) {
-      if (clip.muted) continue
-      if (soloActive && !soloedLanesRef.current.has(clip.laneType)) continue
+    // Pre-build crossfade overlap map: for each clip, find overlapping clips on same lane
+    type XFade = { inDur: number; outDur: number }
+    const xfadeMap = new Map<string, XFade>()
+    const visibleClips = audioClips.filter(c => !c.muted && !(soloActive && !soloedLanesRef.current.has(c.laneType)))
+    for (let i = 0; i < visibleClips.length; i++) {
+      const a = visibleClips[i]
+      const aEnd = a.startTime + (a.loopDuration ?? a.stretchDuration ?? a.buf.duration)
+      for (let j = i + 1; j < visibleClips.length; j++) {
+        const b = visibleClips[j]
+        if (b.laneType !== a.laneType) continue
+        const bEnd = b.startTime + (b.loopDuration ?? b.stretchDuration ?? b.buf.duration)
+        const overlapStart = Math.max(a.startTime, b.startTime)
+        const overlapEnd   = Math.min(aEnd, bEnd)
+        if (overlapEnd > overlapStart) {
+          const xdur = overlapEnd - overlapStart
+          const ax = xfadeMap.get(a.id) ?? { inDur: 0, outDur: 0 }
+          xfadeMap.set(a.id, { inDur: ax.inDur, outDur: Math.max(ax.outDur, xdur) })
+          const bx = xfadeMap.get(b.id) ?? { inDur: 0, outDur: 0 }
+          xfadeMap.set(b.id, { inDur: Math.max(bx.inDur, xdur), outDur: bx.outDur })
+        }
+      }
+    }
+
+    for (const clip of visibleClips) {
       const effDur = clip.loopDuration ?? clip.stretchDuration ?? clip.buf.duration
       const clipEnd = clip.startTime + effDur
       if (clipEnd <= startFrom) continue
 
+      // Gate processing
       let bufToPlay = clip.buf
       if (clip.gateThreshold > 0) {
         const sr = clip.buf.sampleRate
@@ -1674,27 +2241,127 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           env += (target - env) * (1 / ramp)
           gated[i] = raw[i] * env
         }
-        bufToPlay = new AudioBuffer({ numberOfChannels: 1, length: raw.length, sampleRate: sr })
+        bufToPlay = new AudioBuffer({ numberOfChannels: 1, length: raw.length, sampleRate: bufToPlay.sampleRate })
         bufToPlay.copyToChannel(gated, 0)
       }
 
+      const peakGain = 0.82 * clip.gain
+      const clipAudioStart = clip.startTime >= startFrom ? now + (clip.startTime - startFrom) : now
+      const clipAudioEnd   = now + Math.max(0, clipEnd - startFrom)
+
+      // Crossfade durations (auto-generated from overlap) merged with explicit fades
+      const xf = xfadeMap.get(clip.id) ?? { inDur: 0, outDur: 0 }
+      const fadeInDur  = Math.max(clip.fadeIn,  xf.inDur)
+      const fadeOutDur = Math.max(clip.fadeOut, xf.outDur)
+
+      // Warp markers: piecewise playback
+      if (clip.warpMarkers.length > 0 && clip.loopDuration == null) {
+        const markers: WarpMarker[] = [
+          { bufFrac: 0, timeFrac: 0 },
+          ...clip.warpMarkers.slice().sort((a, b) => a.timeFrac - b.timeFrac),
+          { bufFrac: 1, timeFrac: 1 },
+        ]
+        const bufDur = bufToPlay.duration
+        const playRate = clip.stretchDuration != null ? clip.buf.duration / clip.stretchDuration : 1
+
+        for (let mi = 0; mi < markers.length - 1; mi++) {
+          const m0 = markers[mi], m1 = markers[mi + 1]
+          const segTimeDur  = (m1.timeFrac - m0.timeFrac) * effDur
+          const segBufDur   = (m1.bufFrac  - m0.bufFrac)  * bufDur
+          if (segTimeDur <= 0 || segBufDur <= 0) continue
+          const segTimeStart = clip.startTime + m0.timeFrac * effDur
+          const segTimeEnd   = segTimeStart + segTimeDur
+          if (segTimeEnd <= startFrom) continue
+
+          const segAudioStart = segTimeStart >= startFrom ? now + (segTimeStart - startFrom) : now
+          const segAudioEnd   = now + Math.max(0, segTimeEnd - startFrom)
+          const segRate = segBufDur / segTimeDur * playRate
+
+          const src = ctx.createBufferSource()
+          src.buffer = bufToPlay
+          src.playbackRate.value = segRate
+          const gn = ctx.createGain(); gn.gain.value = peakGain
+          src.connect(gn); gn.connect(getLaneInput(clip.laneType))
+
+          // Apply fade-in on first segment, fade-out on last
+          if (mi === 0 && fadeInDur > 0 && clip.startTime >= startFrom) {
+            gn.gain.setValueAtTime(0, segAudioStart)
+            gn.gain.linearRampToValueAtTime(peakGain, segAudioStart + fadeInDur)
+          }
+          if (mi === markers.length - 2 && fadeOutDur > 0) {
+            const foStart = Math.max(segAudioStart, segAudioEnd - fadeOutDur)
+            gn.gain.setValueAtTime(peakGain, foStart)
+            gn.gain.linearRampToValueAtTime(0, segAudioEnd)
+          }
+
+          const bufOffset = segTimeStart >= startFrom
+            ? m0.bufFrac * bufDur
+            : m0.bufFrac * bufDur + (startFrom - segTimeStart) * segRate
+          src.start(segAudioStart, Math.min(bufOffset, bufDur - 0.001))
+          src.stop(segAudioEnd)
+        }
+        continue
+      }
+
+      // Standard playback (no warp markers)
       const src = ctx.createBufferSource()
       src.buffer = bufToPlay
       const playRate = clip.stretchDuration != null ? clip.buf.duration / clip.stretchDuration : 1
       src.playbackRate.value = playRate
-      if (clip.loopDuration != null) { src.loop = true; src.loopStart = 0; src.loopEnd = clip.buf.duration }
+      if (clip.loopDuration != null) { src.loop = true; src.loopStart = 0; src.loopEnd = bufToPlay.duration }
 
-      const gainNode = ctx.createGain(); gainNode.gain.value = 0.82 * clip.gain
+      const gainNode = ctx.createGain()
       src.connect(gainNode); gainNode.connect(getLaneInput(clip.laneType))
 
+      // Fade-in gain automation
+      if (fadeInDur > 0 && clip.startTime >= startFrom) {
+        gainNode.gain.setValueAtTime(0, clipAudioStart)
+        gainNode.gain.linearRampToValueAtTime(peakGain, clipAudioStart + fadeInDur)
+      } else {
+        gainNode.gain.setValueAtTime(peakGain, clipAudioStart)
+      }
+
+      // Fade-out gain automation
+      if (fadeOutDur > 0) {
+        const foStart = Math.max(clipAudioStart, clipAudioEnd - fadeOutDur)
+        gainNode.gain.setValueAtTime(peakGain, foStart)
+        gainNode.gain.linearRampToValueAtTime(0, clipAudioEnd)
+      }
+
       if (clip.startTime >= startFrom) {
-        src.start(now + (clip.startTime - startFrom), 0)
+        src.start(clipAudioStart, 0)
       } else {
         const elapsed = startFrom - clip.startTime
-        const bufOffset = clip.loopDuration != null ? elapsed % clip.buf.duration : elapsed * playRate
-        src.start(now, Math.min(bufOffset, clip.buf.duration - 0.001))
+        const bufOffset = clip.loopDuration != null ? elapsed % bufToPlay.duration : elapsed * playRate
+        src.start(now, Math.min(bufOffset, bufToPlay.duration - 0.001))
       }
-      if (clip.loopDuration != null) src.stop(now + Math.max(0, clipEnd - startFrom))
+      if (clip.loopDuration != null) src.stop(clipAudioEnd)
+    }
+
+    // ── Automation scheduling ─────────────────────────────────────────────────
+    for (const al of automLanesRef.current) {
+      if (al.points.length === 0) continue
+      const sorted = al.points.slice().sort((a, b) => a.time - b.time)
+      const [, max] = AUTOM_RANGE[al.param]
+
+      if (al.param === 'volume') {
+        const gn = laneAutoGains.get(al.laneType); if (!gn) continue
+        // Determine value at startFrom via interpolation
+        const initVal = interpAutom(sorted, startFrom, AUTOM_DEFAULT.volume)
+        gn.gain.setValueAtTime(initVal, now)
+        for (const pt of sorted) {
+          if (pt.time <= startFrom) continue
+          gn.gain.linearRampToValueAtTime(Math.max(0, Math.min(max, pt.value)), now + (pt.time - startFrom))
+        }
+      } else if (al.param === 'pan') {
+        const pan = lanePanners.get(al.laneType); if (!pan) continue
+        const initVal = interpAutom(sorted, startFrom, AUTOM_DEFAULT.pan)
+        pan.pan.setValueAtTime(Math.max(-1, Math.min(1, initVal)), now)
+        for (const pt of sorted) {
+          if (pt.time <= startFrom) continue
+          pan.pan.linearRampToValueAtTime(Math.max(-1, Math.min(1, pt.value)), now + (pt.time - startFrom))
+        }
+      }
     }
 
     // Metronome: schedule click sounds at every beat position
@@ -2506,6 +3173,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 />
                 <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 24 }}>{Math.round(masterVolume * 100)}%</span>
               </div>
+              {/* View toggle: Arrangement / Session */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
+                <button onClick={() => setViewMode('arrangement')} title="Arrangement view" style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
+                <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
+                <button onClick={() => setViewMode('session')} title="Session view" style={{ padding: '3px 9px', background: viewMode === 'session' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'session' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>SES</button>
+              </div>
               {/* Zoom controls */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <button onClick={() => setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2)))} title="Zoom out" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>−</button>
@@ -3035,7 +3708,53 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   {/* Waveform */}
                   {audioBuf && <Waveform audioBuffer={audioBuf} pxWidth={timelinePx * zoomLevel} />}
 
-                  {/* Lanes */}
+                  {/* Lanes — Arrangement or Session */}
+                  {viewMode === 'session' ? (
+                    <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+                      <SessionView
+                        bpm={effectiveBpmRef.current}
+                        lanes={activeLaneTypes.map(type => ({
+                          type,
+                          label: typeLabel(type, typeOverrides),
+                          color: typeColor(type, typeOverrides),
+                          clips: getSessionLaneClips(type),
+                          muted: mutedTypes.has(type),
+                        }) satisfies SessionLane)}
+                        playing={sessionPlaying}
+                        onLaunchScene={sceneIdx => {
+                          setSessionPlaying(prev => {
+                            const next = { ...prev }
+                            activeLaneTypes.forEach(t => { next[t] = sessionClips[t]?.[sceneIdx] ? sceneIdx : null })
+                            return next
+                          })
+                        }}
+                        onLaunchClip={(laneType, sceneIdx) => {
+                          setSessionPlaying(prev => ({ ...prev, [laneType]: sceneIdx }))
+                        }}
+                        onStopLane={laneType => setSessionPlaying(prev => ({ ...prev, [laneType]: null }))}
+                        onStopAll={() => setSessionPlaying({})}
+                        onAddClip={(laneType, sceneIdx, clip) => {
+                          setSessionClips(prev => {
+                            const row = getSessionLaneClips(laneType).slice()
+                            row[sceneIdx] = clip
+                            return { ...prev, [laneType]: row }
+                          })
+                        }}
+                        onRemoveClip={(laneType, sceneIdx) => {
+                          setSessionClips(prev => {
+                            const row = getSessionLaneClips(laneType).slice()
+                            row[sceneIdx] = null
+                            return { ...prev, [laneType]: row }
+                          })
+                          setSessionPlaying(prev => prev[laneType] === sceneIdx ? { ...prev, [laneType]: null } : prev)
+                        }}
+                        onEditClip={(laneType) => {
+                          setViewMode('arrangement')
+                          setActiveLaneType(laneType as BeatType)
+                        }}
+                      />
+                    </div>
+                  ) : (
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
                     {activeLaneTypes.map(type => (
                       <div key={type} style={{ display: 'flex' }}>
@@ -3056,11 +3775,33 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           snapInterval={snapInterval}
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
+                          onOpenPianoRoll={MELODIC_TYPES.has(type) ? () => setPianoRollLane(type) : undefined}
                           pan={lanePans[type] ?? 0}
                           soloed={soloedLanes.has(type)}
                           anySoloed={soloedLanes.size > 0}
                           onPanChange={v => setLanePans(prev => ({ ...prev, [type]: v }))}
                           onSoloToggle={() => toggleSolo(type)}
+                          effects={laneEffects[type] ?? []}
+                          fxOpen={fxOpenLanes.has(type)}
+                          fxAddOpen={fxAddOpen === type}
+                          onFxToggleOpen={() => setFxOpenLanes(prev => { const s = new Set(prev); s.has(type) ? s.delete(type) : s.add(type); return s })}
+                          onFxAddOpen={() => setFxAddOpen(type)}
+                          onFxAddClose={() => setFxAddOpen(null)}
+                          onFxAdd={t => addLaneEffect(type, t)}
+                          onFxRemove={id => removeLaneEffect(type, id)}
+                          onFxToggleEnabled={id => updateLaneEffect(type, id, { enabled: !laneEffects[type]?.find(f => f.id === id)?.enabled })}
+                          onFxParamChange={(id, key, val) => updateLaneEffectParam(type, id, key, val)}
+                          automLanes={automLanes.filter(a => a.laneType === type)}
+                          automOpen={automOpenLanes.has(type)}
+                          automAddOpen={automAddOpen === type}
+                          onAutomToggle={() => setAutomOpenLanes(prev => { const s = new Set(prev); s.has(type) ? s.delete(type) : s.add(type); return s })}
+                          onAutomAddOpen={() => setAutomAddOpen(type)}
+                          onAutomAddClose={() => setAutomAddOpen(null)}
+                          onAutomAdd={param => addAutomLane(type, param)}
+                          onAutomRemove={id => removeAutomLane(id)}
+                          onAutomPointAdd={(id, pt) => addAutomPoint(id, pt)}
+                          onAutomPointUpdate={(id, ptId, upd) => updateAutomPoint(id, ptId, upd)}
+                          onAutomPointDelete={(id, ptId) => deleteAutomPoint(id, ptId)}
                           onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
                           onClipDelete={clipId => { setAudioClips(prev => prev.filter(c => c.id !== clipId)); if (selectedClipId === clipId) setSelectedClipId(null) }}
                           onClipSelect={clipId => setSelectedClipId(prev => prev === clipId ? null : clipId)}
@@ -3093,6 +3834,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                       </button>
                     </div>
                   </div>
+                  )}
 
                   {/* Legend */}
                   <div style={{ padding: '5px 10px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -3530,6 +4272,31 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               )}
 
               <div style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
+
+              {/* Color picker */}
+              <div style={{ padding: '4px 10px 2px', fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>Color</div>
+              <div style={{ display: 'flex', gap: 5, padding: '0 10px 6px', flexWrap: 'wrap' }}>
+                {['#8b5cf6','#3b82f6','#10b981','#f59e0b','#ef4444','#ec4899','#06b6d4','#f97316'].map(c => (
+                  <div key={c} onClick={() => { setAudioClips(prev => prev.map(cl => cl.id === clip.id ? { ...cl, color: c } : cl)); setClipMenu(null) }}
+                    style={{ width: 18, height: 18, borderRadius: 4, background: c, cursor: 'pointer', border: clip.color === c ? '2px solid white' : '1px solid rgba(255,255,255,0.2)' }} />
+                ))}
+                <div onClick={() => { setAudioClips(prev => prev.map(cl => cl.id === clip.id ? { ...cl, color: null } : cl)); setClipMenu(null) }}
+                  style={{ width: 18, height: 18, borderRadius: 4, background: 'var(--bg-card)', cursor: 'pointer', border: '1px solid var(--border)', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>✕</div>
+              </div>
+
+              <div style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
+              <button onClick={() => {
+                const buf = clip.buf
+                const rev = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: buf.length, sampleRate: buf.sampleRate })
+                for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+                  const src = buf.getChannelData(ch); const dst = rev.getChannelData(ch)
+                  for (let i = 0; i < src.length; i++) dst[i] = src[src.length - 1 - i]
+                }
+                setAudioClips(prev => prev.map(cl => cl.id === clip.id ? { ...cl, buf: rev, reversed: !cl.reversed } : cl))
+                setClipMenu(null)
+              }} style={btnStyle()}>
+                {clip.reversed ? 'Un-reverse' : 'Reverse'}
+              </button>
               <button onClick={() => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, muted: !c.muted } : c)); setClipMenu(null) }} style={btnStyle()}>
                 {clip.muted ? 'Unmute' : 'Mute'}
               </button>
@@ -3540,6 +4307,24 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </>
         )
       })()}
+
+      {/* ── Piano Roll overlay ─────────────────────────────────────────────── */}
+      {pianoRollLane && (
+        <PianoRoll
+          laneType={pianoRollLane}
+          laneColor={typeColor(pianoRollLane, typeOverrides)}
+          hits={(hitsByType.get(pianoRollLane) ?? []).filter(h => h.type === pianoRollLane)}
+          duration={duration}
+          bpm={effectiveBpmRef.current}
+          onClose={() => setPianoRollLane(null)}
+          onHitsChange={nextHits => {
+            setHits(prev => [
+              ...prev.filter(h => h.type !== pianoRollLane),
+              ...nextHits,
+            ])
+          }}
+        />
+      )}
     </div>
   )
 }
