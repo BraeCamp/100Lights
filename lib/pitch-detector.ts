@@ -155,13 +155,17 @@ export async function synthesizeFromPitchCurve(
   for (const frame of pitchCurve) {
     const t = frame.time
 
-    if (frame.midi !== null) {
+    // Only update pitch when the signal is loud enough to trust the MPM reading.
+    // Quiet/transient frames produce garbage pitch values; holding the last good
+    // pitch instead of jumping to random MIDI numbers prevents "notey" artifacts.
+    // The 100ms ramp smooths out semitone quantization so the pitch glides rather
+    // than snapping discretely, which also masks detector noise on louder frames.
+    if (frame.midi !== null && frame.amplitude >= 0.3) {
       lastMidi = frame.midi
-      osc.frequency.linearRampToValueAtTime(midiToFreq(lastMidi), t + 0.012)
+      osc.frequency.linearRampToValueAtTime(midiToFreq(lastMidi), t + 0.1)
     }
 
-    // ALWAYS follow amplitude — silence only when the source is quiet.
-    // Never force to 0 because pitch was undetected; that creates "notey" gaps.
+    // Volume always follows amplitude regardless of voicing.
     const vol = Math.min(0.72, frame.amplitude * 0.72)
     gain.gain.linearRampToValueAtTime(vol, t + 0.01)
   }

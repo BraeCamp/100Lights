@@ -790,7 +790,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const durationRef  = useRef(duration)
   const loopSrcRef   = useRef<AudioBufferSourceNode | null>(null)
   const loopCtxRef   = useRef<AudioContext | null>(null)
-  const timelineRef  = useRef<HTMLDivElement>(null)
+  // Callback ref so the ResizeObserver re-attaches when the element moves from
+  // the toolbar into the portal — a plain useRef only observed the first element,
+  // and the browser fires a 0-width update when that element unmounts, making
+  // pxWidth go negative and the playhead move right-to-left.
+  const [timelineEl, setTimelineEl] = useState<HTMLDivElement | null>(null)
+  const timelineRef = useCallback((el: HTMLDivElement | null) => setTimelineEl(el), [])
   const [timelinePx, setTimelinePx] = useState(800)
 
   // Keep durationRef current so the RAF closure doesn't stale-capture duration
@@ -798,11 +803,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   // 88px = 64px lane label + 24px note axis
   useEffect(() => {
-    if (!timelineRef.current) return
+    if (!timelineEl) return
     const ro = new ResizeObserver(([e]) => setTimelinePx(e.contentRect.width - 88))
-    ro.observe(timelineRef.current)
+    ro.observe(timelineEl)
     return () => ro.disconnect()
-  }, [])
+  }, [timelineEl])
 
   // Cancel RAF on unmount to avoid dangling callbacks
   useEffect(() => () => cancelAnimationFrame(playRafRef.current), [])
