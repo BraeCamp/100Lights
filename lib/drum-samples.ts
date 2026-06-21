@@ -18,7 +18,7 @@ export const DRUM_PACKS: DrumPack[] = [
 
 // ── Kick ──────────────────────────────────────────────────────────────────────
 
-function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number) {
+function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number, dest: AudioNode) {
   const dur = Math.max(0.18, Math.min(0.55, maxDur))
 
   // Body — sine sweep from ~160 Hz down to ~42 Hz (the "whomp")
@@ -29,7 +29,7 @@ function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number) {
   body.frequency.exponentialRampToValueAtTime(42, when + 0.065)
   bodyGain.gain.setValueAtTime(v * 1.0, when)
   bodyGain.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  body.connect(bodyGain); bodyGain.connect(ctx.destination)
+  body.connect(bodyGain); bodyGain.connect(dest)
   body.start(when); body.stop(when + dur + 0.05)
 
   // Click — high-to-mid pitch sweep (the beater "thwack")
@@ -40,7 +40,7 @@ function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number) {
   click.frequency.exponentialRampToValueAtTime(100, when + 0.028)
   clickGain.gain.setValueAtTime(v * 0.85, when)
   clickGain.gain.exponentialRampToValueAtTime(0.001, when + 0.048)
-  click.connect(clickGain); clickGain.connect(ctx.destination)
+  click.connect(clickGain); clickGain.connect(dest)
   click.start(when); click.stop(when + 0.055)
 
   // Noise transient — beater impact texture, low-passed
@@ -51,13 +51,13 @@ function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number) {
   const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf
   const nFilt = ctx.createBiquadFilter(); nFilt.type = 'lowpass'; nFilt.frequency.value = 180
   const nGain = ctx.createGain(); nGain.gain.value = v * 0.45
-  nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(ctx.destination)
+  nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(dest)
   nSrc.start(when)
 }
 
 // ── Snare ─────────────────────────────────────────────────────────────────────
 
-function synthSnare(ctx: AudioContext, when: number, v: number) {
+function synthSnare(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
   // Wire buzz — the snare wire rattle (bandpass noise 1–8 kHz)
   const wireLen = Math.floor(ctx.sampleRate * 0.19)
   const wireBuf = ctx.createBuffer(1, wireLen, ctx.sampleRate)
@@ -69,7 +69,7 @@ function synthSnare(ctx: AudioContext, when: number, v: number) {
   const wireGain = ctx.createGain()
   wireGain.gain.setValueAtTime(v * 0.72, when)
   wireGain.gain.exponentialRampToValueAtTime(0.001, when + 0.17)
-  wireSrc.connect(wireHp); wireHp.connect(wireBp); wireBp.connect(wireGain); wireGain.connect(ctx.destination)
+  wireSrc.connect(wireHp); wireHp.connect(wireBp); wireBp.connect(wireGain); wireGain.connect(dest)
   wireSrc.start(when)
 
   // Head tone — drum shell resonance (triangle sweep ~280→180 Hz)
@@ -80,7 +80,7 @@ function synthSnare(ctx: AudioContext, when: number, v: number) {
   head.frequency.exponentialRampToValueAtTime(185, when + 0.035)
   headGain.gain.setValueAtTime(v * 0.5, when)
   headGain.gain.exponentialRampToValueAtTime(0.001, when + 0.07)
-  head.connect(headGain); headGain.connect(ctx.destination)
+  head.connect(headGain); headGain.connect(dest)
   head.start(when); head.stop(when + 0.08)
 
   // Stick crack — very short broadband burst
@@ -91,7 +91,7 @@ function synthSnare(ctx: AudioContext, when: number, v: number) {
   const cSrc = ctx.createBufferSource(); cSrc.buffer = cBuf
   const cBp = ctx.createBiquadFilter(); cBp.type = 'bandpass'; cBp.frequency.value = 7000; cBp.Q.value = 0.4
   const cGain = ctx.createGain(); cGain.gain.value = v * 0.65
-  cSrc.connect(cBp); cBp.connect(cGain); cGain.connect(ctx.destination)
+  cSrc.connect(cBp); cBp.connect(cGain); cGain.connect(dest)
   cSrc.start(when)
 }
 
@@ -101,9 +101,9 @@ function synthSnare(ctx: AudioContext, when: number, v: number) {
 
 const HAT_FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7]
 
-function synthHihat(ctx: AudioContext, when: number, v: number) {
+function synthHihat(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
   const dur = 0.062
-  const mix = ctx.createGain(); mix.gain.value = v * 0.07; mix.connect(ctx.destination)
+  const mix = ctx.createGain(); mix.gain.value = v * 0.07; mix.connect(dest)
   const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7800; hp.connect(mix)
   const env = ctx.createGain(); env.connect(hp)
   env.gain.setValueAtTime(1, when)
@@ -116,9 +116,9 @@ function synthHihat(ctx: AudioContext, when: number, v: number) {
 
 // ── Hi-hat (open) ─────────────────────────────────────────────────────────────
 
-function synthOpenHihat(ctx: AudioContext, when: number, v: number) {
+function synthOpenHihat(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
   const dur = 0.42
-  const mix = ctx.createGain(); mix.gain.value = v * 0.065; mix.connect(ctx.destination)
+  const mix = ctx.createGain(); mix.gain.value = v * 0.065; mix.connect(dest)
   const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7200; hp.connect(mix)
   const env = ctx.createGain(); env.connect(hp)
   env.gain.setValueAtTime(1, when)
@@ -132,7 +132,7 @@ function synthOpenHihat(ctx: AudioContext, when: number, v: number) {
 // ── Clap ──────────────────────────────────────────────────────────────────────
 // Real claps are 3–5 closely-spaced broadband noise bursts.
 
-function synthClap(ctx: AudioContext, when: number, v: number) {
+function synthClap(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
   const bursts: [number, number][] = [[0, 1.0], [0.011, 0.85], [0.024, 0.75], [0.042, 0.60]]
   for (const [off, amp] of bursts) {
     const t = when + off
@@ -145,14 +145,14 @@ function synthClap(ctx: AudioContext, when: number, v: number) {
     const g = ctx.createGain()
     g.gain.setValueAtTime(v * amp * 0.68, t)
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.065)
-    src.connect(hp); hp.connect(g); g.connect(ctx.destination)
+    src.connect(hp); hp.connect(g); g.connect(dest)
     src.start(t)
   }
 }
 
 // ── Tom ───────────────────────────────────────────────────────────────────────
 
-function synthTom(ctx: AudioContext, when: number, v: number, note: number) {
+function synthTom(ctx: AudioContext, when: number, v: number, note: number, dest: AudioNode) {
   const fundamental = 440 * Math.pow(2, (note - 69) / 12)
   const f0 = Math.max(60, Math.min(180, fundamental))
   const dur = 0.26
@@ -165,7 +165,7 @@ function synthTom(ctx: AudioContext, when: number, v: number, note: number) {
   body.frequency.exponentialRampToValueAtTime(f0, when + 0.04)
   bodyGain.gain.setValueAtTime(v * 0.88, when)
   bodyGain.gain.exponentialRampToValueAtTime(0.001, when + dur)
-  body.connect(bodyGain); bodyGain.connect(ctx.destination)
+  body.connect(bodyGain); bodyGain.connect(dest)
   body.start(when); body.stop(when + dur + 0.02)
 
   // Stick transient
@@ -176,7 +176,7 @@ function synthTom(ctx: AudioContext, when: number, v: number, note: number) {
   const cSrc = ctx.createBufferSource(); cSrc.buffer = cBuf
   const cLp = ctx.createBiquadFilter(); cLp.type = 'lowpass'; cLp.frequency.value = 300
   const cGain = ctx.createGain(); cGain.gain.value = v * 0.4
-  cSrc.connect(cLp); cLp.connect(cGain); cGain.connect(ctx.destination)
+  cSrc.connect(cLp); cLp.connect(cGain); cGain.connect(dest)
   cSrc.start(when)
 }
 
@@ -184,11 +184,11 @@ function synthTom(ctx: AudioContext, when: number, v: number, note: number) {
 
 const CRASH_FREQS = [205.3, 304.4, 369.9, 522.8, 635.4, 831.7, 1024.5, 1312.8]
 
-function synthCrash(ctx: AudioContext, when: number, v: number) {
+function synthCrash(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
   const dur = 1.5
 
   // Metallic oscillator cluster
-  const mix = ctx.createGain(); mix.gain.value = v * 0.052; mix.connect(ctx.destination)
+  const mix = ctx.createGain(); mix.gain.value = v * 0.052; mix.connect(dest)
   const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3800; hp.connect(mix)
   const env = ctx.createGain(); env.connect(hp)
   env.gain.setValueAtTime(1, when)
@@ -208,13 +208,13 @@ function synthCrash(ctx: AudioContext, when: number, v: number) {
   const nGain = ctx.createGain()
   nGain.gain.setValueAtTime(v * 0.12, when)
   nGain.gain.exponentialRampToValueAtTime(0.001, when + 0.7)
-  nSrc.connect(nHp); nHp.connect(nGain); nGain.connect(ctx.destination)
+  nSrc.connect(nHp); nHp.connect(nGain); nGain.connect(dest)
   nSrc.start(when)
 }
 
 // ── Rim shot ──────────────────────────────────────────────────────────────────
 
-function synthRim(ctx: AudioContext, when: number, v: number) {
+function synthRim(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
   // Sharp pitched click with quick decay
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
@@ -223,7 +223,7 @@ function synthRim(ctx: AudioContext, when: number, v: number) {
   osc.frequency.exponentialRampToValueAtTime(600, when + 0.008)
   gain.gain.setValueAtTime(v * 0.55, when)
   gain.gain.exponentialRampToValueAtTime(0.001, when + 0.032)
-  osc.connect(gain); gain.connect(ctx.destination)
+  osc.connect(gain); gain.connect(dest)
   osc.start(when); osc.stop(when + 0.038)
 
   // Short noise burst for texture
@@ -234,12 +234,12 @@ function synthRim(ctx: AudioContext, when: number, v: number) {
   const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf
   const nBp = ctx.createBiquadFilter(); nBp.type = 'bandpass'; nBp.frequency.value = 2500; nBp.Q.value = 1.2
   const nGain = ctx.createGain(); nGain.gain.value = v * 0.45
-  nSrc.connect(nBp); nBp.connect(nGain); nGain.connect(ctx.destination)
+  nSrc.connect(nBp); nBp.connect(nGain); nGain.connect(dest)
   nSrc.start(when)
 }
 
-function synthOther(ctx: AudioContext, when: number, v: number) {
-  synthClap(ctx, when, v)
+function synthOther(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
+  synthClap(ctx, when, v, dest)
 }
 
 // ── Unified API ───────────────────────────────────────────────────────────────
@@ -274,17 +274,18 @@ export function playDrumHit(
   velocity: number,
   note: number | undefined,
   maxKickDur = 0.45,
+  dest: AudioNode = ctx.destination,
 ): void {
   const n = note ?? DEFAULT_NOTE[type]
   switch (type) {
-    case 'kick':       return synthKick(ctx, when, velocity, maxKickDur)
-    case 'snare':      return synthSnare(ctx, when, velocity)
-    case 'hihat':      return synthHihat(ctx, when, velocity)
-    case 'open-hihat': return synthOpenHihat(ctx, when, velocity)
-    case 'clap':       return synthClap(ctx, when, velocity)
-    case 'tom':        return synthTom(ctx, when, velocity, n)
-    case 'crash':      return synthCrash(ctx, when, velocity)
-    case 'rim':        return synthRim(ctx, when, velocity)
-    default:           return synthOther(ctx, when, velocity)
+    case 'kick':       return synthKick(ctx, when, velocity, maxKickDur, dest)
+    case 'snare':      return synthSnare(ctx, when, velocity, dest)
+    case 'hihat':      return synthHihat(ctx, when, velocity, dest)
+    case 'open-hihat': return synthOpenHihat(ctx, when, velocity, dest)
+    case 'clap':       return synthClap(ctx, when, velocity, dest)
+    case 'tom':        return synthTom(ctx, when, velocity, n, dest)
+    case 'crash':      return synthCrash(ctx, when, velocity, dest)
+    case 'rim':        return synthRim(ctx, when, velocity, dest)
+    default:           return synthOther(ctx, when, velocity, dest)
   }
 }

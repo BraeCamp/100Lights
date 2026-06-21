@@ -153,6 +153,16 @@ async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
   try { return await ctx.decodeAudioData(ab) } finally { ctx.close() }
 }
 
+function makeReverbIR(ctx: AudioContext, duration = 2.5, decay = 2): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * duration)
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate)
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c)
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay)
+  }
+  return buf
+}
+
 // ── Waveform ─────────────────────────────────────────────────────────────────
 
 function Waveform({ audioBuffer, pxWidth }: { audioBuffer: AudioBuffer; pxWidth: number }) {
@@ -581,11 +591,22 @@ interface LaneProps {
   onClipSelect: (clipId: string) => void
   selectedClipId: string | null
   onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold'>>) => void
+  // Mixer
+  pan: number; soloed: boolean; anySoloed: boolean
+  onPanChange: (v: number) => void; onSoloToggle: () => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
+
+  function startPanDrag(e: React.MouseEvent) {
+    e.stopPropagation(); e.preventDefault()
+    const sx = e.clientX, orig = pan
+    const move = (me: MouseEvent) => onPanChange(Math.max(-1, Math.min(1, orig + (me.clientX - sx) / 28)))
+    const up   = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+  }
 
   function calcLaneHit(e: React.MouseEvent<HTMLDivElement>): [number, number] {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -606,27 +627,66 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
     onAddHit(t, note)
   }
 
+  const dimmed = muted || (anySoloed && !soloed)
+
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT, borderBottom: '1px solid var(--border)', opacity: muted ? 0.45 : 1 }}>
-      {/* Label — left-click selects, right-click opens context menu */}
+    <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT, borderBottom: '1px solid var(--border)', opacity: dimmed ? 0.45 : 1 }}>
+      {/* Lane header: label + M/S + pan */}
       <div
-        onClick={onSelectLane}
         onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
         style={{
           width: 64, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
           background: isActiveLane ? 'var(--accent-subtle)' : 'var(--bg-surface)',
-          cursor: 'pointer', display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 3, userSelect: 'none',
+          display: 'flex', flexDirection: 'column', userSelect: 'none',
           borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
         }}
       >
-        <div style={{ width: 7, height: 7, borderRadius: '50%', background: muted ? 'var(--border-light)' : color }} />
-        <span style={{ fontSize: 10, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : muted ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 56, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {label}
-        </span>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{hits.length}</span>
-        {/* Mute indicator */}
-        {muted && <VolumeX size={9} color="#ef4444" style={{ position: 'absolute', bottom: 4 }} />}
+        {/* Label row */}
+        <div onClick={onSelectLane} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: dimmed ? 'var(--border-light)' : color }} />
+          <span style={{ fontSize: 9, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : dimmed ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>
+            {label}
+          </span>
+          {hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
+        </div>
+
+        {/* Mute + Solo buttons */}
+        <div style={{ display: 'flex', gap: 3, padding: '0 4px 3px', justifyContent: 'center' }}>
+          <button
+            onClick={e => { e.stopPropagation(); onToggleMute() }}
+            style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
+              background: muted ? 'rgba(239,68,68,0.18)' : 'var(--bg-card)',
+              border: `1px solid ${muted ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+              color: muted ? '#ef4444' : 'var(--text-muted)' }}
+          >M</button>
+          <button
+            onClick={e => { e.stopPropagation(); onSoloToggle() }}
+            style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
+              background: soloed ? 'rgba(251,191,36,0.18)' : 'var(--bg-card)',
+              border: `1px solid ${soloed ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
+              color: soloed ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
+          >S</button>
+        </div>
+
+        {/* Pan drag bar — double-click resets to 0 */}
+        <div style={{ padding: '0 5px 5px' }}>
+          <div
+            title={`Pan: ${pan >= 0 ? '+' : ''}${Math.round(pan * 100)}`}
+            onMouseDown={startPanDrag}
+            onDoubleClick={() => onPanChange(0)}
+            style={{ position: 'relative', height: 8, background: 'var(--bg-base)', borderRadius: 4, cursor: 'ew-resize', border: '1px solid var(--border)' }}
+          >
+            <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--border)', transform: 'translateX(-50%)' }} />
+            <div style={{
+              position: 'absolute', top: '50%',
+              left: `${Math.round(((pan + 1) / 2) * 100)}%`,
+              transform: 'translate(-50%,-50%)',
+              width: 7, height: 7, borderRadius: '50%',
+              background: pan === 0 ? 'var(--text-muted)' : color,
+              boxShadow: pan !== 0 ? `0 0 3px ${color}` : 'none',
+            }} />
+          </div>
+        </div>
       </div>
 
       {/* Hit area — left-click adds, right-click adds (snapped) */}
@@ -1270,6 +1330,35 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setBpmEditing(false)
   }
 
+  // ── Tier-2 mixer ─────────────────────────────────────────────────────────────
+  const [lanePans,   setLanePans]   = useState<Record<string, number>>({})
+  const [soloedLanes, setSoloedLanes] = useState<Set<string>>(new Set())
+  const [laneReverb, setLaneReverb] = useState<Record<string, number>>({})
+  const [laneDelay,  setLaneDelay]  = useState<Record<string, number>>({})
+  const [masterVolume, setMasterVolume] = useState(1.0)
+
+  const lanePansRef    = useRef<Record<string, number>>({})
+  const soloedLanesRef = useRef<Set<string>>(new Set())
+  const laneReverbRef  = useRef<Record<string, number>>({})
+  const laneDelayRef   = useRef<Record<string, number>>({})
+  const masterVolumeRef = useRef(1.0)
+  const masterGainNodeRef = useRef<GainNode | null>(null)
+
+  useEffect(() => { lanePansRef.current    = lanePans },    [lanePans])
+  useEffect(() => { soloedLanesRef.current = soloedLanes }, [soloedLanes])
+  useEffect(() => { laneReverbRef.current  = laneReverb },  [laneReverb])
+  useEffect(() => { laneDelayRef.current   = laneDelay },   [laneDelay])
+  useEffect(() => { masterVolumeRef.current = masterVolume; if (masterGainNodeRef.current) masterGainNodeRef.current.gain.setTargetAtTime(masterVolume, audioCtxRef.current?.currentTime ?? 0, 0.02) }, [masterVolume])
+
+  function toggleSolo(laneType: string) {
+    setSoloedLanes(prev => {
+      const next = new Set(prev)
+      if (next.has(laneType)) next.delete(laneType); else next.add(laneType)
+      soloedLanesRef.current = next
+      return next
+    })
+  }
+
   function playMetronomeClick(ctx: AudioContext, when: number, accent: boolean) {
     const osc = ctx.createOscillator()
     const g   = ctx.createGain()
@@ -1342,6 +1431,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       }
       // T → tap tempo
       if (e.code === 'KeyT' && !inInput) { tapTempo(); return }
+      // S → solo active lane
+      if (e.code === 'KeyS' && !inInput) { if (activeLaneType) toggleSolo(activeLaneType); return }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -1492,66 +1583,94 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     if (duration <= 0) return
     const ctx = getAudioCtx()
     const now = ctx.currentTime
+
+    // ── Routing graph ────────────────────────────────────────────────────────
+    // master gain → destination
+    const masterGain = ctx.createGain()
+    masterGain.gain.value = masterVolumeRef.current
+    masterGainNodeRef.current = masterGain
+    masterGain.connect(ctx.destination)
+
+    // reverb return
+    const reverb = ctx.createConvolver()
+    reverb.buffer = makeReverbIR(ctx)
+    const reverbReturn = ctx.createGain(); reverbReturn.gain.value = 0.75
+    reverb.connect(reverbReturn); reverbReturn.connect(masterGain)
+
+    // delay return (8th-note, BPM-synced)
+    const delayBeat = Math.min(1.9, Math.max(0.05, 60 / effectiveBpmRef.current / 2))
+    const delay = ctx.createDelay(2.0); delay.delayTime.value = delayBeat
+    const dlFb = ctx.createGain(); dlFb.gain.value = 0.35
+    const delayReturn = ctx.createGain(); delayReturn.gain.value = 0.6
+    delay.connect(dlFb); dlFb.connect(delay)     // feedback loop
+    delay.connect(delayReturn); delayReturn.connect(masterGain)
+
+    // per-lane panner + sends cache (created on first use per lane)
+    const laneInputs = new Map<string, GainNode>()
+    function getLaneInput(laneType: string): GainNode {
+      if (laneInputs.has(laneType)) return laneInputs.get(laneType)!
+      const input   = ctx.createGain()
+      const panner  = ctx.createStereoPanner(); panner.pan.value = lanePansRef.current[laneType] ?? 0
+      const revSend = ctx.createGain(); revSend.gain.value = laneReverbRef.current[laneType] ?? 0
+      const dlySend = ctx.createGain(); dlySend.gain.value = laneDelayRef.current[laneType] ?? 0
+      input.connect(panner); panner.connect(masterGain)
+      input.connect(revSend); revSend.connect(reverb)
+      input.connect(dlySend); dlySend.connect(delay)
+      laneInputs.set(laneType, input)
+      return input
+    }
+
+    const soloActive = soloedLanesRef.current.size > 0
+    // ── Hits ─────────────────────────────────────────────────────────────────
     const kickTimes = hits.filter(h => h.type === 'kick' && !mutedTypes.has('kick')).map(h => h.time).sort((a, b) => a - b)
 
     for (const hit of hits) {
       if (hit.time < startFrom - 0.01) continue
       if (mutedTypes.has(hit.type)) continue
+      if (soloActive && !soloedLanesRef.current.has(hit.type)) continue
       const when = Math.max(now, now + (hit.time - startFrom))
+      const laneDest = getLaneInput(hit.type)
 
-      // Use sample pack buffer if available, pitch-shifted to match the hit's MIDI note
       const sampleBuf  = sampleBuffers.get(hit.type)
       const sampleRoot = sampleRoots.get(hit.type) ?? 60
       if (sampleBuf) {
         const src = ctx.createBufferSource()
         src.buffer = sampleBuf
-        // Transpose sample to hit's actual note
         const targetNote = hit.note ?? sampleRoot
         src.playbackRate.value = Math.pow(2, (targetNote - sampleRoot) / 12)
-        const gain = ctx.createGain()
-        gain.gain.value = hit.velocity
-        src.connect(gain)
-        gain.connect(ctx.destination)
+        const gain = ctx.createGain(); gain.gain.value = hit.velocity
+        src.connect(gain); gain.connect(laneDest)
         src.start(when)
       } else if (MELODIC_TYPES.has(hit.type)) {
-        playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity)
+        playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity, laneDest)
       } else {
         const maxKickDur = hit.type === 'kick'
-          ? (() => {
-              const idx = kickTimes.indexOf(hit.time)
-              const next = kickTimes[idx + 1] ?? Infinity
-              return Math.min(0.45, next - hit.time - 0.01)
-            })()
+          ? (() => { const idx = kickTimes.indexOf(hit.time); const next = kickTimes[idx + 1] ?? Infinity; return Math.min(0.45, next - hit.time - 0.01) })()
           : 0.45
-        playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note, maxKickDur)
+        playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note, maxKickDur, laneDest)
       }
     }
 
-    // Audio clips
+    // ── Audio clips ───────────────────────────────────────────────────────────
     for (const clip of audioClips) {
       if (clip.muted) continue
+      if (soloActive && !soloedLanesRef.current.has(clip.laneType)) continue
       const effDur = clip.loopDuration ?? clip.stretchDuration ?? clip.buf.duration
       const clipEnd = clip.startTime + effDur
       if (clipEnd <= startFrom) continue
 
-      // Apply gate: zero out samples below threshold (with 2ms ramps to avoid clicks)
       let bufToPlay = clip.buf
       if (clip.gateThreshold > 0) {
         const sr = clip.buf.sampleRate
         const raw = clip.buf.getChannelData(0)
         const gated = new Float32Array(raw.length)
         const ramp = Math.floor(sr * 0.002)
-        const hold = Math.floor(sr * 0.020)
-        let holdLeft = 0, gateOpen = false
-        for (let i = 0; i < raw.length; i++) {
-          if (Math.abs(raw[i]) >= clip.gateThreshold) { holdLeft = hold; gateOpen = true }
-          else if (holdLeft > 0) { holdLeft-- } else { gateOpen = false }
-          gated[i] = raw[i]
-        }
-        // Quick re-pass: smooth transitions
+        let holdLeft = 0
         let env = 0
-        for (let i = 0; i < gated.length; i++) {
-          const target = Math.abs(raw[i]) >= clip.gateThreshold ? 1 : 0
+        for (let i = 0; i < raw.length; i++) {
+          if (Math.abs(raw[i]) >= clip.gateThreshold) holdLeft = Math.floor(sr * 0.020)
+          else if (holdLeft > 0) holdLeft--
+          const target = holdLeft > 0 || Math.abs(raw[i]) >= clip.gateThreshold ? 1 : 0
           env += (target - env) * (1 / ramp)
           gated[i] = raw[i] * env
         }
@@ -1559,41 +1678,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         bufToPlay.copyToChannel(gated, 0)
       }
 
-      const src  = ctx.createBufferSource()
+      const src = ctx.createBufferSource()
       src.buffer = bufToPlay
-
-      // Time stretch: adjust playback rate so audio fills stretchDuration
       const playRate = clip.stretchDuration != null ? clip.buf.duration / clip.stretchDuration : 1
       src.playbackRate.value = playRate
+      if (clip.loopDuration != null) { src.loop = true; src.loopStart = 0; src.loopEnd = clip.buf.duration }
 
-      // Loop
-      if (clip.loopDuration != null) {
-        src.loop = true
-        src.loopStart = 0
-        src.loopEnd = clip.buf.duration
-      }
-
-      const gainNode = ctx.createGain()
-      gainNode.gain.value = 0.82 * clip.gain
-      src.connect(gainNode); gainNode.connect(ctx.destination)
+      const gainNode = ctx.createGain(); gainNode.gain.value = 0.82 * clip.gain
+      src.connect(gainNode); gainNode.connect(getLaneInput(clip.laneType))
 
       if (clip.startTime >= startFrom) {
         src.start(now + (clip.startTime - startFrom), 0)
       } else {
         const elapsed = startFrom - clip.startTime
-        let bufOffset: number
-        if (clip.loopDuration != null) {
-          bufOffset = elapsed % clip.buf.duration
-        } else {
-          bufOffset = elapsed * playRate
-        }
+        const bufOffset = clip.loopDuration != null ? elapsed % clip.buf.duration : elapsed * playRate
         src.start(now, Math.min(bufOffset, clip.buf.duration - 0.001))
       }
-
-      // Schedule stop for loops (otherwise they'd run forever)
-      if (clip.loopDuration != null) {
-        src.stop(now + Math.max(0, clipEnd - startFrom))
-      }
+      if (clip.loopDuration != null) src.stop(now + Math.max(0, clipEnd - startFrom))
     }
 
     // Metronome: schedule click sounds at every beat position
@@ -2394,6 +2495,17 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                 {activeHitCount} active{mutedTypes.size > 0 && ` · ${hits.length - activeHitCount} muted`}
               </span>
+              {/* Master volume */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 7px' }}>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>VOL</span>
+                <input
+                  type="range" min={0} max={2} step={0.01} value={masterVolume}
+                  onChange={e => setMasterVolume(Number(e.target.value))}
+                  style={{ width: 60, accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  title={`Master volume: ${Math.round(masterVolume * 100)}%`}
+                />
+                <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 24 }}>{Math.round(masterVolume * 100)}%</span>
+              </div>
               {/* Zoom controls */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <button onClick={() => setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2)))} title="Zoom out" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>−</button>
@@ -2944,6 +3056,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           snapInterval={snapInterval}
                           onSelectHit={selectHit}
                           onSelectLane={() => setActiveLaneType(type)}
+                          pan={lanePans[type] ?? 0}
+                          soloed={soloedLanes.has(type)}
+                          anySoloed={soloedLanes.size > 0}
+                          onPanChange={v => setLanePans(prev => ({ ...prev, [type]: v }))}
+                          onSoloToggle={() => toggleSolo(type)}
                           onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
                           onClipDelete={clipId => { setAudioClips(prev => prev.filter(c => c.id !== clipId)); if (selectedClipId === clipId) setSelectedClipId(null) }}
                           onClipSelect={clipId => setSelectedClipId(prev => prev === clipId ? null : clipId)}
@@ -3208,6 +3325,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   { label: 'Rename', action: () => setLaneMenuEdit({ label: typeLabel(laneMenu.type, typeOverrides), color: typeColor(laneMenu.type, typeOverrides) }) },
                   { label: 'Change instrument', action: () => setLaneMenuChanging(true) },
                   { label: mutedTypes.has(laneMenu.type) ? 'Unmute' : 'Mute', action: () => { toggleMute(laneMenu.type); setLaneMenu(null) } },
+                  { label: soloedLanes.has(laneMenu.type) ? 'Unsolo' : 'Solo', action: () => { toggleSolo(laneMenu.type); setLaneMenu(null) } },
                   ...(activeLaneTypes.length > 1
                     ? [{ label: 'Delete lane', action: () => { removeLane(laneMenu.type); setLaneMenu(null) }, danger: true }]
                     : []),
@@ -3218,6 +3336,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                   >{item.label}</button>
                 ))}
+                {/* Sends */}
+                <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6, padding: '6px 10px 4px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sends</div>
+                  {[
+                    { label: 'Reverb', key: laneMenu.type, val: laneReverb[laneMenu.type] ?? 0, set: (v: number) => setLaneReverb(p => ({ ...p, [laneMenu!.type]: v })) },
+                    { label: 'Delay',  key: laneMenu.type, val: laneDelay[laneMenu.type]  ?? 0, set: (v: number) => setLaneDelay(p => ({ ...p, [laneMenu!.type]: v })) },
+                  ].map(({ label, val, set }) => (
+                    <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36 }}>{label}</span>
+                      <input type="range" min={0} max={1} step={0.01} value={val}
+                        onChange={e => set(Number(e.target.value))}
+                        style={{ flex: 1, accentColor: 'var(--accent)', cursor: 'pointer' }} />
+                      <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 26, textAlign: 'right' }}>{Math.round(val * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
           </div>

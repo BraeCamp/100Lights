@@ -18,7 +18,7 @@ function midiToHz(note: number): number {
 
 export function playGuitar(
   ctx: AudioContext, variant: BeatType, midiNote: number,
-  when: number, velocity: number,
+  when: number, velocity: number, dest: AudioNode = ctx.destination,
 ) {
   const hz = midiToHz(Math.max(28, Math.min(88, midiNote)))
   const sr = ctx.sampleRate
@@ -69,7 +69,7 @@ export function playGuitar(
     src.connect(gain)
   }
 
-  gain.connect(ctx.destination)
+  gain.connect(dest)
   src.start(when)
 }
 
@@ -79,13 +79,11 @@ export function playGuitar(
 
 export function playPiano(
   ctx: AudioContext, variant: BeatType, midiNote: number,
-  when: number, velocity: number,
+  when: number, velocity: number, dest: AudioNode = ctx.destination,
 ) {
   const hz = midiToHz(Math.max(21, Math.min(108, midiNote)))
-  // Lower notes sustain longer (natural piano behaviour)
   const sustain = Math.max(0.8, Math.min(4.5, 5.0 - (midiNote - 21) / 87 * 3.0))
 
-  const dest = ctx.destination
   const masterGain = ctx.createGain()
   masterGain.connect(dest)
 
@@ -172,10 +170,9 @@ export function playPiano(
 
 export function playSynth(
   ctx: AudioContext, variant: BeatType, midiNote: number,
-  when: number, velocity: number,
+  when: number, velocity: number, dest: AudioNode = ctx.destination,
 ) {
   const hz = midiToHz(Math.max(21, Math.min(108, midiNote)))
-  const dest = ctx.destination
 
   const filter = ctx.createBiquadFilter()
   filter.type = 'lowpass'
@@ -256,14 +253,14 @@ export function playSynth(
 
 export function playMelodicNote(
   ctx: AudioContext, type: BeatType, midiNote: number,
-  when: number, velocity: number,
+  when: number, velocity: number, dest: AudioNode = ctx.destination,
 ) {
   if (type.startsWith('guitar')) {
-    playGuitar(ctx, type, midiNote, when, velocity)
+    playGuitar(ctx, type, midiNote, when, velocity, dest)
   } else if (type.startsWith('piano')) {
-    playPiano(ctx, type, midiNote, when, velocity)
+    playPiano(ctx, type, midiNote, when, velocity, dest)
   } else if (type.startsWith('synth')) {
-    playSynth(ctx, type, midiNote, when, velocity)
+    playSynth(ctx, type, midiNote, when, velocity, dest)
   }
 }
 
