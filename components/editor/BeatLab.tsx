@@ -1504,6 +1504,7 @@ function Playhead({ time, duration, pxWidth }: { time: number; duration: number;
 // ── BeatLab ───────────────────────────────────────────────────────────────────
 
 interface BeatLabProps {
+  projectId?: string
   onExport?: (hits: BeatHit[], bpm: number | null) => void
   hasSong?: boolean
   onRequestSongPlay?: () => void
@@ -1519,7 +1520,7 @@ interface BeatLabProps {
   onStemAnalyzed?: () => void      // called after stem analysis completes (or fails)
 }
 
-export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
+export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('editing')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -2651,11 +2652,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     reader.readAsText(file)
   }
 
+  // Project-scoped autosave key — new projects (no ID) never restore or overwrite
+  const autosaveKey = projectId ? `beatlab-autosave-${projectId}` : null
+
   // Restore audio clips from IndexedDB on mount
   useEffect(() => {
     async function restoreClips() {
+      if (!autosaveKey) return  // new project — start fresh
       try {
-        const raw = typeof window !== 'undefined' ? localStorage.getItem('beatlab-autosave') : null
+        // One-time migration: move legacy shared key to project-scoped key
+        const legacy = localStorage.getItem('beatlab-autosave')
+        if (legacy && !localStorage.getItem(autosaveKey)) {
+          localStorage.setItem(autosaveKey, legacy)
+          localStorage.removeItem('beatlab-autosave')
+        }
+        const raw = typeof window !== 'undefined' ? localStorage.getItem(autosaveKey) : null
         if (!raw) return
         const s = JSON.parse(raw) as Record<string, unknown>
         const meta = s.audioClipsMeta
@@ -2688,8 +2699,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     restoreClips()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save to localStorage (debounced 2s)
+  // Auto-save to localStorage (debounced 2s, project-scoped — skipped for new projects)
   useEffect(() => {
+    if (!autosaveKey) return
     const t = setTimeout(() => {
       try {
         const audioClipsMeta = audioClips.map(c => ({
@@ -2699,11 +2711,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           fadeIn: c.fadeIn, fadeOut: c.fadeOut, color: c.color,
           reversed: c.reversed, warpMarkers: c.warpMarkers, gainEnvelope: c.gainEnvelope,
         }))
-        localStorage.setItem('beatlab-autosave', JSON.stringify({ hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing, audioClipsMeta }))
+        localStorage.setItem(autosaveKey, JSON.stringify({ hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing, audioClipsMeta }))
       } catch { /* quota exceeded */ }
     }, 2000)
     return () => clearTimeout(t)
-  }, [hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing, audioClips]) // eslint-disable-line
+  }, [hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing, audioClips, autosaveKey]) // eslint-disable-line
 
   // ── Audio clip IndexedDB persistence ──────────────────────────────────────
   const savedClipBufsRef = useRef<Map<string, AudioBuffer>>(new Map())

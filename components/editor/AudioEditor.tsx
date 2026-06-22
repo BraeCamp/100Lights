@@ -499,6 +499,7 @@ export default function AudioEditor({
             borderTop: '1px solid var(--border)',
           }}>
             <BeatLab
+              projectId={projectId}
               hasSong={tracks.length > 0}
               requestRecord={singCount}
               lanesContainer={beatLabLanesEl}
