@@ -1774,9 +1774,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     let currentCode = ''
     try {
       const codeRes = await fetch('/api/synth-code')
-      if (!codeRes.ok) { setSynthTuner(null); return }
+      if (!codeRes.ok) {
+        setSynthTuner(prev => prev ? { ...prev, status: 'error', errorMsg: `/api/synth-code returned ${codeRes.status}` } : null)
+        return
+      }
       ;({ code: currentCode } = await codeRes.json() as { code: string })
-    } catch { setSynthTuner(null); return }
+    } catch (e) {
+      setSynthTuner(prev => prev ? { ...prev, status: 'error', errorMsg: `Failed to load code: ${String(e)}` } : null)
+      return
+    }
 
     const notes = extractNoteEvents(pitchCurve)
     const pitchSummary = {
@@ -3903,14 +3909,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         </div>
       )}
 
-      {/* ── AI Synth Tuner overlay ────────────────────────────────────────── */}
-      {synthTuner && (
+      {/* ── AI Synth Tuner overlay — rendered via portal to escape stacking contexts ── */}
+      {synthTuner && typeof document !== 'undefined' && createPortal(
         <div style={{
           position: 'fixed', bottom: 24, right: 24, width: 360,
-          background: '#12121e', border: '1px solid rgba(139,92,246,0.35)',
-          borderRadius: 12, padding: '14px 16px', zIndex: 9998,
-          boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+          background: '#12121e', border: '1px solid rgba(139,92,246,0.45)',
+          borderRadius: 12, padding: '14px 16px', zIndex: 99999,
+          boxShadow: '0 8px 40px rgba(0,0,0,0.8)',
           display: 'flex', flexDirection: 'column', gap: 10,
+          fontFamily: 'inherit',
         }}>
           {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -3921,23 +3928,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </span>
               {synthTuner.status === 'running' && (
                 <span style={{ fontSize: 10, color: '#6b7280' }}>
-                  — iteration {synthTuner.iteration}/3
+                  — pass {synthTuner.iteration}/3
                 </span>
               )}
             </div>
-            {synthTuner.status !== 'running' && (
-              <button
-                onClick={() => setSynthTuner(null)}
-                style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 2px' }}
-              >×</button>
-            )}
+            <button
+              onClick={() => setSynthTuner(null)}
+              style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}
+            >×</button>
           </div>
 
-          {/* Running spinner */}
+          {/* Loading state (no cards yet) */}
           {synthTuner.status === 'running' && synthTuner.iterations.length === 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6b7280', fontSize: 11 }}>
               <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
-              Analyzing pitch curve and synthesis algorithm…
+              Analyzing pitch data and synthesis algorithm…
             </div>
           )}
 
@@ -3954,23 +3959,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.55, marginBottom: 6 }}>
                 {iter.analysis}
               </div>
-              <div style={{ fontSize: 10, color: '#6d28d9', fontStyle: 'italic' }}>
+              <div style={{ fontSize: 10, color: '#8b5cf6', fontStyle: 'italic' }}>
                 → {iter.changes}
               </div>
             </div>
           ))}
 
-          {/* Status between iterations */}
+          {/* Spinner between iterations */}
           {synthTuner.status === 'running' && synthTuner.iterations.length > 0 && synthTuner.iterations.length < 3 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6b7280', fontSize: 11 }}>
               <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
-              Re-synthesizing and running next iteration…
+              Re-synthesizing and running next pass…
             </div>
           )}
 
           {/* Done */}
           {synthTuner.status === 'done' && (
-            <div style={{ fontSize: 11, color: '#34d399', paddingTop: 2 }}>
+            <div style={{ fontSize: 11, color: '#34d399' }}>
               ✓ All improvements applied — code saved to pitch-detector.ts
             </div>
           )}
@@ -3981,7 +3986,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               ✗ {synthTuner.errorMsg ?? 'Tuning failed'}
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
