@@ -64,6 +64,8 @@ import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
+import { matchBuffer } from '@/lib/spectral-match'
+import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1810,6 +1812,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     synthOpts: SynthOptions
     sensitivity: BeatSensitivity
     instrument: InstrumentPreset
+    referenceBuf?: AudioBuffer | null
+    referenceId?: string
+    referenceLoading?: boolean
   } | null>(null)
 
   function openConvertCard(clipId: string, mode: 'synth' | 'beats' | 'instrument') {
@@ -1835,7 +1840,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
-  async function runConvertToSynth(clipId: string, opts: SynthOptions) {
+  async function runConvertToSynth(clipId: string, opts: SynthOptions, referenceBuf?: AudioBuffer | null) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
     setConvertCard(null)
@@ -1843,9 +1848,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const source = clip.originalBuf ?? clip.buf  // always derive from original recording
     try {
       const curve    = await detectPitchCurveAsync(source)
-      const rendered = await transformVoiceToSynth(source, curve, source.sampleRate, source.duration, opts)
+      let rendered   = await transformVoiceToSynth(source, curve, source.sampleRate, source.duration, opts)
+      if (referenceBuf) rendered = await matchBuffer(rendered, source, referenceBuf)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
-      runSynthTuner(clipId, curve, source, opts)
+      runSynthTuner(clipId, curve, source, opts, referenceBuf)
     } catch (e) {
       showToast(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
@@ -1857,6 +1863,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     pitchCurve: import('@/lib/pitch-detector').PitchFrame[],
     source: AudioBuffer,
     opts: SynthOptions,
+    referenceBuf?: AudioBuffer | null,
   ) {
     // Snapshot the pre-tuning buffer so the × button can revert
     const preAiClip = audioClips.find(c => c.id === clipId)
@@ -1964,7 +1971,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             `${improvedCode}\nreturn transformVoiceToSynth`)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof transformVoiceToSynth
-          const rendered = await improvedFn(source, pitchCurve, source.sampleRate, source.duration, opts)
+          let rendered = await improvedFn(source, pitchCurve, source.sampleRate, source.duration, opts)
+          if (referenceBuf) rendered = await matchBuffer(rendered, source, referenceBuf)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
           currentCode = improvedCode  // track latest applied code for the final save
         } catch (evalErr) {
@@ -5928,6 +5936,81 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
               {isSynth ? (
                 <>
+                  {sectionLabel('Reference Sound')}
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {/* None option */}
+                    <button
+                      onClick={() => setConvertCard(c => c ? { ...c, referenceBuf: null, referenceId: undefined } : c)}
+                      style={{
+                        padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
+                        fontWeight: !convertCard.referenceId ? 600 : 400,
+                        background: !convertCard.referenceId ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
+                        borderColor: !convertCard.referenceId ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                        color: !convertCard.referenceId ? 'var(--accent-light)' : 'var(--text-secondary)',
+                      }}
+                    >None</button>
+                    {SAMPLE_LIBRARY.map(preset => {
+                      const isSelected = convertCard.referenceId === preset.id
+                      const isLoading  = convertCard.referenceLoading && isSelected
+                      return (
+                        <button
+                          key={preset.id}
+                          onClick={async () => {
+                            if (isSelected) return
+                            setConvertCard(c => c ? { ...c, referenceId: preset.id, referenceLoading: true } : c)
+                            const buf = await getSampleBuffer(preset.id)
+                            setConvertCard(c => c ? { ...c, referenceBuf: buf, referenceLoading: false } : c)
+                          }}
+                          title={preset.description}
+                          style={{
+                            padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
+                            fontWeight: isSelected ? 600 : 400,
+                            background: isSelected ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
+                            borderColor: isSelected ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                            color: isSelected ? 'var(--accent-light)' : 'var(--text-secondary)',
+                            opacity: isLoading ? 0.5 : 1,
+                          }}
+                        >{isLoading ? '…' : preset.name}</button>
+                      )
+                    })}
+                    {/* Custom upload */}
+                    <label
+                      title="Upload any audio file as reference"
+                      style={{
+                        padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
+                        fontWeight: convertCard.referenceId === 'custom' ? 600 : 400,
+                        background: convertCard.referenceId === 'custom' ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
+                        borderColor: convertCard.referenceId === 'custom' ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                        color: convertCard.referenceId === 'custom' ? 'var(--accent-light)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      Custom ↑
+                      <input type="file" accept="audio/*" hidden onChange={async e => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        setConvertCard(c => c ? { ...c, referenceId: 'custom', referenceLoading: true } : c)
+                        try {
+                          const arrayBuf = await file.arrayBuffer()
+                          const tmpCtx = new AudioContext()
+                          const buf = await tmpCtx.decodeAudioData(arrayBuf)
+                          await tmpCtx.close()
+                          setConvertCard(c => c ? { ...c, referenceBuf: buf, referenceLoading: false } : c)
+                        } catch {
+                          setConvertCard(c => c ? { ...c, referenceId: undefined, referenceLoading: false } : c)
+                          showToast('Could not decode reference audio')
+                        }
+                        e.target.value = ''
+                      }} />
+                    </label>
+                  </div>
+                  {convertCard.referenceId && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
+                      {convertCard.referenceId === 'custom'
+                        ? 'Spectral matching will reshape your recording to approximate the reference file\'s harmonic character.'
+                        : `${SAMPLE_LIBRARY.find(p => p.id === convertCard.referenceId)?.description ?? ''} — spectral matching applied after transformation.`}
+                    </div>
+                  )}
+
                   {sectionLabel('Waveform')}
                   {chipGroup(
                     [{ label: 'Sawtooth', value: 'sawtooth' }, { label: 'Sine', value: 'sine' }, { label: 'Square', value: 'square' }, { label: 'Triangle', value: 'triangle' }],
@@ -6009,7 +6092,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 </button>
                 <button
                   onClick={() => {
-                    if (isSynth) runConvertToSynth(convertCard.clipId, convertCard.synthOpts)
+                    if (isSynth) runConvertToSynth(convertCard.clipId, convertCard.synthOpts, convertCard.referenceBuf)
                     else if (isInstrument) runConvertToInstrument(convertCard.clipId, convertCard.instrument)
                     else runConvertToBeats(convertCard.clipId, convertCard.sensitivity)
                   }}
