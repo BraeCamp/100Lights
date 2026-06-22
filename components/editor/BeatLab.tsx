@@ -1803,7 +1803,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           headers: { 'content-type': 'application/json' },
           body:    JSON.stringify({ code: currentCode, pitchSummary, iteration: i }),
         })
-        if (!res.ok) { setSynthTuner(prev => prev ? { ...prev, status: 'error', errorMsg: `API error ${res.status}` } : null); return }
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => null) as { error?: string } | null
+          setSynthTuner(prev => prev ? { ...prev, status: 'error', errorMsg: errBody?.error ?? `API error ${res.status}` } : null)
+          return
+        }
 
         const { iteration: iterData, improvedCode } = await res.json() as {
           iteration:   SynthTunerIteration
