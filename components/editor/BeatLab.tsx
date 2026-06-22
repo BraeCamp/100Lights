@@ -4094,7 +4094,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 {addTrackOpen && (
                   <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setAddTrackOpen(false)} />
-                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, minWidth: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+                    <div style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 4, zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, minWidth: 200, boxShadow: '0 -8px 24px rgba(0,0,0,0.35)' }}>
                       {/* Family tabs */}
                       <div style={{ display: 'flex', gap: 2, marginBottom: 8, background: 'var(--bg-surface)', borderRadius: 6, padding: 2 }}>
                         {(['drums', 'guitar', 'piano', 'synth'] as InstrumentFamily[]).map(f => (
