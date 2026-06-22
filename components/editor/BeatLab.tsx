@@ -1463,8 +1463,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   interface SynthTunerState {
     clipId:     string
     status:     'running' | 'done' | 'error'
-    iteration:  number   // current iteration 1-3
+    iteration:  number
     iterations: SynthTunerIteration[]
+    preAiBuf:   AudioBuffer | null  // snapshot before AI touched the clip
     errorMsg?:  string
   }
   const [synthTuner, setSynthTuner] = useState<SynthTunerState | null>(null)
@@ -1769,7 +1770,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     source: AudioBuffer,
     opts: SynthOptions,
   ) {
-    setSynthTuner({ clipId, status: 'running', iteration: 1, iterations: [] })
+    // Snapshot the pre-tuning buffer so the × button can revert
+    const preAiClip = audioClips.find(c => c.id === clipId)
+    const preAiBuf = preAiClip?.buf ?? null
+
+    setSynthTuner({ clipId, status: 'running', iteration: 1, iterations: [], preAiBuf })
 
     let currentCode = ''
     try {
@@ -3937,7 +3942,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               )}
             </div>
             <button
-              onClick={() => setSynthTuner(null)}
+              onClick={() => {
+                if (synthTuner.preAiBuf && synthTuner.iterations.length > 0) {
+                  setAudioClips(prev => prev.map(c => c.id === synthTuner.clipId ? { ...c, buf: synthTuner.preAiBuf! } : c))
+                }
+                setSynthTuner(null)
+              }}
+              title={synthTuner.iterations.length > 0 ? 'Dismiss and revert audio to pre-AI version' : 'Dismiss'}
               style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}
             >×</button>
           </div>
@@ -3979,8 +3990,23 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
           {/* Done */}
           {synthTuner.status === 'done' && (
-            <div style={{ fontSize: 11, color: '#34d399' }}>
-              ✓ All improvements applied — code saved to pitch-detector.ts
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 11, color: '#34d399' }}>
+                ✓ All passes complete — code saved to pitch-detector.ts
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setSynthTuner(null)}
+                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.3)', color: '#34d399', fontSize: 11, cursor: 'pointer' }}
+                >Keep AI version</button>
+                <button
+                  onClick={() => {
+                    if (synthTuner.preAiBuf) setAudioClips(prev => prev.map(c => c.id === synthTuner.clipId ? { ...c, buf: synthTuner.preAiBuf! } : c))
+                    setSynthTuner(null)
+                  }}
+                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: 11, cursor: 'pointer' }}
+                >Revert</button>
+              </div>
             </div>
           )}
 

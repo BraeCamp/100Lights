@@ -95,10 +95,18 @@ CRITICAL rules for the <code> block:
 - Function signature exactly: async function synthesizeFromPitchCurve(pitchCurve, sampleRate, _rootNote, totalDuration, options)
 - Helper functions available as parameters: extractNoteEvents(pitchCurve, minDuration?), midiToFreq(midi), freqToMidi(freq)
 - OfflineAudioContext, OscillatorNode, GainNode, BiquadFilterNode etc. are browser globals
-- options object has: { waveform, filterCutoff, pitchShift, followPitch, followDynamics, portamento, vibrato }
+- options object has: { waveform, filterCutoff, pitchShift, followPitch, followDynamics }
 - Must return Promise<AudioBuffer> via ctx.startRendering()
 - Do NOT include 'export' keyword
-- If no notes detected, throw new Error('No pitched notes detected — try singing more clearly')`
+- If no notes detected, throw new Error('No pitched notes detected — try singing more clearly')
+
+WEB AUDIO PITFALLS — avoid these or the output will be silent/broken:
+- NEVER call exponentialRampToValueAtTime(0, t) — zero is illegal for exponential ramps; use linearRampToValueAtTime(0, t) for fade-outs
+- NEVER call exponentialRampToValueAtTime with a negative value
+- Always call osc.start() and osc.stop() — an oscillator that is never started produces silence
+- osc.stop() time must be > osc.start() time; if dur is tiny, use Math.max(0.05, dur)
+- For portamento: automate frequency with setValueAtTime then exponentialRampToValueAtTime between POSITIVE frequency values only
+- GainNode default value is 1.0 — always set gain explicitly before automation`
 
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
