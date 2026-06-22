@@ -1815,6 +1815,107 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const clipboardRef = useRef<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
   const [segmentPanel, setSegmentPanel] = useState<string | null>(null)  // clipId whose segments are shown
+
+  // ── Wave Manager ──────────────────────────────────────────────────────────
+  interface BandDef { id: string; label: string; lo: number; hi: number; color: string }
+  const FREQ_BANDS: BandDef[] = [
+    { id: 'sub',      label: 'Sub-bass',  lo: 20,    hi: 80,    color: '#7c3aed' },
+    { id: 'bass',     label: 'Bass',      lo: 80,    hi: 250,   color: '#2563eb' },
+    { id: 'lowmid',   label: 'Low-mid',   lo: 250,   hi: 500,   color: '#059669' },
+    { id: 'mid',      label: 'Mid',       lo: 500,   hi: 2000,  color: '#d97706' },
+    { id: 'himid',    label: 'Hi-mid',    lo: 2000,  hi: 4000,  color: '#dc2626' },
+    { id: 'presence', label: 'Presence',  lo: 4000,  hi: 8000,  color: '#db2777' },
+    { id: 'air',      label: 'Air',       lo: 8000,  hi: 22050, color: '#0891b2' },
+  ]
+  interface BandState { def: BandDef; buf: AudioBuffer | null; muted: boolean; loading: boolean }
+  const [waveMgrPanel, setWaveMgrPanel] = useState<string | null>(null)
+  const [clipBands, setClipBands] = useState<Record<string, BandState[]>>({})
+
+  function wavelengthStr(hz: number): string {
+    const m = 343 / hz
+    return m >= 1 ? `~${m.toFixed(1)} m` : `~${(m * 100).toFixed(0)} cm`
+  }
+
+  async function extractFreqBand(src: AudioBuffer, lo: number, hi: number): Promise<AudioBuffer> {
+    const ctx = new OfflineAudioContext(src.numberOfChannels, src.length, src.sampleRate)
+    const node = ctx.createBufferSource(); node.buffer = src
+    let last: AudioNode = node
+    const sr2 = src.sampleRate / 2
+    const safeHi = Math.min(hi, sr2 - 10)
+    if (lo <= 20) {
+      for (let i = 0; i < 2; i++) {
+        const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = safeHi; f.Q.value = 0.707
+        last.connect(f); last = f
+      }
+    } else if (hi >= sr2) {
+      for (let i = 0; i < 2; i++) {
+        const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = lo; f.Q.value = 0.707
+        last.connect(f); last = f
+      }
+    } else {
+      for (let i = 0; i < 2; i++) {
+        const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = safeHi; f.Q.value = 0.707
+        last.connect(f); last = f
+      }
+      for (let i = 0; i < 2; i++) {
+        const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = lo; f.Q.value = 0.707
+        last.connect(f); last = f
+      }
+    }
+    last.connect(ctx.destination); node.start(0)
+    return ctx.startRendering()
+  }
+
+  async function openWaveManager(clipId: string) {
+    setWaveMgrPanel(clipId)
+    if (clipBands[clipId]) return  // already loaded
+    const clip = audioClips.find(c => c.id === clipId)
+    if (!clip) return
+    setClipBands(prev => ({
+      ...prev,
+      [clipId]: FREQ_BANDS.map(def => ({ def, buf: null, muted: false, loading: true })),
+    }))
+    for (let i = 0; i < FREQ_BANDS.length; i++) {
+      const def = FREQ_BANDS[i]
+      try {
+        const buf = await extractFreqBand(clip.buf, def.lo, def.hi)
+        setClipBands(prev => ({
+          ...prev,
+          [clipId]: (prev[clipId] ?? []).map((b, j) => j === i ? { ...b, buf, loading: false } : b),
+        }))
+      } catch {
+        setClipBands(prev => ({
+          ...prev,
+          [clipId]: (prev[clipId] ?? []).map((b, j) => j === i ? { ...b, loading: false } : b),
+        }))
+      }
+    }
+  }
+
+  function toggleBandMute(clipId: string, bandIdx: number) {
+    setClipBands(prev => ({
+      ...prev,
+      [clipId]: (prev[clipId] ?? []).map((b, j) => j === bandIdx ? { ...b, muted: !b.muted } : b),
+    }))
+  }
+
+  function applyBandMutes(clipId: string) {
+    const bands = clipBands[clipId]
+    if (!bands) return
+    const active = bands.filter(b => !b.muted && b.buf)
+    if (active.length === 0) { showToast('All bands muted — unmute at least one'); return }
+    const first = active[0].buf!
+    const mixed = new AudioBuffer({ numberOfChannels: first.numberOfChannels, length: first.length, sampleRate: first.sampleRate })
+    for (let ch = 0; ch < first.numberOfChannels; ch++) {
+      const dst = mixed.getChannelData(ch)
+      for (const { buf } of active) {
+        const s = buf!.getChannelData(Math.min(ch, buf!.numberOfChannels - 1))
+        for (let i = 0; i < dst.length; i++) dst[i] += s[i]
+      }
+    }
+    setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: mixed } : c))
+    showToast('Band mix applied to clip')
+  }
   type BeatSensitivity = 'low' | 'medium' | 'high'
   type InstrumentPreset = 'piano' | 'strings' | 'bells' | 'bass' | 'organ'
   const [convertCard, setConvertCard] = useState<{
@@ -6340,6 +6441,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   </span>
                 </button>
               )}
+              <button
+                onClick={() => { openWaveManager(clip.id); setClipMenu(null) }}
+                style={{ ...btnStyle(), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
+                Wave Manager
+                <span style={{ fontSize: 10, color: '#0891b2', marginLeft: 6, opacity: 0.8 }}>7 bands</span>
+              </button>
               {clip.originalBuf && (
                 <button
                   onClick={() => {
@@ -6486,6 +6594,146 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             </div>
 
             </div>{/* end wrapper */}
+          </>
+        )
+      })()}
+
+      {/* ── Wave Manager panel ────────────────────────────────────────────── */}
+      {waveMgrPanel && (() => {
+        const clip = audioClips.find(c => c.id === waveMgrPanel)
+        if (!clip) { setWaveMgrPanel(null); return null }
+        const bands = clipBands[waveMgrPanel] ?? FREQ_BANDS.map(def => ({ def, buf: null, muted: false, loading: true }))
+        const allMuted = bands.every(b => b.muted)
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.45)' }} onClick={() => setWaveMgrPanel(null)} />
+            <div style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              zIndex: 300, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 14, padding: 20, width: 560,
+              boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+              display: 'flex', flexDirection: 'column', gap: 12,
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Wave Manager — {clip.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    Mute frequency bands to isolate the character causing problems. Apply writes the mix to the clip.
+                  </div>
+                </div>
+                <button onClick={() => setWaveMgrPanel(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>
+              </div>
+
+              {/* Quick actions */}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => setClipBands(prev => ({ ...prev, [waveMgrPanel]: bands.map(b => ({ ...b, muted: false })) }))}
+                  style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>
+                  All on
+                </button>
+                <button onClick={() => setClipBands(prev => ({ ...prev, [waveMgrPanel]: bands.map(b => ({ ...b, muted: true })) }))}
+                  style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>
+                  All off
+                </button>
+                <div style={{ flex: 1 }} />
+                <button onClick={() => applyBandMutes(waveMgrPanel)}
+                  style={{ padding: '4px 14px', borderRadius: 5, border: '1px solid rgba(52,211,153,0.4)', background: 'rgba(52,211,153,0.12)', color: '#34d399', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  Apply to clip →
+                </button>
+              </div>
+
+              {/* Band rows */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {bands.map((band, idx) => {
+                  const { def, buf, muted, loading } = band
+                  // Mini waveform: 50 peak bars from this band's buffer
+                  const peaks: number[] = []
+                  if (buf) {
+                    const data = buf.getChannelData(0)
+                    const step = Math.max(1, Math.floor(data.length / 50))
+                    for (let i = 0; i < 50; i++) {
+                      let p = 0
+                      for (let j = 0; j < step; j++) p = Math.max(p, Math.abs(data[i * step + j] ?? 0))
+                      peaks.push(p)
+                    }
+                  }
+                  const maxPeak = Math.max(...peaks, 0.001)
+
+                  return (
+                    <div key={def.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderRadius: 8,
+                      background: muted ? 'rgba(255,255,255,0.02)' : 'var(--bg-card)',
+                      border: `1px solid ${muted ? 'var(--border)' : def.color + '55'}`,
+                      opacity: muted ? 0.5 : 1,
+                      transition: 'opacity 0.15s, border-color 0.15s, background 0.15s',
+                    }}>
+                      {/* Color bar */}
+                      <div style={{ width: 4, height: 42, borderRadius: 2, background: def.color, flexShrink: 0 }} />
+
+                      {/* Labels */}
+                      <div style={{ width: 78, flexShrink: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{def.label}</div>
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                          {def.lo >= 1000 ? `${def.lo/1000}k` : def.lo}–{def.hi >= 1000 ? `${def.hi/1000}k` : def.hi} Hz
+                        </div>
+                        <div style={{ fontSize: 9, color: def.color, marginTop: 1, opacity: 0.8 }}>
+                          {wavelengthStr(Math.sqrt(def.lo * def.hi))}
+                        </div>
+                      </div>
+
+                      {/* Mini waveform */}
+                      <div style={{ flex: 1, height: 32, display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {loading ? (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Analyzing…</div>
+                        ) : peaks.length > 0 ? peaks.map((p, i) => {
+                          const h = Math.max(2, (p / maxPeak) * 30)
+                          return (
+                            <div key={i} style={{
+                              width: '100%', height: h,
+                              background: def.color,
+                              borderRadius: 1,
+                              opacity: muted ? 0.4 : 0.85,
+                            }} />
+                          )
+                        }) : <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>No signal</div>}
+                      </div>
+
+                      {/* Preview */}
+                      <button
+                        disabled={!buf}
+                        onClick={() => {
+                          if (!buf) return
+                          const actx = new AudioContext()
+                          const s = actx.createBufferSource()
+                          s.buffer = buf; s.connect(actx.destination); s.start()
+                        }}
+                        title="Preview this frequency band alone"
+                        style={{ padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 12, cursor: buf ? 'pointer' : 'default', opacity: buf ? 1 : 0.4, flexShrink: 0 }}
+                      >▶</button>
+
+                      {/* Mute toggle */}
+                      <button
+                        onClick={() => toggleBandMute(waveMgrPanel, idx)}
+                        title={muted ? 'Unmute this band' : 'Mute this band'}
+                        style={{
+                          width: 36, padding: '5px 0', borderRadius: 5, border: '1px solid',
+                          borderColor: muted ? 'rgba(239,68,68,0.5)' : 'var(--border)',
+                          background: muted ? 'rgba(239,68,68,0.15)' : 'transparent',
+                          color: muted ? '#f87171' : 'var(--text-muted)',
+                          fontSize: 10, fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+                          letterSpacing: 0.5,
+                        }}
+                      >{muted ? 'M' : 'M'}</button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Preview each band to hear what it contributes. Mute the band that sounds wrong, then <strong style={{ color: 'var(--text-secondary)' }}>Apply to clip</strong> to remove it permanently. You can give the AI feedback like "the hi-mid band has too much resonance."
+              </div>
+            </div>
           </>
         )
       })()}
