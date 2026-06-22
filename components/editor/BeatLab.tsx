@@ -913,7 +913,7 @@ interface LaneProps {
   loopBeats?: number  // 0 = follow global
   onLoopBeatsChange?: (beats: number) => void
   inputArmed?: boolean
-  inputSource?: 'mic' | 'midi'
+  inputSource?: string
   onToggleInput?: () => void
   onOpenInputPicker?: () => void
 }
@@ -1744,15 +1744,37 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   }
 
   // ── Per-lane input mode ────────────────────────────────────────────────────
-  // inputLanes: which lanes have input armed; inputSource: 'mic' | 'midi' per lane
-  type InputSource = 'mic' | 'midi'
+  // inputLanes: which lanes have input armed
+  // inputSource: per lane — 'midi' | audio deviceId string ('default' = system default)
   const [inputLanes,  setInputLanes]  = useState<Set<string>>(new Set())
-  const [inputSource, setInputSource] = useState<Record<string, InputSource>>({})
+  const [inputSource, setInputSource] = useState<Record<string, string>>({})
   const [inputSourcePickerLane, setInputSourcePickerLane] = useState<string | null>(null)
+  const [pickerDevices, setPickerDevices] = useState<MediaDeviceInfo[]>([])
   const inputLanesRef  = useRef<Set<string>>(new Set())
-  const inputSourceRef = useRef<Record<string, InputSource>>({})
+  const inputSourceRef = useRef<Record<string, string>>({})
   useEffect(() => { inputLanesRef.current  = inputLanes  }, [inputLanes])
   useEffect(() => { inputSourceRef.current = inputSource }, [inputSource])
+
+  // Enumerate audio devices when picker opens; request permission once to unlock labels
+  useEffect(() => {
+    if (!inputSourcePickerLane) return
+    let cancelled = false
+    async function enumerate() {
+      try {
+        const probe = await navigator.mediaDevices.enumerateDevices()
+        const hasLabels = probe.some(d => d.kind === 'audioinput' && d.label)
+        if (!hasLabels) {
+          const tmp = await navigator.mediaDevices.getUserMedia({ audio: true })
+          tmp.getTracks().forEach(t => t.stop())
+        }
+      } catch { /* denied — show devices with generic labels */ }
+      if (cancelled) return
+      const all = await navigator.mediaDevices.enumerateDevices()
+      if (!cancelled) setPickerDevices(all.filter(d => d.kind === 'audioinput'))
+    }
+    enumerate()
+    return () => { cancelled = true }
+  }, [inputSourcePickerLane])
 
   function toggleInputLane(laneType: string) {
     setInputLanes(prev => {
@@ -1761,8 +1783,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         next.delete(laneType)
       } else {
         next.add(laneType)
-        // default source to mic
-        setInputSource(s => s[laneType] ? s : { ...s, [laneType]: 'mic' })
+        // default source to system default audio input
+        setInputSource(s => s[laneType] ? s : { ...s, [laneType]: 'default' })
       }
       return next
     })
@@ -1890,7 +1912,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         setCountInBeat(0)
       }
 
-      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const firstMicLane = Array.from(inputLanesRef.current).find(l => inputSourceRef.current[l] !== 'midi')
+      const deviceId     = firstMicLane ? inputSourceRef.current[firstMicLane] : 'default'
+      const audioConstraint: MediaTrackConstraints | boolean =
+        deviceId && deviceId !== 'default' ? { deviceId: { exact: deviceId } } : true
+      const stream   = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false })
       const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
       laneRecChunksRef.current = []
       recorder.ondataavailable = e => { if (e.data.size > 0) laneRecChunksRef.current.push(e.data) }
@@ -1929,7 +1955,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     try {
       const buf = await decodeAudio(blob)
       // Record into all mic-input lanes; fall back to active lane if none armed
-      const micLanes = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] === 'mic')
+      const micLanes = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] !== 'midi')
       const targets  = micLanes.length > 0 ? micLanes : activeLaneType ? [activeLaneType] : []
       setAudioClips(prev => [
         ...prev,
@@ -3752,7 +3778,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             </Tooltip>
 
             {/* Record — only when at least one mic-input lane is armed */}
-            {!laneRecording && Array.from(inputLanes).some(l => inputSource[l] === 'mic' || !inputSource[l]) && (
+            {!laneRecording && Array.from(inputLanes).some(l => inputSource[l] !== 'midi') && (
               <Tooltip content={`Record into ${Array.from(inputLanes).filter(l => inputSource[l] !== 'midi').length} armed track(s)`} placement="bottom">
                 <button
                   onClick={startLaneRecording}
@@ -5313,51 +5339,78 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       )}
 
       {/* ── Input source picker ────────────────────────────────────────── */}
-      {inputSourcePickerLane && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setInputSourcePickerLane(null)} />
-          <div style={{
-            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
-            zIndex: 500, background: 'var(--bg-surface)', border: '1px solid var(--border)',
-            borderRadius: 12, padding: 20, width: 280, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: typeColor(inputSourcePickerLane as BeatType, typeOverrides), marginRight: 8 }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>
-                Input source — {typeLabel(inputSourcePickerLane as BeatType, typeOverrides)}
-              </span>
-              <button onClick={() => setInputSourcePickerLane(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}>✕</button>
+      {inputSourcePickerLane && (() => {
+        const curSrc = inputSource[inputSourcePickerLane] ?? 'default'
+        const selectSrc = (src: string) => {
+          setInputSource(prev => ({ ...prev, [inputSourcePickerLane]: src }))
+          setInputSourcePickerLane(null)
+        }
+        const srcBtn = (key: string, icon: string, label: string, sub: string) => {
+          const active = curSrc === key
+          return (
+            <button key={key} onClick={() => selectSrc(key)} style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', width: '100%',
+              borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+              background: active ? 'rgba(220,38,38,0.1)' : 'var(--bg-card)',
+              border: `1px solid ${active ? 'rgba(220,38,38,0.45)' : 'var(--border)'}`,
+            }}>
+              <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: active ? '#ef4444' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{sub}</div>
+              </div>
+              {active && <span style={{ fontSize: 12, color: '#ef4444', flexShrink: 0 }}>✓</span>}
+            </button>
+          )
+        }
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setInputSourcePickerLane(null)} />
+            <div style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              zIndex: 500, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 12, padding: 20, width: 320, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+              maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: typeColor(inputSourcePickerLane as BeatType, typeOverrides), marginRight: 8, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>
+                  Input — {typeLabel(inputSourcePickerLane as BeatType, typeOverrides)}
+                </span>
+                <button onClick={() => setInputSourcePickerLane(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}>✕</button>
+              </div>
+
+              {/* Audio inputs */}
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Audio input</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {pickerDevices.length === 0
+                    ? <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>Requesting device access…</div>
+                    : pickerDevices.map((d, i) =>
+                        srcBtn(
+                          d.deviceId,
+                          '🎙',
+                          d.label || `Microphone ${i + 1}`,
+                          d.deviceId === 'default' ? 'System default audio input' : d.deviceId === 'communications' ? 'Default communications device' : 'Audio input device',
+                        )
+                      )
+                  }
+                </div>
+
+                {/* MIDI section */}
+                {'requestMIDIAccess' in navigator && (
+                  <>
+                    <div style={{ borderTop: '1px solid var(--border)', margin: '14px 0 10px' }} />
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>MIDI</div>
+                    {srcBtn('midi', '♪', 'MIDI input', 'Routes MIDI note-ons from any connected device into this track')}
+                  </>
+                )}
+              </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(['mic', 'midi'] as const).map(src => {
-                const active = (inputSource[inputSourcePickerLane] ?? 'mic') === src
-                return (
-                  <button key={src} onClick={() => {
-                    setInputSource(prev => ({ ...prev, [inputSourcePickerLane]: src }))
-                    setInputSourcePickerLane(null)
-                  }} style={{
-                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                    borderRadius: 8, cursor: 'pointer', textAlign: 'left',
-                    background: active ? 'rgba(220,38,38,0.1)' : 'var(--bg-card)',
-                    border: `1px solid ${active ? 'rgba(220,38,38,0.45)' : 'var(--border)'}`,
-                  }}>
-                    <span style={{ fontSize: 18, lineHeight: 1 }}>{src === 'mic' ? '🎙' : '♪'}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: active ? '#ef4444' : 'var(--text-primary)' }}>
-                        {src === 'mic' ? 'Microphone' : 'MIDI'}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
-                        {src === 'mic' ? 'Records audio from your mic into this track' : 'Routes MIDI note-ons into this track when playing'}
-                      </div>
-                    </div>
-                    {active && <span style={{ fontSize: 12, color: '#ef4444' }}>✓</span>}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      )}
+          </>
+        )
+      })()}
 
       {/* ── Command Palette (Cmd+K) ─────────────────────────────────────── */}
       <Suspense fallback={null}>
