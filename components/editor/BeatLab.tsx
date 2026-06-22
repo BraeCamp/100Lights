@@ -67,6 +67,7 @@ import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extract
 import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel, getAllProfiles, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
+import { detectSegments, extractSubBuffer, extractSubCurve, spliceSegmentBack, concatenateBuffers, VOWEL_COLORS, VOWEL_LABELS, type AudioSegment, type VowelType } from '@/lib/vowel-segmenter'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1801,6 +1802,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     reversed: boolean
     warpMarkers: WarpMarker[]
     gainEnvelope?: { t: number; v: number }[]
+    segments?: AudioSegment[]
   }
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
     return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null, fadeIn: 0, fadeOut: 0, color: null, reversed: false, warpMarkers: [] }
@@ -1811,6 +1813,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [openCompGroup, setOpenCompGroup] = useState<string | null>(null)
   const clipboardRef = useRef<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
+  const [segmentPanel, setSegmentPanel] = useState<string | null>(null)  // clipId whose segments are shown
   type BeatSensitivity = 'low' | 'medium' | 'high'
   type InstrumentPreset = 'piano' | 'strings' | 'bells' | 'bass' | 'organ'
   const [convertCard, setConvertCard] = useState<{
@@ -1859,14 +1862,63 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
     try {
       const curve    = await detectPitchCurveAsync(source)
-      let rendered   = await transformVoiceToSynth(source, curve, source.sampleRate, source.duration, fullOpts)
-      // matchBuffer only as fallback when reference exists but no harmProfile could be extracted
-      if (referenceBuf && !harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
-      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
+      const segments = detectSegments(source, curve)
+
+      // Process each segment independently so each vowel can be reshaped correctly
+      const segBufs: AudioBuffer[] = []
+      for (const seg of segments) {
+        const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
+        const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
+        if (seg.vowel === 'silence') {
+          // Pure silence — zero-fill
+          segBufs.push(new AudioBuffer({ numberOfChannels: subBuf.numberOfChannels, length: subBuf.length, sampleRate: subBuf.sampleRate }))
+        } else if (seg.vowel === 'consonant') {
+          // Consonants are percussive — keep original audio unchanged
+          segBufs.push(subBuf)
+        } else {
+          // Voiced vowel — synthesize
+          try {
+            let rendered = await transformVoiceToSynth(subBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts)
+            if (referenceBuf && !harmProfile) rendered = await matchBuffer(rendered, subBuf, referenceBuf)
+            segBufs.push(rendered)
+          } catch {
+            // Fallback to original if synthesis fails (e.g., segment too short)
+            segBufs.push(subBuf)
+          }
+        }
+      }
+
+      const rendered = concatenateBuffers(segBufs)
+      setAudioClips(prev => prev.map(c => c.id === clipId
+        ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf, segments }
+        : c
+      ))
       runSynthTuner(clipId, curve, source, fullOpts, referenceBuf)
     } catch (e) {
       showToast(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
+    }
+  }
+
+  // Re-convert a single segment and splice it back into the clip
+  async function reConvertSegment(clipId: string, segId: string, opts: SynthOptions, referenceBuf?: AudioBuffer | null, harmProfile?: Float32Array | null) {
+    const clip = audioClips.find(c => c.id === clipId)
+    const seg  = clip?.segments?.find(s => s.id === segId)
+    if (!clip || !seg) return
+    const source = clip.originalBuf ?? clip.buf
+    const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
+    showToast('Re-converting segment…')
+    try {
+      const curve    = await detectPitchCurveAsync(source)
+      const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
+      const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
+      let rendered   = await transformVoiceToSynth(subBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts)
+      if (referenceBuf && !harmProfile) rendered = await matchBuffer(rendered, subBuf, referenceBuf)
+      const newFull  = spliceSegmentBack(clip.buf, rendered, seg.startSec)
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: newFull } : c))
+      showToast('Segment re-converted')
+    } catch (e) {
+      showToast(`Re-convert failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -6276,6 +6328,17 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 </div>
               )}
 
+              {clip.segments && clip.segments.length > 0 && (
+                <button
+                  onClick={() => { setSegmentPanel(clip.id); setClipMenu(null) }}
+                  style={{ ...btnStyle(), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  View Segments
+                  <span style={{ fontSize: 10, color: 'var(--accent-light)', marginLeft: 6, background: 'rgba(139,92,246,0.18)', padding: '1px 6px', borderRadius: 4 }}>
+                    {clip.segments.length}
+                  </span>
+                </button>
+              )}
               {clip.originalBuf && (
                 <button
                   onClick={() => {
@@ -6422,6 +6485,111 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             </div>
 
             </div>{/* end wrapper */}
+          </>
+        )
+      })()}
+
+      {/* ── Segment panel ─────────────────────────────────────────────────── */}
+      {segmentPanel && (() => {
+        const clip = audioClips.find(c => c.id === segmentPanel)
+        if (!clip?.segments?.length) { setSegmentPanel(null); return null }
+        const segs = clip.segments
+        const totalDur = clip.buf.duration
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.45)' }} onClick={() => setSegmentPanel(null)} />
+            <div style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              zIndex: 300, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 14, padding: 20, width: 520, maxHeight: '80vh',
+              boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+              display: 'flex', flexDirection: 'column', gap: 14,
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Segments — {clip.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{segs.length} segments · {totalDur.toFixed(1)}s total</div>
+                </div>
+                <button onClick={() => setSegmentPanel(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
+              </div>
+
+              {/* Colored segment timeline */}
+              <div style={{ display: 'flex', height: 36, borderRadius: 6, overflow: 'hidden', gap: 1 }}>
+                {segs.map(seg => {
+                  const w = ((seg.endSec - seg.startSec) / totalDur) * 100
+                  return (
+                    <div
+                      key={seg.id}
+                      title={`${VOWEL_LABELS[seg.vowel]}: ${seg.startSec.toFixed(2)}s – ${seg.endSec.toFixed(2)}s`}
+                      style={{
+                        width: `${w}%`, background: VOWEL_COLORS[seg.vowel],
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 9, fontWeight: 700, color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                        overflow: 'hidden', whiteSpace: 'nowrap',
+                        cursor: 'default', minWidth: 2,
+                      }}
+                    >{w > 5 ? VOWEL_LABELS[seg.vowel] : ''}</div>
+                  )
+                })}
+              </div>
+
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {(['aaa','ooo','eee','iii','consonant','silence'] as VowelType[]).map(v => {
+                  const count = segs.filter(s => s.vowel === v).length
+                  if (!count) return null
+                  return (
+                    <div key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-secondary)' }}>
+                      <div style={{ width: 10, height: 10, borderRadius: 2, background: VOWEL_COLORS[v] }} />
+                      {VOWEL_LABELS[v]} ({count})
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Segment list */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', maxHeight: 320 }}>
+                {segs.map((seg, idx) => {
+                  const dur = (seg.endSec - seg.startSec).toFixed(2)
+                  const isVoiced = seg.vowel !== 'consonant' && seg.vowel !== 'silence'
+                  return (
+                    <div key={seg.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '7px 10px', borderRadius: 7,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)',
+                    }}>
+                      {/* Color swatch */}
+                      <div style={{ width: 8, height: 32, borderRadius: 3, background: VOWEL_COLORS[seg.vowel], flexShrink: 0 }} />
+                      {/* Info */}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{VOWEL_LABELS[seg.vowel]}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{seg.startSec.toFixed(2)}s – {seg.endSec.toFixed(2)}s · {dur}s</div>
+                      </div>
+                      {/* Play */}
+                      <button
+                        onClick={() => {
+                          const subBuf = extractSubBuffer(clip.buf, seg.startSec, seg.endSec)
+                          const actx = new AudioContext()
+                          const src = actx.createBufferSource()
+                          src.buffer = subBuf; src.connect(actx.destination); src.start()
+                        }}
+                        title="Preview this segment"
+                        style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}
+                      >▶</button>
+                      {/* Re-convert */}
+                      {isVoiced && (
+                        <button
+                          onClick={() => reConvertSegment(clip.id, seg.id, DEFAULT_SYNTH_OPTIONS)}
+                          title="Re-synthesize just this segment"
+                          style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.1)', color: 'var(--accent-light)', fontSize: 11, cursor: 'pointer' }}
+                        >Re-convert</button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </>
         )
       })()}
