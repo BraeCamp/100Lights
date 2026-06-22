@@ -26,7 +26,7 @@ slightly detuned sub-layers, not from distortion. Ensure all timing is correct f
 ]
 
 interface TuneRequest {
-  code:         string                                   // current JS function source
+  code:         string                                   // always the original source
   pitchSummary: {
     totalDuration: number
     noteCount:     number
@@ -35,6 +35,7 @@ interface TuneRequest {
     notes: { start: number; end: number; midi: number; amplitude: number }[]
   }
   iteration:    1 | 2 | 3
+  previousIterations: { title: string; analysis: string; changes: string }[]
 }
 
 export async function POST(req: Request) {
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
   if (!apiKey) return Response.json({ error: 'No API key' }, { status: 503 })
 
   const body = await req.json() as TuneRequest
-  const { code, pitchSummary, iteration } = body
+  const { code, pitchSummary, iteration, previousIterations = [] } = body
 
   const midiToName = (m: number) => {
     const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
@@ -72,7 +73,11 @@ RECORDING CHARACTERISTICS:
 - Sample notes:
 ${noteList}
 
-TASK:
+${previousIterations.length > 0 ? `PREVIOUS PASSES (applied to the SAME original code above, not chained):
+${previousIterations.map((p, i) => `Pass ${i + 1} — ${p.title}\n  Tried: ${p.changes}\n  Result: ${p.analysis}`).join('\n')}
+
+Each pass starts fresh from the original code shown above — do NOT build on the previous pass's output code. Instead, write a NEW version of the function that incorporates ALL improvements from all passes simultaneously, avoiding any mistakes noted above.
+` : ''}TASK:
 ${ITER_TASKS[(iteration - 1)]}
 
 Respond in EXACTLY this format — no other text before or after:

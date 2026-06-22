@@ -1800,13 +1800,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       notes: notes.slice(0, 15),
     }
 
+    const originalCode = currentCode  // never changes — each pass starts from this
+    const completedIterations: SynthTunerIteration[] = []
+
     for (let i = 1 as 1 | 2 | 3; i <= 3; i++) {
       setSynthTuner(prev => prev ? { ...prev, iteration: i } : null)
       try {
         const res = await fetch('/api/synth-tune', {
           method:  'POST',
           headers: { 'content-type': 'application/json' },
-          body:    JSON.stringify({ code: currentCode, pitchSummary, iteration: i }),
+          // Always the original code — don't chain on potentially broken output.
+          // Pass previous iterations so Claude learns what was tried.
+          body:    JSON.stringify({ code: originalCode, pitchSummary, iteration: i, previousIterations: completedIterations }),
         })
         if (!res.ok) {
           const errBody = await res.json().catch(() => null) as { error?: string } | null
@@ -1819,6 +1824,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           improvedCode: string
         }
 
+        completedIterations.push(iterData)
         setSynthTuner(prev => prev ? { ...prev, iterations: [...prev.iterations, iterData] } : null)
 
         // Apply the improved function immediately via eval
@@ -1829,7 +1835,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof synthesizeFromPitchCurve
           const rendered = await improvedFn(pitchCurve, source.sampleRate, 60, source.duration, opts)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
-          currentCode = improvedCode
+          currentCode = improvedCode  // track latest applied code for the final save
         } catch (evalErr) {
           console.warn(`[SynthTuner] Iteration ${i} eval failed:`, evalErr)
         }
