@@ -160,6 +160,7 @@ export interface SynthOptions {
   pitchShift:     number          // semitones added to detected pitch
   followPitch:    boolean         // automate frequency per-frame from detected pitch
   followDynamics: boolean         // automate gain per-frame from RMS envelope
+  harmProfile?:   Float32Array    // normalized harmonic amplitudes from reference (index = harmonic number)
 }
 
 export const DEFAULT_SYNTH_OPTIONS: SynthOptions = {
@@ -263,39 +264,89 @@ export async function transformVoiceToSynth(
   const notes = extractNoteEvents(pitchCurve)
   if (notes.length === 0) throw new Error('No pitched notes detected — try singing more clearly')
 
-  const numCh = originalBuf.numberOfChannels
-  const ctx = new OfflineAudioContext(numCh, Math.ceil(totalDuration * sampleRate), sampleRate)
+  const ctx = new OfflineAudioContext(1, Math.ceil(totalDuration * sampleRate), sampleRate)
+  const nyquist = sampleRate / 2
 
-  const src = ctx.createBufferSource()
-  src.buffer = originalBuf
+  if (options.harmProfile && options.harmProfile.length > 1) {
+    // ── Additive resynthesis guided by reference harmonic profile ─────────────
+    // Each note is rebuilt as a sum of sine waves whose amplitudes match the
+    // reference's harmonic ratios. Timbre comes from the reference structure;
+    // pitch, timing, and dynamics come from the original voice recording.
+    const profile = options.harmProfile
+    const numHarmonics = profile.length - 1  // profile[0] unused, profile[1..N]
 
-  // Arctan saturation: adds harmonics and compresses peaks for synth-like density
-  const shaper = ctx.createWaveShaper()
-  const n = 512
-  const curve = new Float32Array(n)
-  const k = 8  // saturation amount — higher = more aggressive harmonics
-  for (let i = 0; i < n; i++) {
-    const x = (i * 2 / (n - 1)) - 1
-    curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x))
+    // Normalize so the RMS of all harmonics ≈ 1 at full amplitude
+    let rmsSum = 0
+    for (let h = 1; h <= numHarmonics; h++) rmsSum += profile[h] ** 2
+    const normFactor = 1 / (Math.sqrt(rmsSum) + 1e-10)
+
+    const masterGain = ctx.createGain()
+    masterGain.gain.value = 0.7
+    masterGain.connect(ctx.destination)
+
+    for (const note of notes) {
+      const f0 = midiToFreq(note.midi + (options.pitchShift ?? 0))
+      const t0 = note.start
+      const t1 = note.end
+      const dur = Math.max(0.05, t1 - t0)
+      const attack  = Math.min(0.04, dur * 0.12)
+      const release = Math.min(0.06, dur * 0.18)
+
+      for (let h = 1; h <= numHarmonics; h++) {
+        const freq = f0 * h
+        if (freq >= nyquist) break
+        const harmAmp = profile[h]
+        if (harmAmp < 0.005) continue  // skip imperceptible harmonics
+
+        const osc = ctx.createOscillator()
+        osc.type = 'sine'
+        osc.frequency.value = freq
+
+        const g = ctx.createGain()
+        const peak = harmAmp * normFactor * note.amplitude
+        g.gain.setValueAtTime(0, t0)
+        g.gain.linearRampToValueAtTime(peak, t0 + attack)
+        g.gain.setValueAtTime(peak, Math.max(t0 + attack, t1 - release))
+        g.gain.linearRampToValueAtTime(0, t1)
+
+        osc.connect(g)
+        g.connect(masterGain)
+        osc.start(t0)
+        osc.stop(t1 + 0.01)
+      }
+    }
+  } else {
+    // ── Waveshaper + resonant filter (no reference) ───────────────────────────
+    const src = ctx.createBufferSource()
+    src.buffer = originalBuf
+
+    const shaper = ctx.createWaveShaper()
+    const n = 512
+    const curve = new Float32Array(n)
+    const k = 8
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2 / (n - 1)) - 1
+      curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x))
+    }
+    shaper.curve = curve
+    shaper.oversample = '4x'
+
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = options.filterCutoff ?? 2000
+    filter.Q.value = 3.0
+
+    const gain = ctx.createGain()
+    gain.gain.value = 0.75
+
+    src.connect(shaper)
+    shaper.connect(filter)
+    filter.connect(gain)
+    gain.connect(ctx.destination)
+
+    src.start(0)
   }
-  shaper.curve = curve
-  shaper.oversample = '4x'
 
-  // Resonant lowpass — the defining characteristic of analog synth filters
-  const filter = ctx.createBiquadFilter()
-  filter.type = 'lowpass'
-  filter.frequency.value = options.filterCutoff ?? 2000
-  filter.Q.value = 3.0
-
-  const gain = ctx.createGain()
-  gain.gain.value = 0.75
-
-  src.connect(shaper)
-  shaper.connect(filter)
-  filter.connect(gain)
-  gain.connect(ctx.destination)
-
-  src.start(0)
   return ctx.startRendering()
 }
 

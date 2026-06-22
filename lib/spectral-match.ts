@@ -84,6 +84,55 @@ export function applySpectralMatch(
   return last
 }
 
+// Estimate the fundamental frequency of a signal using the Harmonic Product Spectrum.
+// Works well for sustained tones (voice, synth pads) in the 60–1500 Hz range.
+function estimateFundamental(mag: Float32Array, binHz: number): number {
+  const minBin = Math.max(1, Math.round(60 / binHz))
+  const maxBin = Math.round(1500 / binHz)
+  let bestBin = minBin, bestScore = 0
+  for (let bin = minBin; bin <= maxBin; bin++) {
+    let score = mag[bin]
+    for (let h = 2; h <= 5; h++) {
+      const hBin = Math.round(bin * h)
+      if (hBin < mag.length) score *= mag[hBin]
+    }
+    if (score > bestScore) { bestScore = score; bestBin = bin }
+  }
+  return bestBin * binHz
+}
+
+// Extract the harmonic amplitude profile from a reference AudioBuffer.
+// Returns a Float32Array where index h is the amplitude of the h-th harmonic
+// relative to the strongest harmonic (so the peak = 1.0).
+// The fundamental is auto-detected via HPS, or pass it explicitly (e.g. 261.63 for C4).
+export function extractHarmonicProfile(
+  refBuf: AudioBuffer,
+  knownFundamental?: number,
+  maxHarmonics = 24,
+  fftSize = 4096,
+): Float32Array {
+  const mag = analyzeSpectralEnvelope(refBuf, fftSize)
+  const binHz = refBuf.sampleRate / fftSize
+  const f0 = knownFundamental ?? estimateFundamental(mag, binHz)
+
+  const profile = new Float32Array(maxHarmonics + 1)  // profile[0] unused
+  for (let h = 1; h <= maxHarmonics; h++) {
+    const centerBin = Math.round(f0 * h / binHz)
+    let sum = 0, n = 0
+    for (let d = -3; d <= 3; d++) {
+      const b = centerBin + d
+      if (b >= 0 && b < mag.length) { sum += mag[b]; n++ }
+    }
+    profile[h] = n > 0 ? sum / n : 0
+  }
+
+  // Normalize: peak harmonic = 1.0
+  const peak = Math.max(...profile) + 1e-10
+  for (let h = 1; h <= maxHarmonics; h++) profile[h] /= peak
+
+  return profile
+}
+
 // Apply spectral matching as a standalone buffer-in → buffer-out operation.
 // voiceBuf is the reference baseline (the original voice recording's character).
 // refBuf is the target spectral character (the sample the user picked).

@@ -64,7 +64,7 @@ import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
-import { matchBuffer } from '@/lib/spectral-match'
+import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
@@ -1816,6 +1816,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     referenceBuf?: AudioBuffer | null
     referenceId?: string
     referenceLoading?: boolean
+    harmProfile?: Float32Array | null
   } | null>(null)
 
   function openConvertCard(clipId: string, mode: 'synth' | 'beats' | 'instrument') {
@@ -1841,18 +1842,20 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  async function runConvertToSynth(clipId: string, opts: SynthOptions, referenceBuf?: AudioBuffer | null) {
+  async function runConvertToSynth(clipId: string, opts: SynthOptions, referenceBuf?: AudioBuffer | null, harmProfile?: Float32Array | null) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
     setConvertCard(null)
     setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
-    const source = clip.originalBuf ?? clip.buf  // always derive from original recording
+    const source = clip.originalBuf ?? clip.buf
+    const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
     try {
       const curve    = await detectPitchCurveAsync(source)
-      let rendered   = await transformVoiceToSynth(source, curve, source.sampleRate, source.duration, opts)
-      if (referenceBuf) rendered = await matchBuffer(rendered, source, referenceBuf)
+      let rendered   = await transformVoiceToSynth(source, curve, source.sampleRate, source.duration, fullOpts)
+      // matchBuffer only as fallback when reference exists but no harmProfile could be extracted
+      if (referenceBuf && !harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
-      runSynthTuner(clipId, curve, source, opts, referenceBuf)
+      runSynthTuner(clipId, curve, source, fullOpts, referenceBuf)
     } catch (e) {
       showToast(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
@@ -1973,7 +1976,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof transformVoiceToSynth
           let rendered = await improvedFn(source, pitchCurve, source.sampleRate, source.duration, opts)
-          if (referenceBuf) rendered = await matchBuffer(rendered, source, referenceBuf)
+          // opts already contains harmProfile; matchBuffer only needed when reference exists but profile extraction failed
+          if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
           currentCode = improvedCode  // track latest applied code for the final save
         } catch (evalErr) {
@@ -5952,7 +5956,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                     {/* None option */}
                     <button
-                      onClick={() => setConvertCard(c => c ? { ...c, referenceBuf: null, referenceId: undefined } : c)}
+                      onClick={() => setConvertCard(c => c ? { ...c, referenceBuf: null, referenceId: undefined, harmProfile: null } : c)}
                       style={{
                         padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
                         fontWeight: !convertCard.referenceId ? 600 : 400,
@@ -5971,7 +5975,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             if (isSelected) return
                             setConvertCard(c => c ? { ...c, referenceId: preset.id, referenceLoading: true } : c)
                             const buf = await getSampleBuffer(preset.id)
-                            setConvertCard(c => c ? { ...c, referenceBuf: buf, referenceLoading: false } : c)
+                            const profile = buf ? extractHarmonicProfile(buf, 261.63) : null
+                            setConvertCard(c => c ? { ...c, referenceBuf: buf, harmProfile: profile, referenceLoading: false } : c)
                           }}
                           title={preset.description}
                           style={{
@@ -6006,7 +6011,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           const tmpCtx = new AudioContext()
                           const buf = await tmpCtx.decodeAudioData(arrayBuf)
                           await tmpCtx.close()
-                          setConvertCard(c => c ? { ...c, referenceBuf: buf, referenceLoading: false } : c)
+                          const profile = extractHarmonicProfile(buf)  // auto-detects fundamental
+                          setConvertCard(c => c ? { ...c, referenceBuf: buf, harmProfile: profile, referenceLoading: false } : c)
                         } catch {
                           setConvertCard(c => c ? { ...c, referenceId: undefined, referenceLoading: false } : c)
                           showToast('Could not decode reference audio')
@@ -6104,7 +6110,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 </button>
                 <button
                   onClick={() => {
-                    if (isSynth) runConvertToSynth(convertCard.clipId, convertCard.synthOpts, convertCard.referenceBuf)
+                    if (isSynth) runConvertToSynth(convertCard.clipId, convertCard.synthOpts, convertCard.referenceBuf, convertCard.harmProfile)
                     else if (isInstrument) runConvertToInstrument(convertCard.clipId, convertCard.instrument)
                     else runConvertToBeats(convertCard.clipId, convertCard.sensitivity)
                   }}
