@@ -71,6 +71,7 @@ import { extractSubBuffer, extractSubCurve, spliceSegmentBack } from '@/lib/vowe
 import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
 import { smoothPitchCurve, smoothSpectralTransitions, applyReferenceEnvelope } from '@/lib/timbre-smooth'
 import { parseAbletonProject, loadClipAudio, type AbletonProject, type AbletonTrack } from '@/lib/ableton-parser'
+import { encodeWav, decodeWav } from '@/lib/wav-codec'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -2037,6 +2038,48 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
+  // ── Server-side synth processing ─────────────────────────────────────────
+  // Encode an AudioBuffer as WAV for upload to the API route.
+  function audioBufToWav(buf: AudioBuffer): ArrayBuffer {
+    const channels: Float32Array[] = []
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) channels.push(buf.getChannelData(ch))
+    return encodeWav(channels, buf.sampleRate)
+  }
+
+  // Decode a WAV ArrayBuffer (from the API response) back into an AudioBuffer.
+  async function wavToAudioBuf(ab: ArrayBuffer): Promise<AudioBuffer> {
+    const { channels, sampleRate } = decodeWav(ab)
+    const ctx = new AudioContext()
+    try {
+      const out = ctx.createBuffer(channels.length, channels[0].length, sampleRate)
+      for (let ch = 0; ch < channels.length; ch++) out.getChannelData(ch).set(channels[ch])
+      return out
+    } finally { ctx.close() }
+  }
+
+  // Send audio to the server-side pipeline and receive the processed result.
+  async function processSynthOnServer(
+    srcBuf: AudioBuffer,
+    refBuf: AudioBuffer | null | undefined,
+    opts: SynthOptions,
+    harmProfile: Float32Array | null | undefined,
+  ): Promise<AudioBuffer> {
+    const form = new FormData()
+    form.append('audio', new Blob([audioBufToWav(srcBuf)], { type: 'audio/wav' }), 'src.wav')
+    if (refBuf) form.append('refAudio', new Blob([audioBufToWav(refBuf)], { type: 'audio/wav' }), 'ref.wav')
+    form.append('opts', JSON.stringify({
+      harmProfile: harmProfile ? Array.from(harmProfile) : null,
+      filterCutoff: opts.filterCutoff,
+      pitchShift: opts.pitchShift,
+    }))
+    const res = await fetch('/api/process-synth', { method: 'POST', body: form })
+    if (!res.ok) {
+      const err = await res.json().catch(() => null) as { error?: string } | null
+      throw new Error(err?.error ?? `Server error ${res.status}`)
+    }
+    return wavToAudioBuf(await res.arrayBuffer())
+  }
+
   async function runConvertToSynth(clipId: string, opts: SynthOptions, referenceBuf?: AudioBuffer | null, harmProfile?: Float32Array | null) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
@@ -2046,35 +2089,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
 
     try {
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Processing on server…' } : c))
+
+      // Full pipeline runs server-side (HPSS + per-band synthesis + spectral smoothing
+      // + reference envelope morphing + spectral match). Client only handles UI state.
+      const rendered = await processSynthOnServer(source, referenceBuf, opts, harmProfile)
+
+      // Still detect pitch client-side for note segments (fast, lightweight)
       const rawCurve = await detectPitchCurveAsync(source)
-      // Smooth pitch jitter before using the curve for EQ targeting —
-      // prevents EQ cutoff frequencies from hopping between adjacent windows.
-      const curve = smoothPitchCurve(rawCurve)
-
-      // HPSS: separate tonal content from transients before transformation.
-      // Only the harmonic component gets synthesized; percussive content (consonants,
-      // plosives, breath bursts) passes through untouched and is mixed back in.
-      const { harmonic, percussive } = await separateHarmonicPercussive(source)
-
-      // Per-band synthesis: each frequency band is transformed independently so the
-      // spectral EQ can calibrate precisely to the character of that range, then the
-      // bands are summed back together before mixing with the percussive layer.
-      const transformedBands: AudioBuffer[] = []
-      for (let bi = 0; bi < FREQ_BANDS.length; bi++) {
-        const band = FREQ_BANDS[bi]
-        setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: `Converting band ${bi + 1}/${FREQ_BANDS.length}…` } : c))
-        const bandBuf = await extractFreqBand(harmonic, band.lo, band.hi)
-        const tBand = await transformVoiceToSynth(bandBuf, curve, source.sampleRate, source.duration, fullOpts)
-        transformedBands.push(tBand)
-      }
-
-      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Smoothing…' } : c))
-
-      // Spectral transition smoothing: blend adjacent STFT frames' magnitudes to
-      // remove frame-to-frame jitter while keeping transient timing (phase intact).
-      let transformed: AudioBuffer = smoothSpectralTransitions(sumBuffers(transformedBands))
-
-      // Build note events now so we can use them for envelope morphing below
+      const curve    = smoothPitchCurve(rawCurve)
       const midiNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
       const noteSegs = extractNoteEvents(curve).map(n => ({
         id: crypto.randomUUID(),
@@ -2084,21 +2107,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         noteName: `${midiNames[n.midi % 12]}${Math.floor(n.midi / 12) - 1}`,
         amplitude: n.amplitude,
       }))
-
-      // Reference envelope morphing: shape each note's attack and release to match
-      // the reference sample's acceleration/deceleration character (e.g. slow pad
-      // attack vs sharp lead attack). Only applied when a reference sample is selected.
-      if (referenceBuf) {
-        transformed = await applyReferenceEnvelope(
-          transformed, referenceBuf,
-          noteSegs.map(n => ({ start: n.startSec, end: n.endSec })),
-        )
-      }
-
-      if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
-
-      // Mix transformed harmonic back with original percussive layer
-      const rendered = mixBuffers(transformed, percussive)
 
       setAudioClips(prev => prev.map(c => c.id === clipId
         ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf, segments: noteSegs }
@@ -2120,22 +2128,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
     showToast('Re-converting note…')
     try {
-      const rawCurve = await detectPitchCurveAsync(source)
-      const curve    = smoothPitchCurve(rawCurve)
-      const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
-      const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
-      const { harmonic, percussive } = await separateHarmonicPercussive(subBuf)
-      const segBands: AudioBuffer[] = []
-      for (const band of FREQ_BANDS) {
-        const bandBuf = await extractFreqBand(harmonic, band.lo, band.hi)
-        segBands.push(await transformVoiceToSynth(bandBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts))
-      }
-      let transformed = smoothSpectralTransitions(sumBuffers(segBands))
-      if (referenceBuf) {
-        transformed = await applyReferenceEnvelope(transformed, referenceBuf, [{ start: 0, end: subBuf.duration }])
-      }
-      if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
-      const segResult = mixBuffers(transformed, percussive)
+      const subBuf = extractSubBuffer(source, seg.startSec, seg.endSec)
+      const segResult = await processSynthOnServer(subBuf, referenceBuf, opts, harmProfile)
       const newFull   = spliceSegmentBack(clip.buf, segResult, seg.startSec)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: newFull } : c))
       showToast('Note re-converted')
