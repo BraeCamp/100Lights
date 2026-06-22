@@ -522,8 +522,8 @@ export default function AudioEditor({
             />
           </div>
 
-          {/* Song transport */}
-          <div style={{ height: 52, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexShrink: 0, padding: '0 20px' }}>
+          {/* Song transport — only shown when audio tracks are loaded */}
+          <div style={{ height: tracks.length > 0 ? 52 : 0, overflow: 'hidden', borderTop: tracks.length > 0 ? '1px solid var(--border)' : 'none', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexShrink: 0, padding: '0 20px', transition: 'height 0.2s ease' }}>
             <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: 52, textAlign: 'right' }}>{fmtTime(currentTime)}</span>
             <button onClick={skipBack} tabIndex={-1} style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}><SkipBack size={16} /></button>
             <button

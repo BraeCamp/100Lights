@@ -3057,6 +3057,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setIsPlaying(false)
     playStartRef.current = null
     groupBusRef.current.clear()
+    // AnalyserNodes are tied to their AudioContext — clear so next playback
+    // creates fresh ones on the new context (reusing old nodes throws cross-context errors)
+    laneAnalysersRef.current.clear()
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close()
       audioCtxRef.current = null
