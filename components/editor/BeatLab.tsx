@@ -1894,6 +1894,19 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
+  function sumBuffers(bufs: AudioBuffer[]): AudioBuffer {
+    const first = bufs[0]
+    const out = new AudioBuffer({ numberOfChannels: first.numberOfChannels, length: first.length, sampleRate: first.sampleRate })
+    for (let ch = 0; ch < first.numberOfChannels; ch++) {
+      const dst = out.getChannelData(ch)
+      for (const b of bufs) {
+        const s = b.getChannelData(Math.min(ch, b.numberOfChannels - 1))
+        for (let i = 0; i < dst.length; i++) dst[i] += s[i]
+      }
+    }
+    return out
+  }
+
   function toggleBandMute(clipId: string, bandIdx: number) {
     setClipBands(prev => ({
       ...prev,
@@ -1973,8 +1986,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // plosives, breath bursts) passes through untouched and is mixed back in.
       const { harmonic, percussive } = await separateHarmonicPercussive(source)
 
-      // Transform the harmonic layer
-      let transformed = await transformVoiceToSynth(harmonic, curve, source.sampleRate, source.duration, fullOpts)
+      // Per-band synthesis: each frequency band is transformed independently so the
+      // spectral EQ can calibrate precisely to the character of that range, then the
+      // bands are summed back together before mixing with the percussive layer.
+      const transformedBands: AudioBuffer[] = []
+      for (let bi = 0; bi < FREQ_BANDS.length; bi++) {
+        const band = FREQ_BANDS[bi]
+        setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: `Converting band ${bi + 1}/${FREQ_BANDS.length}…` } : c))
+        const bandBuf = await extractFreqBand(harmonic, band.lo, band.hi)
+        const tBand = await transformVoiceToSynth(bandBuf, curve, source.sampleRate, source.duration, fullOpts)
+        transformedBands.push(tBand)
+      }
+      let transformed: AudioBuffer = sumBuffers(transformedBands)
       if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
 
       // Mix transformed harmonic back with original percussive layer
@@ -2015,7 +2038,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
       const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
       const { harmonic, percussive } = await separateHarmonicPercussive(subBuf)
-      let transformed = await transformVoiceToSynth(harmonic, subCurve, source.sampleRate, subBuf.duration, fullOpts)
+      const segBands: AudioBuffer[] = []
+      for (const band of FREQ_BANDS) {
+        const bandBuf = await extractFreqBand(harmonic, band.lo, band.hi)
+        segBands.push(await transformVoiceToSynth(bandBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts))
+      }
+      let transformed = sumBuffers(segBands)
       if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
       const segResult = mixBuffers(transformed, percussive)
       const newFull   = spliceSegmentBack(clip.buf, segResult, seg.startSec)
@@ -2131,8 +2159,14 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             `${match.code}\nreturn transformVoiceToSynth`)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           const fn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof transformVoiceToSynth
-          let rendered = await fn(source, pitchCurve, source.sampleRate, source.duration, opts)
-          if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
+          const { harmonic: hSrc, percussive: pSrc } = await separateHarmonicPercussive(source)
+          const profileBands: AudioBuffer[] = []
+          for (const band of FREQ_BANDS) {
+            const bb = await extractFreqBand(hSrc, band.lo, band.hi)
+            profileBands.push(await fn(bb, pitchCurve, source.sampleRate, source.duration, opts))
+          }
+          let rendered = mixBuffers(sumBuffers(profileBands), pSrc)
+          if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, hSrc, referenceBuf)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
           synthCurrentCodeRef.current = match.code
           incrementUsage(match.id)
@@ -2189,9 +2223,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             `${improvedCode}\nreturn transformVoiceToSynth`)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof transformVoiceToSynth
-          let rendered = await improvedFn(source, pitchCurve, source.sampleRate, source.duration, opts)
+          const { harmonic: hImproved, percussive: pImproved } = await separateHarmonicPercussive(source)
+          const improvedBands: AudioBuffer[] = []
+          for (const band of FREQ_BANDS) {
+            const bb = await extractFreqBand(hImproved, band.lo, band.hi)
+            improvedBands.push(await improvedFn(bb, pitchCurve, source.sampleRate, source.duration, opts))
+          }
+          let rendered = mixBuffers(sumBuffers(improvedBands), pImproved)
           // opts already contains harmProfile; matchBuffer only needed when reference exists but profile extraction failed
-          if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
+          if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, hImproved, referenceBuf)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
           lastRenderedBuf = rendered
           currentCode = improvedCode  // track latest applied code for the final save
