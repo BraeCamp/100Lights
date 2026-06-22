@@ -69,6 +69,7 @@ const ChordProgressionBuilder = lazy(() => import('./ChordProgressionBuilder'))
 const CommandPalette          = lazy(() => import('./CommandPalette'))
 const SpectrumAnalyzer        = lazy(() => import('./SpectrumAnalyzer'))
 const Arpeggiator             = lazy(() => import('./Arpeggiator'))
+const InspectorPanel          = lazy(() => import('./InspectorPanel'))
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -471,7 +472,7 @@ function NoteAxis() {
 
 interface WarpMarker { bufFrac: number; timeFrac: number }
 
-type LaneEffectType = 'eq3' | 'comp' | 'crush' | 'reverb' | 'delay' | 'chorus' | 'phaser' | 'flanger' | 'autofilter' | 'saturator'
+type LaneEffectType = 'eq3' | 'comp' | 'crush' | 'reverb' | 'delay' | 'chorus' | 'phaser' | 'flanger' | 'autofilter' | 'saturator' | 'lfo' | 'beatrepeat'
 interface LaneEffect {
   id: string
   type: LaneEffectType
@@ -489,10 +490,13 @@ const LANE_EFFECT_DEFAULTS: Record<LaneEffectType, Record<string, number>> = {
   flanger:    { wet: 0.5, rate: 0.25, depth: 0.005, delay: 0.005, feedback: 0.5 },
   autofilter: { wet: 1.0, freq: 800, Q: 1.5, lfoRate: 1.0, lfoDepth: 600, type: 0 },
   saturator:  { drive: 3, wet: 1.0 },
+  lfo:        { rate: 2.0, depth: 0.6, shape: 0 }, // shape: 0=sine 1=square 2=sawtooth
+  beatrepeat: { grid: 0.125, chance: 1.0, pitch: 0, feedback: 0.5 },
 }
 const LANE_EFFECT_LABELS: Record<LaneEffectType, string> = {
   eq3: 'EQ3', comp: 'Comp', crush: 'Crush', reverb: 'Reverb', delay: 'Delay',
   chorus: 'Chorus', phaser: 'Phaser', flanger: 'Flanger', autofilter: 'AutoFilt', saturator: 'Satur',
+  lfo: 'LFO', beatrepeat: 'BeatRpt',
 }
 
 // ── Automation ──────────────────────────────────────────────────────────────
@@ -788,6 +792,8 @@ const FX_PARAM_SPECS: Record<LaneEffectType, FxParamSpec[]> = {
   flanger:    [{ key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'rate', label: 'Rate', min: 0.05, max: 4, step: 0.05, decimals: 2 }, { key: 'depth', label: 'Depth', min: 0.001, max: 0.015, step: 0.001, decimals: 3 }, { key: 'feedback', label: 'FB', min: 0, max: 0.9, step: 0.01, decimals: 2 }],
   autofilter: [{ key: 'freq', label: 'Freq', min: 80, max: 16000, step: 10, decimals: 0 }, { key: 'Q', label: 'Q', min: 0.5, max: 18, step: 0.1, decimals: 1 }, { key: 'lfoRate', label: 'LFO', min: 0.1, max: 16, step: 0.1, decimals: 1 }, { key: 'lfoDepth', label: 'Dpth', min: 0, max: 8000, step: 50, decimals: 0 }],
   saturator:  [{ key: 'drive', label: 'Drive', min: 1, max: 20, step: 0.5, decimals: 1 }, { key: 'wet', label: 'Wet', min: 0, max: 1, step: 0.01, decimals: 2 }],
+  lfo:        [{ key: 'rate', label: 'Rate', min: 0.1, max: 20, step: 0.1, decimals: 1 }, { key: 'depth', label: 'Depth', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'shape', label: 'Shape', min: 0, max: 2, step: 1, decimals: 0 }],
+  beatrepeat: [{ key: 'grid', label: 'Grid', min: 0.03125, max: 1, step: 0.03125, decimals: 3 }, { key: 'chance', label: 'Prob', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'pitch', label: 'Pitch', min: -12, max: 12, step: 1, decimals: 0 }, { key: 'feedback', label: 'FB', min: 0, max: 0.9, step: 0.01, decimals: 2 }],
 }
 
 function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange }: {
@@ -828,7 +834,9 @@ function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange }: {
           <div key={spec.key} onMouseDown={e => startKnobDrag(spec, e)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'ns-resize', userSelect: 'none', gap: 1 }}>
             <span style={{ fontSize: 7, color: 'var(--text-muted)', lineHeight: 1 }}>{spec.label}</span>
             <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>
-              {(fx.params[spec.key] ?? spec.min).toFixed(spec.decimals ?? 1)}
+              {fx.type === 'lfo' && spec.key === 'shape'
+                ? (['Sine', 'Sq', 'Saw'] as const)[Math.round(fx.params.shape ?? 0)] ?? 'Sine'
+                : (fx.params[spec.key] ?? spec.min).toFixed(spec.decimals ?? 1)}
             </span>
           </div>
         ))}
@@ -900,9 +908,11 @@ interface LaneProps {
   analyserNode?: AnalyserNode | null
   onToggleMini?: () => void
   onToggleSpectrum?: () => void
+  loopBeats?: number  // 0 = follow global
+  onLoopBeatsChange?: (beats: number) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -957,6 +967,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
             {label}
           </span>
           {!miniMode && hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
+          {!miniMode && loopBeats > 0 && <span style={{ fontSize: 7, color: 'rgba(167,139,250,0.8)', fontFamily: 'monospace' }}>{loopBeats}b⟳</span>}
         </div>
 
         {/* M · S · ··· row */}
@@ -1006,6 +1017,15 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                         onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                       >{item.label}</button>
                     ))}
+                    {/* Polyrhythm loop length */}
+                    {onLoopBeatsChange && (
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '5px 10px', gap: 6, borderTop: '1px solid var(--border)', marginTop: 2 }}>
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1 }}>Loop</span>
+                        <button onClick={() => onLoopBeatsChange(Math.max(0, loopBeats - (loopBeats <= 4 ? 1 : 4)))} style={{ width: 18, height: 18, padding: 0, borderRadius: 3, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, lineHeight: 1 }}>−</button>
+                        <span style={{ fontSize: 10, color: 'var(--text-primary)', minWidth: 28, textAlign: 'center', fontFamily: 'monospace' }}>{loopBeats === 0 ? 'off' : `${loopBeats}b`}</span>
+                        <button onClick={() => onLoopBeatsChange(loopBeats === 0 ? 1 : loopBeats < 4 ? loopBeats + 1 : loopBeats + 4)} style={{ width: 18, height: 18, padding: 0, borderRadius: 3, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, lineHeight: 1 }}>+</button>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -1315,7 +1335,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               <>
                 <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={onFxAddClose} />
                 <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 400, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, boxShadow: '0 6px 20px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 110 }}>
-                  {(['eq3', 'comp', 'crush', 'reverb', 'delay', 'chorus', 'phaser', 'flanger', 'autofilter', 'saturator'] as LaneEffectType[]).map(t => (
+                  {(['eq3', 'comp', 'crush', 'reverb', 'delay', 'chorus', 'phaser', 'flanger', 'autofilter', 'saturator', 'lfo', 'beatrepeat'] as LaneEffectType[]).map(t => (
                     <button key={t} onClick={() => onFxAdd(t)}
                       style={{ textAlign: 'left', padding: '5px 10px', borderRadius: 5, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-primary)' }}>
                       {LANE_EFFECT_LABELS[t]}
@@ -1528,6 +1548,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   // ── Arpeggiator state ─────────────────────────────────────────────────────
   const [arpLane, setArpLane] = useState<BeatType | null>(null)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [selectedLane, setSelectedLane] = useState<BeatType | null>(null)
 
   // Sample pack: active AudioBuffer + rootNote per BeatType for pitch-shifted playback
   const [sampleBuffers, setSampleBuffers] = useState<Map<BeatType, AudioBuffer>>(new Map())
@@ -2021,6 +2043,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [fxOpenLanes, setFxOpenLanes] = useState<Set<string>>(new Set())
   const [fxAddOpen, setFxAddOpen] = useState<string | null>(null)  // laneType with open "add" dropdown
 
+  // ── Polyrhythm: per-lane loop length in beats (default = global loop = 0) ──
+  const [laneLoopBeats, setLaneLoopBeats] = useState<Record<string, number>>({}) // 0 = follow global
+  const laneLoopBeatsRef = useRef<Record<string, number>>({})
+  useEffect(() => { laneLoopBeatsRef.current = laneLoopBeats }, [laneLoopBeats])
+
   // ── Tier 5: Automation lanes ────────────────────────────────────────────────
   const [automLanes, setAutomLanes] = useState<AutomLaneDef[]>([])
   const automLanesRef = useRef<AutomLaneDef[]>([])
@@ -2282,6 +2309,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) || ((e.metaKey || e.ctrlKey) && e.key === 'y')) { e.preventDefault(); redo(); return }
       // Cmd+K → command palette
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdPaletteOpen(v => !v); return }
+      // I → inspector panel
+      if (e.key === 'i' && !inInput && !e.metaKey && !e.ctrlKey) { setInspectorOpen(v => !v); return }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -2612,6 +2641,42 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           inp.connect(wetG); wetG.connect(ws); ws.connect(out)
           return { in: inp, out }
         }
+        case 'lfo': {
+          // Tremolo: LFO modulates gain
+          const shapes: OscillatorType[] = ['sine', 'square', 'sawtooth']
+          const rate  = Math.max(0.1, Math.min(20, p.rate ?? 2))
+          const depth = Math.max(0, Math.min(1, p.depth ?? 0.6))
+          const inp   = ctx.createGain(); inp.gain.value = 1
+          const lfo   = ctx.createOscillator()
+          lfo.type = shapes[Math.round(p.shape ?? 0)] ?? 'sine'
+          lfo.frequency.value = rate
+          // LFO output range: -depth..+depth, bias to 1-depth..1
+          const lfoGain = ctx.createGain(); lfoGain.gain.value = depth * 0.5
+          const bias    = ctx.createConstantSource(); bias.offset.value = 1 - depth * 0.5
+          const ampMod  = ctx.createGain()
+          lfo.connect(lfoGain); lfoGain.connect(ampMod.gain)
+          bias.connect(ampMod.gain)
+          inp.connect(ampMod)
+          lfo.start(); bias.start()
+          return { in: inp, out: ampMod }
+        }
+        case 'beatrepeat': {
+          // Comb-filter stutter: delay + variable feedback
+          const grid     = Math.max(0.03125, Math.min(1, p.grid ?? 0.125))
+          const feedback = Math.max(0, Math.min(0.9, p.feedback ?? 0.5))
+          const pitchSt  = p.pitch ?? 0
+          const inp  = ctx.createGain()
+          const dly  = ctx.createDelay(2); dly.delayTime.value = grid
+          const fbGn = ctx.createGain(); fbGn.gain.value = feedback
+          const out  = ctx.createGain()
+          // Optional pitch shift via playback-rate trick: use a second delay at semitone offset
+          const pitchRatio = Math.pow(2, pitchSt / 12)
+          const pitchShift = ctx.createGain(); pitchShift.gain.value = pitchRatio
+          inp.connect(out); inp.connect(dly)
+          dly.connect(pitchShift); pitchShift.connect(fbGn); fbGn.connect(dly)
+          dly.connect(out)
+          return { in: inp, out }
+        }
       }
     }
 
@@ -2670,12 +2735,38 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const soloActive = soloedLanesRef.current.size > 0
     // ── Hits ─────────────────────────────────────────────────────────────────
     const kickTimes = hits.filter(h => h.type === 'kick' && !mutedTypes.has('kick')).map(h => h.time).sort((a, b) => a - b)
+    const beatSec = bpm ? 60 / bpm : 0.5
 
-    for (const hit of hits) {
-      if (hit.time < startFrom - 0.01) continue
+    // Group hits by lane for polyrhythm repetition
+    const hitsByLane = new Map<string, BeatHit[]>()
+    for (const hit of hits) { const arr = hitsByLane.get(hit.type) ?? []; arr.push(hit); hitsByLane.set(hit.type, arr) }
+
+    const scheduledHitTimes: { hit: BeatHit; absoluteTime: number }[] = []
+    for (const [laneType, laneHits] of hitsByLane) {
+      const loopBeats = laneLoopBeatsRef.current[laneType] ?? 0
+      const loopSec   = loopBeats > 0 ? loopBeats * beatSec : 0 // 0 = no per-lane loop
+      if (loopSec > 0) {
+        // Repeat hits for each loop cycle within the global duration
+        const cycles = Math.ceil((duration - startFrom) / loopSec)
+        for (let c = 0; c < cycles; c++) {
+          for (const hit of laneHits) {
+            const absTime = hit.time + c * loopSec
+            if (absTime >= startFrom - 0.01 && absTime < duration) {
+              scheduledHitTimes.push({ hit, absoluteTime: absTime })
+            }
+          }
+        }
+      } else {
+        for (const hit of laneHits) {
+          if (hit.time >= startFrom - 0.01) scheduledHitTimes.push({ hit, absoluteTime: hit.time })
+        }
+      }
+    }
+
+    for (const { hit, absoluteTime } of scheduledHitTimes) {
       if (mutedTypes.has(hit.type)) continue
       if (soloActive && !soloedLanesRef.current.has(hit.type)) continue
-      const when = Math.max(now, now + (hit.time - startFrom))
+      const when = Math.max(now, now + (absoluteTime - startFrom))
       const laneDest = getLaneInput(hit.type)
 
       const sampleBuf  = sampleBuffers.get(hit.type)
@@ -2692,7 +2783,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity, laneDest)
       } else {
         const maxKickDur = hit.type === 'kick'
-          ? (() => { const idx = kickTimes.indexOf(hit.time); const next = kickTimes[idx + 1] ?? Infinity; return Math.min(0.45, next - hit.time - 0.01) })()
+          ? (() => { const idx = kickTimes.indexOf(absoluteTime); const next = kickTimes[idx + 1] ?? Infinity; return Math.min(0.45, next - absoluteTime - 0.01) })()
           : 0.45
         playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note, maxKickDur, laneDest)
       }
@@ -3943,6 +4034,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 30, textAlign: 'center' }}>{zoomLevel === 1 ? '1×' : `${zoomLevel.toFixed(1)}×`}</span>
                 <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} title="Zoom in" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
               </div>
+              {/* Inspector toggle */}
+              <button
+                onClick={() => setInspectorOpen(v => !v)}
+                title="Inspector panel (I)"
+                style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: inspectorOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${inspectorOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: inspectorOpen ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                Inspector
+              </button>
+
               {/* + Track button */}
               <div style={{ position: 'relative' }}>
                 <button
@@ -4070,6 +4170,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       )}
 
       {/* ── Content ───────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'row', minHeight: 0 }}>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
         {false && phase === 'idle' && (
@@ -4556,7 +4657,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           isActiveLane={activeLaneType === type}
                           snapInterval={snapInterval}
                           onSelectHit={selectHit}
-                          onSelectLane={() => setActiveLaneType(type)}
+                          onSelectLane={() => { setActiveLaneType(type); setSelectedLane(type); setInspectorOpen(true) }}
                           onOpenPianoRoll={MELODIC_TYPES.has(type) ? () => setPianoRollLane(type) : undefined}
                           onOpenStepSeq={() => setStepSeqLane(type)}
                           onOpenChordBuilder={MELODIC_TYPES.has(type) ? () => setChordBuilderLane(type) : undefined}
@@ -4631,6 +4732,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           analyserNode={laneAnalysersRef.current.get(type) ?? null}
                           onToggleMini={() => toggleMiniLane(type)}
                           onToggleSpectrum={() => toggleSpecLane(type)}
+                          loopBeats={laneLoopBeats[type] ?? 0}
+                          onLoopBeatsChange={beats => setLaneLoopBeats(prev => ({ ...prev, [type]: beats }))}
                         />
                       </div>
                       </div>
@@ -4676,7 +4779,47 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           return inPortal ? createPortal(content, lanesContainer!) : content
         })()}
 
-      </div>
+      </div>{/* end inner column */}
+
+      {/* ── Inspector Panel ───────────────────────────────────────────────── */}
+      {inspectorOpen && (
+        <Suspense fallback={null}>
+          <InspectorPanel
+            lane={selectedLane ? (() => {
+              const t = selectedLane
+              const lvl = laneLevels[t] ?? 0
+              return {
+                type: t,
+                label: typeLabel(t, typeOverrides),
+                color: typeColor(t, typeOverrides),
+                hitCount: hitsByType.get(t)?.length ?? 0,
+                level: lvl,
+                pan: lanePans[t] ?? 0,
+                muted: mutedTypes.has(t),
+                soloed: soloedLanes.has(t),
+                effectCount: (laneEffects[t] ?? []).length,
+                automCount: automLanes.filter(a => a.laneType === t).length,
+              }
+            })() : null}
+            bpm={bpm}
+            duration={duration}
+            totalHits={hits.length}
+            laneCount={activeLaneTypes.length}
+            onClose={() => setInspectorOpen(false)}
+            onMute={() => selectedLane && toggleMute(selectedLane)}
+            onSolo={() => selectedLane && toggleSolo(selectedLane)}
+            onPanChange={v => selectedLane && setLanePans(prev => ({ ...prev, [selectedLane]: v }))}
+            onOpenPianoRoll={selectedLane && MELODIC_TYPES.has(selectedLane) ? () => { setPianoRollLane(selectedLane!); setInspectorOpen(false) } : undefined}
+            onOpenStepSeq={selectedLane ? () => { setStepSeqLane(selectedLane!); setInspectorOpen(false) } : undefined}
+            onOpenChordBuilder={selectedLane && MELODIC_TYPES.has(selectedLane) ? () => { setChordBuilderLane(selectedLane!); setInspectorOpen(false) } : undefined}
+            onOpenArpeggiator={selectedLane ? () => { setArpLane(selectedLane!); setInspectorOpen(false) } : undefined}
+            onToggleFx={() => selectedLane && setFxOpenLanes(prev => { const s = new Set(prev); s.has(selectedLane!) ? s.delete(selectedLane!) : s.add(selectedLane!); return s })}
+            onToggleAutom={() => selectedLane && setAutomOpenLanes(prev => { const s = new Set(prev); s.has(selectedLane!) ? s.delete(selectedLane!) : s.add(selectedLane!); return s })}
+          />
+        </Suspense>
+      )}
+
+      </div>{/* end outer row */}
 
       {/* AI Feedback card modal */}
       {showFeedbackCard && ((aiSuggestions?.size ?? 0) > 0 || aiDeletions.size > 0) && (
