@@ -1882,10 +1882,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [laneRecording,     setLaneRecording]     = useState(false)
   const [laneRecordingTime, setLaneRecordingTime]  = useState(0)
   const laneRecTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const laneRecChunksRef = useRef<Blob[]>([])
-  const laneRecorderRef  = useRef<MediaRecorder | null>(null)
-
-  // Track the playhead at the moment recording starts so we can offset hits correctly
+  // Each entry = one device being recorded + which lanes it feeds
+  const laneRecordersRef = useRef<{ recorder: MediaRecorder; chunks: Blob[]; lanes: string[] }[]>([])
   const laneRecStartPlayheadRef = useRef(0)
 
   async function startLaneRecording() {
@@ -1895,7 +1893,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (countIn) {
         const ebpm    = effectiveBpmRef.current
         const beatSec = 60 / ebpm
-        const barSec  = beatSec * 4
         const ctx     = getAudioCtx()
         for (let beat = 0; beat < 4; beat++) {
           const when = ctx.currentTime + beat * beatSec
@@ -1910,24 +1907,39 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         setCountInBeat(0)
       }
 
-      const firstMicLane = Array.from(inputLanesRef.current).find(l => inputSourceRef.current[l] !== 'midi')
-      const deviceId     = firstMicLane ? inputSourceRef.current[firstMicLane] : 'default'
-      const audioConstraint: MediaTrackConstraints | boolean =
-        deviceId && deviceId !== 'default' ? { deviceId: { exact: deviceId } } : true
-      const stream   = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false })
-      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
-      laneRecChunksRef.current = []
-      recorder.ondataavailable = e => { if (e.data.size > 0) laneRecChunksRef.current.push(e.data) }
-      recorder.start(100)
-      laneRecorderRef.current = recorder
+      // Group mic-armed lanes by device ID so each physical input gets its own recorder
+      const micLanes = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] !== 'midi')
+      const byDevice = new Map<string, string[]>()
+      for (const lane of micLanes) {
+        const dev = inputSourceRef.current[lane] ?? 'default'
+        if (!byDevice.has(dev)) byDevice.set(dev, [])
+        byDevice.get(dev)!.push(lane)
+      }
+      if (byDevice.size === 0 && activeLaneType) byDevice.set('default', [activeLaneType])
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
+      const entries: { recorder: MediaRecorder; chunks: Blob[]; lanes: string[] }[] = []
+
+      for (const [deviceId, lanes] of byDevice) {
+        const constraint: MediaTrackConstraints | boolean =
+          deviceId && deviceId !== 'default' ? { deviceId: { exact: deviceId } } : true
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false })
+        const entry = { recorder: null as unknown as MediaRecorder, chunks: [] as Blob[], lanes }
+        const recorder = new MediaRecorder(stream, { mimeType })
+        entry.recorder = recorder
+        recorder.ondataavailable = e => { if (e.data.size > 0) entry.chunks.push(e.data) }
+        recorder.start(100)
+        entries.push(entry)
+      }
+
+      laneRecordersRef.current = entries
       laneRecStartPlayheadRef.current = playhead
       setLaneRecording(true)
       setLaneRecordingTime(0)
       laneRecTimerRef.current = setInterval(() => {
         setLaneRecordingTime(t => {
           const newT = t + 0.1
-          const projectedEnd = laneRecStartPlayheadRef.current + newT
-          setDuration(prev => Math.max(prev, projectedEnd + 2))
+          setDuration(prev => Math.max(prev, laneRecStartPlayheadRef.current + newT + 2))
           return newT
         })
       }, 100)
@@ -1940,28 +1952,36 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   }
 
   async function stopLaneRecording() {
-    const recorder = laneRecorderRef.current
-    if (!recorder) return
+    const entries = laneRecordersRef.current
+    if (entries.length === 0) return
     if (laneRecTimerRef.current) clearInterval(laneRecTimerRef.current)
-    recorder.stop()
-    recorder.stream.getTracks().forEach(t => t.stop())
+
+    // Stop all recorders simultaneously
+    entries.forEach(e => { e.recorder.stop(); e.recorder.stream.getTracks().forEach(t => t.stop()) })
     stopPlayback()
-    await new Promise<void>(res => { recorder.onstop = () => res() })
+    await Promise.all(entries.map(e => new Promise<void>(res => { e.recorder.onstop = () => res() })))
+
     setLaneRecording(false)
-    const blob = new Blob(laneRecChunksRef.current, { type: laneRecChunksRef.current[0]?.type ?? 'audio/webm' })
+    laneRecordersRef.current = []
     const offset = laneRecStartPlayheadRef.current
-    try {
-      const buf = await decodeAudio(blob)
-      // Record into all mic-input lanes; fall back to active lane if none armed
-      const micLanes = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] !== 'midi')
-      const targets  = micLanes.length > 0 ? micLanes : activeLaneType ? [activeLaneType] : []
-      setAudioClips(prev => [
-        ...prev,
-        ...targets.map(laneType => mkClip(crypto.randomUUID(), laneType, buf, offset, 'Voice')),
-      ])
-      if (buf.duration + offset > duration) setDuration(buf.duration + offset)
-    } catch {
-      setError('Could not decode the recording. Try again.')
+
+    // Decode each device's recording independently and place into its lanes
+    const newClips: AudioClip[] = []
+    let maxEnd = duration
+    await Promise.all(entries.map(async entry => {
+      if (entry.chunks.length === 0) return
+      try {
+        const blob = new Blob(entry.chunks, { type: entry.chunks[0]?.type ?? 'audio/webm' })
+        const buf  = await decodeAudio(blob)
+        for (const laneType of entry.lanes) {
+          newClips.push(mkClip(crypto.randomUUID(), laneType, buf, offset, 'Voice'))
+        }
+        maxEnd = Math.max(maxEnd, buf.duration + offset)
+      } catch { /* skip if this device's recording is undecodable */ }
+    }))
+    if (newClips.length > 0) {
+      setAudioClips(prev => [...prev, ...newClips])
+      setDuration(maxEnd)
     }
   }
 
