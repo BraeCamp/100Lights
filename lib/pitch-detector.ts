@@ -249,6 +249,56 @@ export async function synthesizeFromPitchCurve(
   return ctx.startRendering()
 }
 
+// ── Audio transformation: voice → synth timbre ───────────────────────────────
+// Instead of rebuilding audio from oscillators, this transforms the original
+// recording to have synth-like harmonic character while preserving all original
+// timing, dynamics, and feel. The AI improves this function iteratively.
+export async function transformVoiceToSynth(
+  originalBuf: AudioBuffer,
+  pitchCurve: PitchFrame[],
+  sampleRate: number,
+  totalDuration: number,
+  options: SynthOptions
+): Promise<AudioBuffer> {
+  const notes = extractNoteEvents(pitchCurve)
+  if (notes.length === 0) throw new Error('No pitched notes detected — try singing more clearly')
+
+  const numCh = originalBuf.numberOfChannels
+  const ctx = new OfflineAudioContext(numCh, Math.ceil(totalDuration * sampleRate), sampleRate)
+
+  const src = ctx.createBufferSource()
+  src.buffer = originalBuf
+
+  // Arctan saturation: adds harmonics and compresses peaks for synth-like density
+  const shaper = ctx.createWaveShaper()
+  const n = 512
+  const curve = new Float32Array(n)
+  const k = 8  // saturation amount — higher = more aggressive harmonics
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2 / (n - 1)) - 1
+    curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x))
+  }
+  shaper.curve = curve
+  shaper.oversample = '4x'
+
+  // Resonant lowpass — the defining characteristic of analog synth filters
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = options.filterCutoff ?? 2000
+  filter.Q.value = 3.0
+
+  const gain = ctx.createGain()
+  gain.gain.value = 0.75
+
+  src.connect(shaper)
+  shaper.connect(filter)
+  filter.connect(gain)
+  gain.connect(ctx.destination)
+
+  src.start(0)
+  return ctx.startRendering()
+}
+
 // ── Note event extraction ─────────────────────────────────────────────────────
 // Converts a pitch curve into discrete note events by finding stable pitch
 // regions (runs where MIDI pitch doesn't change by more than 1 semitone).

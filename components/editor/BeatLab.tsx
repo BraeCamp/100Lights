@@ -63,7 +63,7 @@ import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
-import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
+import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1843,7 +1843,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const source = clip.originalBuf ?? clip.buf  // always derive from original recording
     try {
       const curve    = await detectPitchCurveAsync(source)
-      const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration, opts)
+      const rendered = await transformVoiceToSynth(source, curve, source.sampleRate, source.duration, opts)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
       runSynthTuner(clipId, curve, source, opts)
     } catch (e) {
@@ -1961,10 +1961,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         // Apply the improved function immediately via eval
         try {
           const factory = new Function('extractNoteEvents', 'midiToFreq', 'freqToMidi',
-            `${improvedCode}\nreturn synthesizeFromPitchCurve`)
+            `${improvedCode}\nreturn transformVoiceToSynth`)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof synthesizeFromPitchCurve
-          const rendered = await improvedFn(pitchCurve, source.sampleRate, 60, source.duration, opts)
+          const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof transformVoiceToSynth
+          const rendered = await improvedFn(source, pitchCurve, source.sampleRate, source.duration, opts)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
           currentCode = improvedCode  // track latest applied code for the final save
         } catch (evalErr) {

@@ -1,14 +1,14 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
-// Dev tool: returns the current synthesizeFromPitchCurve function source
+// Dev tool: returns the current transformVoiceToSynth function source
 export async function GET() {
   try {
     const filePath = join(process.cwd(), 'lib', 'pitch-detector.ts')
     const src = readFileSync(filePath, 'utf-8')
 
-    // Extract synthesizeFromPitchCurve function body
-    const startMarker = 'export async function synthesizeFromPitchCurve('
+    // Extract transformVoiceToSynth function body
+    const startMarker = 'export async function transformVoiceToSynth('
     const start = src.indexOf(startMarker)
     if (start === -1) return Response.json({ error: 'Function not found' }, { status: 404 })
 

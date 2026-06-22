@@ -1,56 +1,66 @@
 const ITER_TASKS = [
-  `ITERATION 1 — Smooth Portamento & Gradual Note Transitions:
-The single biggest flaw in basic synth converters is JARRING, ABRUPT note-to-note jumps — the
-oscillator teleports to the new pitch in one sample, which sounds mechanical and harsh.
-Real synths (Moog, Juno, DX7) glide smoothly using portamento with natural acceleration and
-deceleration: the pitch curve eases OUT of the old note and eases INTO the new one.
+  `ITERATION 1 — Spectral Transformation & Synth Filter Character:
+The goal is to make the original voice recording sound like it's being played through
+an analog synthesizer — NOT rebuilding from oscillators, but PROCESSING the actual audio.
+The original recording already has the right timing, dynamics, and feel. Your job is to
+reshape its harmonic spectrum to sound synthesized.
 
 IMPLEMENTATION RULES (do all of these):
-1. Use ONE persistent oscillator that runs for the entire duration — never stop/restart it.
-2. For each note-to-note transition, use exponentialRampToValueAtTime for the frequency glide.
-   Portamento time = clamp(abs(pitchJumpSemitones) * 18ms, 40ms, 280ms).
-   For legato (gapMs < 20): glide directly. For gaps > 20ms: drop gain to 0.05 briefly, then glide.
-3. Within each note, once the target pitch is reached, hold the frequency steady
-   (setValueAtTime, not a ramp) — vibrato is added in pass 2, don't add it here.
-4. Gain envelope per note: attack (use attackMs from noteStats), sustain at sustainLevel,
-   release using linearRampToValueAtTime (NOT exponential — zero is illegal for exponential).
+1. Use an OfflineAudioContext. Connect: src (originalBuf) → waveshaper → filter → gain → destination.
+2. Design a WaveShaper curve that emphasizes odd harmonics for a square/synth character.
+   The arctan formula: curve[i] = ((π + k) * x) / (π + k * |x|) where k controls saturation intensity.
+   Use k between 6–14 based on whether the recording has many notes (higher k = more aggression).
+3. The filter is the most important element — it defines the synth's personality:
+   - Use BiquadFilterNode type 'bandpass' or 'lowpass'
+   - Q value of 3–8 (higher Q = more resonance = more synthesizer character)
+   - Cutoff frequency derived from the median fundamental: midiToFreq(medianMidi) * 3 to midiToFreq(medianMidi) * 6
+4. Set gain.gain.value to compensate for the waveshaper's output level (usually 0.65–0.8).
+5. Use originalBuf.numberOfChannels for the OfflineAudioContext channel count.
 
-USE THE TRAJECTORY DATA: Look at the hz values between notes — do they jump or glide?
-Use gapMs in transitions to decide portamento speed. Negative gapMs means legato overlap.
-The result should sound like a continuous singing synthesizer, not a step sequencer.`,
+USE THE PITCH DATA: Calculate the median MIDI note from pitchCurve to set an appropriate
+filter cutoff. Higher-pitched recordings need a higher cutoff. Look at the note count and
+average duration to judge how much saturation is appropriate.`,
 
-  `ITERATION 2 — Vibrato & Envelope Shaping:
-Building on the portamento changes, now add:
-1. Vibrato: an LFO (low-frequency oscillator around 5-7 Hz, depth ~0.3-0.7 semitones) modulating
-   the main oscillator's frequency via a GainNode added to the frequency AudioParam. Apply it only
-   after a ~150ms delay on each note (onset without wobble feels more natural).
-2. Improve the amplitude envelope: use attackMs from noteStats for per-note attack time. Use
-   sustainLevel from noteStats for the sustain gain target. Use pitchVarianceCents as a proxy for
-   natural expressiveness — higher variance means the singer was expressive, so add more vibrato depth.
-3. A proper sustain level around sustainLevel * peak, and a gentle exponentialRampToValueAtTime for
-   release instead of a hard linearRamp. Reference the Juno-106 envelope shape.`,
+  `ITERATION 2 — Note-Synchronized Envelope & Gate:
+Building on the spectral transformation, now make it react to the actual musical phrases:
+1. Extract note events using extractNoteEvents(pitchCurve). For each note:
+   - Open the filter cutoff wider at note onset (attack), settle lower during sustain.
+   - Use filter.frequency.setValueAtTime() and linearRampToValueAtTime() to create
+     a per-note filter sweep: start at 1.5× the sustain cutoff, decay to sustain cutoff
+     over the note's attack time.
+2. Gate between notes: insert a gainNode before the waveshaper. Between notes where
+   gapMs > 30ms, ramp gain to 0.05 for the gap duration, then back to 1.0 on the next
+   note's start. This removes breath/room noise between notes.
+3. Preserve the original audio's natural amplitude variation — do NOT flatten dynamics.
+   The gain gating should only target the silences, not compress the notes themselves.
+4. Incorporate ALL improvements from iteration 1 (saturation curve, filter character, gain).`,
 
-  `ITERATION 3 — Harmonic Richness & Final Polish:
-Layer the sound for warmth: add a second oscillator one octave down at 25% gain and a third
-at a 5th above (1.5x frequency) at 12% gain, both sharing the same frequency automation and gain
-envelope as the primary oscillator. Apply a resonant lowpass filter (Q ≈ 1.2) with the cutoff
-frequency modulated slightly by an ADSR (opens wider on note attack, settles to filterCutoff).
-Cross-reference with classic analog polysynth textures (Prophet-5, OB-Xa): warmth comes from
-slightly detuned sub-layers, not from distortion. Ensure all timing is correct for OfflineAudioContext.
-Incorporate ALL improvements from iterations 1 and 2 into this single unified rewrite.`,
+  `ITERATION 3 — Harmonic Layering & Polish:
+Complete the transformation with harmonic richness and final polish:
+1. Add a ring modulator layer for metallic synth character:
+   - Create an OscillatorNode at 2× the median fundamental frequency.
+   - Create a GainNode with gain.value = 0 (this is the ring mod carrier).
+   - Connect: osc → ringGain; ringGain → modulatorGain.gain (AudioParam modulation).
+   - Connect: waveshaperOutput → modulatorGain → filter.
+   - Mix ring mod in at ~0.15 depth (subtle — adds presence without harsh metallic quality).
+2. Add a slight chorus effect by creating a second DelayNode (4–8ms) mixed at ~20% gain,
+   fed from the same waveshaper output. This adds stereo width and "analog" feel.
+3. Apply a gentle highpass filter (80Hz, Q=0.7) before the main filter to remove
+   low-frequency rumble from the recording that wasn't part of the voice.
+4. Incorporate ALL improvements from iterations 1 and 2 into this single unified rewrite.`,
 ]
 
 interface NoteEvent {
   start: number; end: number; midi: number; amplitude: number
 }
 interface NoteStats {
-  pitchVarianceCents: number  // how much pitch wobbles within the note (0 = steady, 50 = expressive vibrato)
-  sustainLevel: number        // fraction of peak amplitude during the last 30% of the note (0-1)
-  attackMs: number            // ms from note start to 80% of peak amplitude
+  pitchVarianceCents: number
+  sustainLevel: number
+  attackMs: number
 }
 interface Transition {
-  gapMs: number               // ms of silence between this note and the next (negative = legato overlap)
-  pitchJumpSemitones: number  // semitone distance (positive = up, negative = down)
+  gapMs: number
+  pitchJumpSemitones: number
 }
 interface TrajectoryPoint {
   t: number; hz: number | null; amp: number
@@ -70,7 +80,7 @@ interface TuneRequest {
   }
   iteration:    1 | 2 | 3
   previousIterations: { title: string; analysis: string; changes: string }[]
-  userFeedback?: string  // user's description of what still sounds wrong, entered between passes
+  userFeedback?: string
 }
 
 export async function POST(req: Request) {
@@ -85,7 +95,6 @@ export async function POST(req: Request) {
     return `${names[m % 12]}${Math.floor(m / 12) - 1}`
   }
 
-  // Full note list with per-note stats
   const noteList = pitchSummary.notes.map((n, i) => {
     const s = pitchSummary.noteStats?.[i]
     const statStr = s
@@ -94,17 +103,14 @@ export async function POST(req: Request) {
     return `  { start:${n.start.toFixed(2)}s end:${n.end.toFixed(2)}s midi:${n.midi}(${midiToName(n.midi)}) amp:${n.amplitude.toFixed(2)}${statStr} }`
   }).join('\n')
 
-  // Transition table
   const transitionList = (pitchSummary.transitions ?? []).map((t, i) => {
     const n0 = pitchSummary.notes[i], n1 = pitchSummary.notes[i + 1]
     if (!n0 || !n1) return ''
-    const dir = t.pitchJumpSemitones > 0 ? '↑' : t.pitchJumpSemitones < 0 ? '↓' : '→'
     const legato = t.gapMs < 0 ? 'LEGATO' : t.gapMs < 20 ? 'tight' : t.gapMs < 100 ? 'normal' : 'gap'
-    return `  note${i}→note${i + 1}: ${legato} gap=${t.gapMs}ms jump=${t.pitchJumpSemitones > 0 ? '+' : ''}${t.pitchJumpSemitones}st ${dir}`
+    return `  note${i}→note${i + 1}: ${legato} gap=${t.gapMs}ms jump=${t.pitchJumpSemitones > 0 ? '+' : ''}${t.pitchJumpSemitones}st`
   }).filter(Boolean).join('\n')
 
-  // Pitch trajectory as compact table (every point)
-  const traj = (pitchSummary.trajectory ?? [])
+  const traj = pitchSummary.trajectory ?? []
   const trajectoryStr = traj.map(p =>
     `${p.t}s:${p.hz != null ? p.hz.toFixed(0) + 'Hz' : 'silence'} amp=${p.amp.toFixed(2)}`
   ).join('  ')
@@ -113,26 +119,30 @@ export async function POST(req: Request) {
     ? `MIDI ${pitchSummary.pitchRangeMidi.min}–${pitchSummary.pitchRangeMidi.max} (${midiToName(pitchSummary.pitchRangeMidi.min)}–${midiToName(pitchSummary.pitchRangeMidi.max)})`
     : 'unknown'
 
-  // Summarize vibrato presence from note stats
+  const medianMidi = pitchSummary.notes.length > 0
+    ? pitchSummary.notes.slice().sort((a, b) => a.midi - b.midi)[Math.floor(pitchSummary.notes.length / 2)].midi
+    : 60
+  const medianHz = 440 * Math.pow(2, (medianMidi - 69) / 12)
+
   const avgVariance = pitchSummary.noteStats?.length
     ? Math.round(pitchSummary.noteStats.reduce((s, x) => s + x.pitchVarianceCents, 0) / pitchSummary.noteStats.length)
     : 0
-  const vibratoComment = avgVariance > 40
-    ? `HIGH pitch variance (avg ${avgVariance}¢) — singer uses significant vibrato/expression`
+  const expressionComment = avgVariance > 40
+    ? `HIGH expression (avg ${avgVariance}¢ variance) — use stronger saturation and filter movement`
     : avgVariance > 15
-    ? `MODERATE pitch variance (avg ${avgVariance}¢) — some natural vibrato present`
-    : `LOW pitch variance (avg ${avgVariance}¢) — relatively straight tones`
+    ? `MODERATE expression (avg ${avgVariance}¢ variance) — moderate saturation`
+    : `LOW expression (avg ${avgVariance}¢ variance) — gentle saturation, emphasize filter character`
 
-  // Transition style summary
   const transitions = pitchSummary.transitions ?? []
-  const legatoCount = transitions.filter(t => t.gapMs < 20).length
-  const gapCount    = transitions.filter(t => t.gapMs > 80).length
-  const transitionStyle = transitions.length === 0 ? 'no transitions'
-    : legatoCount > transitions.length * 0.6 ? 'mostly LEGATO — use portamento with minimal gain dip'
-    : gapCount    > transitions.length * 0.6 ? 'mostly STACCATO — brief silence gaps between notes'
-    : 'mixed legato/staccato'
+  const gapCount = transitions.filter(t => t.gapMs > 30).length
+  const gateComment = gapCount > 0
+    ? `${gapCount} of ${transitions.length} transitions have gaps >30ms — GATE these silences`
+    : 'mostly legato — gating not critical'
 
-  const prompt = `You are a professional synthesizer engineer improving a voice-to-synth algorithm in a browser-based DAW.
+  const prompt = `You are a professional audio engineer improving a voice-to-synth transformation algorithm in a browser-based DAW.
+
+This approach TRANSFORMS the original recording using Web Audio effects chains — it does NOT rebuild audio from oscillators.
+The original audio's timing, dynamics, and feel are preserved; only the harmonic character is reshaped to sound synthesized.
 
 CURRENT FUNCTION (JavaScript, will be eval()'d in Chrome):
 \`\`\`js
@@ -144,26 +154,26 @@ RECORDING CHARACTERISTICS:
 - Notes detected: ${pitchSummary.noteCount}
 - Average note duration: ${pitchSummary.avgDurationMs}ms
 - Pitch range: ${pitchRangeStr}
-- ${vibratoComment}
-- Transition style: ${transitionStyle}
+- Median fundamental: MIDI ${medianMidi} = ${medianHz.toFixed(0)}Hz → suggested filter base: ${(medianHz * 3).toFixed(0)}–${(medianHz * 6).toFixed(0)}Hz
+- ${expressionComment}
+- ${gateComment}
 
 NOTES WITH PER-NOTE ANALYSIS:
-(variance = pitch wobble in cents within note; sustain = amplitude fraction at end; attack = ms to reach 80% peak)
+(variance = pitch wobble; sustain = amplitude at note end; attack = ms to 80% peak)
 ${noteList}
 
 NOTE-TO-NOTE TRANSITIONS:
-${transitionList || '  (no transitions — single note recording)'}
+${transitionList || '  (no transitions — single note)'}
 
-PITCH TRAJECTORY (downsampled to ~80 points — use this to see actual glides, vibrato shape, silence gaps):
+PITCH TRAJECTORY (downsampled ~80 pts):
 ${trajectoryStr}
 
-${previousIterations.length > 0 ? `PREVIOUS PASSES (applied to the SAME original code above, not chained):
+${previousIterations.length > 0 ? `PREVIOUS PASSES (each started from original code above — do NOT chain on previous pass output):
 ${previousIterations.map((p, i) => `Pass ${i + 1} — ${p.title}\n  Tried: ${p.changes}\n  Result: ${p.analysis}`).join('\n')}
 
-Each pass starts fresh from the original code shown above — do NOT build on the previous pass's output code. Instead, write a NEW version of the function that incorporates ALL improvements from all passes simultaneously, avoiding any mistakes noted above.
-` : ''}${userFeedback.trim() ? `USER FEEDBACK (listened to the last result and reported):
+Write a NEW version incorporating ALL improvements from all passes simultaneously.
+` : ''}${userFeedback.trim() ? `USER FEEDBACK (highest priority — address this specifically):
 "${userFeedback.trim()}"
-This is the highest-priority input — address this specific complaint in the code you write. Treat it as the primary goal of this pass, in addition to the technical task below.
 
 ` : ''}TASK:
 ${ITER_TASKS[(iteration - 1)]}
@@ -173,33 +183,35 @@ Respond in EXACTLY this format — no other text before or after:
 <iteration>
 {
   "title": "Iteration ${iteration} — [brief descriptive title]",
-  "analysis": "[3-4 sentences: what sounds wrong now and why, referencing specific synthesis/music theory concepts. Reference specific numbers from the trajectory/stats above — e.g. 'the 45¢ pitch variance indicates active vibrato' or 'the 8ms gaps suggest legato phrasing']",
-  "changes": "[1-2 sentences: exactly what you changed and the expected sonic result]"
+  "analysis": "[3-4 sentences: what the current transformation does wrong, referencing the recording data. E.g. 'The filter Q of 2.5 is too low to produce synth character given the ${avgVariance}¢ variance — it sounds like a guitar pedal, not a Moog.' Reference specific numbers.]",
+  "changes": "[1-2 sentences: exactly what you changed in the processing chain and expected sonic result]"
 }
 </iteration>
 <code>
-async function synthesizeFromPitchCurve(pitchCurve, sampleRate, _rootNote, totalDuration, options) {
+async function transformVoiceToSynth(originalBuf, pitchCurve, sampleRate, totalDuration, options) {
   // your improved implementation here
 }
 </code>
 
 CRITICAL rules for the <code> block:
 - Plain JavaScript only — NO TypeScript type annotations
-- Function signature exactly: async function synthesizeFromPitchCurve(pitchCurve, sampleRate, _rootNote, totalDuration, options)
-- Helper functions available as parameters: extractNoteEvents(pitchCurve, minDuration?), midiToFreq(midi), freqToMidi(freq)
-- OfflineAudioContext, OscillatorNode, GainNode, BiquadFilterNode etc. are browser globals
+- Function signature exactly: async function transformVoiceToSynth(originalBuf, pitchCurve, sampleRate, totalDuration, options)
+- originalBuf is an AudioBuffer containing the original voice recording
+- Helper functions available: extractNoteEvents(pitchCurve, minDuration?), midiToFreq(midi), freqToMidi(freq)
+- OfflineAudioContext, AudioBufferSourceNode, WaveShaper, GainNode, BiquadFilterNode, OscillatorNode, DelayNode are browser globals
 - options object has: { waveform, filterCutoff, pitchShift, followPitch, followDynamics }
 - Must return Promise<AudioBuffer> via ctx.startRendering()
 - Do NOT include 'export' keyword
+- Use originalBuf.numberOfChannels for the OfflineAudioContext channel count
 - If no notes detected, throw new Error('No pitched notes detected — try singing more clearly')
 
-WEB AUDIO PITFALLS — avoid these or the output will be silent/broken:
-- NEVER call exponentialRampToValueAtTime(0, t) — zero is illegal for exponential ramps; use linearRampToValueAtTime(0, t) for fade-outs
+WEB AUDIO PITFALLS:
+- NEVER call exponentialRampToValueAtTime(0, t) — zero is illegal; use linearRampToValueAtTime for fade-outs
 - NEVER call exponentialRampToValueAtTime with a negative value
-- Always call osc.start() and osc.stop() — an oscillator that is never started produces silence
-- osc.stop() time must be > osc.start() time; if dur is tiny, use Math.max(0.05, dur)
-- For portamento: automate frequency with setValueAtTime then exponentialRampToValueAtTime between POSITIVE frequency values only
-- GainNode default value is 1.0 — always set gain explicitly before automation`
+- AudioBufferSourceNode: call src.start(0) exactly once; never restart
+- WaveShaper curve must be a Float32Array of length N, indexed from -1 to +1
+- GainNode default value is 1.0 — always set explicitly before automation
+- OscillatorNode must be started/stopped if used; osc.stop() time must be > osc.start() time`
 
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',

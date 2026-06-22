@@ -4,7 +4,7 @@ import { join } from 'path'
 // Dev tool: replaces synthesizeFromPitchCurve in pitch-detector.ts with AI-improved version
 export async function POST(req: Request) {
   const { code } = await req.json() as { code: string }
-  if (!code?.includes('synthesizeFromPitchCurve')) {
+  if (!code?.includes('transformVoiceToSynth')) {
     return Response.json({ error: 'Invalid function code' }, { status: 400 })
   }
 
@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const filePath = join(process.cwd(), 'lib', 'pitch-detector.ts')
     const src = readFileSync(filePath, 'utf-8')
 
-    const startMarker = 'export async function synthesizeFromPitchCurve('
+    const startMarker = 'export async function transformVoiceToSynth('
     const start = src.indexOf(startMarker)
     if (start === -1) return Response.json({ error: 'Function not found in source' }, { status: 404 })
 
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     }
 
     // Wrap as TypeScript export (the incoming code is JS — prepend export keyword)
-    const tsCode = code.startsWith('export ') ? code : code.replace('async function synthesizeFromPitchCurve', 'export async function synthesizeFromPitchCurve')
+    const tsCode = code.startsWith('export ') ? code : code.replace('async function transformVoiceToSynth', 'export async function transformVoiceToSynth')
 
     const updated = src.slice(0, start) + tsCode + src.slice(end)
     writeFileSync(filePath, updated, 'utf-8')
