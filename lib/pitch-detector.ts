@@ -168,82 +168,64 @@ export async function synthesizeFromPitchCurve(
   const sr  = sampleRate
   const len = Math.ceil(sr * totalDuration)
   if (len < 1) throw new Error('Recording too short to synthesize')
-  const ctx = new OfflineAudioContext(1, len, sr)
 
-  const osc = ctx.createOscillator()
-  osc.type = options.waveform
+  // Group the continuous pitch curve into discrete note events so each sung
+  // note (C#, A, etc.) becomes its own oscillator with a clean envelope,
+  // instead of one sliding oscillator that just modulates volume.
+  const notes = extractNoteEvents(pitchCurve, 0.04)
+  if (notes.length === 0) throw new Error('No pitched notes detected — try singing more clearly or increasing the recording gain')
 
-  const midiValues = pitchCurve
-    .filter(f => f.midi !== null)
-    .map(f => f.midi!)
-    .sort((a, b) => a - b)
-  const medianMidi = (midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60) + options.pitchShift
-  const medianFreq = midiToFreq(medianMidi)
+  const ctx   = new OfflineAudioContext(1, len, sr)
+  const shift = Math.pow(2, options.pitchShift / 12)
 
-  if (options.followPitch) {
-    // 1. Fill gaps in the pitch curve via linear interpolation between voiced
-    //    frames. Without this the oscillator holds the last pitch through
-    //    unvoiced segments and then jumps, sounding like discrete notes.
-    const filled = pitchCurve.map(f => ({ ...f }))
-    let lastVoicedIdx = -1
-    for (let i = 0; i < filled.length; i++) {
-      if (filled[i].freq !== null) {
-        if (lastVoicedIdx >= 0 && i - lastVoicedIdx > 1) {
-          const fromFreq = filled[lastVoicedIdx].freq!
-          const toFreq   = filled[i].freq!
-          for (let j = lastVoicedIdx + 1; j < i; j++) {
-            const t = (j - lastVoicedIdx) / (i - lastVoicedIdx)
-            filled[j] = { ...filled[j], freq: fromFreq + (toFreq - fromFreq) * t }
-          }
-        }
-        lastVoicedIdx = i
-      }
-    }
-
-    // 2. Schedule one pitch target per hop so the oscillator stays in sync.
-    //    Use the actual detected frequency (float) rather than rounded MIDI so
-    //    microtonal glides between notes are smooth and accurate.
-    const hopSec = filled.length > 1 ? (filled[1].time - filled[0].time) : 0.012
-    const shift  = Math.pow(2, options.pitchShift / 12)
-    osc.frequency.setValueAtTime(medianFreq * shift, 0)
-    for (const frame of filled) {
-      if (frame.freq !== null) {
-        osc.frequency.linearRampToValueAtTime(frame.freq * shift, frame.time + hopSec)
-      }
-    }
-  } else {
-    osc.frequency.setValueAtTime(medianFreq, 0)
-  }
-
+  // Single shared lowpass filter → destination
   const filter = ctx.createBiquadFilter()
   filter.type = 'lowpass'
-  filter.frequency.setValueAtTime(options.filterCutoff, 0)
-  filter.Q.setValueAtTime(0.6, 0)
+  filter.frequency.value = options.filterCutoff
+  filter.Q.value = 0.5
+  filter.connect(ctx.destination)
 
-  const gain = ctx.createGain()
-  gain.gain.setValueAtTime(0, 0)
+  // Median MIDI (used when followPitch is off — plays all notes at one pitch)
+  const midiValues = pitchCurve.filter(f => f.midi !== null).map(f => f.midi!).sort((a, b) => a - b)
+  const medianMidi = midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60
 
-  osc.connect(filter)
-  filter.connect(gain)
-  gain.connect(ctx.destination)
-  osc.start(0)
-  osc.stop(totalDuration + 0.05)
+  for (const note of notes) {
+    const midi = options.followPitch ? note.midi : medianMidi
+    const freq = midiToFreq(midi) * shift
+    const dur  = Math.max(0.04, note.end - note.start)
+    const t0   = note.start
+    const peak = options.followDynamics ? Math.min(0.88, note.amplitude * 0.9) : 0.72
 
-  if (options.followDynamics) {
-    // Normalize against peak amplitude so quiet recordings still sound full.
-    // 30ms ramps between frames prevent zipper noise on rapid amplitude changes.
-    const peakAmp = Math.max(...pitchCurve.map(f => f.amplitude), 0.001)
-    gain.gain.setValueAtTime(0, 0)
-    for (const frame of pitchCurve) {
-      const target = Math.min(0.9, (frame.amplitude / peakAmp) * 0.85)
-      gain.gain.linearRampToValueAtTime(target, frame.time + 0.03)
-    }
-    gain.gain.linearRampToValueAtTime(0, totalDuration)
-  } else {
-    // Constant level — single 20ms fade in and out.
-    gain.gain.linearRampToValueAtTime(0.72, 0.02)
-    gain.gain.setValueAtTime(0.72, Math.max(0.02, totalDuration - 0.02))
-    gain.gain.linearRampToValueAtTime(0, totalDuration)
+    // Short attack so notes feel punchy; release scales with note length
+    const attack  = Math.min(0.012, dur * 0.08)
+    const release = Math.min(0.07, dur * 0.18)
+
+    // Primary oscillator
+    const osc = ctx.createOscillator()
+    osc.type = options.waveform
+    osc.frequency.value = freq
+
+    // Detuned unison copy (+7 cents) for slight thickness without losing pitch clarity
+    const osc2 = ctx.createOscillator()
+    osc2.type = options.waveform
+    osc2.frequency.value = freq * Math.pow(2, 0.07 / 12)
+
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0, t0)
+    g.gain.linearRampToValueAtTime(peak, t0 + attack)
+    g.gain.setValueAtTime(peak * 0.88, t0 + dur - release)
+    g.gain.linearRampToValueAtTime(0, t0 + dur)
+
+    const g2 = ctx.createGain()
+    g2.gain.value = 0.3  // unison voice at 30%
+
+    osc.connect(g)
+    osc2.connect(g2)
+    g2.connect(g)
+    g.connect(filter)
+
+    osc.start(t0); osc.stop(t0 + dur + 0.01)
+    osc2.start(t0); osc2.stop(t0 + dur + 0.01)
   }
 
   return ctx.startRendering()
@@ -255,24 +237,42 @@ export async function synthesizeFromPitchCurve(
 
 export interface NoteEvent { start: number; end: number; midi: number; amplitude: number }
 
-export function extractNoteEvents(pitchCurve: PitchFrame[], minDuration = 0.06): NoteEvent[] {
+export function extractNoteEvents(pitchCurve: PitchFrame[], minDuration = 0.04): NoteEvent[] {
   if (pitchCurve.length < 2) return []
   const events: NoteEvent[] = []
-  let noteStart = -1, noteMidi = -1, ampSum = 0, ampCount = 0
+  let noteStart = -1, noteMidi = -1, ampSum = 0, ampCount = 0, silenceFrames = 0
+
+  // Allow up to ~60ms of silence within a note before splitting — prevents
+  // one sung note from breaking into fragments on slightly breathy frames.
+  const hopSec     = pitchCurve.length > 1 ? pitchCurve[1].time - pitchCurve[0].time : 0.012
+  const maxSilence = Math.ceil(0.06 / hopSec)
 
   const flush = (endTime: number) => {
     if (noteStart >= 0 && endTime - noteStart >= minDuration)
       events.push({ start: noteStart, end: endTime, midi: noteMidi, amplitude: Math.min(0.9, (ampSum / ampCount) * 0.9) })
-    noteStart = -1
+    noteStart = -1; silenceFrames = 0
   }
 
   for (const frame of pitchCurve) {
-    if (frame.midi !== null && frame.amplitude > 0.05) {
+    if (frame.midi !== null && frame.amplitude > 0.04) {
       const r = Math.round(frame.midi)
-      if (noteStart < 0) { noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1 }
-      else if (Math.abs(r - noteMidi) <= 1) { ampSum += frame.amplitude; ampCount++ }
-      else { flush(frame.time); noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1 }
-    } else { flush(frame.time) }
+      if (noteStart < 0) {
+        noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1; silenceFrames = 0
+      } else if (Math.abs(r - noteMidi) <= 1) {
+        // Same note (within ±1 semitone): extend it
+        ampSum += frame.amplitude; ampCount++; silenceFrames = 0
+      } else {
+        // Different pitch: new note
+        flush(frame.time); noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1
+      }
+    } else {
+      // Silence/unvoiced frame
+      if (noteStart >= 0) {
+        silenceFrames++
+        if (silenceFrames > maxSilence) flush(frame.time)
+        // else: swallow the gap — might be a short breath between syllables
+      }
+    }
   }
   flush(pitchCurve[pitchCurve.length - 1].time + 0.02)
   return events
