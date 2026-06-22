@@ -1498,13 +1498,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   interface SynthTunerIteration { title: string; analysis: string; changes: string }
   interface SynthTunerState {
     clipId:     string
-    status:     'running' | 'done' | 'error'
+    status:     'running' | 'waiting' | 'done' | 'error'
     iteration:  number
     iterations: SynthTunerIteration[]
     preAiBuf:   AudioBuffer | null  // snapshot before AI touched the clip
     errorMsg?:  string
   }
   const [synthTuner, setSynthTuner] = useState<SynthTunerState | null>(null)
+  const synthResumeRef       = useRef<((feedback: string) => void) | null>(null)
+  const synthCancelledRef    = useRef(false)
+  const synthFeedbackInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [bpm, setBpm] = useState<number | null>(null)
   const [duration, setDuration] = useState(8)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
@@ -1879,16 +1882,20 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
     const originalCode = currentCode  // never changes — each pass starts from this
     const completedIterations: SynthTunerIteration[] = []
+    const userFeedbacks: string[] = []  // indexed by iteration-1 (feedback collected before that iteration)
+    synthCancelledRef.current = false
 
     for (let i = 1 as 1 | 2 | 3; i <= 3; i++) {
-      setSynthTuner(prev => prev ? { ...prev, iteration: i } : null)
+      if (synthCancelledRef.current) break
+      setSynthTuner(prev => prev ? { ...prev, status: 'running', iteration: i } : null)
+      const userFeedback = userFeedbacks[i - 2] ?? ''  // feedback from user after seeing pass i-1
       try {
         const res = await fetch('/api/synth-tune', {
           method:  'POST',
           headers: { 'content-type': 'application/json' },
           // Always the original code — don't chain on potentially broken output.
           // Pass previous iterations so Claude learns what was tried.
-          body:    JSON.stringify({ code: originalCode, pitchSummary, iteration: i, previousIterations: completedIterations }),
+          body:    JSON.stringify({ code: originalCode, pitchSummary, iteration: i, previousIterations: completedIterations, userFeedback }),
         })
         if (!res.ok) {
           const errBody = await res.json().catch(() => null) as { error?: string } | null
@@ -1915,6 +1922,17 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           currentCode = improvedCode  // track latest applied code for the final save
         } catch (evalErr) {
           console.warn(`[SynthTuner] Iteration ${i} eval failed:`, evalErr)
+        }
+
+        // Between iterations: pause and wait for user feedback
+        if (i < 3 && !synthCancelledRef.current) {
+          const feedback = await new Promise<string>(resolve => {
+            synthResumeRef.current = resolve
+            setSynthTuner(prev => prev ? { ...prev, status: 'waiting' } : null)
+          })
+          synthResumeRef.current = null
+          if (synthCancelledRef.current) break
+          userFeedbacks.push(feedback)
         }
       } catch (fetchErr) {
         console.warn(`[SynthTuner] Iteration ${i} fetch failed:`, fetchErr)
@@ -4257,6 +4275,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             </div>
             <button
               onClick={() => {
+                synthCancelledRef.current = true
+                synthResumeRef.current?.('')  // unblock any waiting Promise
                 if (synthTuner.preAiBuf && synthTuner.iterations.length > 0) {
                   setAudioClips(prev => prev.map(c => c.id === synthTuner.clipId ? { ...c, buf: synthTuner.preAiBuf! } : c))
                 }
@@ -4293,6 +4313,41 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </div>
             </div>
           ))}
+
+          {/* User feedback input between iterations */}
+          {synthTuner.status === 'waiting' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 11, color: '#a78bfa', fontWeight: 600 }}>
+                Pass {synthTuner.iterations.length} done — listen and describe what still sounds wrong:
+              </div>
+              <textarea
+                ref={synthFeedbackInputRef}
+                placeholder="e.g. still jarring between notes, vibrato too fast, sounds too thin…"
+                rows={2}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#0e0e1a', border: '1px solid rgba(139,92,246,0.35)',
+                  borderRadius: 6, padding: '6px 8px',
+                  color: '#e5e7eb', fontSize: 11, fontFamily: 'inherit',
+                  resize: 'none', outline: 'none',
+                }}
+              />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => {
+                    const feedback = synthFeedbackInputRef.current?.value ?? ''
+                    if (synthFeedbackInputRef.current) synthFeedbackInputRef.current.value = ''
+                    synthResumeRef.current?.(feedback)
+                  }}
+                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.45)', color: '#a78bfa', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                >Next Pass →</button>
+                <button
+                  onClick={() => synthResumeRef.current?.('')}
+                  style={{ padding: '5px 10px', borderRadius: 6, background: 'transparent', border: '1px solid rgba(107,114,128,0.4)', color: '#6b7280', fontSize: 11, cursor: 'pointer' }}
+                >Skip</button>
+              </div>
+            </div>
+          )}
 
           {/* Spinner between iterations */}
           {synthTuner.status === 'running' && synthTuner.iterations.length > 0 && synthTuner.iterations.length < 3 && (

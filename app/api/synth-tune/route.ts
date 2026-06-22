@@ -1,13 +1,23 @@
 const ITER_TASKS = [
-  `ITERATION 1 — Portamento & Legato Transitions:
-The most common flaw in basic synth converters is abrupt note-to-note jumps because each note
-spawns a fresh oscillator at a fixed frequency. Real synths (Moog, Juno, DX7) use portamento:
-the oscillator frequency glides continuously from the previous note to the next using
-exponentialRampToValueAtTime. Use a SINGLE shared oscillator whose frequency is automated across
-all notes, with a gain envelope that shapes each note onset and release. Silence gaps between notes
-should briefly fade the gain rather than stop/restart the oscillator.
-USE THE TRAJECTORY DATA: Look at the hz values between notes — do they jump or glide? Use gapMs in
-transitions to decide portamento speed. Negative gapMs means legato overlap.`,
+  `ITERATION 1 — Smooth Portamento & Gradual Note Transitions:
+The single biggest flaw in basic synth converters is JARRING, ABRUPT note-to-note jumps — the
+oscillator teleports to the new pitch in one sample, which sounds mechanical and harsh.
+Real synths (Moog, Juno, DX7) glide smoothly using portamento with natural acceleration and
+deceleration: the pitch curve eases OUT of the old note and eases INTO the new one.
+
+IMPLEMENTATION RULES (do all of these):
+1. Use ONE persistent oscillator that runs for the entire duration — never stop/restart it.
+2. For each note-to-note transition, use exponentialRampToValueAtTime for the frequency glide.
+   Portamento time = clamp(abs(pitchJumpSemitones) * 18ms, 40ms, 280ms).
+   For legato (gapMs < 20): glide directly. For gaps > 20ms: drop gain to 0.05 briefly, then glide.
+3. Within each note, once the target pitch is reached, hold the frequency steady
+   (setValueAtTime, not a ramp) — vibrato is added in pass 2, don't add it here.
+4. Gain envelope per note: attack (use attackMs from noteStats), sustain at sustainLevel,
+   release using linearRampToValueAtTime (NOT exponential — zero is illegal for exponential).
+
+USE THE TRAJECTORY DATA: Look at the hz values between notes — do they jump or glide?
+Use gapMs in transitions to decide portamento speed. Negative gapMs means legato overlap.
+The result should sound like a continuous singing synthesizer, not a step sequencer.`,
 
   `ITERATION 2 — Vibrato & Envelope Shaping:
 Building on the portamento changes, now add:
@@ -60,6 +70,7 @@ interface TuneRequest {
   }
   iteration:    1 | 2 | 3
   previousIterations: { title: string; analysis: string; changes: string }[]
+  userFeedback?: string  // user's description of what still sounds wrong, entered between passes
 }
 
 export async function POST(req: Request) {
@@ -67,7 +78,7 @@ export async function POST(req: Request) {
   if (!apiKey) return Response.json({ error: 'No API key' }, { status: 503 })
 
   const body = await req.json() as TuneRequest
-  const { code, pitchSummary, iteration, previousIterations = [] } = body
+  const { code, pitchSummary, iteration, previousIterations = [], userFeedback = '' } = body
 
   const midiToName = (m: number) => {
     const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
@@ -150,6 +161,10 @@ ${previousIterations.length > 0 ? `PREVIOUS PASSES (applied to the SAME original
 ${previousIterations.map((p, i) => `Pass ${i + 1} — ${p.title}\n  Tried: ${p.changes}\n  Result: ${p.analysis}`).join('\n')}
 
 Each pass starts fresh from the original code shown above — do NOT build on the previous pass's output code. Instead, write a NEW version of the function that incorporates ALL improvements from all passes simultaneously, avoiding any mistakes noted above.
+` : ''}${userFeedback.trim() ? `USER FEEDBACK (listened to the last result and reported):
+"${userFeedback.trim()}"
+This is the highest-priority input — address this specific complaint in the code you write. Treat it as the primary goal of this pass, in addition to the technical task below.
+
 ` : ''}TASK:
 ${ITER_TASKS[(iteration - 1)]}
 
