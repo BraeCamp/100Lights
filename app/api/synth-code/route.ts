@@ -1,12 +1,8 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
-// Dev-only: returns the current synthesizeFromPitchCurve function source
+// Dev tool: returns the current synthesizeFromPitchCurve function source
 export async function GET() {
-  if (process.env.NODE_ENV !== 'development') {
-    return Response.json({ error: 'Dev only' }, { status: 403 })
-  }
-
   try {
     const filePath = join(process.cwd(), 'lib', 'pitch-detector.ts')
     const src = readFileSync(filePath, 'utf-8')

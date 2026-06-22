@@ -38,10 +38,6 @@ interface TuneRequest {
 }
 
 export async function POST(req: Request) {
-  if (process.env.NODE_ENV !== 'development') {
-    return Response.json({ error: 'Dev only' }, { status: 403 })
-  }
-
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return Response.json({ error: 'No API key' }, { status: 503 })
 

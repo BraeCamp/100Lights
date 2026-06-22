@@ -1,12 +1,8 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
-// Dev-only: replaces synthesizeFromPitchCurve in pitch-detector.ts with AI-improved version
+// Dev tool: replaces synthesizeFromPitchCurve in pitch-detector.ts with AI-improved version
 export async function POST(req: Request) {
-  if (process.env.NODE_ENV !== 'development') {
-    return Response.json({ error: 'Dev only' }, { status: 403 })
-  }
-
   const { code } = await req.json() as { code: string }
   if (!code?.includes('synthesizeFromPitchCurve')) {
     return Response.json({ error: 'Invalid function code' }, { status: 400 })
