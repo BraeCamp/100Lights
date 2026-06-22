@@ -52,6 +52,9 @@ import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX, Send } from 'lucide-react'
 import Tooltip from './Tooltip'
+import type { MidiMapping, MidiMappingTarget } from '@/lib/midi-mapping'
+import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping'
+import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -61,6 +64,7 @@ import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
+import { createSidechainProcessor } from '@/lib/sidechain'
 import type { SceneClip, SessionLane } from './SessionView'
 const SCENE_COUNT = 8
 const PianoRoll               = lazy(() => import('./PianoRoll'))
@@ -71,6 +75,13 @@ const CommandPalette          = lazy(() => import('./CommandPalette'))
 const SpectrumAnalyzer        = lazy(() => import('./SpectrumAnalyzer'))
 const Arpeggiator             = lazy(() => import('./Arpeggiator'))
 const InspectorPanel          = lazy(() => import('./InspectorPanel'))
+const CompEditor              = lazy(() => import('./CompEditor'))
+const SamplerEditor           = lazy(() => import('./SamplerEditor'))
+const WavetableSynthEditor    = lazy(() => import('./WavetableSynthEditor'))
+const FMSynthEditor           = lazy(() => import('./FMSynthEditor'))
+import type { CompGroup } from '@/lib/comping'
+import { renderComp } from '@/lib/comping'
+import { addTakeToGroup } from '@/lib/loop-recorder'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -798,11 +809,14 @@ const FX_PARAM_SPECS: Record<LaneEffectType, FxParamSpec[]> = {
   beatrepeat: [{ key: 'grid', label: 'Grid', min: 0.03125, max: 1, step: 0.03125, decimals: 3 }, { key: 'chance', label: 'Prob', min: 0, max: 1, step: 0.01, decimals: 2 }, { key: 'pitch', label: 'Pitch', min: -12, max: 12, step: 1, decimals: 0 }, { key: 'feedback', label: 'FB', min: 0, max: 0.9, step: 0.01, decimals: 2 }],
 }
 
-function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange }: {
+function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange, sidechainLane, allLaneTypes, onSidechainChange }: {
   fx: LaneEffect
   onToggleEnabled: () => void
   onRemove: () => void
   onParamChange: (key: string, val: number) => void
+  sidechainLane?: string
+  allLaneTypes?: string[]
+  onSidechainChange?: (val: string) => void
 }) {
   const specs = FX_PARAM_SPECS[fx.type]
 
@@ -843,6 +857,21 @@ function FxSlot({ fx, onToggleEnabled, onRemove, onParamChange }: {
           </div>
         ))}
       </div>
+      {/* Sidechain select — only shown for comp effects with available lanes */}
+      {fx.type === 'comp' && allLaneTypes && allLaneTypes.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 7, color: 'var(--text-muted)', marginBottom: 2, letterSpacing: '0.04em' }}>Sidechain</div>
+          <select
+            value={sidechainLane ?? ''}
+            onChange={e => { e.stopPropagation(); onSidechainChange?.(e.target.value) }}
+            onClick={e => e.stopPropagation()}
+            style={{ fontSize: 8, background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 2px', width: '100%', cursor: 'pointer' }}
+          >
+            <option value=''>Off</option>
+            {allLaneTypes.map(lt => <option key={lt} value={lt}>{lt}</option>)}
+          </select>
+        </div>
+      )}
     </div>
   )
 }
@@ -916,9 +945,13 @@ interface LaneProps {
   inputSource?: string
   onToggleInput?: () => void
   onOpenInputPicker?: () => void
+  // Sidechain routing
+  allLaneTypes?: string[]
+  sidechains?: Record<string, string>  // key: effectId, value: source lane type
+  onSidechainChange?: (effectId: string, val: string) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -1354,7 +1387,10 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
             <FxSlot key={fx.id} fx={fx}
               onToggleEnabled={() => onFxToggleEnabled(fx.id)}
               onRemove={() => onFxRemove(fx.id)}
-              onParamChange={(key, val) => onFxParamChange(fx.id, key, val)} />
+              onParamChange={(key, val) => onFxParamChange(fx.id, key, val)}
+              sidechainLane={sidechains?.[fx.id] ?? ''}
+              allLaneTypes={allLaneTypes?.filter(lt => lt !== (type as string))}
+              onSidechainChange={val => onSidechainChange?.(fx.id, val)} />
           ))}
           {/* Rnd button */}
           {effects.length > 0 && (
@@ -1712,6 +1748,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   }
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [compGroups, setCompGroups] = useState<CompGroup[]>([])
+  const [openCompGroup, setOpenCompGroup] = useState<string | null>(null)
   const clipboardRef = useRef<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
   type BeatSensitivity = 'low' | 'medium' | 'high'
@@ -1790,6 +1828,42 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
 
     const notes = extractNoteEvents(pitchCurve)
+
+    // Per-note pitch statistics derived from raw pitch frames
+    const noteStats = notes.map(n => {
+      const frames = pitchCurve.filter(f => f.time >= n.start && f.time <= n.end && f.freq != null)
+      if (frames.length < 2) return { pitchVarianceCents: 0, sustainLevel: 1, attackMs: 0 }
+      const freqs = frames.map(f => f.freq!)
+      const avgFreq = freqs.reduce((s, x) => s + x, 0) / freqs.length
+      const cents = freqs.map(f => 1200 * Math.log2(f / avgFreq))
+      const pitchVarianceCents = Math.round(Math.sqrt(cents.reduce((s, c) => s + c * c, 0) / cents.length))
+      // Amplitude: peak and sustain (last 30% of note frames)
+      const amps = frames.map(f => f.amplitude)
+      const peakAmp = Math.max(...amps)
+      const tail = amps.slice(Math.max(0, Math.floor(amps.length * 0.7)))
+      const sustainLevel = peakAmp > 0 ? Math.round((tail.reduce((s, x) => s + x, 0) / tail.length / peakAmp) * 100) / 100 : 1
+      // Attack: time from note start to first frame at 80% of peak amplitude
+      const attackFrame = frames.findIndex(f => f.amplitude >= peakAmp * 0.8)
+      const attackMs = attackFrame >= 0 ? Math.round((frames[attackFrame].time - n.start) * 1000) : 0
+      return { pitchVarianceCents, sustainLevel, attackMs }
+    })
+
+    // Note transitions: gap between consecutive notes and pitch jump
+    const transitions = notes.slice(1).map((n, i) => ({
+      gapMs: Math.round((n.start - notes[i].end) * 1000),
+      pitchJumpSemitones: +(n.midi - notes[i].midi).toFixed(1),
+    }))
+
+    // Downsampled pitch trajectory: ~80 points covering the whole recording
+    const step = Math.max(1, Math.floor(pitchCurve.length / 80))
+    const trajectory = pitchCurve
+      .filter((_, i) => i % step === 0)
+      .map(f => ({
+        t:   +f.time.toFixed(2),
+        hz:  f.freq  != null ? +f.freq.toFixed(1) : null,
+        amp: +f.amplitude.toFixed(2),
+      }))
+
     const pitchSummary = {
       totalDuration: source.duration,
       noteCount:     notes.length,
@@ -1797,7 +1871,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       pitchRangeMidi: notes.length > 0
         ? { min: Math.min(...notes.map(n => n.midi)), max: Math.max(...notes.map(n => n.midi)) }
         : null,
-      notes: notes.slice(0, 15),
+      notes,          // all notes
+      noteStats,      // per-note pitch variance, sustain level, attack speed
+      transitions,    // gap/jump between consecutive notes
+      trajectory,     // downsampled pitch+amplitude curve for the full recording
     }
 
     const originalCode = currentCode  // never changes — each pass starts from this
@@ -1937,12 +2014,56 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     })
   }
 
+  // ── Sidechain routing: key = `${laneType}:${effectId}`, value = source lane type or '' ───
+  const [laneSidechains, setLaneSidechains] = useState<Record<string, string>>({})
+  const laneSidechainsRef = useRef<Record<string, string>>({})
+  useEffect(() => { laneSidechainsRef.current = laneSidechains }, [laneSidechains])
+
+  // ── MIDI CC mapping ───────────────────────────────────────────────────────
+  const [midiMappings,  setMidiMappings]  = useState<MidiMapping[]>([])
+  const [midiLearning,  setMidiLearning]  = useState<MidiMappingTarget | null>(null)
+  const [showMidiPanel, setShowMidiPanel] = useState(false)
+  const [lastMappedId,  setLastMappedId]  = useState<string | null>(null)
+  const midiMappingsRef  = useRef<MidiMapping[]>([])
+  const midiLearningRef  = useRef<MidiMappingTarget | null>(null)
+  useEffect(() => { midiMappingsRef.current = midiMappings },  [midiMappings])
+  useEffect(() => { midiLearningRef.current = midiLearning },  [midiLearning])
+
+  function applyMappingTarget(target: MidiMappingTarget, value: number) {
+    switch (target.type) {
+      case 'masterVolume': setMasterVolume(Math.max(0, Math.min(2, value))); break
+      case 'bpm': setBpm(Math.max(20, Math.min(300, Math.round(value)))); setMasterBpm(Math.max(20, Math.min(300, Math.round(value)))); break
+      case 'laneLevel':  setLaneLevels(prev => ({ ...prev, [target.laneType]: Math.max(0, Math.min(1, value)) })); break
+      case 'lanePan':    setLanePans(prev => ({ ...prev, [target.laneType]: Math.max(-1, Math.min(1, value)) })); break
+      case 'laneReverb': setLaneReverb(prev => ({ ...prev, [target.laneType]: Math.max(0, Math.min(1, value)) })); break
+      case 'laneDelay':  setLaneDelay(prev => ({ ...prev, [target.laneType]: Math.max(0, Math.min(1, value)) })); break
+      case 'fxParam':    updateLaneEffectParam(target.laneType, target.effectId, target.paramKey, value); break
+      case 'automPoint':
+        setAutomLanes(prev => prev.map(a => {
+          if (a.id !== target.automLaneId) return a
+          const near = a.points.find(p => Math.abs(p.time - playhead) < 0.05)
+          if (near) return { ...a, points: a.points.map(p => p.id === near.id ? { ...p, value } : p) }
+          return { ...a, points: [...a.points, { id: crypto.randomUUID(), time: playhead, value }].sort((x, y) => x.time - y.time) }
+        }))
+        break
+    }
+  }
+
+  function handleMidiExport() {
+    const json = JSON.stringify(serializeMappings({ mappings: midiMappings, learningTarget: null }), null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a'); a.href = url; a.download = 'midi-mappings.json'
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
+
   // ── Live MIDI input — routes to all midi-sourced input lanes ──────────────
   const midiAccessRef  = useRef<MIDIAccess | null>(null)
   const midiArmed      = Array.from(inputLanes).some(l => inputSource[l] === 'midi')
 
   useEffect(() => {
-    if (!midiArmed) {
+    if (!midiArmed && midiMappings.length === 0) {
       if (midiAccessRef.current) {
         for (const inp of midiAccessRef.current.inputs.values()) inp.onmidimessage = null
       }
@@ -1953,7 +2074,35 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       midiAccessRef.current = access
       const handler = (e: MIDIMessageEvent) => {
         if (!e.data) return
-        const status = e.data[0]; const note = e.data[1]; const velocity = e.data[2]
+        const status = e.data[0]
+
+        // CC messages (0xB0–0xBF) — handle MIDI learn and parameter control
+        if (status >= 0xB0 && status <= 0xBF) {
+          const channel = (status - 0xB0) + 1
+          const cc      = e.data[1]
+          const value   = e.data[2]
+          if (midiLearningRef.current) {
+            const newMapping: MidiMapping = {
+              id: crypto.randomUUID(), channel, cc,
+              target: midiLearningRef.current,
+              min: 0, max: 1, curve: 'linear',
+              label: targetLabel(midiLearningRef.current),
+            }
+            setMidiMappings(prev => [...prev, newMapping])
+            setLastMappedId(newMapping.id)
+            setMidiLearning(null)
+          } else {
+            for (const mapping of midiMappingsRef.current) {
+              if ((mapping.channel === 'any' || mapping.channel === channel) && mapping.cc === cc) {
+                applyMappingTarget(mapping.target, applyCCValue(value, mapping))
+              }
+            }
+          }
+          return
+        }
+
+        // Note-on messages (0x90–0x9F)
+        const note = e.data[1]; const velocity = e.data[2]
         if ((status & 0xF0) !== 0x90 || velocity === 0) return
         const vel = velocity / 127
         const midiTargets = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] === 'midi')
@@ -1975,11 +2124,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         for (const inp of midiAccessRef.current.inputs.values()) inp.onmidimessage = null
       }
     }
-  }, [midiArmed]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [midiArmed, midiMappings.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── View mode: Arrangement vs Session ────────────────────────────────────
   const [viewMode, setViewMode] = useState<'arrangement' | 'session'>('arrangement')
   const [pianoRollLane, setPianoRollLane] = useState<BeatType | null>(null)
+  const [samplerLane, setSamplerLane] = useState<string | null>(null)
+  const [wavetableLane, setWavetableLane] = useState<string | null>(null)
+  const [fmSynthLane, setFmSynthLane] = useState<string | null>(null)
+  // Patch state for instrument editors
+  const [samplerPatch, setSamplerPatch] = useState<import('@/lib/sampler-engine').SamplerPatch | null>(null)
+  const [wavetablePatch, setWavetablePatch] = useState<import('@/lib/wavetable-synth').WavetablePatch | null>(null)
+  const [fmPatch, setFmPatch] = useState<import('@/lib/fm-synth').FMPatch | null>(null)
   const [stepSeqLane, setStepSeqLane] = useState<BeatType | null>(null)
   const [chordBuilderLane, setChordBuilderLane] = useState<BeatType | null>(null)
 
@@ -2131,6 +2287,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     if (newClips.length > 0) {
       setAudioClips(prev => [...prev, ...newClips])
       setDuration(maxEnd)
+      // Auto-group loop-recorded takes into comp groups when AB loop is active
+      if (abLoopEnabledRef.current && abLoopRef.current) {
+        const loopStart = abLoopRef.current.start
+        const loopEnd   = abLoopRef.current.end
+        newClips.forEach(clip => {
+          setCompGroups(prev => addTakeToGroup(prev, clip, loopStart, loopEnd))
+        })
+      }
     }
   }
 
@@ -2881,6 +3045,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
     const laneInputs    = new Map<string, GainNode>()
     const laneAutoGains = new Map<string, GainNode>()
+    const sidechainConnections: Array<{ keyInput: AudioNode; sourceLaneType: string }> = []
     const lanePanners   = new Map<string, StereoPannerNode>()
 
     function getLaneInput(laneType: string): GainNode {
@@ -2893,6 +3058,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       let chainOut: AudioNode = autoGain
       for (const fx of laneEffectsRef.current[laneType] ?? []) {
         if (!fx.enabled) continue
+        // comp with sidechain: use envelope-follower VCA instead of DynamicsCompressor
+        if (fx.type === 'comp') {
+          const scSrc = laneSidechainsRef.current[`${laneType}:${fx.id}`] ?? ''
+          if (scSrc) {
+            const proc = createSidechainProcessor(ctx, {
+              threshold: fx.params.threshold ?? -24,
+              ratio:     fx.params.ratio     ?? 4,
+              attack:    fx.params.attack    ?? 0.003,
+              release:   fx.params.release   ?? 0.25,
+            })
+            sidechainConnections.push({ keyInput: proc.keyInput, sourceLaneType: scSrc })
+            chainOut.connect(proc.signalIn)
+            chainOut = proc.signalOut
+            continue
+          }
+        }
         const nodes = buildFxNodes(fx)
         if (nodes) { chainOut.connect(nodes.in); chainOut = nodes.out }
       }
@@ -3153,6 +3334,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           if (pt.time <= startFrom) continue
           pan.pan.linearRampToValueAtTime(Math.max(-1, Math.min(1, pt.value)), now + (pt.time - startFrom))
         }
+      }
+    }
+
+    // ── Sidechain tap connections ─────────────────────────────────────────────
+    if (sidechainConnections.length > 0) {
+      for (const { sourceLaneType } of sidechainConnections) {
+        if (!laneInputs.has(sourceLaneType)) getLaneInput(sourceLaneType)
+      }
+      const sidechainTaps = new Map<string, GainNode>()
+      for (const { keyInput, sourceLaneType } of sidechainConnections) {
+        if (!sidechainTaps.has(sourceLaneType)) {
+          const tap = ctx.createGain(); tap.gain.value = 1
+          laneInputs.get(sourceLaneType)!.connect(tap)
+          sidechainTaps.set(sourceLaneType, tap)
+        }
+        sidechainTaps.get(sourceLaneType)!.connect(keyInput)
       }
     }
 
@@ -3842,6 +4039,115 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   }
 
+  async function exportMasterMix() {
+    if (!duration || duration <= 0) return
+    const sr = 44100
+    const totalSamples = Math.ceil(sr * (duration + 2))
+    const offCtx = new OfflineAudioContext(2, totalSamples, sr)
+    const masterGain = offCtx.createGain()
+    masterGain.gain.value = masterVolume
+    masterGain.connect(offCtx.destination)
+
+    // Build per-lane mixer chains (pan only — no per-lane gain control in this app) into master
+    const getLaneNode = (() => {
+      const cache = new Map<string, AudioNode>()
+      return (laneType: string) => {
+        if (!cache.has(laneType)) {
+          const panVal = lanePansRef.current[laneType] ?? 0
+          const p = offCtx.createStereoPanner(); p.pan.value = panVal
+          p.connect(masterGain)
+          cache.set(laneType, p)
+        }
+        return cache.get(laneType)!
+      }
+    })()
+
+    // Render all hits
+    const allLaneTypes = Array.from(new Set(hits.map(h => h.type)))
+    for (const laneType of allLaneTypes) {
+      if (mutedTypes.has(laneType as BeatType)) continue
+      for (const hit of hits.filter(h => h.type === laneType)) {
+        if (hit.time > duration) continue
+        try {
+          const { playDrumHit } = await import('@/lib/drum-samples')
+          const { playMelodicNote, MELODIC_TYPES } = await import('@/lib/instrument-synth')
+          if (MELODIC_TYPES.has(hit.type)) {
+            playMelodicNote(offCtx as unknown as AudioContext, hit.type, hit.note, hit.time, hit.velocity, getLaneNode(laneType))
+          } else {
+            playDrumHit(offCtx as unknown as AudioContext, 'synth', hit.type, hit.time, hit.velocity, hit.note, undefined, getLaneNode(laneType))
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
+    // Render all audio clips
+    for (const clip of audioClips) {
+      if (clip.muted) continue
+      const effDur = clip.loopDuration ?? clip.stretchDuration ?? clip.buf.duration
+      const clipEnd = clip.startTime + effDur
+      if (clipEnd <= 0 || clip.startTime > duration) continue
+      const peakGain = 0.82 * clip.gain
+      const src = offCtx.createBufferSource()
+      src.buffer = clip.buf
+      const playRate = clip.stretchDuration != null ? clip.buf.duration / clip.stretchDuration : 1
+      src.playbackRate.value = clip.reversed ? -playRate : playRate
+      if (clip.loopDuration != null) { src.loop = true; src.loopStart = 0; src.loopEnd = clip.buf.duration }
+      const gn = offCtx.createGain(); gn.gain.value = peakGain
+      src.connect(gn); gn.connect(getLaneNode(clip.laneType))
+      if (clip.fadeIn > 0) {
+        gn.gain.setValueAtTime(0, clip.startTime)
+        gn.gain.linearRampToValueAtTime(peakGain, clip.startTime + clip.fadeIn)
+      }
+      if (clip.fadeOut > 0) {
+        const foStart = clipEnd - clip.fadeOut
+        gn.gain.setValueAtTime(peakGain, Math.max(clip.startTime, foStart))
+        gn.gain.linearRampToValueAtTime(0, clipEnd)
+      }
+      src.start(clip.startTime)
+      if (clip.loopDuration != null) src.stop(clipEnd)
+    }
+
+    try {
+      const rendered = await offCtx.startRendering()
+      const wav = audioBufferToWav(rendered)
+      const url = URL.createObjectURL(wav)
+      const a = document.createElement('a'); a.href = url; a.download = 'beatlab-mix.wav'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    } catch (e) { showToast(`Export failed: ${String(e)}`) }
+  }
+
+  function splitClipAtPlayhead(clipId: string) {
+    const clip = audioClips.find(c => c.id === clipId)
+    if (!clip) return
+    const splitAt = playheadKbRef.current
+    const relSplit = splitAt - clip.startTime
+    const effDur = clip.stretchDuration ?? clip.buf.duration
+    if (relSplit <= 0.05 || relSplit >= effDur - 0.05) return
+
+    // Slice the AudioBuffer at the split point
+    const sr = clip.buf.sampleRate
+    const ch = clip.buf.numberOfChannels
+    const splitSample = Math.round(relSplit * (clip.buf.length / effDur))
+
+    const leftLen  = Math.max(1, splitSample)
+    const rightLen = Math.max(1, clip.buf.length - splitSample)
+
+    const leftBuf  = new AudioBuffer({ numberOfChannels: ch, length: leftLen,  sampleRate: sr })
+    const rightBuf = new AudioBuffer({ numberOfChannels: ch, length: rightLen, sampleRate: sr })
+    for (let c2 = 0; c2 < ch; c2++) {
+      leftBuf.copyToChannel(clip.buf.getChannelData(c2).slice(0, leftLen), c2)
+      rightBuf.copyToChannel(clip.buf.getChannelData(c2).slice(splitSample), c2)
+    }
+
+    const leftClip:  AudioClip = { ...clip, id: crypto.randomUUID(), buf: leftBuf,  stretchDuration: null, loopDuration: null, fadeOut: 0 }
+    const rightClip: AudioClip = { ...clip, id: crypto.randomUUID(), buf: rightBuf, stretchDuration: null, loopDuration: null, fadeIn: 0, startTime: splitAt }
+
+    captureHistory()
+    setAudioClips(prev => prev.flatMap(c => c.id === clipId ? [leftClip, rightClip] : [c]))
+    setClipMenu(null)
+  }
+
   async function exportStems() {
     if (!duration || duration <= 0) return
     const sr = 44100
@@ -4327,6 +4633,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           inp.click(); setShowFileMenu(false)
                         }},
                         { label: '─', action: null },
+                        { label: 'Export Master Mix (WAV)', action: () => { void exportMasterMix(); setShowFileMenu(false) } },
                         { label: 'Export Stems (WAV)', action: () => { void exportStems(); setShowFileMenu(false) } },
                         { label: 'Export MIDI', action: () => { exportMidi(); setShowFileMenu(false) } },
                       ].map((item, i) => item.action === null
@@ -4341,6 +4648,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   </>
                 )}
               </div>
+              {/* MIDI Mapping button */}
+              <Tooltip content="MIDI controller mapping — map knobs/faders to parameters" placement="bottom" disabled={showMidiPanel}>
+                <button
+                  onClick={() => setShowMidiPanel(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5,
+                    background: showMidiPanel || midiLearning !== null ? 'rgba(249,115,22,0.15)' : midiMappings.length > 0 ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)',
+                    border: `1px solid ${showMidiPanel || midiLearning !== null ? 'rgba(249,115,22,0.45)' : midiMappings.length > 0 ? 'rgba(139,92,246,0.35)' : 'var(--border)'}`,
+                    color: showMidiPanel || midiLearning !== null ? '#f97316' : midiMappings.length > 0 ? 'rgba(167,139,250,1)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  MIDI{midiMappings.length > 0 && <span style={{ fontSize: 9 }}>{midiMappings.length}</span>}
+                </button>
+              </Tooltip>
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <button onClick={() => setViewMode('arrangement')} title="Arrangement view" style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
@@ -4978,6 +5301,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           inputSource={inputSource[type]}
                           onToggleInput={() => toggleInputLane(type)}
                           onOpenInputPicker={() => setInputSourcePickerLane(type)}
+                          allLaneTypes={activeLaneTypes}
+                          sidechains={Object.fromEntries(
+                            Object.entries(laneSidechains)
+                              .filter(([k]) => k.startsWith(`${type as string}:`))
+                              .map(([k, v]) => [k.slice((type as string).length + 1), v])
+                          )}
+                          onSidechainChange={(effectId, val) =>
+                            setLaneSidechains(prev => ({ ...prev, [`${type as string}:${effectId}`]: val }))
+                          }
                         />
                           </div>
                           </div>
@@ -5305,6 +5637,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   { label: 'Step Sequencer', action: () => { setStepSeqLane(laneMenu.type); setLaneMenu(null) } },
                   ...(MELODIC_TYPES.has(laneMenu.type) ? [{ label: 'Chord Builder', action: () => { setChordBuilderLane(laneMenu.type); setLaneMenu(null) } }] : []),
                   { label: 'Arpeggiator', action: () => { setArpLane(laneMenu.type as BeatType); setLaneMenu(null) } },
+                  { label: 'Open Sampler', action: async () => { const { DEFAULT_SAMPLER_PATCH } = await import('@/lib/sampler-engine'); setSamplerPatch(DEFAULT_SAMPLER_PATCH); setSamplerLane(laneMenu.type); setLaneMenu(null) } },
+                  { label: 'Open Wavetable Synth', action: async () => { const { WAVETABLE_PRESETS } = await import('@/lib/wavetable-synth'); setWavetablePatch(Object.values(WAVETABLE_PRESETS)[0]); setWavetableLane(laneMenu.type); setLaneMenu(null) } },
+                  { label: 'Open FM Synth', action: async () => { const { FM_PRESETS } = await import('@/lib/fm-synth'); setFmPatch(Object.values(FM_PRESETS)[0]); setFmSynthLane(laneMenu.type); setLaneMenu(null) } },
                   { label: `FX Chain${(laneEffects[laneMenu.type]?.length ?? 0) > 0 ? ` (${laneEffects[laneMenu.type].length})` : ''}`, action: () => { setFxOpenLanes(prev => { const s = new Set(prev); s.add(laneMenu!.type); return s }); setLaneMenu(null) } },
                   { label: `Automation`, action: () => { setAutomOpenLanes(prev => { const s = new Set(prev); s.add(laneMenu!.type); return s }); setLaneMenu(null) } },
                   { label: `Spectrum ${specLanes.has(laneMenu.type) ? '✓' : ''}`, action: () => { toggleSpecLane(laneMenu.type); setLaneMenu(null) } },
@@ -5535,6 +5870,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   Revert to original
                 </button>
               )}
+              {compGroups.some(g => g.takes.some(t => t.clipId === clip.id)) && (
+                <button
+                  onClick={() => {
+                    const g = compGroups.find(g => g.takes.some(t => t.clipId === clip.id))
+                    if (g) setOpenCompGroup(g.id)
+                    setClipMenu(null)
+                  }}
+                  style={btnStyle()}
+                >
+                  Open Comp Editor
+                </button>
+              )}
 
               <div style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
 
@@ -5561,6 +5908,25 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 setClipMenu(null)
               }} style={btnStyle()}>
                 {clip.reversed ? 'Un-reverse' : 'Reverse'}
+              </button>
+              <button onClick={async () => {
+                setClipMenu(null)
+                try {
+                  const { analyzeBeats } = await import('@/lib/beat-analyzer')
+                  const result = await analyzeBeats(clip.buf, { allowedTypes: ['kick', 'snare'], referenceSounds })
+                  if (result.bpm && result.bpm >= 40 && result.bpm <= 300) {
+                    captureHistory()
+                    setBpm(result.bpm); setMasterBpm(result.bpm)
+                    showToast(`BPM detected: ${result.bpm}`)
+                  } else {
+                    showToast('Could not detect BPM from this clip')
+                  }
+                } catch { showToast('BPM detection failed') }
+              }} style={btnStyle()}>
+                Detect BPM from clip
+              </button>
+              <button onClick={() => splitClipAtPlayhead(clip.id)} style={btnStyle()}>
+                Split at Playhead
               </button>
               <button onClick={() => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, muted: !c.muted } : c)); setClipMenu(null) }} style={btnStyle()}>
                 {clip.muted ? 'Unmute' : 'Mute'}
@@ -5763,6 +6129,62 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           ]}
         />
       </Suspense>
+
+      {/* ── Instrument editor overlays ──────────────────────────────────────── */}
+      {samplerLane && samplerPatch && (
+        <Suspense fallback={null}>
+          <SamplerEditor patch={samplerPatch} onPatchChange={setSamplerPatch} onClose={() => { setSamplerLane(null); setSamplerPatch(null) }} />
+        </Suspense>
+      )}
+      {wavetableLane && wavetablePatch && (
+        <Suspense fallback={null}>
+          <WavetableSynthEditor patch={wavetablePatch} onPatchChange={setWavetablePatch} onClose={() => { setWavetableLane(null); setWavetablePatch(null) }} />
+        </Suspense>
+      )}
+      {fmSynthLane && fmPatch && (
+        <Suspense fallback={null}>
+          <FMSynthEditor patch={fmPatch} onPatchChange={setFmPatch} onClose={() => { setFmSynthLane(null); setFmPatch(null) }} />
+        </Suspense>
+      )}
+
+      {/* ── Comp Editor overlay ─────────────────────────────────────────────── */}
+      {openCompGroup && (() => {
+        const group = compGroups.find(g => g.id === openCompGroup)
+        if (!group) return null
+        return (
+          <Suspense fallback={null}>
+            <CompEditor
+              group={group}
+              clips={audioClips}
+              onGroupChange={updated => setCompGroups(prev => prev.map(g => g.id === updated.id ? updated : g))}
+              onRenderComp={async (g) => {
+                const rendered = await renderComp(g, audioClips)
+                const clip = mkClip(crypto.randomUUID(), g.laneType, rendered, g.loopStart, 'Comp')
+                setAudioClips(prev => [...prev, clip])
+                setOpenCompGroup(null)
+              }}
+              onClose={() => setOpenCompGroup(null)}
+            />
+          </Suspense>
+        )
+      })()}
+
+      {/* ── MIDI Mapping Panel ────────────────────────────────────────────── */}
+      <MidiMappingPanel
+        open={showMidiPanel}
+        mappings={midiMappings}
+        learningTarget={midiLearning}
+        onStartLearn={(t) => setMidiLearning(t)}
+        onStopLearn={() => setMidiLearning(null)}
+        onUpdateMapping={(id, update) => setMidiMappings(prev => prev.map(m => m.id === id ? { ...m, ...update } : m))}
+        onDeleteMapping={(id) => setMidiMappings(prev => prev.filter(m => m.id !== id))}
+        onImport={(imported) => setMidiMappings(imported)}
+        onExport={handleMidiExport}
+        onClose={() => setShowMidiPanel(false)}
+        activeLaneTypes={activeLaneTypes}
+        laneLabels={Object.fromEntries(activeLaneTypes.map(t => [t, typeLabel(t, typeOverrides)]))}
+        lastAddedId={lastMappedId}
+      />
     </div>
   )
 }

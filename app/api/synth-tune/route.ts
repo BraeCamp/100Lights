@@ -5,16 +5,20 @@ spawns a fresh oscillator at a fixed frequency. Real synths (Moog, Juno, DX7) us
 the oscillator frequency glides continuously from the previous note to the next using
 exponentialRampToValueAtTime. Use a SINGLE shared oscillator whose frequency is automated across
 all notes, with a gain envelope that shapes each note onset and release. Silence gaps between notes
-should briefly fade the gain rather than stop/restart the oscillator.`,
+should briefly fade the gain rather than stop/restart the oscillator.
+USE THE TRAJECTORY DATA: Look at the hz values between notes — do they jump or glide? Use gapMs in
+transitions to decide portamento speed. Negative gapMs means legato overlap.`,
 
   `ITERATION 2 — Vibrato & Envelope Shaping:
 Building on the portamento changes, now add:
 1. Vibrato: an LFO (low-frequency oscillator around 5-7 Hz, depth ~0.3-0.7 semitones) modulating
    the main oscillator's frequency via a GainNode added to the frequency AudioParam. Apply it only
    after a ~150ms delay on each note (onset without wobble feels more natural).
-2. Improve the amplitude envelope: longer attack on sustained notes (>400ms), a proper sustain
-   level around 65-75% of peak, and a gentle exponentialRampToValueAtTime for release instead of
-   a hard linearRamp. Reference the Juno-106 envelope shape.`,
+2. Improve the amplitude envelope: use attackMs from noteStats for per-note attack time. Use
+   sustainLevel from noteStats for the sustain gain target. Use pitchVarianceCents as a proxy for
+   natural expressiveness — higher variance means the singer was expressive, so add more vibrato depth.
+3. A proper sustain level around sustainLevel * peak, and a gentle exponentialRampToValueAtTime for
+   release instead of a hard linearRamp. Reference the Juno-106 envelope shape.`,
 
   `ITERATION 3 — Harmonic Richness & Final Polish:
 Layer the sound for warmth: add a second oscillator one octave down at 25% gain and a third
@@ -22,17 +26,37 @@ at a 5th above (1.5x frequency) at 12% gain, both sharing the same frequency aut
 envelope as the primary oscillator. Apply a resonant lowpass filter (Q ≈ 1.2) with the cutoff
 frequency modulated slightly by an ADSR (opens wider on note attack, settles to filterCutoff).
 Cross-reference with classic analog polysynth textures (Prophet-5, OB-Xa): warmth comes from
-slightly detuned sub-layers, not from distortion. Ensure all timing is correct for OfflineAudioContext.`,
+slightly detuned sub-layers, not from distortion. Ensure all timing is correct for OfflineAudioContext.
+Incorporate ALL improvements from iterations 1 and 2 into this single unified rewrite.`,
 ]
 
+interface NoteEvent {
+  start: number; end: number; midi: number; amplitude: number
+}
+interface NoteStats {
+  pitchVarianceCents: number  // how much pitch wobbles within the note (0 = steady, 50 = expressive vibrato)
+  sustainLevel: number        // fraction of peak amplitude during the last 30% of the note (0-1)
+  attackMs: number            // ms from note start to 80% of peak amplitude
+}
+interface Transition {
+  gapMs: number               // ms of silence between this note and the next (negative = legato overlap)
+  pitchJumpSemitones: number  // semitone distance (positive = up, negative = down)
+}
+interface TrajectoryPoint {
+  t: number; hz: number | null; amp: number
+}
+
 interface TuneRequest {
-  code:         string                                   // always the original source
+  code:         string
   pitchSummary: {
-    totalDuration: number
-    noteCount:     number
-    avgDurationMs: number
+    totalDuration:  number
+    noteCount:      number
+    avgDurationMs:  number
     pitchRangeMidi: { min: number; max: number } | null
-    notes: { start: number; end: number; midi: number; amplitude: number }[]
+    notes:      NoteEvent[]
+    noteStats:  NoteStats[]
+    transitions: Transition[]
+    trajectory: TrajectoryPoint[]
   }
   iteration:    1 | 2 | 3
   previousIterations: { title: string; analysis: string; changes: string }[]
@@ -50,13 +74,52 @@ export async function POST(req: Request) {
     return `${names[m % 12]}${Math.floor(m / 12) - 1}`
   }
 
-  const noteList = pitchSummary.notes.slice(0, 12).map(n =>
-    `  { start: ${n.start.toFixed(2)}s, end: ${n.end.toFixed(2)}s, midi: ${n.midi} (${midiToName(n.midi)}), amp: ${n.amplitude.toFixed(2)} }`
-  ).join('\n')
+  // Full note list with per-note stats
+  const noteList = pitchSummary.notes.map((n, i) => {
+    const s = pitchSummary.noteStats?.[i]
+    const statStr = s
+      ? ` | variance:${s.pitchVarianceCents}¢ sustain:${Math.round(s.sustainLevel * 100)}% attack:${s.attackMs}ms`
+      : ''
+    return `  { start:${n.start.toFixed(2)}s end:${n.end.toFixed(2)}s midi:${n.midi}(${midiToName(n.midi)}) amp:${n.amplitude.toFixed(2)}${statStr} }`
+  }).join('\n')
+
+  // Transition table
+  const transitionList = (pitchSummary.transitions ?? []).map((t, i) => {
+    const n0 = pitchSummary.notes[i], n1 = pitchSummary.notes[i + 1]
+    if (!n0 || !n1) return ''
+    const dir = t.pitchJumpSemitones > 0 ? '↑' : t.pitchJumpSemitones < 0 ? '↓' : '→'
+    const legato = t.gapMs < 0 ? 'LEGATO' : t.gapMs < 20 ? 'tight' : t.gapMs < 100 ? 'normal' : 'gap'
+    return `  note${i}→note${i + 1}: ${legato} gap=${t.gapMs}ms jump=${t.pitchJumpSemitones > 0 ? '+' : ''}${t.pitchJumpSemitones}st ${dir}`
+  }).filter(Boolean).join('\n')
+
+  // Pitch trajectory as compact table (every point)
+  const traj = (pitchSummary.trajectory ?? [])
+  const trajectoryStr = traj.map(p =>
+    `${p.t}s:${p.hz != null ? p.hz.toFixed(0) + 'Hz' : 'silence'} amp=${p.amp.toFixed(2)}`
+  ).join('  ')
 
   const pitchRangeStr = pitchSummary.pitchRangeMidi
     ? `MIDI ${pitchSummary.pitchRangeMidi.min}–${pitchSummary.pitchRangeMidi.max} (${midiToName(pitchSummary.pitchRangeMidi.min)}–${midiToName(pitchSummary.pitchRangeMidi.max)})`
     : 'unknown'
+
+  // Summarize vibrato presence from note stats
+  const avgVariance = pitchSummary.noteStats?.length
+    ? Math.round(pitchSummary.noteStats.reduce((s, x) => s + x.pitchVarianceCents, 0) / pitchSummary.noteStats.length)
+    : 0
+  const vibratoComment = avgVariance > 40
+    ? `HIGH pitch variance (avg ${avgVariance}¢) — singer uses significant vibrato/expression`
+    : avgVariance > 15
+    ? `MODERATE pitch variance (avg ${avgVariance}¢) — some natural vibrato present`
+    : `LOW pitch variance (avg ${avgVariance}¢) — relatively straight tones`
+
+  // Transition style summary
+  const transitions = pitchSummary.transitions ?? []
+  const legatoCount = transitions.filter(t => t.gapMs < 20).length
+  const gapCount    = transitions.filter(t => t.gapMs > 80).length
+  const transitionStyle = transitions.length === 0 ? 'no transitions'
+    : legatoCount > transitions.length * 0.6 ? 'mostly LEGATO — use portamento with minimal gain dip'
+    : gapCount    > transitions.length * 0.6 ? 'mostly STACCATO — brief silence gaps between notes'
+    : 'mixed legato/staccato'
 
   const prompt = `You are a professional synthesizer engineer improving a voice-to-synth algorithm in a browser-based DAW.
 
@@ -70,8 +133,18 @@ RECORDING CHARACTERISTICS:
 - Notes detected: ${pitchSummary.noteCount}
 - Average note duration: ${pitchSummary.avgDurationMs}ms
 - Pitch range: ${pitchRangeStr}
-- Sample notes:
+- ${vibratoComment}
+- Transition style: ${transitionStyle}
+
+NOTES WITH PER-NOTE ANALYSIS:
+(variance = pitch wobble in cents within note; sustain = amplitude fraction at end; attack = ms to reach 80% peak)
 ${noteList}
+
+NOTE-TO-NOTE TRANSITIONS:
+${transitionList || '  (no transitions — single note recording)'}
+
+PITCH TRAJECTORY (downsampled to ~80 points — use this to see actual glides, vibrato shape, silence gaps):
+${trajectoryStr}
 
 ${previousIterations.length > 0 ? `PREVIOUS PASSES (applied to the SAME original code above, not chained):
 ${previousIterations.map((p, i) => `Pass ${i + 1} — ${p.title}\n  Tried: ${p.changes}\n  Result: ${p.analysis}`).join('\n')}
@@ -85,7 +158,7 @@ Respond in EXACTLY this format — no other text before or after:
 <iteration>
 {
   "title": "Iteration ${iteration} — [brief descriptive title]",
-  "analysis": "[3-4 sentences: what sounds wrong now and why, referencing specific synthesis/music theory concepts]",
+  "analysis": "[3-4 sentences: what sounds wrong now and why, referencing specific synthesis/music theory concepts. Reference specific numbers from the trajectory/stats above — e.g. 'the 45¢ pitch variance indicates active vibrato' or 'the 8ms gaps suggest legato phrasing']",
   "changes": "[1-2 sentences: exactly what you changed and the expected sonic result]"
 }
 </iteration>
@@ -135,8 +208,6 @@ WEB AUDIO PITFALLS — avoid these or the output will be silent/broken:
   const data = await anthropicRes.json() as { content: { type: string; text: string }[] }
   const raw = data.content.find(b => b.type === 'text')?.text ?? ''
 
-  // Extract <iteration> JSON and <code> blocks separately — avoids JSON escaping
-  // issues when the code contains quotes, backticks, or newlines.
   const iterMatch = raw.match(/<iteration>([\s\S]*?)<\/iteration>/)
   const codeMatch = raw.match(/<code>([\s\S]*?)<\/code>/)
 
