@@ -66,6 +66,7 @@ import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
+import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel, getAllProfiles, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1546,18 +1547,22 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   interface SynthTunerIteration { title: string; analysis: string; changes: string }
   interface SynthTunerState {
-    clipId:     string
-    status:     'running' | 'waiting' | 'done' | 'error'
-    iteration:  number
-    iterations: SynthTunerIteration[]
-    preAiBuf:   AudioBuffer | null  // snapshot before AI touched the clip
-    errorMsg?:  string
+    clipId:           string
+    status:           'running' | 'waiting' | 'done' | 'error'
+    iteration:        number
+    iterations:       SynthTunerIteration[]
+    preAiBuf:         AudioBuffer | null  // snapshot before AI touched the clip
+    errorMsg?:        string
+    features?:        ProfileFeatures     // recording characteristics, used to save/match profiles
+    learnedProfileId?: string            // set when result came from a stored profile (no AI used)
   }
   const [synthTuner, setSynthTuner] = useState<SynthTunerState | null>(null)
   const synthResumeRef        = useRef<((feedback: string) => void) | null>(null)
   const synthCancelledRef     = useRef(false)
   const synthPassAcceptedRef  = useRef(true)   // true = keep pass result, false = revert on resume
   const synthFeedbackInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const synthCurrentCodeRef   = useRef('')      // latest accepted code, read when saving a profile
+  const synthTunerArgsRef     = useRef<{ clipId: string; pitchCurve: import('@/lib/pitch-detector').PitchFrame[]; source: AudioBuffer; opts: SynthOptions; referenceBuf?: AudioBuffer | null } | null>(null)
   const [bpm, setBpm] = useState<number | null>(null)
   const [duration, setDuration] = useState(8)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
@@ -1871,7 +1876,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     source: AudioBuffer,
     opts: SynthOptions,
     referenceBuf?: AudioBuffer | null,
+    skipLearning = false,
   ) {
+    synthTunerArgsRef.current = { clipId, pitchCurve, source, opts, referenceBuf }
+
     // Snapshot the pre-tuning buffer so the × button can revert
     const preAiClip = audioClips.find(c => c.id === clipId)
     const preAiBuf = preAiClip?.buf ?? null
@@ -1941,10 +1949,52 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       trajectory,     // downsampled pitch+amplitude curve for the full recording
     }
 
+    // Build feature vector for this recording
+    const avgVariance = noteStats.length
+      ? Math.round(noteStats.reduce((s, x) => s + x.pitchVarianceCents, 0) / noteStats.length)
+      : 0
+    const medianMidi = notes.length > 0
+      ? notes.slice().sort((a, b) => a.midi - b.midi)[Math.floor(notes.length / 2)].midi
+      : 60
+    const gapCount = transitions.filter(t => t.gapMs > 30).length
+    const features: ProfileFeatures = {
+      noteCount:          notes.length,
+      avgDurationMs:      pitchSummary.avgDurationMs,
+      pitchVarianceCents: avgVariance,
+      medianMidi,
+      gapRatio:           transitions.length > 0 ? gapCount / transitions.length : 0,
+      totalDuration:      source.duration,
+    }
+
+    // Check for a stored learned profile that matches this recording
+    if (!skipLearning) {
+      const match = findBestMatch(features)
+      if (match) {
+        try {
+          const factory = new Function('extractNoteEvents', 'midiToFreq', 'freqToMidi',
+            `${match.code}\nreturn transformVoiceToSynth`)
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+          const fn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof transformVoiceToSynth
+          let rendered = await fn(source, pitchCurve, source.sampleRate, source.duration, opts)
+          if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
+          setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
+          synthCurrentCodeRef.current = match.code
+          incrementUsage(match.id)
+          setSynthTuner({ clipId, status: 'done', iteration: 0, iterations: [], preAiBuf, features, learnedProfileId: match.id })
+          return
+        } catch (e) {
+          console.warn('[SynthTuner] Learned profile failed, falling back to AI:', e)
+        }
+      }
+    }
+
     const originalCode = currentCode  // never changes — each pass starts from this
     const completedIterations: SynthTunerIteration[] = []
     const userFeedbacks: string[] = []  // indexed by iteration-1 (feedback collected before that iteration)
     synthCancelledRef.current = false
+
+    // Store features in state so the "Keep AI version" button can save a profile
+    setSynthTuner(prev => prev ? { ...prev, features } : null)
 
     // Checkpoint buffer: advances only when user accepts a pass.
     // On reject we revert the clip to this buffer before the next pass runs.
@@ -1989,6 +2039,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
           lastRenderedBuf = rendered
           currentCode = improvedCode  // track latest applied code for the final save
+          synthCurrentCodeRef.current = improvedCode
         } catch (evalErr) {
           console.warn(`[SynthTuner] Iteration ${i} eval failed:`, evalErr)
         }
@@ -4548,17 +4599,57 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             </div>
           )}
 
-          {/* Done */}
-          {synthTuner.status === 'done' && (
+          {/* Done — learned profile path */}
+          {synthTuner.status === 'done' && synthTuner.learnedProfileId && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 11, color: '#fbbf24', fontWeight: 600 }}>
+                ⚡ Learned profile applied — no AI needed
+              </div>
+              <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.5 }}>
+                This profile was saved from a previous session with a similar recording.
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => setSynthTuner(null)}
+                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.3)', color: '#34d399', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                >Keep this</button>
+                <button
+                  onClick={() => {
+                    // Re-run with AI, skipping the learned profile
+                    const args = synthTunerArgsRef.current
+                    if (args) runSynthTuner(args.clipId, args.pitchCurve, args.source, args.opts, args.referenceBuf, true)
+                  }}
+                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(139,92,246,0.18)', border: '1px solid rgba(139,92,246,0.45)', color: '#a78bfa', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                >Refine with AI →</button>
+              </div>
+              <button
+                onClick={() => {
+                  if (synthTuner.preAiBuf) setAudioClips(prev => prev.map(c => c.id === synthTuner.clipId ? { ...c, buf: synthTuner.preAiBuf! } : c))
+                  setSynthTuner(null)
+                }}
+                style={{ padding: '4px 0', borderRadius: 6, background: 'transparent', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontSize: 10, cursor: 'pointer' }}
+              >Revert to original</button>
+            </div>
+          )}
+
+          {/* Done — AI path */}
+          {synthTuner.status === 'done' && !synthTuner.learnedProfileId && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ fontSize: 11, color: '#34d399' }}>
-                ✓ All passes complete — code saved to pitch-detector.ts
+                ✓ All passes complete
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
-                  onClick={() => setSynthTuner(null)}
-                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.3)', color: '#34d399', fontSize: 11, cursor: 'pointer' }}
-                >Keep AI version</button>
+                  onClick={() => {
+                    // Save this as a learned profile for future similar recordings
+                    if (synthTuner.features && synthCurrentCodeRef.current) {
+                      saveProfile(synthTuner.features, synthCurrentCodeRef.current, profileLabel(synthTuner.features))
+                      showToast('Profile saved — future similar recordings will skip the AI')
+                    }
+                    setSynthTuner(null)
+                  }}
+                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.3)', color: '#34d399', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                >Keep &amp; save profile</button>
                 <button
                   onClick={() => {
                     if (synthTuner.preAiBuf) setAudioClips(prev => prev.map(c => c.id === synthTuner.clipId ? { ...c, buf: synthTuner.preAiBuf! } : c))
