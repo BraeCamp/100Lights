@@ -1729,6 +1729,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // + Track popover state
   const [addTrackOpen,   setAddTrackOpen]   = useState(false)
   const [addTrackFamily, setAddTrackFamily] = useState<InstrumentFamily>('drums')
+  const addTrackBtnRef = useRef<HTMLButtonElement>(null)
 
   // ── Tap tempo ──────────────────────────────────────────────────────────────
   function handleTapTempo() {
@@ -4085,16 +4086,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               <div style={{ position: 'relative' }}>
                 <Tooltip content="Add a new instrument or drum track" placement="bottom" disabled={addTrackOpen}>
                   <button
+                    ref={addTrackBtnRef}
                     onClick={() => setAddTrackOpen(v => !v)}
                     style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: addTrackOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${addTrackOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: addTrackOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
                   >
                     + Track
                   </button>
                 </Tooltip>
-                {addTrackOpen && (
+                {addTrackOpen && (() => {
+                  const r = addTrackBtnRef.current?.getBoundingClientRect()
+                  return (
                   <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setAddTrackOpen(false)} />
-                    <div style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 4, zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, minWidth: 200, boxShadow: '0 -8px 24px rgba(0,0,0,0.35)' }}>
+                    <div style={{ position: 'fixed', bottom: r ? window.innerHeight - r.top + 4 : 0, right: r ? window.innerWidth - r.right : 0, zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, minWidth: 200, boxShadow: '0 -8px 24px rgba(0,0,0,0.35)' }}>
                       {/* Family tabs */}
                       <div style={{ display: 'flex', gap: 2, marginBottom: 8, background: 'var(--bg-surface)', borderRadius: 6, padding: 2 }}>
                         {(['drums', 'guitar', 'piano', 'synth'] as InstrumentFamily[]).map(f => (
@@ -4131,7 +4135,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                       </div>
                     </div>
                   </>
-                )}
+                  )
+                })()}
               </div>
 
               {!userFeedbackMode ? (
