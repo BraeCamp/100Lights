@@ -5521,6 +5521,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 </div>
               )}
 
+              {clip.originalBuf && (
+                <button
+                  onClick={() => {
+                    setAudioClips(prev => prev.map(c => c.id === clip.id
+                      ? { ...c, buf: c.originalBuf!, name: 'Voice', originalBuf: null }
+                      : c
+                    ))
+                    setClipMenu(null)
+                  }}
+                  style={btnStyle()}
+                >
+                  Revert to original
+                </button>
+              )}
+
               <div style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
 
               {/* Color picker */}
