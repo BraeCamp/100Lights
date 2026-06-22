@@ -1599,6 +1599,44 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setGroupDefs(prev => prev.map(g => ({ ...g, childTypes: g.childTypes.filter(t => t !== laneType) })))
   }
 
+  // ── Lane drag-to-group ────────────────────────────────────────────────────
+  const [dragLane,     setDragLane]     = useState<string | null>(null)
+  const [dragOverLane, setDragOverLane] = useState<string | null>(null)
+
+  function handleLaneDrop(droppedLane: string, targetLane: string) {
+    if (droppedLane === targetLane) return
+    const isTargetGroupBus = groupDefs.some(g => g.id === targetLane)
+    const targetGroupId    = isTargetGroupBus
+      ? targetLane
+      : groupDefs.find(g => g.childTypes.includes(targetLane))?.id
+
+    if (targetGroupId) {
+      // Drop onto a group or a lane already inside a group → add to that group
+      setGroupDefs(prev => prev.map(g => {
+        if (g.id === targetGroupId) return { ...g, childTypes: [...new Set([...g.childTypes, droppedLane])] }
+        return { ...g, childTypes: g.childTypes.filter(t => t !== droppedLane) }
+      }))
+    } else {
+      // Drop onto a plain lane → create a new group containing both
+      const id    = `grp_${Date.now()}`
+      const color = '#6b7280'
+      setGroupDefs(prev => [
+        ...prev.map(g => ({ ...g, childTypes: g.childTypes.filter(t => t !== droppedLane) })),
+        { id, label: 'Group', color, childTypes: [droppedLane, targetLane], collapsed: false },
+      ])
+      setTypeOverrides(prev => ({ ...prev, [id]: { label: 'Group', color } }))
+      // Insert the group bus just before the target in the lane list
+      setExtraLaneIds(prev => {
+        const without = prev.filter(x => x !== droppedLane && x !== id)
+        const idx     = without.indexOf(targetLane)
+        if (idx < 0) return [...without, id, droppedLane]
+        const result = [...without]
+        result.splice(idx, 0, id, droppedLane)
+        return result
+      })
+    }
+  }
+
   // ── Arpeggiator state ─────────────────────────────────────────────────────
   const [arpLane, setArpLane] = useState<BeatType | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
@@ -4592,36 +4630,40 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     </div>
                   ) : (
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
-                    {activeLaneTypes.map(type => {
-                      const parentGroup = groupDefs.find(g => g.childTypes.includes(type))
-                      const isGroupBus  = groupDefs.some(g => g.id === type)
-                      const group       = groupDefs.find(g => g.id === type)
-                      // If this lane belongs to a collapsed group, skip rendering
-                      if (parentGroup?.collapsed) return null
-                      return (
-                      <div key={type}>
-                      {/* Group header row (only for the group bus lane) */}
-                      {isGroupBus && group && (
-                        <div style={{ display: 'flex', alignItems: 'center', height: 26, background: 'var(--bg-surface)', borderBottom: '1px solid rgba(139,92,246,0.2)', paddingLeft: HEADER_W }}>
-                          <button onClick={() => toggleGroupCollapse(group.id)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '0 6px' }}>
-                            {group.collapsed ? '▶' : '▼'}
-                          </button>
-                          <div style={{ width: 7, height: 7, borderRadius: '50%', background: group.color, marginRight: 5, flexShrink: 0 }} />
-                          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>{group.label}</span>
-                          <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 6 }}>{group.childTypes.length} tracks</span>
-                        </div>
-                      )}
-                      <div style={{ display: 'flex' }}>
-                        <div style={{ width: 24, flexShrink: 0 }} />
+                    {(() => {
+                      const renderedSet = new Set<string>()
+
+                      const renderLaneRow = (type: string, indented = false) => {
+                        const isOver = dragOverLane === type && dragLane !== type
+                        const isGroupBus = groupDefs.some(g => g.id === type)
+                        return (
+                          <div
+                            key={type}
+                            draggable={!isGroupBus}
+                            onDragStart={e => { if (!isGroupBus) { e.dataTransfer.effectAllowed = 'move'; setDragLane(type) } }}
+                            onDragEnd={() => { setDragLane(null); setDragOverLane(null) }}
+                            onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverLane(type) }}
+                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverLane(null) }}
+                            onDrop={e => { e.preventDefault(); setDragOverLane(null); if (dragLane) handleLaneDrop(dragLane, type); setDragLane(null) }}
+                            style={{
+                              opacity: dragLane === type ? 0.35 : 1,
+                              borderLeft: isOver ? '3px solid var(--accent)' : indented ? '3px solid rgba(139,92,246,0.25)' : '3px solid transparent',
+                              background: isOver ? 'rgba(139,92,246,0.06)' : 'transparent',
+                              transition: 'border-color 0.1s, background 0.1s',
+                            }}
+                          >
+                          <div style={{ display: 'flex' }}>
+                            <div style={{ width: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isGroupBus ? 'default' : 'grab', color: 'var(--text-muted)', fontSize: 10, opacity: 0.5, userSelect: 'none' }}>
+                              {!isGroupBus && '⠿'}
+                            </div>
                         <Lane
-                          type={type}
-                          hits={hitsByType.get(type) ?? []}
-                          clips={audioClipsByLane.get(type) ?? []}
+                          type={type as BeatType}
+                          hits={hitsByType.get(type as BeatType) ?? []}
+                          clips={audioClipsByLane.get(type as BeatType) ?? []}
                           duration={duration}
                           pxWidth={timelinePx * zoomLevel}
                           selectedIds={selectedIds}
-                          muted={mutedTypes.has(type)}
+                          muted={mutedTypes.has(type as BeatType)}
                           aiSuggestions={aiSuggestions}
                           aiDeletions={aiDeletions}
                           typeOverrides={typeOverrides}
@@ -4629,10 +4671,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           isActiveLane={activeLaneType === type}
                           snapInterval={snapInterval}
                           onSelectHit={selectHit}
-                          onSelectLane={() => { setActiveLaneType(type); setSelectedLane(type); setInspectorOpen(true) }}
-                          onOpenPianoRoll={MELODIC_TYPES.has(type) ? () => setPianoRollLane(type) : undefined}
-                          onOpenStepSeq={() => setStepSeqLane(type)}
-                          onOpenChordBuilder={MELODIC_TYPES.has(type) ? () => setChordBuilderLane(type) : undefined}
+                          onSelectLane={() => { setActiveLaneType(type as BeatType); setSelectedLane(type as BeatType); setInspectorOpen(true) }}
+                          onOpenPianoRoll={MELODIC_TYPES.has(type as BeatType) ? () => setPianoRollLane(type as BeatType) : undefined}
+                          onOpenStepSeq={() => setStepSeqLane(type as BeatType)}
+                          onOpenChordBuilder={MELODIC_TYPES.has(type as BeatType) ? () => setChordBuilderLane(type as BeatType) : undefined}
                           level={laneLevels[type] ?? 0}
                           pan={lanePans[type] ?? 0}
                           soloed={soloedLanes.has(type)}
@@ -4695,13 +4737,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           }}
                           onMoveHit={moveHit}
                           onDeleteHit={deleteHit}
-                          onAddHit={(t, note) => addHit(type, t, note)}
-                          onToggleMute={() => toggleMute(type)}
-                          onLaneContextMenu={e => setLaneMenu({ type, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 200) })}
+                          onAddHit={(t, note) => addHit(type as BeatType, t, note)}
+                          onToggleMute={() => toggleMute(type as BeatType)}
+                          onLaneContextMenu={e => setLaneMenu({ type: type as BeatType, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 200) })}
                           onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
                           miniMode={miniLanes.has(type)}
                           spectrumOpen={specLanes.has(type)}
-                          analyserNode={laneAnalysersRef.current.get(type) ?? null}
+                          analyserNode={laneAnalysersRef.current.get(type as BeatType) ?? null}
                           onToggleMini={() => toggleMiniLane(type)}
                           onToggleSpectrum={() => toggleSpecLane(type)}
                           loopBeats={laneLoopBeats[type] ?? 0}
@@ -4711,9 +4753,52 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onToggleInput={() => toggleInputLane(type)}
                           onOpenInputPicker={() => setInputSourcePickerLane(type)}
                         />
-                      </div>
-                      </div>
-                    )})}
+                          </div>
+                          </div>
+                        )
+                      }
+
+                      return activeLaneTypes.flatMap(type => {
+                        if (renderedSet.has(type)) return []
+                        renderedSet.add(type)
+
+                        const isGroupBus = groupDefs.some(g => g.id === type)
+                        const group      = groupDefs.find(g => g.id === type)
+                        const inGroup    = groupDefs.some(g => g.childTypes.includes(type))
+
+                        // Ungrouped child lane (orphan) — render normally
+                        if (!isGroupBus && !inGroup) return [renderLaneRow(type)]
+
+                        // Lane that belongs to a group but we haven't hit its group bus yet — skip (rendered below)
+                        if (!isGroupBus && inGroup) return []
+
+                        // Group bus — render header + bus lane + all children inline
+                        const children = (group?.childTypes ?? []).filter(c => activeLaneTypes.includes(c as BeatType))
+                        children.forEach(c => renderedSet.add(c))
+
+                        const isOver = dragOverLane === type && dragLane !== type
+                        return [
+                          // Folder header
+                          <div
+                            key={`hdr-${type}`}
+                            onDragOver={e => { e.preventDefault(); setDragOverLane(type) }}
+                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverLane(null) }}
+                            onDrop={e => { e.preventDefault(); setDragOverLane(null); if (dragLane) handleLaneDrop(dragLane, type); setDragLane(null) }}
+                            style={{ display: 'flex', alignItems: 'center', height: 26, background: isOver ? 'rgba(139,92,246,0.12)' : 'var(--bg-surface)', borderBottom: `1px solid ${isOver ? 'var(--accent)' : 'rgba(139,92,246,0.2)'}`, paddingLeft: HEADER_W, transition: 'background 0.1s, border-color 0.1s', cursor: 'default' }}>
+                            <button onClick={() => toggleGroupCollapse(type)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '0 6px' }}>
+                              {group?.collapsed ? '▶' : '▼'}
+                            </button>
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: group?.color ?? '#6b7280', marginRight: 5, flexShrink: 0 }} />
+                            <span style={{ fontSize: 10, fontWeight: 700, color: isOver ? 'var(--accent-light)' : 'var(--text-secondary)', letterSpacing: '0.04em' }}>{group?.label ?? 'Group'}</span>
+                            <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 6 }}>{children.length} tracks</span>
+                            {isOver && <span style={{ fontSize: 9, color: 'var(--accent-light)', marginLeft: 8 }}>Drop to add</span>}
+                          </div>,
+                          // Children (only if not collapsed)
+                          ...(group?.collapsed ? [] : children.map(c => renderLaneRow(c, true))),
+                        ]
+                      })
+                    })()}
                   </div>
                   )}
 
