@@ -66,6 +66,9 @@ const PianoRoll               = lazy(() => import('./PianoRoll'))
 const SessionView             = lazy(() => import('./SessionView'))
 const StepSequencer           = lazy(() => import('./StepSequencer'))
 const ChordProgressionBuilder = lazy(() => import('./ChordProgressionBuilder'))
+const CommandPalette          = lazy(() => import('./CommandPalette'))
+const SpectrumAnalyzer        = lazy(() => import('./SpectrumAnalyzer'))
+const Arpeggiator             = lazy(() => import('./Arpeggiator'))
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -892,11 +895,18 @@ interface LaneProps {
   onAutomPointUpdate: (id: string, ptId: string, update: Partial<AutomPoint>) => void
   onAutomPointDelete: (id: string, ptId: string) => void
   level?: number  // RMS 0–1 from AnalyserNode, updated during playback
+  miniMode?: boolean
+  spectrumOpen?: boolean
+  analyserNode?: AnalyserNode | null
+  onToggleMini?: () => void
+  onToggleSpectrum?: () => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0 }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
+
+  const [dotMenuOpen, setDotMenuOpen] = useState(false)
 
   function startPanDrag(e: React.MouseEvent) {
     e.stopPropagation(); e.preventDefault()
@@ -929,8 +939,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', borderBottom: '1px solid var(--border)', opacity: dimmed ? 0.45 : 1 }}>
-    <div style={{ display: 'flex', alignItems: 'stretch', height: LANE_HEIGHT }}>
-      {/* Lane header: label + M/S + pan */}
+    <div style={{ display: 'flex', alignItems: 'stretch', height: miniMode ? 28 : LANE_HEIGHT }}>
+      {/* Lane header: label + M/S + ··· menu */}
       <div
         onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
         style={{
@@ -940,65 +950,81 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
         }}
       >
-        {/* Label row — double-click opens Piano Roll on melodic lanes */}
-        <div onClick={onSelectLane} onDoubleClick={onOpenPianoRoll} title={onOpenPianoRoll ? 'Double-click to open Piano Roll' : undefined} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
+        {/* Label row */}
+        <div onClick={onSelectLane} onDoubleClick={onToggleMini} title="Double-click to collapse lane" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: dimmed ? 'var(--border-light)' : color }} />
           <span style={{ fontSize: 9, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : dimmed ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>
             {label}
           </span>
-          {hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
+          {!miniMode && hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
         </div>
 
-        {/* Mute + Solo + FX buttons */}
-        <div style={{ display: 'flex', gap: 3, padding: '0 4px 3px', justifyContent: 'center' }}>
+        {/* M · S · ··· row */}
+        {!miniMode && (
+          <div style={{ display: 'flex', gap: 2, padding: '0 3px 3px', justifyContent: 'center' }}>
+            <button
+              onClick={e => { e.stopPropagation(); onToggleMute() }}
+              title="Mute"
+              style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
+                background: muted ? 'rgba(239,68,68,0.18)' : 'var(--bg-card)',
+                border: `1px solid ${muted ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+                color: muted ? '#ef4444' : 'var(--text-muted)' }}
+            >M</button>
+            <button
+              onClick={e => { e.stopPropagation(); onSoloToggle() }}
+              title="Solo"
+              style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
+                background: soloed ? 'rgba(251,191,36,0.18)' : 'var(--bg-card)',
+                border: `1px solid ${soloed ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
+                color: soloed ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
+            >S</button>
+            {/* ··· menu */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={e => { e.stopPropagation(); setDotMenuOpen(v => !v) }}
+                title="Lane tools"
+                style={{ fontSize: 11, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer', lineHeight: 1,
+                  background: dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)',
+                  border: `1px solid ${dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`,
+                  color: dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
+              >···</button>
+              {dotMenuOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={() => setDotMenuOpen(false)} />
+                  <div style={{ position: 'absolute', left: '100%', top: 0, marginLeft: 4, zIndex: 400, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 0', minWidth: 160, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+                    {[
+                      { label: `FX Chain${effects.length > 0 ? ` (${effects.length})` : ''}`, action: () => { onFxToggleOpen(); setDotMenuOpen(false) }, active: fxOpen || effects.length > 0, color: 'rgba(139,92,246,1)' },
+                      { label: `Automation${automLanes.length > 0 ? ` (${automLanes.length})` : ''}`, action: () => { onAutomToggle(); setDotMenuOpen(false) }, active: automOpen || automLanes.length > 0, color: 'rgba(56,189,248,1)' },
+                      ...(onOpenStepSeq ? [{ label: 'Step Sequencer', action: () => { onOpenStepSeq!(); setDotMenuOpen(false) }, active: false, color: 'rgba(167,139,250,1)' }] : []),
+                      ...(onOpenPianoRoll ? [{ label: 'Piano Roll', action: () => { onOpenPianoRoll!(); setDotMenuOpen(false) }, active: false, color: 'rgba(167,139,250,1)' }] : []),
+                      ...(onOpenChordBuilder ? [{ label: 'Chord Builder', action: () => { onOpenChordBuilder!(); setDotMenuOpen(false) }, active: false, color: 'rgba(167,139,250,1)' }] : []),
+                      ...(onToggleSpectrum ? [{ label: `Spectrum${spectrumOpen ? ' ✓' : ''}`, action: () => { onToggleSpectrum!(); setDotMenuOpen(false) }, active: spectrumOpen, color: 'rgba(34,211,238,1)' }] : []),
+                    ].map(item => (
+                      <button key={item.label} onClick={item.action}
+                        style={{ display: 'block', width: '100%', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 11, color: item.active ? item.color : 'var(--text-secondary)', fontWeight: item.active ? 600 : 400 }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >{item.label}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+        {/* Mini-mode: just M button */}
+        {miniMode && (
           <button
             onClick={e => { e.stopPropagation(); onToggleMute() }}
-            style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
-              background: muted ? 'rgba(239,68,68,0.18)' : 'var(--bg-card)',
+            style={{ position: 'absolute', right: 3, top: '50%', transform: 'translateY(-50%)', fontSize: 8, fontWeight: 700, padding: '1px 3px', borderRadius: 2, cursor: 'pointer',
+              background: muted ? 'rgba(239,68,68,0.18)' : 'transparent',
               border: `1px solid ${muted ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
               color: muted ? '#ef4444' : 'var(--text-muted)' }}
           >M</button>
-          <button
-            onClick={e => { e.stopPropagation(); onSoloToggle() }}
-            style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
-              background: soloed ? 'rgba(251,191,36,0.18)' : 'var(--bg-card)',
-              border: `1px solid ${soloed ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
-              color: soloed ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
-          >S</button>
-          <button
-            onClick={e => { e.stopPropagation(); onFxToggleOpen() }}
-            style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
-              background: fxOpen || effects.length > 0 ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
-              border: `1px solid ${fxOpen || effects.length > 0 ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`,
-              color: fxOpen || effects.length > 0 ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
-          >FX</button>
-          <button
-            onClick={e => { e.stopPropagation(); onAutomToggle() }}
-            style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
-              background: automOpen || automLanes.length > 0 ? 'rgba(56,189,248,0.2)' : 'var(--bg-card)',
-              border: `1px solid ${automOpen || automLanes.length > 0 ? 'rgba(56,189,248,0.5)' : 'var(--border)'}`,
-              color: automOpen || automLanes.length > 0 ? 'rgba(125,211,252,1)' : 'var(--text-muted)' }}
-          >A</button>
-          {onOpenStepSeq && (
-            <button
-              onClick={e => { e.stopPropagation(); onOpenStepSeq() }}
-              title="Open Step Sequencer"
-              style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
-                background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-            >SS</button>
-          )}
-          {onOpenChordBuilder && (
-            <button
-              onClick={e => { e.stopPropagation(); onOpenChordBuilder() }}
-              title="Open Chord Progression Builder"
-              style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
-                background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-            >Ch</button>
-          )}
-        </div>
+        )}
 
-        {/* Level meter — thin VU bar, updates during playback */}
-        <div style={{ padding: '0 5px 2px' }}>
+        {/* Level meter — always visible */}
+        <div style={{ padding: miniMode ? '0 5px' : '0 5px 2px' }}>
           <div style={{ position: 'relative', height: 4, background: 'var(--bg-base)', borderRadius: 2, overflow: 'hidden' }}>
             <div style={{
               position: 'absolute', left: 0, top: 0, bottom: 0,
@@ -1010,8 +1036,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           </div>
         </div>
 
-        {/* Pan drag bar — double-click resets to 0 */}
-        <div style={{ padding: '0 5px 5px' }}>
+        {/* Pan drag bar — hidden in mini mode */}
+        {!miniMode && <div style={{ padding: '0 5px 5px' }}>
           <div
             title={`Pan: ${pan >= 0 ? '+' : ''}${Math.round(pan * 100)}`}
             onMouseDown={startPanDrag}
@@ -1028,15 +1054,15 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               boxShadow: pan !== 0 ? `0 0 3px ${color}` : 'none',
             }} />
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Hit area — left-click adds, right-click adds (snapped) */}
       <div
-        onClick={handleLaneClick}
-        onContextMenu={handleLaneRightClick}
+        onClick={miniMode ? undefined : handleLaneClick}
+        onContextMenu={miniMode ? undefined : handleLaneRightClick}
         style={{
-          flex: 1, position: 'relative', cursor: muted ? 'default' : 'crosshair', height: LANE_HEIGHT,
+          flex: 1, position: 'relative', cursor: miniMode ? 'default' : muted ? 'default' : 'crosshair', height: miniMode ? 28 : LANE_HEIGHT,
           background: 'var(--bg-card)',
           backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent calc(12.5% - 1px), var(--border) calc(12.5% - 1px), var(--border) 12.5%)',
         }}
@@ -1302,6 +1328,20 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         </div>
       </div>
     )}
+
+    {/* Spectrum Analyzer sub-view */}
+    {spectrumOpen && !miniMode && (
+      <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-base)', borderTop: '1px solid rgba(34,211,238,0.15)' }}>
+        <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 8, color: 'rgba(34,211,238,0.7)', fontWeight: 700, letterSpacing: '0.08em' }}>FFT</span>
+        </div>
+        <div style={{ flex: 1, padding: '4px 8px', overflow: 'hidden' }}>
+          <Suspense fallback={null}>
+            <SpectrumAnalyzer analyser={analyserNode ?? null} active={true} height={44} />
+          </Suspense>
+        </div>
+      </div>
+    )}
     </div>
   )
 }
@@ -1448,6 +1488,46 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     setLaneMenuEdit(null)
     if (activeLaneType === fromType) setActiveLaneType(toType)
   }
+
+  // ── Group tracks (bus lanes) ──────────────────────────────────────────────
+  interface GroupDef {
+    id: string
+    label: string
+    color: string
+    childTypes: string[]
+    collapsed: boolean
+  }
+  const [groupDefs, setGroupDefs] = useState<GroupDef[]>([])
+  const groupDefsRef = useRef<GroupDef[]>([])
+  useEffect(() => { groupDefsRef.current = groupDefs }, [groupDefs])
+  const groupBusRef = useRef<Map<string, GainNode>>(new Map())
+
+  function createGroup(selectedChildTypes?: string[]) {
+    const id = `grp_${Date.now()}`
+    const children = selectedChildTypes ?? []
+    const color = '#6b7280'
+    setGroupDefs(prev => [...prev, { id, label: 'Group', color, childTypes: children, collapsed: false }])
+    setExtraLaneIds(prev => [...prev, id])
+    setTypeOverrides(prev => ({ ...prev, [id]: { label: 'Group', color } }))
+  }
+
+  function toggleGroupCollapse(groupId: string) {
+    setGroupDefs(prev => prev.map(g => g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
+  }
+
+  function addLaneToGroup(laneType: string, groupId: string) {
+    setGroupDefs(prev => prev.map(g => {
+      if (g.id !== groupId) return { ...g, childTypes: g.childTypes.filter(t => t !== laneType) }
+      return { ...g, childTypes: [...new Set([...g.childTypes, laneType])] }
+    }))
+  }
+
+  function removeLaneFromGroup(laneType: string) {
+    setGroupDefs(prev => prev.map(g => ({ ...g, childTypes: g.childTypes.filter(t => t !== laneType) })))
+  }
+
+  // ── Arpeggiator state ─────────────────────────────────────────────────────
+  const [arpLane, setArpLane] = useState<BeatType | null>(null)
 
   // Sample pack: active AudioBuffer + rootNote per BeatType for pitch-shifted playback
   const [sampleBuffers, setSampleBuffers] = useState<Map<BeatType, AudioBuffer>>(new Map())
@@ -1716,6 +1796,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const locatorCountRef = useRef(0)
 
   function addLocator(t: number) {
+    captureHistory()
     locatorCountRef.current += 1
     const label = bpm
       ? `${Math.round(t / (60 / bpm / 4) / 4) + 1}`
@@ -1724,6 +1805,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   }
 
   function removeLocator(id: string) {
+    captureHistory()
     setLocators(prev => prev.filter(l => l.id !== id))
   }
 
@@ -1731,6 +1813,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [quantizeSwing, setQuantizeSwing] = useState(0)
 
   function quantizeHits() {
+    captureHistory()
     const grid = snapInterval > 0 ? snapInterval : (bpm ? 60 / bpm / 4 : 0)
     if (!grid) return
     const swing = quantizeSwing
@@ -1946,28 +2029,34 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [automAddOpen, setAutomAddOpen] = useState<string | null>(null)
 
   function addAutomLane(laneType: string, param: AutomParam) {
+    captureHistory()
     setAutomLanes(prev => [...prev, { id: Math.random().toString(36).slice(2), laneType, param, points: [] }])
     setAutomAddOpen(null)
   }
   function removeAutomLane(id: string) {
+    captureHistory()
     setAutomLanes(prev => prev.filter(a => a.id !== id))
   }
   function addAutomPoint(automId: string, pt: AutomPoint) {
+    captureHistory()
     setAutomLanes(prev => prev.map(a => a.id === automId ? { ...a, points: [...a.points, pt] } : a))
   }
   function updateAutomPoint(automId: string, ptId: string, update: Partial<AutomPoint>) {
     setAutomLanes(prev => prev.map(a => a.id === automId ? { ...a, points: a.points.map(p => p.id === ptId ? { ...p, ...update } : p) } : a))
   }
   function deleteAutomPoint(automId: string, ptId: string) {
+    captureHistory()
     setAutomLanes(prev => prev.map(a => a.id === automId ? { ...a, points: a.points.filter(p => p.id !== ptId) } : a))
   }
 
   function addLaneEffect(laneType: string, type: LaneEffectType) {
+    captureHistory()
     const fx: LaneEffect = { id: Math.random().toString(36).slice(2), type, enabled: true, params: { ...LANE_EFFECT_DEFAULTS[type] } }
     setLaneEffects(prev => ({ ...prev, [laneType]: [...(prev[laneType] ?? []), fx] }))
     setFxAddOpen(null)
   }
   function removeLaneEffect(laneType: string, id: string) {
+    captureHistory()
     setLaneEffects(prev => ({ ...prev, [laneType]: (prev[laneType] ?? []).filter(f => f.id !== id) }))
   }
   function updateLaneEffect(laneType: string, id: string, update: Partial<LaneEffect>) {
@@ -1995,6 +2084,130 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     g.gain.exponentialRampToValueAtTime(0.001, when + 0.04)
     osc.connect(g); g.connect(ctx.destination)
     osc.start(when); osc.stop(when + 0.05)
+  }
+
+  // ── Undo / Redo ──────────────────────────────────────────────────────────────
+  interface HistorySnapshot {
+    hits: BeatHit[]
+    laneEffects: Record<string, LaneEffect[]>
+    lanePans: Record<string, number>
+    automLanes: AutomLaneDef[]
+    locators: Locator[]
+    typeOverrides: TypeOverrides
+  }
+  const historyRef    = useRef<HistorySnapshot[]>([])
+  const historyIdxRef = useRef(-1)
+
+  function captureHistory() {
+    const snap: HistorySnapshot = {
+      hits: [...hits],
+      laneEffects: Object.fromEntries(Object.entries(laneEffects).map(([k, v]) => [k, [...v]])),
+      lanePans: { ...lanePans },
+      automLanes: automLanes.map(a => ({ ...a, points: [...a.points] })),
+      locators: [...locators],
+      typeOverrides: { ...typeOverrides },
+    }
+    historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
+    historyRef.current.push(snap)
+    if (historyRef.current.length > 60) historyRef.current.shift()
+    else historyIdxRef.current++
+  }
+
+  function applySnapshot(snap: HistorySnapshot) {
+    setHits(snap.hits)
+    setLaneEffects(snap.laneEffects)
+    setLanePans(snap.lanePans)
+    setAutomLanes(snap.automLanes)
+    setLocators(snap.locators)
+    setTypeOverrides(snap.typeOverrides)
+  }
+
+  function undo() {
+    if (historyIdxRef.current <= 0) return
+    historyIdxRef.current--
+    applySnapshot(historyRef.current[historyIdxRef.current])
+  }
+
+  function redo() {
+    if (historyIdxRef.current >= historyRef.current.length - 1) return
+    historyIdxRef.current++
+    applySnapshot(historyRef.current[historyIdxRef.current])
+  }
+
+  // ── UI: command palette, file menu, mini lanes, spectrum lanes ──────────────
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false)
+  const [showFileMenu,   setShowFileMenu]   = useState(false)
+  const [showEditMenu,   setShowEditMenu]   = useState(false)
+  const [miniLanes,      setMiniLanes]      = useState<Set<string>>(new Set())
+  const [specLanes,      setSpecLanes]      = useState<Set<string>>(new Set())
+
+  function toggleMiniLane(type: string) {
+    setMiniLanes(prev => { const s = new Set(prev); s.has(type) ? s.delete(type) : s.add(type); return s })
+  }
+  function toggleSpecLane(type: string) {
+    setSpecLanes(prev => { const s = new Set(prev); s.has(type) ? s.delete(type) : s.add(type); return s })
+  }
+
+  // ── Project save / load ───────────────────────────────────────────────────
+  function saveProject() {
+    const state = {
+      version: '1.0',
+      hits, laneEffects, lanePans, laneReverb, laneDelay,
+      automLanes, typeOverrides, locators, bpm, masterVolume,
+      quantizeSwing, sessionClips, extraLaneIds,
+    }
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'beatlab-project.json'
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
+
+  function loadProjectFromFile(file: File) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const s = JSON.parse(e.target?.result as string)
+        captureHistory()
+        if (s.hits)         setHits(s.hits)
+        if (s.laneEffects)  setLaneEffects(s.laneEffects)
+        if (s.lanePans)     setLanePans(s.lanePans)
+        if (s.laneReverb)   setLaneReverb(s.laneReverb)
+        if (s.laneDelay)    setLaneDelay(s.laneDelay)
+        if (s.automLanes)   setAutomLanes(s.automLanes)
+        if (s.typeOverrides) setTypeOverrides(s.typeOverrides)
+        if (s.locators)     setLocators(s.locators)
+        if (s.bpm != null)  { setBpm(s.bpm); setMasterBpm(s.bpm ?? 120) }
+        if (s.masterVolume != null) setMasterVolume(s.masterVolume)
+        if (s.quantizeSwing != null) setQuantizeSwing(s.quantizeSwing)
+        if (s.sessionClips)  setSessionClips(s.sessionClips)
+        if (s.extraLaneIds)  setExtraLaneIds(s.extraLaneIds)
+      } catch { /* ignore bad files */ }
+    }
+    reader.readAsText(file)
+  }
+
+  // Auto-save to localStorage (debounced 2s)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem('beatlab-autosave', JSON.stringify({ hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing }))
+      } catch { /* quota exceeded */ }
+    }, 2000)
+    return () => clearTimeout(t)
+  }, [hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing]) // eslint-disable-line
+
+  // ── Humanizer ────────────────────────────────────────────────────────────────
+  function humanizeHits(amount = 0.5) {
+    captureHistory()
+    const grid = bpm ? 60 / bpm / 4 : 0.05
+    const maxJitter = grid * 0.5 * amount
+    setHits(prev => prev.map(h => ({
+      ...h,
+      time: Math.max(0, h.time + (Math.random() - 0.5) * 2 * maxJitter),
+      velocity: Math.max(0.1, Math.min(1, h.velocity + (Math.random() - 0.5) * 0.3 * amount)),
+    })).sort((a, b) => a.time - b.time))
   }
 
   const recorderRef    = useRef<MediaRecorder | null>(null)
@@ -2064,6 +2277,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (e.code === 'KeyT' && !inInput) { tapTempo(); return }
       // S → solo active lane
       if (e.code === 'KeyS' && !inInput) { if (activeLaneType) toggleSolo(activeLaneType); return }
+      // Cmd+Z → undo, Cmd+Shift+Z / Cmd+Y → redo
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
+      if (((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) || ((e.metaKey || e.ctrlKey) && e.key === 'y')) { e.preventDefault(); redo(); return }
+      // Cmd+K → command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdPaletteOpen(v => !v); return }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -2425,7 +2643,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         laneAnalysersRef.current.set(laneType, an)
       }
       const analyser = laneAnalysersRef.current.get(laneType)!
-      chainOut.connect(panner); panner.connect(analyser); analyser.connect(masterGain)
+
+      // Group bus routing: child lanes → group bus → master
+      const groupForLane = groupDefsRef.current.find(g => g.childTypes.includes(laneType))
+      let laneDest: AudioNode = masterGain
+      if (groupForLane) {
+        const gId = groupForLane.id
+        if (!groupBusRef.current.has(gId)) {
+          const bus = ctx.createGain()
+          bus.gain.value = 1
+          bus.connect(masterGain)
+          groupBusRef.current.set(gId, bus)
+        }
+        laneDest = groupBusRef.current.get(gId)!
+      }
+      chainOut.connect(panner); panner.connect(analyser); analyser.connect(laneDest)
       chainOut.connect(revSend); revSend.connect(reverb)
       chainOut.connect(dlySend); dlySend.connect(delay)
 
@@ -2701,6 +2933,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     cancelAnimationFrame(playRafRef.current)
     setIsPlaying(false)
     playStartRef.current = null
+    groupBusRef.current.clear()
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close()
       audioCtxRef.current = null
@@ -2754,13 +2987,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // ── Hit editing ────────────────────────────────────────────────────────────
 
   const moveHit = useCallback((id: string, t: number, note: number) => {
+    captureHistory()
     setHits(prev => prev.map(h => h.id === id ? { ...h, time: t, note } : h).sort((a, b) => a.time - b.time))
-  }, [])
+  }, []) // eslint-disable-line
 
   const deleteHit = useCallback((id: string) => {
+    captureHistory()
     setHits(prev => prev.filter(h => h.id !== id))
     setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n })
-  }, [])
+  }, []) // eslint-disable-line
 
   // ── Hit property editing (from right-click context menu) ──────────────────
   const [hitMenu, setHitMenu] = useState<{ hitId: string; x: number; y: number } | null>(null)
@@ -2814,6 +3049,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   }
 
   function addHit(type: BeatType, t: number, note: number) {
+    captureHistory()
     const newHit: BeatHit = { id: crypto.randomUUID(), time: t, type, velocity: 0.7, note }
     setHits(prev => [...prev, newHit].sort((a, b) => a.time - b.time))
     setSelectedIds(new Set([newHit.id]))
@@ -2821,6 +3057,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   function changeSelectedType(type: BeatType) {
     if (selectedIds.size === 0) return
+    captureHistory()
     setHits(prev => prev.map(h => {
       if (!selectedIds.has(h.id)) return h
       if (type !== h.type && h.spectral) {
@@ -3615,9 +3852,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   MIDI {midiEnabled ? '●' : '○'}
                 </button>
               )}
-              {/* Quantize */}
+              {/* Quantize strip */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
-                <button onClick={quantizeHits} title="Quantize hits to grid" style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
+                <button onClick={quantizeHits} title="Quantize hits to grid (Q)" style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
                 <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
                 <span style={{ fontSize: 9, color: 'var(--text-muted)', paddingLeft: 4 }}>Swing</span>
                 <input
@@ -3628,14 +3865,72 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 />
                 <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 22 }}>{Math.round(quantizeSwing * 100)}%</span>
               </div>
-              {/* Export Stems */}
-              <button onClick={() => void exportStems()} title="Export each lane as a separate WAV file" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600 }}>
-                Stems
-              </button>
-              {/* MIDI Export */}
-              <button onClick={exportMidi} title="Export all lanes as a .mid file" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600 }}>
-                MIDI
-              </button>
+              {/* Edit menu */}
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => { setShowEditMenu(v => !v); setShowFileMenu(false) }}
+                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showEditMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showEditMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showEditMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                  Edit ▾
+                </button>
+                {showEditMenu && (
+                  <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setShowEditMenu(false)} />
+                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 500, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 0', minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+                      {[
+                        { label: 'Undo', shortcut: '⌘Z', action: () => { undo(); setShowEditMenu(false) } },
+                        { label: 'Redo', shortcut: '⌘⇧Z', action: () => { redo(); setShowEditMenu(false) } },
+                        { label: '─', action: null },
+                        { label: 'Quantize to Grid', shortcut: 'Q', action: () => { quantizeHits(); setShowEditMenu(false) } },
+                        { label: 'Humanize (light)', action: () => { humanizeHits(0.25); setShowEditMenu(false) } },
+                        { label: 'Humanize (heavy)', action: () => { humanizeHits(0.7); setShowEditMenu(false) } },
+                        { label: '─', action: null },
+                        { label: 'Command Palette', shortcut: '⌘K', action: () => { setCmdPaletteOpen(true); setShowEditMenu(false) } },
+                      ].map((item, i) => item.action === null
+                        ? <div key={i} style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
+                        : <button key={item.label} onClick={item.action!}
+                            style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 11, color: 'var(--text-primary)' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                          >
+                            <span style={{ flex: 1 }}>{item.label}</span>
+                            {item.shortcut && <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 12 }}>{item.shortcut}</span>}
+                          </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* File menu */}
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => { setShowFileMenu(v => !v); setShowEditMenu(false) }}
+                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showFileMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showFileMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showFileMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                  File ▾
+                </button>
+                {showFileMenu && (
+                  <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setShowFileMenu(false)} />
+                    <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 500, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 0', minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+                      {[
+                        { label: 'Save Project', action: () => { saveProject(); setShowFileMenu(false) } },
+                        { label: 'Load Project…', action: () => {
+                          const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'
+                          inp.onchange = (ev) => { const f = (ev.target as HTMLInputElement).files?.[0]; if (f) loadProjectFromFile(f) }
+                          inp.click(); setShowFileMenu(false)
+                        }},
+                        { label: '─', action: null },
+                        { label: 'Export Stems (WAV)', action: () => { void exportStems(); setShowFileMenu(false) } },
+                        { label: 'Export MIDI', action: () => { exportMidi(); setShowFileMenu(false) } },
+                      ].map((item, i) => item.action === null
+                        ? <div key={i} style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
+                        : <button key={item.label} onClick={item.action!}
+                            style={{ display: 'block', width: '100%', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 11, color: 'var(--text-primary)' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                          >{item.label}</button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <button onClick={() => setViewMode('arrangement')} title="Arrangement view" style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
@@ -4224,8 +4519,27 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                     </div>
                   ) : (
                   <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
-                    {activeLaneTypes.map(type => (
-                      <div key={type} style={{ display: 'flex' }}>
+                    {activeLaneTypes.map(type => {
+                      const parentGroup = groupDefs.find(g => g.childTypes.includes(type))
+                      const isGroupBus  = groupDefs.some(g => g.id === type)
+                      const group       = groupDefs.find(g => g.id === type)
+                      // If this lane belongs to a collapsed group, skip rendering
+                      if (parentGroup?.collapsed) return null
+                      return (
+                      <div key={type}>
+                      {/* Group header row (only for the group bus lane) */}
+                      {isGroupBus && group && (
+                        <div style={{ display: 'flex', alignItems: 'center', height: 26, background: 'var(--bg-surface)', borderBottom: '1px solid rgba(139,92,246,0.2)', paddingLeft: 88 }}>
+                          <button onClick={() => toggleGroupCollapse(group.id)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '0 6px' }}>
+                            {group.collapsed ? '▶' : '▼'}
+                          </button>
+                          <div style={{ width: 7, height: 7, borderRadius: '50%', background: group.color, marginRight: 5, flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>{group.label}</span>
+                          <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 6 }}>{group.childTypes.length} tracks</span>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex' }}>
                         <div style={{ width: 24, flexShrink: 0 }} />
                         <Lane
                           type={type}
@@ -4312,9 +4626,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onToggleMute={() => toggleMute(type)}
                           onLaneContextMenu={e => setLaneMenu({ type, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 200) })}
                           onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
+                          miniMode={miniLanes.has(type)}
+                          spectrumOpen={specLanes.has(type)}
+                          analyserNode={laneAnalysersRef.current.get(type) ?? null}
+                          onToggleMini={() => toggleMiniLane(type)}
+                          onToggleSpectrum={() => toggleSpecLane(type)}
                         />
                       </div>
-                    ))}
+                      </div>
+                    )})}
                     {/* Add new lane */}
                     <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
                       <button
@@ -4559,16 +4879,34 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   { label: 'Change instrument', action: () => setLaneMenuChanging(true) },
                   { label: mutedTypes.has(laneMenu.type) ? 'Unmute' : 'Mute', action: () => { toggleMute(laneMenu.type); setLaneMenu(null) } },
                   { label: soloedLanes.has(laneMenu.type) ? 'Unsolo' : 'Solo', action: () => { toggleSolo(laneMenu.type); setLaneMenu(null) } },
+                  { label: '──────', action: null, danger: false },
+                  ...(MELODIC_TYPES.has(laneMenu.type) ? [{ label: 'Open Piano Roll', action: () => { setPianoRollLane(laneMenu.type); setLaneMenu(null) } }] : []),
+                  { label: 'Step Sequencer', action: () => { setStepSeqLane(laneMenu.type); setLaneMenu(null) } },
+                  ...(MELODIC_TYPES.has(laneMenu.type) ? [{ label: 'Chord Builder', action: () => { setChordBuilderLane(laneMenu.type); setLaneMenu(null) } }] : []),
+                  { label: 'Arpeggiator', action: () => { setArpLane(laneMenu.type as BeatType); setLaneMenu(null) } },
+                  { label: `FX Chain${(laneEffects[laneMenu.type]?.length ?? 0) > 0 ? ` (${laneEffects[laneMenu.type].length})` : ''}`, action: () => { setFxOpenLanes(prev => { const s = new Set(prev); s.add(laneMenu!.type); return s }); setLaneMenu(null) } },
+                  { label: `Automation`, action: () => { setAutomOpenLanes(prev => { const s = new Set(prev); s.add(laneMenu!.type); return s }); setLaneMenu(null) } },
+                  { label: `Spectrum ${specLanes.has(laneMenu.type) ? '✓' : ''}`, action: () => { toggleSpecLane(laneMenu.type); setLaneMenu(null) } },
+                  { label: miniLanes.has(laneMenu.type) ? 'Expand lane' : 'Collapse lane', action: () => { toggleMiniLane(laneMenu.type); setLaneMenu(null) } },
+                  { label: '──────', action: null, danger: false },
+                  ...(groupDefs.find(g => g.childTypes.includes(laneMenu.type))
+                    ? [{ label: 'Remove from group', action: () => { removeLaneFromGroup(laneMenu.type); setLaneMenu(null) } }]
+                    : groupDefs.length > 0
+                      ? groupDefs.map(g => ({ label: `Add to: ${g.label}`, action: () => { addLaneToGroup(laneMenu.type, g.id); setLaneMenu(null) } }))
+                      : []),
+                  { label: 'Create new group', action: () => { createGroup(); setLaneMenu(null) } },
+                  { label: '──────', action: null, danger: false },
                   ...(activeLaneTypes.length > 1
                     ? [{ label: 'Delete lane', action: () => { removeLane(laneMenu.type); setLaneMenu(null) }, danger: true }]
                     : []),
-                ].map(item => (
-                  <button key={item.label} onClick={item.action}
-                    style={{ width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 12, color: (item as {danger?: boolean}).danger ? '#ef4444' : 'var(--text-primary)', borderRadius: 6 }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                  >{item.label}</button>
-                ))}
+                ].map((item, idx) => item.action === null
+                  ? <div key={idx} style={{ height: 1, background: 'var(--border)', margin: '3px 8px' }} />
+                  : <button key={item.label} onClick={item.action ?? undefined}
+                      style={{ width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 12, color: (item as {danger?: boolean}).danger ? '#ef4444' : 'var(--text-primary)', borderRadius: 6 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                    >{item.label}</button>
+                )}
                 {/* Sends */}
                 <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6, padding: '6px 10px 4px' }}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sends</div>
@@ -4852,6 +5190,70 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         />
         </Suspense>
       )}
+
+      {/* ── Arpeggiator ─────────────────────────────────────────────────── */}
+      {arpLane && (
+        <Suspense fallback={null}>
+          <Arpeggiator
+            laneType={arpLane}
+            laneColor={typeColor(arpLane, typeOverrides)}
+            existingHits={(hitsByType.get(arpLane) ?? []).filter(h => h.type === arpLane)}
+            bpm={effectiveBpmRef.current}
+            duration={duration}
+            onClose={() => setArpLane(null)}
+            onHitsChange={nextHits => {
+              captureHistory()
+              setHits(prev => [...prev.filter(h => h.type !== arpLane), ...nextHits])
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* ── Command Palette (Cmd+K) ─────────────────────────────────────── */}
+      <Suspense fallback={null}>
+        <CommandPalette
+          open={cmdPaletteOpen}
+          onClose={() => setCmdPaletteOpen(false)}
+          actions={[
+            // Transport
+            { id: 'play', label: 'Play / Pause', group: 'Transport', shortcut: 'Space', action: () => { if (isPlaying) stopPlayback(); else startPlayback(); setCmdPaletteOpen(false) } },
+            { id: 'undo', label: 'Undo', group: 'Edit', shortcut: '⌘Z', action: () => { undo(); setCmdPaletteOpen(false) } },
+            { id: 'redo', label: 'Redo', group: 'Edit', shortcut: '⌘⇧Z', action: () => { redo(); setCmdPaletteOpen(false) } },
+            { id: 'quantize', label: 'Quantize hits to grid', group: 'Edit', shortcut: 'Q', action: () => { quantizeHits(); setCmdPaletteOpen(false) } },
+            { id: 'humanize-light', label: 'Humanize (light)', group: 'Edit', action: () => { humanizeHits(0.25); setCmdPaletteOpen(false) } },
+            { id: 'humanize-heavy', label: 'Humanize (heavy)', group: 'Edit', action: () => { humanizeHits(0.7); setCmdPaletteOpen(false) } },
+            { id: 'tap', label: 'Tap tempo', group: 'Transport', shortcut: 'T', action: () => { tapTempo(); setCmdPaletteOpen(false) } },
+            { id: 'midi-toggle', label: midiEnabled ? 'Disable MIDI input' : 'Enable MIDI input', group: 'Transport', action: () => { setMidiEnabled(v => !v); setCmdPaletteOpen(false) } },
+            { id: 'metronome', label: metronomeOn ? 'Disable metronome' : 'Enable metronome', group: 'Transport', action: () => { setMetronomeOn(v => !v); setCmdPaletteOpen(false) } },
+            // Export
+            { id: 'save', label: 'Save project', group: 'File', action: () => { saveProject(); setCmdPaletteOpen(false) } },
+            { id: 'export-stems', label: 'Export stems (WAV)', group: 'File', action: () => { void exportStems(); setCmdPaletteOpen(false) } },
+            { id: 'export-midi', label: 'Export MIDI', group: 'File', action: () => { exportMidi(); setCmdPaletteOpen(false) } },
+            // Views
+            { id: 'view-arr', label: 'Switch to Arrangement view', group: 'View', action: () => { setViewMode('arrangement'); setCmdPaletteOpen(false) } },
+            { id: 'view-ses', label: 'Switch to Session view', group: 'View', action: () => { setViewMode('session'); setCmdPaletteOpen(false) } },
+            { id: 'zoom-in', label: 'Zoom in', group: 'View', action: () => { setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2))); setCmdPaletteOpen(false) } },
+            { id: 'zoom-out', label: 'Zoom out', group: 'View', action: () => { setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2))); setCmdPaletteOpen(false) } },
+            { id: 'add-track', label: 'Add custom track', group: 'Tracks', action: () => { addCustomLane(); setCmdPaletteOpen(false) } },
+            // Per-lane actions
+            ...activeLaneTypes.flatMap(type => {
+              const lbl = typeLabel(type, typeOverrides)
+              const actions = [
+                { id: `mute-${type}`, label: `${mutedTypes.has(type) ? 'Unmute' : 'Mute'}: ${lbl}`, group: 'Lanes', action: () => { toggleMute(type); setCmdPaletteOpen(false) } },
+                { id: `solo-${type}`, label: `${soloedLanes.has(type) ? 'Unsolo' : 'Solo'}: ${lbl}`, group: 'Lanes', action: () => { toggleSolo(type); setCmdPaletteOpen(false) } },
+                { id: `stepseq-${type}`, label: `Open Step Sequencer: ${lbl}`, group: 'Lanes', action: () => { setStepSeqLane(type); setCmdPaletteOpen(false) } },
+                { id: `spec-${type}`, label: `${specLanes.has(type) ? 'Hide' : 'Show'} Spectrum: ${lbl}`, group: 'Lanes', action: () => { toggleSpecLane(type); setCmdPaletteOpen(false) } },
+                { id: `mini-${type}`, label: `${miniLanes.has(type) ? 'Expand' : 'Collapse'} Lane: ${lbl}`, group: 'Lanes', action: () => { toggleMiniLane(type); setCmdPaletteOpen(false) } },
+              ]
+              if (MELODIC_TYPES.has(type)) {
+                actions.push({ id: `piano-${type}`, label: `Open Piano Roll: ${lbl}`, group: 'Lanes', action: () => { setPianoRollLane(type); setCmdPaletteOpen(false) } })
+                actions.push({ id: `chord-${type}`, label: `Open Chord Builder: ${lbl}`, group: 'Lanes', action: () => { setChordBuilderLane(type); setCmdPaletteOpen(false) } })
+              }
+              return actions
+            }),
+          ]}
+        />
+      </Suspense>
     </div>
   )
 }
