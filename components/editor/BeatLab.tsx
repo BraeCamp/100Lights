@@ -1817,6 +1817,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     referenceId?: string
     referenceLoading?: boolean
     harmProfile?: Float32Array | null
+    refSearch?: string
+    refCategory?: string
   } | null>(null)
 
   function openConvertCard(clipId: string, mode: 'synth' | 'beats' | 'instrument') {
@@ -5941,7 +5943,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             <div style={{
               position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
               zIndex: 201, background: 'var(--bg-surface)', border: '1px solid var(--border)',
-              borderRadius: 14, padding: 24, width: 340, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+              borderRadius: 14, padding: 24, width: isSynth ? 400 : 340, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
             }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>
                 Convert to {isSynth ? 'Synth' : isInstrument ? 'Instrument' : 'Beats'}
@@ -5950,134 +5952,124 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 {clip.name} · {srcDur.toFixed(1)}s{clip.originalBuf ? ' · from original' : ''}
               </div>
 
-              {isSynth ? (
-                <>
-                  {sectionLabel('Reference Sound')}
-                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                    {/* None option */}
-                    <button
-                      onClick={() => setConvertCard(c => c ? { ...c, referenceBuf: null, referenceId: undefined, harmProfile: null } : c)}
+              {isSynth ? (() => {
+                const search = (convertCard.refSearch ?? '').toLowerCase()
+                const cat    = convertCard.refCategory ?? 'all'
+                const CATS   = ['all', 'lead', 'pad', 'bass', 'keys', 'strings', 'experimental'] as const
+                const filtered = SAMPLE_LIBRARY.filter(p =>
+                  (cat === 'all' || p.category === cat) &&
+                  (!search || p.name.toLowerCase().includes(search) || p.description.toLowerCase().includes(search))
+                )
+                const selectedPreset = SAMPLE_LIBRARY.find(p => p.id === convertCard.referenceId)
+                return (
+                  <>
+                    {/* Search */}
+                    <input
+                      placeholder="Search sounds…"
+                      value={convertCard.refSearch ?? ''}
+                      onChange={e => setConvertCard(c => c ? { ...c, refSearch: e.target.value } : c)}
                       style={{
-                        padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
-                        fontWeight: !convertCard.referenceId ? 600 : 400,
-                        background: !convertCard.referenceId ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
-                        borderColor: !convertCard.referenceId ? 'rgba(139,92,246,0.5)' : 'var(--border)',
-                        color: !convertCard.referenceId ? 'var(--accent-light)' : 'var(--text-secondary)',
+                        width: '100%', boxSizing: 'border-box', marginTop: 10,
+                        background: 'var(--bg-card)', border: '1px solid var(--border)',
+                        borderRadius: 7, padding: '7px 10px', fontSize: 12,
+                        color: 'var(--text-primary)', outline: 'none',
                       }}
-                    >None</button>
-                    {SAMPLE_LIBRARY.map(preset => {
-                      const isSelected = convertCard.referenceId === preset.id
-                      const isLoading  = convertCard.referenceLoading && isSelected
-                      return (
-                        <button
-                          key={preset.id}
-                          onClick={async () => {
+                      onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+                      onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+                    />
+
+                    {/* Category tabs */}
+                    <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
+                      {CATS.map(c => (
+                        <button key={c} onClick={() => setConvertCard(cc => cc ? { ...cc, refCategory: c } : cc)} style={{
+                          padding: '3px 9px', borderRadius: 5, border: '1px solid', fontSize: 10, cursor: 'pointer',
+                          fontWeight: cat === c ? 600 : 400, textTransform: 'capitalize',
+                          background: cat === c ? 'rgba(139,92,246,0.18)' : 'transparent',
+                          borderColor: cat === c ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                          color: cat === c ? 'var(--accent-light)' : 'var(--text-muted)',
+                        }}>{c}</button>
+                      ))}
+                    </div>
+
+                    {/* Sample grid */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6,
+                      marginTop: 8, maxHeight: 200, overflowY: 'auto',
+                      paddingRight: 2,
+                    }}>
+                      {filtered.map(preset => {
+                        const isSelected = convertCard.referenceId === preset.id
+                        const isLoading  = convertCard.referenceLoading && isSelected
+                        return (
+                          <button key={preset.id} onClick={async () => {
                             if (isSelected) return
                             setConvertCard(c => c ? { ...c, referenceId: preset.id, referenceLoading: true } : c)
                             const buf = await getSampleBuffer(preset.id)
                             const profile = buf ? extractHarmonicProfile(buf, 261.63) : null
                             setConvertCard(c => c ? { ...c, referenceBuf: buf, harmProfile: profile, referenceLoading: false } : c)
-                          }}
-                          title={preset.description}
-                          style={{
-                            padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
-                            fontWeight: isSelected ? 600 : 400,
-                            background: isSelected ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
-                            borderColor: isSelected ? 'rgba(139,92,246,0.5)' : 'var(--border)',
-                            color: isSelected ? 'var(--accent-light)' : 'var(--text-secondary)',
-                            opacity: isLoading ? 0.5 : 1,
-                          }}
-                        >{isLoading ? '…' : preset.name}</button>
-                      )
-                    })}
-                    {/* Custom upload */}
-                    <label
-                      title="Upload any audio file as reference"
-                      style={{
-                        padding: '5px 10px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer',
-                        fontWeight: convertCard.referenceId === 'custom' ? 600 : 400,
-                        background: convertCard.referenceId === 'custom' ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
-                        borderColor: convertCard.referenceId === 'custom' ? 'rgba(139,92,246,0.5)' : 'var(--border)',
-                        color: convertCard.referenceId === 'custom' ? 'var(--accent-light)' : 'var(--text-secondary)',
-                      }}
-                    >
-                      Custom ↑
-                      <input type="file" accept="audio/*" hidden onChange={async e => {
-                        const file = e.target.files?.[0]
-                        if (!file) return
-                        setConvertCard(c => c ? { ...c, referenceId: 'custom', referenceLoading: true } : c)
-                        try {
-                          const arrayBuf = await file.arrayBuffer()
-                          const tmpCtx = new AudioContext()
-                          const buf = await tmpCtx.decodeAudioData(arrayBuf)
-                          await tmpCtx.close()
-                          const profile = extractHarmonicProfile(buf)  // auto-detects fundamental
-                          setConvertCard(c => c ? { ...c, referenceBuf: buf, harmProfile: profile, referenceLoading: false } : c)
-                        } catch {
-                          setConvertCard(c => c ? { ...c, referenceId: undefined, referenceLoading: false } : c)
-                          showToast('Could not decode reference audio')
-                        }
-                        e.target.value = ''
-                      }} />
-                    </label>
-                  </div>
-                  {convertCard.referenceId && (
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
-                      {convertCard.referenceId === 'custom'
-                        ? 'Spectral matching will reshape your recording to approximate the reference file\'s harmonic character.'
-                        : `${SAMPLE_LIBRARY.find(p => p.id === convertCard.referenceId)?.description ?? ''} — spectral matching applied after transformation.`}
+                          }} style={{
+                            textAlign: 'left', padding: '8px 10px', borderRadius: 7, border: '1px solid',
+                            cursor: 'pointer', background: isSelected ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)',
+                            borderColor: isSelected ? 'rgba(139,92,246,0.55)' : 'var(--border)',
+                            opacity: isLoading ? 0.5 : 1, transition: 'border-color 0.1s, background 0.1s',
+                          }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: isSelected ? 'var(--accent-light)' : 'var(--text-primary)', marginBottom: 2 }}>
+                              {isLoading ? '…' : preset.name}
+                            </div>
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                              {preset.description}
+                            </div>
+                          </button>
+                        )
+                      })}
+                      {filtered.length === 0 && (
+                        <div style={{ gridColumn: '1/-1', fontSize: 11, color: 'var(--text-muted)', padding: '16px 0', textAlign: 'center' }}>
+                          No sounds match
+                        </div>
+                      )}
+                      {/* Custom upload — always shown at end */}
+                      <label style={{
+                        textAlign: 'left', padding: '8px 10px', borderRadius: 7,
+                        border: `1px dashed ${convertCard.referenceId === 'custom' ? 'rgba(139,92,246,0.55)' : 'var(--border)'}`,
+                        cursor: 'pointer', background: convertCard.referenceId === 'custom' ? 'rgba(139,92,246,0.15)' : 'transparent',
+                      }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: convertCard.referenceId === 'custom' ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                          Upload file ↑
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.3 }}>
+                          Any audio file
+                        </div>
+                        <input type="file" accept="audio/*" hidden onChange={async e => {
+                          const file = e.target.files?.[0]
+                          if (!file) return
+                          setConvertCard(c => c ? { ...c, referenceId: 'custom', referenceLoading: true } : c)
+                          try {
+                            const arrayBuf = await file.arrayBuffer()
+                            const tmpCtx = new AudioContext()
+                            const buf = await tmpCtx.decodeAudioData(arrayBuf)
+                            await tmpCtx.close()
+                            const profile = extractHarmonicProfile(buf)
+                            setConvertCard(c => c ? { ...c, referenceBuf: buf, harmProfile: profile, referenceLoading: false } : c)
+                          } catch {
+                            setConvertCard(c => c ? { ...c, referenceId: undefined, referenceLoading: false } : c)
+                            showToast('Could not decode reference audio')
+                          }
+                          e.target.value = ''
+                        }} />
+                      </label>
                     </div>
-                  )}
 
-                  {sectionLabel('Waveform')}
-                  {chipGroup(
-                    [{ label: 'Sawtooth', value: 'sawtooth' }, { label: 'Sine', value: 'sine' }, { label: 'Square', value: 'square' }, { label: 'Triangle', value: 'triangle' }],
-                    o.waveform,
-                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, waveform: v as OscillatorType } } : c)
-                  )}
-
-                  {sectionLabel('Brightness')}
-                  {chipGroup(
-                    [{ label: 'Muffled', value: '400' }, { label: 'Warm', value: '1400' }, { label: 'Bright', value: '2800' }, { label: 'Full', value: '8000' }],
-                    String(o.filterCutoff),
-                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, filterCutoff: Number(v) } } : c)
-                  )}
-
-                  {sectionLabel('Pitch')}
-                  {chipGroup(
-                    [{ label: 'Steady', value: 'false' }, { label: 'Follow melody', value: 'true' }],
-                    String(o.followPitch),
-                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, followPitch: v === 'true' } } : c)
-                  )}
-                  {o.followPitch && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-                      Oscillator frequency follows detected pitch frame-by-frame. Best for singing or humming; may sound choppy on speech.
-                    </div>
-                  )}
-
-                  {sectionLabel('Volume')}
-                  {chipGroup(
-                    [{ label: 'Steady', value: 'false' }, { label: 'Follow dynamics', value: 'true' }],
-                    String(o.followDynamics),
-                    v => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, followDynamics: v === 'true' } } : c)
-                  )}
-                  {o.followDynamics && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-                      Gain follows the RMS envelope of the source — louder moments in the recording become louder in the synth.
-                    </div>
-                  )}
-
-                  {sectionLabel(`Pitch shift: ${o.pitchShift > 0 ? '+' : ''}${o.pitchShift} semitones`)}
-                  <input
-                    type="range" min={-12} max={12} step={1} value={o.pitchShift}
-                    onChange={e => setConvertCard(c => c ? { ...c, synthOpts: { ...c.synthOpts, pitchShift: Number(e.target.value) } } : c)}
-                    style={{ width: '100%', accentColor: 'var(--accent)' }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                    <span>-12</span><span>0</span><span>+12</span>
-                  </div>
-                </>
-              ) : isInstrument ? (
+                    {/* Selected description */}
+                    {(selectedPreset || convertCard.referenceId === 'custom') && (
+                      <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        {convertCard.referenceId === 'custom'
+                          ? 'Harmonic profile extracted from your file — conversion will match its tonal character.'
+                          : selectedPreset?.description}
+                      </div>
+                    )}
+                  </>
+                )
+              })() : isInstrument ? (
                 <>
                   {sectionLabel('Instrument')}
                   {chipGroup(
