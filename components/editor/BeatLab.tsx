@@ -65,6 +65,7 @@ import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { createSidechainProcessor } from '@/lib/sidechain'
+import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
 const SCENE_COUNT = 8
 const PianoRoll               = lazy(() => import('./PianoRoll'))
@@ -534,16 +535,18 @@ interface AudioClipShape {
   color:           string | null // null = default purple
   reversed:        boolean
   warpMarkers:     WarpMarker[]
+  gainEnvelope?:   { t: number; v: number }[]  // t: 0-1 normalized within clip, v: 0-1 gain
 }
 
 function clipEffectiveDuration(c: AudioClipShape) {
   return c.loopDuration ?? c.stretchDuration ?? c.buf.duration
 }
 
-function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null, stretchDuration = null, fadeIn = 0, fadeOut = 0, reversed = false, warpMarkers = [] }: {
+function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration = null, stretchDuration = null, fadeIn = 0, fadeOut = 0, reversed = false, warpMarkers = [], gainEnvelope }: {
   buf: AudioClipShape['buf']; color: string
   gain?: number; gateThreshold?: number; loopDuration?: number | null; stretchDuration?: number | null
   fadeIn?: number; fadeOut?: number; reversed?: boolean; warpMarkers?: WarpMarker[]
+  gainEnvelope?: { t: number; v: number }[]
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
@@ -675,7 +678,25 @@ function WaveformCanvas({ buf, color, gain = 1, gateThreshold = 0, loopDuration 
       ctx.moveTo(mx, 3); ctx.lineTo(mx + 5, 8); ctx.lineTo(mx, 13); ctx.lineTo(mx - 5, 8); ctx.closePath()
       ctx.fill()
     }
-  }, [buf, color, gain, gateThreshold, loopDuration, stretchDuration, fadeIn, fadeOut, reversed, warpMarkers])
+    // Gain envelope overlay
+    if (gainEnvelope && gainEnvelope.length >= 2) {
+      ctx.beginPath()
+      ctx.moveTo(0, h)
+      for (const pt of gainEnvelope) ctx.lineTo(pt.t * w, (1 - pt.v) * h)
+      ctx.lineTo(w, h)
+      ctx.closePath()
+      ctx.fillStyle = 'rgba(167,139,250,0.25)'
+      ctx.fill()
+      ctx.beginPath()
+      ctx.moveTo(gainEnvelope[0].t * w, (1 - gainEnvelope[0].v) * h)
+      for (let i = 1; i < gainEnvelope.length; i++) ctx.lineTo(gainEnvelope[i].t * w, (1 - gainEnvelope[i].v) * h)
+      ctx.strokeStyle = 'rgba(167,139,250,0.7)'; ctx.lineWidth = 1.5; ctx.stroke()
+      ctx.fillStyle = 'rgba(167,139,250,0.9)'
+      for (const pt of gainEnvelope) {
+        ctx.beginPath(); ctx.arc(pt.t * w, (1 - pt.v) * h, 4, 0, Math.PI * 2); ctx.fill()
+      }
+    }
+  }, [buf, color, gain, gateThreshold, loopDuration, stretchDuration, fadeIn, fadeOut, reversed, warpMarkers, gainEnvelope])
   return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
 }
 
@@ -905,7 +926,7 @@ interface LaneProps {
   onClipDelete: (clipId: string) => void
   onClipSelect: (clipId: string) => void
   selectedClipId: string | null
-  onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold' | 'fadeIn' | 'fadeOut' | 'color' | 'reversed' | 'warpMarkers'>>) => void
+  onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold' | 'fadeIn' | 'fadeOut' | 'color' | 'reversed' | 'warpMarkers' | 'gainEnvelope'>>) => void
   // Mixer
   pan: number; soloed: boolean; anySoloed: boolean
   onPanChange: (v: number) => void; onSoloToggle: () => void
@@ -1211,16 +1232,40 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                 const pxPerSec = duration > 0 ? pxWidth / duration : 1
                 let moved = false
 
-                // Alt+click in move zone: drop or remove a warp marker
+                // Alt+click in move zone: gain envelope editing
                 if (e.altKey && zone === 'move') {
-                  const timeFrac = Math.max(0.01, Math.min(0.99, rx / r.width))
-                  const bufFrac  = timeFrac
-                  const existing = clip.warpMarkers.findIndex(m => Math.abs(m.timeFrac - timeFrac) < 0.04)
-                  if (existing >= 0) {
-                    onClipUpdate(clip.id, { warpMarkers: clip.warpMarkers.filter((_, i) => i !== existing) })
+                  const clickT = Math.max(0, Math.min(1, rx / r.width))
+                  const clickV = Math.max(0, Math.min(1, 1 - ry / r.height))
+                  const envelope: { t: number; v: number }[] =
+                    clip.gainEnvelope && clip.gainEnvelope.length >= 2
+                      ? clip.gainEnvelope
+                      : [{ t: 0, v: 1 }, { t: 1, v: 1 }]
+                  const handleIdx = envelope.findIndex(pt =>
+                    Math.hypot(rx - pt.t * r.width, ry - (1 - pt.v) * r.height) < 8
+                  )
+                  if (handleIdx >= 0) {
+                    let didMove = false
+                    const origEnv = envelope.slice()
+                    const onEnvMove = (me: MouseEvent) => {
+                      didMove = true
+                      const newT = Math.max(0, Math.min(1, (me.clientX - r.left) / r.width))
+                      const newV = Math.max(0, Math.min(1, 1 - (me.clientY - r.top) / r.height))
+                      const prevT = handleIdx > 0 ? origEnv[handleIdx - 1].t : 0
+                      const nextT = handleIdx < origEnv.length - 1 ? origEnv[handleIdx + 1].t : 1
+                      const clampedT = Math.max(prevT, Math.min(nextT, newT))
+                      onClipUpdate(clip.id, { gainEnvelope: origEnv.map((p, i) => i === handleIdx ? { t: clampedT, v: newV } : p) })
+                    }
+                    const onEnvUp = () => {
+                      if (!didMove && origEnv.length > 2)
+                        onClipUpdate(clip.id, { gainEnvelope: origEnv.filter((_, i) => i !== handleIdx) })
+                      window.removeEventListener('mousemove', onEnvMove)
+                      window.removeEventListener('mouseup', onEnvUp)
+                    }
+                    window.addEventListener('mousemove', onEnvMove)
+                    window.addEventListener('mouseup', onEnvUp)
                   } else {
-                    const updated = [...clip.warpMarkers, { bufFrac, timeFrac }].sort((a, b) => a.timeFrac - b.timeFrac)
-                    onClipUpdate(clip.id, { warpMarkers: updated })
+                    const newEnv = [...envelope, { t: clickT, v: clickV }].sort((a, b) => a.t - b.t)
+                    onClipUpdate(clip.id, { gainEnvelope: newEnv })
                   }
                   return
                 }
@@ -1321,7 +1366,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                   gain={clip.gain} gateThreshold={clip.gateThreshold}
                   loopDuration={clip.loopDuration} stretchDuration={clip.stretchDuration}
                   fadeIn={clip.fadeIn} fadeOut={clip.fadeOut}
-                  reversed={clip.reversed} warpMarkers={clip.warpMarkers} />
+                  reversed={clip.reversed} warpMarkers={clip.warpMarkers}
+                  gainEnvelope={clip.gainEnvelope} />
               )}
               <span style={{
                 position: 'absolute', top: 2, left: 5, fontSize: 8, fontWeight: 500, pointerEvents: 'none',
@@ -1745,6 +1791,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     color: string | null
     reversed: boolean
     warpMarkers: WarpMarker[]
+    gainEnvelope?: { t: number; v: number }[]
   }
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
     return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null, fadeIn: 0, fadeOut: 0, color: null, reversed: false, warpMarkers: [] }
@@ -2596,15 +2643,79 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     reader.readAsText(file)
   }
 
+  // Restore audio clips from IndexedDB on mount
+  useEffect(() => {
+    async function restoreClips() {
+      try {
+        const raw = typeof window !== 'undefined' ? localStorage.getItem('beatlab-autosave') : null
+        if (!raw) return
+        const s = JSON.parse(raw) as Record<string, unknown>
+        const meta = s.audioClipsMeta
+        if (!Array.isArray(meta) || meta.length === 0) return
+        const idbClips = await loadAllClips()
+        type ClipMeta = {
+          id: string; laneType: string; startTime: number; muted: boolean; name: string
+          gain: number; stretchDuration: number | null; loopDuration: number | null
+          gateThreshold: number; fadeIn: number; fadeOut: number; color: string | null
+          reversed: boolean; warpMarkers: WarpMarker[]; gainEnvelope?: { t: number; v: number }[]
+        }
+        const restored: AudioClip[] = []
+        for (const m of meta as ClipMeta[]) {
+          const entry = idbClips.get(m.id)
+          if (!entry) continue
+          restored.push({
+            id: m.id, laneType: m.laneType, buf: entry.buf,
+            startTime: m.startTime ?? 0, muted: m.muted ?? false, name: m.name ?? 'Voice',
+            gain: m.gain ?? 1, stretchDuration: m.stretchDuration ?? null,
+            loopDuration: m.loopDuration ?? null, gateThreshold: m.gateThreshold ?? 0,
+            originalBuf: entry.originalBuf ?? null, fadeIn: m.fadeIn ?? 0, fadeOut: m.fadeOut ?? 0,
+            color: m.color ?? null, reversed: m.reversed ?? false,
+            warpMarkers: m.warpMarkers ?? [], gainEnvelope: m.gainEnvelope,
+          })
+          savedClipBufsRef.current.set(m.id, entry.buf)
+        }
+        if (restored.length > 0) setAudioClips(restored)
+      } catch { /* ignore — degrade gracefully */ }
+    }
+    restoreClips()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-save to localStorage (debounced 2s)
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem('beatlab-autosave', JSON.stringify({ hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing }))
+        const audioClipsMeta = audioClips.map(c => ({
+          id: c.id, laneType: c.laneType, startTime: c.startTime, name: c.name,
+          muted: c.muted, gain: c.gain, stretchDuration: c.stretchDuration,
+          loopDuration: c.loopDuration, gateThreshold: c.gateThreshold,
+          fadeIn: c.fadeIn, fadeOut: c.fadeOut, color: c.color,
+          reversed: c.reversed, warpMarkers: c.warpMarkers, gainEnvelope: c.gainEnvelope,
+        }))
+        localStorage.setItem('beatlab-autosave', JSON.stringify({ hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing, audioClipsMeta }))
       } catch { /* quota exceeded */ }
     }, 2000)
     return () => clearTimeout(t)
-  }, [hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing]) // eslint-disable-line
+  }, [hits, laneEffects, lanePans, automLanes, locators, typeOverrides, bpm, masterVolume, quantizeSwing, audioClips]) // eslint-disable-line
+
+  // ── Audio clip IndexedDB persistence ──────────────────────────────────────
+  const savedClipBufsRef = useRef<Map<string, AudioBuffer>>(new Map())
+  useEffect(() => {
+    for (const clip of audioClips) {
+      if (savedClipBufsRef.current.get(clip.id) !== clip.buf) {
+        savedClipBufsRef.current.set(clip.id, clip.buf)
+        saveClip(clip.id, clip.buf, clip.originalBuf).catch(() => {})
+      }
+    }
+    const currentIds = new Set(audioClips.map(c => c.id))
+    const toDelete: string[] = []
+    for (const id of savedClipBufsRef.current.keys()) {
+      if (!currentIds.has(id)) toDelete.push(id)
+    }
+    for (const id of toDelete) {
+      savedClipBufsRef.current.delete(id)
+      deleteClip(id).catch(() => {})
+    }
+  }, [audioClips])
 
   // ── Humanizer ────────────────────────────────────────────────────────────────
   function humanizeHits(amount = 0.5) {
@@ -2858,11 +2969,18 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const now = ctx.currentTime
 
     // ── Routing graph ────────────────────────────────────────────────────────
-    // master gain → destination
+    // master gain → brickwall limiter → destination
     const masterGain = ctx.createGain()
     masterGain.gain.value = masterVolumeRef.current
     masterGainNodeRef.current = masterGain
-    masterGain.connect(ctx.destination)
+    const masterLimiter = ctx.createDynamicsCompressor()
+    masterLimiter.threshold.value = -0.3
+    masterLimiter.knee.value      = 0
+    masterLimiter.ratio.value     = 20
+    masterLimiter.attack.value    = 0.001
+    masterLimiter.release.value   = 0.1
+    masterGain.connect(masterLimiter)
+    masterLimiter.connect(ctx.destination)
 
     // reverb return
     const reverb = ctx.createConvolver()
@@ -3302,7 +3420,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       if (clip.loopDuration != null) { src.loop = true; src.loopStart = 0; src.loopEnd = bufToPlay.duration }
 
       const gainNode = ctx.createGain()
-      src.connect(gainNode); gainNode.connect(getLaneInput(clip.laneType))
+      src.connect(gainNode)
+      if (clip.gainEnvelope && clip.gainEnvelope.length >= 2) {
+        const envGain = ctx.createGain(); envGain.gain.value = clip.gainEnvelope[0].v
+        gainNode.connect(envGain); envGain.connect(getLaneInput(clip.laneType))
+        const clipLen = clipAudioEnd - clipAudioStart
+        for (const pt of clip.gainEnvelope)
+          envGain.gain.setValueAtTime(pt.v, Math.max(ctx.currentTime, clipAudioStart + pt.t * clipLen))
+      } else {
+        gainNode.connect(getLaneInput(clip.laneType))
+      }
 
       // Fade-in gain automation
       if (fadeInDur > 0 && clip.startTime >= startFrom) {
@@ -4066,7 +4193,14 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const offCtx = new OfflineAudioContext(2, totalSamples, sr)
     const masterGain = offCtx.createGain()
     masterGain.gain.value = masterVolume
-    masterGain.connect(offCtx.destination)
+    const exportLimiter = offCtx.createDynamicsCompressor()
+    exportLimiter.threshold.value = -0.3
+    exportLimiter.knee.value      = 0
+    exportLimiter.ratio.value     = 20
+    exportLimiter.attack.value    = 0.001
+    exportLimiter.release.value   = 0.1
+    masterGain.connect(exportLimiter)
+    exportLimiter.connect(offCtx.destination)
 
     // Build per-lane mixer chains (pan only — no per-lane gain control in this app) into master
     const getLaneNode = (() => {
@@ -4113,7 +4247,15 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       src.playbackRate.value = clip.reversed ? -playRate : playRate
       if (clip.loopDuration != null) { src.loop = true; src.loopStart = 0; src.loopEnd = clip.buf.duration }
       const gn = offCtx.createGain(); gn.gain.value = peakGain
-      src.connect(gn); gn.connect(getLaneNode(clip.laneType))
+      src.connect(gn)
+      if (clip.gainEnvelope && clip.gainEnvelope.length >= 2) {
+        const envGn = offCtx.createGain(); envGn.gain.value = clip.gainEnvelope[0].v
+        gn.connect(envGn); envGn.connect(getLaneNode(clip.laneType))
+        for (const pt of clip.gainEnvelope)
+          envGn.gain.setValueAtTime(pt.v, clip.startTime + pt.t * effDur)
+      } else {
+        gn.connect(getLaneNode(clip.laneType))
+      }
       if (clip.fadeIn > 0) {
         gn.gain.setValueAtTime(0, clip.startTime)
         gn.gain.linearRampToValueAtTime(peakGain, clip.startTime + clip.fadeIn)
@@ -5982,9 +6124,38 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               }} style={btnStyle()}>
                 Detect BPM from clip
               </button>
+              <button onClick={async () => {
+                setClipMenu(null)
+                const projectBpm = effectiveBpmRef.current
+                if (!projectBpm || projectBpm <= 0) { showToast('Set a project BPM first'); return }
+                showToast('Detecting clip BPM…')
+                try {
+                  const { analyzeBeats } = await import('@/lib/beat-analyzer')
+                  const result = await analyzeBeats(clip.buf, { allowedTypes: ['kick', 'snare'], referenceSounds })
+                  if (result.bpm && result.bpm >= 40 && result.bpm <= 300) {
+                    const ratio = projectBpm / result.bpm
+                    const newDuration = clip.buf.duration * ratio
+                    captureHistory()
+                    setAudioClips(prev => prev.map(c => c.id === clip.id
+                      ? { ...c, stretchDuration: newDuration, loopDuration: null, warpMarkers: [] }
+                      : c
+                    ))
+                    showToast(`Warped ${result.bpm.toFixed(1)} → ${projectBpm} BPM`)
+                  } else {
+                    showToast('Could not detect tempo in this clip')
+                  }
+                } catch { showToast('Auto-warp failed') }
+              }} style={btnStyle()}>
+                Auto-warp to Project BPM
+              </button>
               <button onClick={() => splitClipAtPlayhead(clip.id)} style={btnStyle()}>
                 Split at Playhead
               </button>
+              {clip.gainEnvelope && clip.gainEnvelope.length > 0 && (
+                <button onClick={() => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, gainEnvelope: undefined } : c)); setClipMenu(null) }} style={btnStyle()}>
+                  Clear Volume Envelope
+                </button>
+              )}
               <button onClick={() => { setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, muted: !c.muted } : c)); setClipMenu(null) }} style={btnStyle()}>
                 {clip.muted ? 'Unmute' : 'Mute'}
               </button>
