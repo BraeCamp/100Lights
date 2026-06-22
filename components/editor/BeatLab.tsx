@@ -60,7 +60,7 @@ import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
-import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions } from '@/lib/pitch-detector'
+import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import type { SceneClip, SessionLane } from './SessionView'
 const SCENE_COUNT = 8
 const PianoRoll               = lazy(() => import('./PianoRoll'))
@@ -1458,6 +1458,16 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     toastTimerRef.current = setTimeout(() => setToast(null), 4500)
   }
+
+  interface SynthTunerIteration { title: string; analysis: string; changes: string }
+  interface SynthTunerState {
+    clipId:     string
+    status:     'running' | 'done' | 'error'
+    iteration:  number   // current iteration 1-3
+    iterations: SynthTunerIteration[]
+    errorMsg?:  string
+  }
+  const [synthTuner, setSynthTuner] = useState<SynthTunerState | null>(null)
   const [bpm, setBpm] = useState<number | null>(null)
   const [duration, setDuration] = useState(8)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
@@ -1746,10 +1756,83 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       const curve    = await detectPitchCurveAsync(source)
       const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration, opts)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
+      runSynthTuner(clipId, curve, source, opts)
     } catch (e) {
       showToast(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
     }
+  }
+
+  async function runSynthTuner(
+    clipId: string,
+    pitchCurve: import('@/lib/pitch-detector').PitchFrame[],
+    source: AudioBuffer,
+    opts: SynthOptions,
+  ) {
+    setSynthTuner({ clipId, status: 'running', iteration: 1, iterations: [] })
+
+    let currentCode = ''
+    try {
+      const codeRes = await fetch('/api/synth-code')
+      if (!codeRes.ok) { setSynthTuner(null); return }
+      ;({ code: currentCode } = await codeRes.json() as { code: string })
+    } catch { setSynthTuner(null); return }
+
+    const notes = extractNoteEvents(pitchCurve)
+    const pitchSummary = {
+      totalDuration: source.duration,
+      noteCount:     notes.length,
+      avgDurationMs: Math.round(notes.reduce((s, n) => s + (n.end - n.start), 0) / Math.max(1, notes.length) * 1000),
+      pitchRangeMidi: notes.length > 0
+        ? { min: Math.min(...notes.map(n => n.midi)), max: Math.max(...notes.map(n => n.midi)) }
+        : null,
+      notes: notes.slice(0, 15),
+    }
+
+    for (let i = 1 as 1 | 2 | 3; i <= 3; i++) {
+      setSynthTuner(prev => prev ? { ...prev, iteration: i } : null)
+      try {
+        const res = await fetch('/api/synth-tune', {
+          method:  'POST',
+          headers: { 'content-type': 'application/json' },
+          body:    JSON.stringify({ code: currentCode, pitchSummary, iteration: i }),
+        })
+        if (!res.ok) { setSynthTuner(prev => prev ? { ...prev, status: 'error', errorMsg: `API error ${res.status}` } : null); return }
+
+        const { iteration: iterData, improvedCode } = await res.json() as {
+          iteration:   SynthTunerIteration
+          improvedCode: string
+        }
+
+        setSynthTuner(prev => prev ? { ...prev, iterations: [...prev.iterations, iterData] } : null)
+
+        // Apply the improved function immediately via eval
+        try {
+          const factory = new Function('extractNoteEvents', 'midiToFreq', 'freqToMidi',
+            `${improvedCode}\nreturn synthesizeFromPitchCurve`)
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+          const improvedFn = factory(extractNoteEvents, midiToFreq, freqToMidi) as typeof synthesizeFromPitchCurve
+          const rendered = await improvedFn(pitchCurve, source.sampleRate, 60, source.duration, opts)
+          setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
+          currentCode = improvedCode
+        } catch (evalErr) {
+          console.warn(`[SynthTuner] Iteration ${i} eval failed:`, evalErr)
+        }
+      } catch (fetchErr) {
+        console.warn(`[SynthTuner] Iteration ${i} fetch failed:`, fetchErr)
+      }
+    }
+
+    // Persist the final improved code to disk (dev only)
+    try {
+      await fetch('/api/apply-synth-code', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify({ code: currentCode }),
+      })
+    } catch { /* non-critical */ }
+
+    setSynthTuner(prev => prev ? { ...prev, status: 'done' } : null)
   }
 
   async function runConvertToInstrument(clipId: string, preset: InstrumentPreset) {
@@ -3817,6 +3900,87 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           maxWidth: 480, textAlign: 'center', pointerEvents: 'none',
         }}>
           {toast}
+        </div>
+      )}
+
+      {/* ── AI Synth Tuner overlay ────────────────────────────────────────── */}
+      {synthTuner && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, width: 360,
+          background: '#12121e', border: '1px solid rgba(139,92,246,0.35)',
+          borderRadius: 12, padding: '14px 16px', zIndex: 9998,
+          boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13 }}>🎛</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', letterSpacing: 0.3 }}>
+                AI Synth Tuner
+              </span>
+              {synthTuner.status === 'running' && (
+                <span style={{ fontSize: 10, color: '#6b7280' }}>
+                  — iteration {synthTuner.iteration}/3
+                </span>
+              )}
+            </div>
+            {synthTuner.status !== 'running' && (
+              <button
+                onClick={() => setSynthTuner(null)}
+                style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 2px' }}
+              >×</button>
+            )}
+          </div>
+
+          {/* Running spinner */}
+          {synthTuner.status === 'running' && synthTuner.iterations.length === 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6b7280', fontSize: 11 }}>
+              <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
+              Analyzing pitch curve and synthesis algorithm…
+            </div>
+          )}
+
+          {/* Iteration cards */}
+          {synthTuner.iterations.map((iter, idx) => (
+            <div key={idx} style={{
+              background: '#1a1a2e', borderRadius: 8, padding: '10px 12px',
+              borderLeft: '3px solid #7c3aed',
+              animation: 'slideUp 0.3s ease',
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', marginBottom: 5 }}>
+                {iter.title}
+              </div>
+              <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.55, marginBottom: 6 }}>
+                {iter.analysis}
+              </div>
+              <div style={{ fontSize: 10, color: '#6d28d9', fontStyle: 'italic' }}>
+                → {iter.changes}
+              </div>
+            </div>
+          ))}
+
+          {/* Status between iterations */}
+          {synthTuner.status === 'running' && synthTuner.iterations.length > 0 && synthTuner.iterations.length < 3 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6b7280', fontSize: 11 }}>
+              <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
+              Re-synthesizing and running next iteration…
+            </div>
+          )}
+
+          {/* Done */}
+          {synthTuner.status === 'done' && (
+            <div style={{ fontSize: 11, color: '#34d399', paddingTop: 2 }}>
+              ✓ All improvements applied — code saved to pitch-detector.ts
+            </div>
+          )}
+
+          {/* Error */}
+          {synthTuner.status === 'error' && (
+            <div style={{ fontSize: 11, color: '#f87171' }}>
+              ✗ {synthTuner.errorMsg ?? 'Tuning failed'}
+            </div>
+          )}
         </div>
       )}
 
