@@ -75,23 +75,30 @@ ${noteList}
 TASK:
 ${ITER_TASKS[(iteration - 1)]}
 
-Return ONLY valid JSON (no markdown fences, no explanation outside JSON):
+Respond in EXACTLY this format — no other text before or after:
+
+<iteration>
 {
   "title": "Iteration ${iteration} — [brief descriptive title]",
   "analysis": "[3-4 sentences: what sounds wrong now and why, referencing specific synthesis/music theory concepts]",
-  "changes": "[1-2 sentences: exactly what you changed and the expected sonic result]",
-  "improvedCode": "[the complete improved async function as a JavaScript string — NO TypeScript type annotations]"
+  "changes": "[1-2 sentences: exactly what you changed and the expected sonic result]"
 }
+</iteration>
+<code>
+async function synthesizeFromPitchCurve(pitchCurve, sampleRate, _rootNote, totalDuration, options) {
+  // your improved implementation here
+}
+</code>
 
-CRITICAL rules for improvedCode:
-- Plain JavaScript only — NO type annotations like ': PitchFrame[]', ': number', etc.
-- Function signature: async function synthesizeFromPitchCurve(pitchCurve, sampleRate, _rootNote, totalDuration, options)
+CRITICAL rules for the <code> block:
+- Plain JavaScript only — NO TypeScript type annotations
+- Function signature exactly: async function synthesizeFromPitchCurve(pitchCurve, sampleRate, _rootNote, totalDuration, options)
 - Helper functions available as parameters: extractNoteEvents(pitchCurve, minDuration?), midiToFreq(midi), freqToMidi(freq)
-- OfflineAudioContext, AudioParam, OscillatorNode etc. are browser globals
+- OfflineAudioContext, OscillatorNode, GainNode, BiquadFilterNode etc. are browser globals
 - options object has: { waveform, filterCutoff, pitchShift, followPitch, followDynamics, portamento, vibrato }
 - Must return Promise<AudioBuffer> via ctx.startRendering()
-- Do NOT add 'export' keyword — the caller wraps it
-- If pitchCurve has no notes after extractNoteEvents, throw new Error('No pitched notes detected — try singing more clearly')`
+- Do NOT include 'export' keyword
+- If no notes detected, throw new Error('No pitched notes detected — try singing more clearly')`
 
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -115,18 +122,22 @@ CRITICAL rules for improvedCode:
   const data = await anthropicRes.json() as { content: { type: string; text: string }[] }
   const raw = data.content.find(b => b.type === 'text')?.text ?? ''
 
-  // Strip markdown fences if Claude wrapped it anyway
-  const jsonStr = raw.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim()
+  // Extract <iteration> JSON and <code> blocks separately — avoids JSON escaping
+  // issues when the code contains quotes, backticks, or newlines.
+  const iterMatch = raw.match(/<iteration>([\s\S]*?)<\/iteration>/)
+  const codeMatch = raw.match(/<code>([\s\S]*?)<\/code>/)
 
-  try {
-    const parsed = JSON.parse(jsonStr) as {
-      title:        string
-      analysis:     string
-      changes:      string
-      improvedCode: string
-    }
-    return Response.json({ iteration: { title: parsed.title, analysis: parsed.analysis, changes: parsed.changes }, improvedCode: parsed.improvedCode })
-  } catch {
-    return Response.json({ error: 'Failed to parse AI response', raw }, { status: 502 })
+  if (!iterMatch || !codeMatch) {
+    return Response.json({ error: 'Malformed AI response — missing <iteration> or <code> block', raw }, { status: 502 })
   }
+
+  let iterData: { title: string; analysis: string; changes: string }
+  try {
+    iterData = JSON.parse(iterMatch[1].trim())
+  } catch {
+    return Response.json({ error: 'Could not parse iteration JSON', raw: iterMatch[1] }, { status: 502 })
+  }
+
+  const improvedCode = codeMatch[1].trim()
+  return Response.json({ iteration: iterData, improvedCode })
 }
