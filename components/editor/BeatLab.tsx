@@ -1554,8 +1554,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     errorMsg?:  string
   }
   const [synthTuner, setSynthTuner] = useState<SynthTunerState | null>(null)
-  const synthResumeRef       = useRef<((feedback: string) => void) | null>(null)
-  const synthCancelledRef    = useRef(false)
+  const synthResumeRef        = useRef<((feedback: string) => void) | null>(null)
+  const synthCancelledRef     = useRef(false)
+  const synthPassAcceptedRef  = useRef(true)   // true = keep pass result, false = revert on resume
   const synthFeedbackInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [bpm, setBpm] = useState<number | null>(null)
   const [duration, setDuration] = useState(8)
@@ -1945,6 +1946,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const userFeedbacks: string[] = []  // indexed by iteration-1 (feedback collected before that iteration)
     synthCancelledRef.current = false
 
+    // Checkpoint buffer: advances only when user accepts a pass.
+    // On reject we revert the clip to this buffer before the next pass runs.
+    let lastAcceptedBuf: AudioBuffer | null = preAiBuf
+    let lastRenderedBuf: AudioBuffer | null = preAiBuf
+
     for (let i = 1 as 1 | 2 | 3; i <= 3; i++) {
       if (synthCancelledRef.current) break
       setSynthTuner(prev => prev ? { ...prev, status: 'running', iteration: i } : null)
@@ -1981,19 +1987,29 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           // opts already contains harmProfile; matchBuffer only needed when reference exists but profile extraction failed
           if (referenceBuf && !opts.harmProfile) rendered = await matchBuffer(rendered, source, referenceBuf)
           setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered } : c))
+          lastRenderedBuf = rendered
           currentCode = improvedCode  // track latest applied code for the final save
         } catch (evalErr) {
           console.warn(`[SynthTuner] Iteration ${i} eval failed:`, evalErr)
         }
 
-        // Between iterations: pause and wait for user feedback
+        // Between iterations: pause, let user accept or reject, collect feedback
         if (i < 3 && !synthCancelledRef.current) {
+          synthPassAcceptedRef.current = true  // default: accept if user dismisses without deciding
           const feedback = await new Promise<string>(resolve => {
             synthResumeRef.current = resolve
             setSynthTuner(prev => prev ? { ...prev, status: 'waiting' } : null)
           })
           synthResumeRef.current = null
           if (synthCancelledRef.current) break
+
+          if (synthPassAcceptedRef.current) {
+            lastAcceptedBuf = lastRenderedBuf  // advance checkpoint
+          } else if (lastAcceptedBuf) {
+            // Revert clip to last accepted state and let the next pass try again
+            const revertTo = lastAcceptedBuf
+            setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: revertTo } : c))
+          }
           userFeedbacks.push(feedback)
         }
       } catch (fetchErr) {
@@ -4482,15 +4498,36 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             </div>
           ))}
 
-          {/* User feedback input between iterations */}
+          {/* Accept / reject between iterations */}
           {synthTuner.status === 'waiting' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ fontSize: 11, color: '#a78bfa', fontWeight: 600 }}>
-                Pass {synthTuner.iterations.length} done — listen and describe what still sounds wrong:
+                Pass {synthTuner.iterations.length} complete — listen, then decide:
               </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => {
+                    synthPassAcceptedRef.current = true
+                    const feedback = synthFeedbackInputRef.current?.value ?? ''
+                    if (synthFeedbackInputRef.current) synthFeedbackInputRef.current.value = ''
+                    synthResumeRef.current?.(feedback)
+                  }}
+                  style={{ flex: 1, padding: '6px 0', borderRadius: 6, background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.35)', color: '#34d399', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                >✓ Keep &amp; next pass</button>
+                <button
+                  onClick={() => {
+                    synthPassAcceptedRef.current = false
+                    const feedback = synthFeedbackInputRef.current?.value ?? ''
+                    if (synthFeedbackInputRef.current) synthFeedbackInputRef.current.value = ''
+                    synthResumeRef.current?.(feedback)
+                  }}
+                  style={{ flex: 1, padding: '6px 0', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                >✗ Undo &amp; retry</button>
+              </div>
+              <div style={{ fontSize: 10, color: '#6b7280' }}>Optional — describe the issue for the next pass:</div>
               <textarea
                 ref={synthFeedbackInputRef}
-                placeholder="e.g. still jarring between notes, vibrato too fast, sounds too thin…"
+                placeholder="e.g. still jarring between notes, too thin, too much resonance…"
                 rows={2}
                 style={{
                   width: '100%', boxSizing: 'border-box',
@@ -4500,20 +4537,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   resize: 'none', outline: 'none',
                 }}
               />
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={() => {
-                    const feedback = synthFeedbackInputRef.current?.value ?? ''
-                    if (synthFeedbackInputRef.current) synthFeedbackInputRef.current.value = ''
-                    synthResumeRef.current?.(feedback)
-                  }}
-                  style={{ flex: 1, padding: '5px 0', borderRadius: 6, background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.45)', color: '#a78bfa', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
-                >Next Pass →</button>
-                <button
-                  onClick={() => synthResumeRef.current?.('')}
-                  style={{ padding: '5px 10px', borderRadius: 6, background: 'transparent', border: '1px solid rgba(107,114,128,0.4)', color: '#6b7280', fontSize: 11, cursor: 'pointer' }}
-                >Skip</button>
-              </div>
             </div>
           )}
 
