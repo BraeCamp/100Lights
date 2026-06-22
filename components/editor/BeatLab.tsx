@@ -6148,10 +6148,24 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           background: 'none', cursor: 'pointer', fontSize: 13, width: '100%',
           color: danger ? '#ef4444' : 'var(--text-primary)',
         })
+        const sliderRow = (label: string, value: number, min: number, max: number, step: number, fmt: (v: number) => string, onChange: (v: number) => void) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>{label}</span>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{fmt(value)}</span>
+            </div>
+            <input type="range" min={min} max={max} step={step} value={value}
+              onChange={e => onChange(Number(e.target.value))}
+              style={{ width: '100%', accentColor: 'var(--accent)', margin: 0 }}
+            />
+          </div>
+        )
         return (
           <>
             <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setClipMenu(null)} onContextMenu={e => { e.preventDefault(); setClipMenu(null) }} />
-            <div style={{ position: 'fixed', left: clipMenu.x, top: clipMenu.y, zIndex: 300, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 8, minWidth: 170, boxShadow: '0 8px 28px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {/* Wrapper so menu + settings panel sit side by side */}
+            <div style={{ position: 'fixed', left: clipMenu.x, top: clipMenu.y, zIndex: 300, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 8, minWidth: 170, boxShadow: '0 8px 28px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: 2 }}>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px 6px', fontWeight: 600 }}>
                 {clip.name} · {clip.buf.duration.toFixed(1)}s
               </div>
@@ -6278,7 +6292,45 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               <button onClick={() => { setAudioClips(prev => prev.filter(c => c.id !== clip.id)); setClipMenu(null) }} style={btnStyle(true)}>
                 Delete
               </button>
+            </div>{/* end dropdown */}
+
+            {/* ── Sound settings panel ── */}
+            <div style={{
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 10, padding: '12px 14px', width: 200,
+              boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+              display: 'flex', flexDirection: 'column', gap: 14,
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', marginBottom: -4 }}>
+                Sound Settings
+              </div>
+
+              {sliderRow(
+                'Volume', clip.gain, 0, 2, 0.01,
+                v => `${Math.round(v * 100)}%`,
+                v => setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, gain: v } : c)),
+              )}
+
+              {sliderRow(
+                'Fade In', clip.fadeIn, 0, 3, 0.05,
+                v => v === 0 ? 'off' : `${v.toFixed(2)}s`,
+                v => setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, fadeIn: v } : c)),
+              )}
+
+              {sliderRow(
+                'Fade Out', clip.fadeOut, 0, 3, 0.05,
+                v => v === 0 ? 'off' : `${v.toFixed(2)}s`,
+                v => setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, fadeOut: v } : c)),
+              )}
+
+              {sliderRow(
+                'Noise Gate', clip.gateThreshold, 0, 0.5, 0.005,
+                v => v === 0 ? 'off' : `${Math.round(v * 200)}%`,
+                v => setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, gateThreshold: v } : c)),
+              )}
             </div>
+
+            </div>{/* end wrapper */}
           </>
         )
       })()}
