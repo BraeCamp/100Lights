@@ -60,6 +60,18 @@ function detectPitchInFrame(frame: Float32Array, sampleRate: number): number | n
     prevPos = cur > 0
   }
 
+  // Fallback: if MPM found nothing (NSDF never crossed zero so !prevPos never
+  // triggered), do a brute-force peak search starting after the minimum lag
+  // for 4000 Hz.  This handles sustained tones and harmonic-rich signals.
+  if (bestLag < 2) {
+    const minLag = Math.floor(sampleRate / 4000)
+    for (let i = Math.max(minLag, 2); i < half - 1; i++) {
+      const cur = nsdf[i]
+      if (cur > THRESHOLD && cur > nsdf[i - 1] && cur >= nsdf[i + 1]) {
+        if (cur > bestVal) { bestVal = cur; bestLag = i }
+      }
+    }
+  }
   if (bestLag < 2 || bestVal < THRESHOLD) return null
 
   // Parabolic interpolation for sub-sample accuracy
@@ -189,12 +201,18 @@ export async function synthesizeFromPitchCurve(
   const midiValues = pitchCurve.filter(f => f.midi !== null).map(f => f.midi!).sort((a, b) => a - b)
   const medianMidi = midiValues.length > 0 ? midiValues[Math.floor(midiValues.length / 2)] : 60
 
+  // Normalize note amplitudes so the loudest note hits 0.8 — prevents quiet
+  // recordings from producing near-silent synth output.
+  const maxAmp = notes.reduce((m, n) => Math.max(m, n.amplitude), 0.001)
+  const ampScale = 0.8 / maxAmp
+
   for (const note of notes) {
     const midi = options.followPitch ? note.midi : medianMidi
     const freq = midiToFreq(midi) * shift
     const dur  = Math.max(0.04, note.end - note.start)
     const t0   = note.start
-    const peak = options.followDynamics ? Math.min(0.88, note.amplitude * 0.9) : 0.72
+    const normAmp = Math.min(0.88, note.amplitude * ampScale)
+    const peak = options.followDynamics ? normAmp : 0.72
 
     // Short attack so notes feel punchy; release scales with note length
     const attack  = Math.min(0.012, dur * 0.08)
@@ -254,7 +272,7 @@ export function extractNoteEvents(pitchCurve: PitchFrame[], minDuration = 0.04):
   }
 
   for (const frame of pitchCurve) {
-    if (frame.midi !== null && frame.amplitude > 0.04) {
+    if (frame.midi !== null && frame.amplitude > 0.025) {
       const r = Math.round(frame.midi)
       if (noteStart < 0) {
         noteStart = frame.time; noteMidi = r; ampSum = frame.amplitude; ampCount = 1; silenceFrames = 0

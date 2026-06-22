@@ -1451,6 +1451,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   const [playhead, setPlayhead] = useState(0)
   const [recordingTime, setRecordingTime] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function showToast(msg: string) {
+    setToast(msg)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => setToast(null), 4500)
+  }
   const [bpm, setBpm] = useState<number | null>(null)
   const [duration, setDuration] = useState(8)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
@@ -1724,7 +1731,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       setAudioClips(prev => prev.filter(c => c.id !== clipId))
       if (result.duration + clip.startTime > duration) setDuration(result.duration + clip.startTime)
     } catch (e) {
-      setError(`Beat conversion failed: ${e instanceof Error ? e.message : String(e)}`)
+      showToast(`Beat conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
     }
   }
@@ -1740,7 +1747,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration, opts)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf } : c))
     } catch (e) {
-      setError(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
+      showToast(`Synth conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Voice' } : c))
     }
   }
@@ -1759,7 +1766,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       const label: Record<InstrumentPreset, string> = { piano: 'Piano', strings: 'Strings', bells: 'Bells', bass: 'Bass', organ: 'Organ' }
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: label[preset], originalBuf: c.originalBuf ?? c.buf } : c))
     } catch (e) {
-      setError(`Instrument conversion failed: ${e instanceof Error ? e.message : String(e)}`)
+      showToast(`Instrument conversion failed: ${e instanceof Error ? e.message : String(e)}`)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: clip.name } : c))
     }
   }
@@ -3799,6 +3806,19 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', userSelect: 'none' }}>
+
+      {/* ── Global error toast ────────────────────────────────────────────── */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: '#1e1e32', border: '1px solid #ef4444', color: '#fca5a5',
+          borderRadius: 8, padding: '10px 18px', fontSize: 13, fontWeight: 500,
+          zIndex: 9999, boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          maxWidth: 480, textAlign: 'center', pointerEvents: 'none',
+        }}>
+          {toast}
+        </div>
+      )}
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div style={{
