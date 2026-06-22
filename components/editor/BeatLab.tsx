@@ -3387,6 +3387,8 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         playStartRef.current = null
         setIsPlaying(false)
         setPlayhead(0)
+        groupBusRef.current.clear()
+        laneAnalysersRef.current.clear()
         if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
           audioCtxRef.current.close()
           audioCtxRef.current = null
