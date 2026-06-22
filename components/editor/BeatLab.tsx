@@ -1493,7 +1493,21 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const id = `cust_${Date.now()}`
     setTypeOverrides(prev => ({ ...prev, [id]: { label: 'New Sound', color: '#6b7280' } }))
     setExtraLaneIds(prev => [...prev, id])
+    return id
   }
+
+  // Seed one default track on fresh project load
+  useEffect(() => {
+    setExtraLaneIds(prev => {
+      if (prev.length > 0) return prev
+      const id = `cust_${Date.now()}`
+      setTypeOverrides(o => ({ ...o, [id]: { label: 'Track 1', color: '#8b5cf6' } }))
+      // Select it so Rec is available immediately
+      setTimeout(() => { setActiveLaneType(id as BeatType); setSelectedLane(id as BeatType) }, 0)
+      return [id]
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   function removeCustomLane(id: string) {
     setTypeOverrides(prev => { const n = { ...prev }; delete n[id]; return n })
     setExtraLaneIds(prev => prev.filter(x => x !== id))
@@ -3686,9 +3700,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </button>
             </Tooltip>
 
-            {/* Record audio as clip — always available */}
-            {!laneRecording && (
-              <Tooltip content="Record audio — adds as a clip at the playhead position" placement="bottom">
+            {/* Record audio as clip — only when a track is selected */}
+            {!laneRecording && activeLaneType && (
+              <Tooltip content="Record audio into selected track" placement="bottom">
                 <button
                   onClick={startLaneRecording}
                   style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}
@@ -4651,15 +4665,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                       </div>
                       </div>
                     )})}
-                    {/* Add new lane */}
-                    <div style={{ display: 'flex', height: 36, alignItems: 'center', paddingLeft: 88, borderBottom: '1px solid var(--border)' }}>
-                      <button
-                        onClick={addCustomLane}
-                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                      >
-                        + Add track
-                      </button>
-                    </div>
                   </div>
                   )}
 
