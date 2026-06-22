@@ -604,6 +604,32 @@ export function mixBufs(a: AudioBuf, b: AudioBuf): AudioBuf {
   return out
 }
 
+// ── Utility helpers ───────────────────────────────────────────────────────
+
+function rmsOf(buf: AudioBuf): number {
+  const ch = buf.getChannelData(0)
+  let sum = 0
+  for (let i = 0; i < ch.length; i++) sum += ch[i] ** 2
+  return Math.sqrt(sum / Math.max(ch.length, 1))
+}
+
+function trimBuf(buf: AudioBuf, len: number): AudioBuf {
+  const out = new AudioBuf({ numberOfChannels: buf.numberOfChannels, length: len, sampleRate: buf.sampleRate })
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    out.getChannelData(ch).set(buf.getChannelData(ch).subarray(0, len))
+  }
+  return out
+}
+
+function scaleBuf(buf: AudioBuf, gain: number): AudioBuf {
+  const out = new AudioBuf({ numberOfChannels: buf.numberOfChannels, length: buf.length, sampleRate: buf.sampleRate })
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const src = buf.getChannelData(ch), dst = out.getChannelData(ch)
+    for (let i = 0; i < src.length; i++) dst[i] = src[i] * gain
+  }
+  return out
+}
+
 // ── Frequency band definitions (must match client-side FREQ_BANDS) ─────────
 
 export const FREQ_BANDS = [
@@ -655,4 +681,39 @@ export function runPipeline(srcBuf: AudioBuf, refBuf: AudioBuf | null, opts: Pip
 
   // 7. Mix with percussive layer
   return mixBufs(converted, percussive)
+}
+
+// ── Two-way match pipeline ────────────────────────────────────────────────
+// Converts vocal toward the target's timbre, then fills in any frequency
+// bands where the target has content the converted voice doesn't reach.
+// strength: overall gain of the converted voice (0–1)
+// gapFill:  how aggressively to blend target content into missing bands (0–1)
+
+export interface MatchOpts { strength?: number; gapFill?: number }
+
+export function runMatchPipeline(vocalBuf: AudioBuf, targetBuf: AudioBuf, opts: MatchOpts): AudioBuf {
+  const strength = opts.strength ?? 0.8
+  const gapFill  = opts.gapFill  ?? 0.4
+
+  // Align to shortest length so every operation is sample-accurate
+  const matchLen = Math.min(vocalBuf.length, targetBuf.length)
+  const vocal    = matchLen < vocalBuf.length  ? trimBuf(vocalBuf,  matchLen) : vocalBuf
+  const target   = matchLen < targetBuf.length ? trimBuf(targetBuf, matchLen) : targetBuf
+
+  // Full synth conversion using target as timbral reference
+  const converted = runPipeline(vocal, target, {})
+
+  // Per-band gap fill: add target content in bands where converted voice falls short
+  const bandOutputs: AudioBuf[] = [scaleBuf(converted, strength)]
+  for (const { lo, hi } of FREQ_BANDS) {
+    const convBand = extractBand(converted, lo, hi)
+    const targBand = extractBand(target,    lo, hi)
+    const targRms  = rmsOf(targBand)
+    if (targRms < 1e-6) continue
+    const gap      = Math.max(0, (targRms - rmsOf(convBand)) / targRms)
+    const fillGain = gap * gapFill
+    if (fillGain > 0.02) bandOutputs.push(scaleBuf(targBand, fillGain))
+  }
+
+  return sumBufs(bandOutputs)
 }

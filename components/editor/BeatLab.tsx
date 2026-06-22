@@ -1642,6 +1642,148 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [abletonLoading,     setAbletonLoading]     = useState(false)
   const [abletonProgress,    setAbletonProgress]    = useState('')
 
+  // ── Match Studio ──────────────────────────────────────────────────────────
+  const [matchStudioOpen,  setMatchStudioOpen]  = useState(false)
+  const [matchTarget,      setMatchTarget]      = useState<AudioBuffer | null>(null)
+  const [matchTargetName,  setMatchTargetName]  = useState('')
+  const [matchVocal,       setMatchVocal]       = useState<AudioBuffer | null>(null)
+  const [matchVocalName,   setMatchVocalName]   = useState('')
+  const [matchResult,      setMatchResult]      = useState<AudioBuffer | null>(null)
+  const [matchLoading,     setMatchLoading]     = useState(false)
+  const [matchProgress,    setMatchProgress]    = useState('')
+  const [matchStrength,    setMatchStrength]    = useState(80)   // 0-100
+  const [matchGapFill,     setMatchGapFill]     = useState(40)   // 0-100
+  const [matchTargetUrl,   setMatchTargetUrl]   = useState('')
+  const [matchPlayingSlot, setMatchPlayingSlot] = useState<'target' | 'vocal' | 'result' | null>(null)
+  const [matchRecording,   setMatchRecording]   = useState(false)
+  const matchRecordRef = useRef<MediaRecorder | null>(null)
+  const matchPlayRef   = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
+
+  function matchStopPlay() {
+    if (matchPlayRef.current) {
+      try { matchPlayRef.current.src.stop() } catch { /* already stopped */ }
+      matchPlayRef.current.ctx.close()
+      matchPlayRef.current = null
+    }
+    setMatchPlayingSlot(null)
+  }
+
+  async function matchPlaySlot(slot: 'target' | 'vocal' | 'result') {
+    matchStopPlay()
+    const buf = slot === 'target' ? matchTarget : slot === 'vocal' ? matchVocal : matchResult
+    if (!buf) return
+    const ctx = new AudioContext()
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(ctx.destination)
+    src.onended = () => { ctx.close(); setMatchPlayingSlot(null) }
+    src.start(0)
+    matchPlayRef.current = { src, ctx }
+    setMatchPlayingSlot(slot)
+  }
+
+  async function matchLoadFile(file: File, slot: 'target' | 'vocal') {
+    try {
+      const ctx = new AudioContext()
+      const decoded = await ctx.decodeAudioData(await file.arrayBuffer()).finally(() => ctx.close())
+      if (slot === 'target') { setMatchTarget(decoded); setMatchTargetName(file.name) }
+      else                   { setMatchVocal(decoded);  setMatchVocalName(file.name) }
+    } catch { showToast('Could not decode audio file') }
+  }
+
+  async function matchFetchUrl() {
+    const url = matchTargetUrl.trim()
+    if (!url) return
+    setMatchProgress('Fetching track…')
+    try {
+      const res = await fetch(`/api/fetch-audio?url=${encodeURIComponent(url)}`)
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      const ctx = new AudioContext()
+      const decoded = await ctx.decodeAudioData(await res.arrayBuffer()).finally(() => ctx.close())
+      const name = url.split('/').pop()?.split('?')[0] ?? 'Track'
+      setMatchTarget(decoded)
+      setMatchTargetName(name)
+      setMatchTargetUrl('')
+    } catch (e) {
+      showToast(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setMatchProgress('')
+  }
+
+  async function startMatchRecord() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const chunks: BlobPart[] = []
+      const mr = new MediaRecorder(stream)
+      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        try {
+          const blob = new Blob(chunks, { type: mr.mimeType })
+          const ctx = new AudioContext()
+          const decoded = await ctx.decodeAudioData(await blob.arrayBuffer()).finally(() => ctx.close())
+          setMatchVocal(decoded)
+          setMatchVocalName('Recording')
+        } catch { showToast('Recording decode failed') }
+        setMatchRecording(false)
+      }
+      matchRecordRef.current = mr
+      mr.start()
+      setMatchRecording(true)
+    } catch { showToast('Microphone access denied') }
+  }
+
+  function stopMatchRecord() {
+    matchRecordRef.current?.stop()
+    matchRecordRef.current = null
+  }
+
+  async function runMatchStudio() {
+    if (!matchTarget || !matchVocal) return
+    setMatchLoading(true)
+    setMatchProgress('Uploading to server…')
+    setMatchResult(null)
+    try {
+      const form = new FormData()
+      form.append('vocal',  new Blob([audioBufToWav(matchVocal)],  { type: 'audio/wav' }), 'vocal.wav')
+      form.append('target', new Blob([audioBufToWav(matchTarget)], { type: 'audio/wav' }), 'target.wav')
+      form.append('opts', JSON.stringify({ strength: matchStrength / 100, gapFill: matchGapFill / 100 }))
+      setMatchProgress('Processing…')
+      const res = await fetch('/api/match-vocal', { method: 'POST', body: form })
+      if (!res.ok) {
+        const err = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(err?.error ?? `Server error ${res.status}`)
+      }
+      setMatchProgress('Decoding result…')
+      const result = await wavToAudioBuf(await res.arrayBuffer())
+      setMatchResult(result)
+    } catch (e) {
+      showToast(`Match failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setMatchProgress('')
+    setMatchLoading(false)
+  }
+
+  function addMatchResultToTimeline() {
+    if (!matchResult) return
+    const laneId = addCustomLane()
+    const clipId = crypto.randomUUID()
+    setAudioClips(prev => [...prev, mkClip(clipId, laneId, matchResult, 0, `Match — ${matchTargetName || 'Track'}`)])
+    showToast('Added to timeline')
+    setMatchStudioOpen(false)
+  }
+
+  function exportMatchResult() {
+    if (!matchResult) return
+    const wav = audioBufToWav(matchResult)
+    const blob = new Blob([wav], { type: 'audio/wav' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `match-${matchTargetName || 'result'}.wav`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
   async function openAbletonProject() {
     try {
       const dir = await (window as unknown as { showDirectoryPicker: (o?: object) => Promise<FileSystemDirectoryHandle> })
@@ -5306,6 +5448,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 </button>
               </Tooltip>
 
+              {/* Match Studio button */}
+              <Tooltip content="Match Studio — sing to a track, AI matches your voice to it" placement="bottom" disabled={matchStudioOpen}>
+                <button
+                  onClick={() => setMatchStudioOpen(v => !v)}
+                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: matchStudioOpen ? 'rgba(236,72,153,0.15)' : 'var(--bg-card)', border: `1px solid ${matchStudioOpen ? 'rgba(236,72,153,0.4)' : 'var(--border)'}`, color: matchStudioOpen ? 'rgba(244,114,182,1)' : 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  ♪ Match
+                </button>
+              </Tooltip>
+
               {/* + Track button */}
               <Tooltip content="Add a new track" placement="bottom">
                 <button
@@ -6919,6 +7071,236 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       })()}
 
       {/* ── Ableton import modal ──────────────────────────────────────────── */}
+      {/* ── Match Studio ─────────────────────────────────────────────────── */}
+      {matchStudioOpen && (() => {
+        // Waveform mini-renderer using a canvas
+        const WaveViz = ({ buf, color = '#a855f7' }: { buf: AudioBuffer | null; color?: string }) => {
+          const ref = useRef<HTMLCanvasElement>(null)
+          useEffect(() => {
+            const canvas = ref.current
+            if (!canvas || !buf) return
+            const ctx2d = canvas.getContext('2d')
+            if (!ctx2d) return
+            const W = canvas.width, H = canvas.height
+            ctx2d.clearRect(0, 0, W, H)
+            const data = buf.getChannelData(0)
+            const bars = Math.floor(W / 3)
+            const sPerBar = Math.floor(data.length / bars)
+            ctx2d.fillStyle = color
+            for (let i = 0; i < bars; i++) {
+              let peak = 0
+              for (let j = 0; j < sPerBar; j++) peak = Math.max(peak, Math.abs(data[i * sPerBar + j] ?? 0))
+              const bh = Math.max(2, peak * H * 0.9)
+              ctx2d.fillRect(i * 3, (H - bh) / 2, 2, bh)
+            }
+          }, [buf, color])
+          return <canvas ref={ref} width={420} height={56} style={{ width: '100%', height: 56, display: 'block', opacity: buf ? 1 : 0 }} />
+        }
+
+        const slotStyle = (active: boolean): React.CSSProperties => ({
+          flex: 1, background: 'var(--bg-card)', border: `1px solid ${active ? 'rgba(236,72,153,0.5)' : 'var(--border)'}`,
+          borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
+        })
+        const dropZoneStyle: React.CSSProperties = {
+          border: '1.5px dashed var(--border)', borderRadius: 8, padding: '20px 12px',
+          textAlign: 'center', cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)',
+          background: 'rgba(255,255,255,0.02)',
+        }
+        const btnBase: React.CSSProperties = {
+          padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+        }
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
+            onClick={e => { if (e.target === e.currentTarget) { matchStopPlay(); setMatchStudioOpen(false) } }}>
+            <div style={{ background: 'var(--bg-modal, #18181b)', border: '1px solid var(--border)', borderRadius: 14, padding: 24, width: 'min(900px,94vw)', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>♪ Match Studio</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Load a track, record yourself singing it — the AI matches your voice and fills in what's missing</div>
+                </div>
+                <button onClick={() => { matchStopPlay(); setMatchStudioOpen(false) }} style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)' }}>✕</button>
+              </div>
+
+              {/* Two columns */}
+              <div style={{ display: 'flex', gap: 14 }}>
+
+                {/* ── Reference track ── */}
+                <div style={slotStyle(!!matchTarget)}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(244,114,182,0.9)' }}>Reference Track</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>The song or beat you want to sound like</div>
+
+                  {/* Drop zone */}
+                  <div style={dropZoneStyle}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) matchLoadFile(f, 'target') }}
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*'; inp.onchange = () => { const f = inp.files?.[0]; if (f) matchLoadFile(f, 'target') }; inp.click() }}
+                  >
+                    {matchTarget
+                      ? <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{matchTargetName}</span>
+                      : <><div style={{ fontSize: 18, marginBottom: 4 }}>🎵</div>Drop audio file or click to browse</>
+                    }
+                  </div>
+
+                  {/* URL import */}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      value={matchTargetUrl}
+                      onChange={e => setMatchTargetUrl(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') matchFetchUrl() }}
+                      placeholder="Paste direct audio URL…"
+                      style={{ flex: 1, fontSize: 10, padding: '5px 8px', borderRadius: 6, background: 'var(--bg-input, #27272a)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    />
+                    <button onClick={matchFetchUrl} style={{ ...btnBase, background: 'rgba(236,72,153,0.15)', color: 'rgba(244,114,182,1)', border: '1px solid rgba(236,72,153,0.3)' }}>Fetch</button>
+                  </div>
+
+                  {/* Waveform */}
+                  <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '6px 8px', minHeight: 68 }}>
+                    <WaveViz buf={matchTarget} color="rgba(244,114,182,0.8)" />
+                    {!matchTarget && <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', paddingTop: 8 }}>No track loaded</div>}
+                  </div>
+
+                  {/* Playback */}
+                  {matchTarget && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        onClick={() => matchPlayingSlot === 'target' ? matchStopPlay() : matchPlaySlot('target')}
+                        style={{ ...btnBase, background: matchPlayingSlot === 'target' ? 'rgba(236,72,153,0.2)' : 'var(--bg-card)', color: matchPlayingSlot === 'target' ? 'rgba(244,114,182,1)' : 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                      >
+                        {matchPlayingSlot === 'target' ? '■ Stop' : '▶ Play'}
+                      </button>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{matchTarget.duration.toFixed(1)}s · {matchTarget.sampleRate / 1000}kHz</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Your voice ── */}
+                <div style={slotStyle(!!matchVocal)}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(139,92,246,0.9)' }}>Your Voice</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Your vocal recording (sing the track, or a melody you want matched)</div>
+
+                  {/* Record button */}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={() => matchRecording ? stopMatchRecord() : startMatchRecord()}
+                      style={{ ...btnBase, flex: 1, background: matchRecording ? 'rgba(239,68,68,0.2)' : 'rgba(139,92,246,0.12)', color: matchRecording ? '#f87171' : 'rgba(167,139,250,1)', border: `1px solid ${matchRecording ? 'rgba(239,68,68,0.4)' : 'rgba(139,92,246,0.3)'}` }}
+                    >
+                      {matchRecording ? '■ Stop Recording' : '⏺ Record'}
+                    </button>
+                    <button
+                      onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*'; inp.onchange = () => { const f = inp.files?.[0]; if (f) matchLoadFile(f, 'vocal') }; inp.click() }}
+                      style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+                    >
+                      Browse
+                    </button>
+                  </div>
+
+                  {/* Drop zone (when no recording) */}
+                  {!matchVocal && !matchRecording && (
+                    <div style={dropZoneStyle}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) matchLoadFile(f, 'vocal') }}
+                    >
+                      <div style={{ fontSize: 18, marginBottom: 4 }}>🎤</div>
+                      Drop a vocal file, or record above
+                    </div>
+                  )}
+                  {matchRecording && (
+                    <div style={{ ...dropZoneStyle, borderColor: 'rgba(239,68,68,0.4)', color: '#f87171', background: 'rgba(239,68,68,0.04)' }}>
+                      <div style={{ fontSize: 18, marginBottom: 4 }}>🔴</div>Recording… tap Stop when done
+                    </div>
+                  )}
+
+                  {/* Waveform */}
+                  <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '6px 8px', minHeight: 68 }}>
+                    <WaveViz buf={matchVocal} color="rgba(167,139,250,0.8)" />
+                    {!matchVocal && <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', paddingTop: 8 }}>No voice loaded</div>}
+                  </div>
+
+                  {/* Playback */}
+                  {matchVocal && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        onClick={() => matchPlayingSlot === 'vocal' ? matchStopPlay() : matchPlaySlot('vocal')}
+                        style={{ ...btnBase, background: matchPlayingSlot === 'vocal' ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)', color: matchPlayingSlot === 'vocal' ? 'rgba(167,139,250,1)' : 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                      >
+                        {matchPlayingSlot === 'vocal' ? '■ Stop' : '▶ Play'}
+                      </button>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{matchVocal.duration.toFixed(1)}s · {matchVocal.sampleRate / 1000}kHz</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div style={{ background: 'var(--bg-card)', borderRadius: 10, padding: '14px 18px', display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Match Strength <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{matchStrength}%</span>
+                  </div>
+                  <input type="range" min={20} max={100} value={matchStrength} onChange={e => setMatchStrength(+e.target.value)}
+                    style={{ width: '100%', accentColor: 'rgba(244,114,182,0.9)' }} />
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>How strongly your voice is pushed toward the reference timbre</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Gap Fill <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{matchGapFill}%</span>
+                  </div>
+                  <input type="range" min={0} max={100} value={matchGapFill} onChange={e => setMatchGapFill(+e.target.value)}
+                    style={{ width: '100%', accentColor: 'rgba(139,92,246,0.9)' }} />
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>Blends in content from the reference track for frequencies your voice doesn&apos;t cover</div>
+                </div>
+              </div>
+
+              {/* Match button */}
+              <div style={{ textAlign: 'center' }}>
+                <button
+                  onClick={runMatchStudio}
+                  disabled={!matchTarget || !matchVocal || matchLoading}
+                  style={{ ...btnBase, fontSize: 13, padding: '10px 36px', background: (!matchTarget || !matchVocal || matchLoading) ? 'rgba(236,72,153,0.1)' : 'rgba(236,72,153,0.85)', color: '#fff', border: 'none', cursor: (!matchTarget || !matchVocal || matchLoading) ? 'not-allowed' : 'pointer', opacity: (!matchTarget || !matchVocal) ? 0.5 : 1 }}
+                >
+                  {matchLoading ? matchProgress || 'Processing…' : '▶ Match →'}
+                </button>
+                {!matchTarget && !matchVocal && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>Load a reference track and your voice to get started</div>}
+                {matchTarget && !matchVocal && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>Record or load your voice</div>}
+                {!matchTarget && matchVocal && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>Load a reference track</div>}
+              </div>
+
+              {/* Result */}
+              {matchResult && (
+                <div style={{ background: 'var(--bg-card)', border: '1px solid rgba(236,72,153,0.25)', borderRadius: 10, padding: '14px 18px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(244,114,182,1)', marginBottom: 10 }}>Result</div>
+                  <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '6px 8px', marginBottom: 10 }}>
+                    <WaveViz buf={matchResult} color="rgba(244,114,182,0.9)" />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button
+                      onClick={() => matchPlayingSlot === 'result' ? matchStopPlay() : matchPlaySlot('result')}
+                      style={{ ...btnBase, background: matchPlayingSlot === 'result' ? 'rgba(236,72,153,0.2)' : 'var(--bg-card)', color: matchPlayingSlot === 'result' ? 'rgba(244,114,182,1)' : 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                    >
+                      {matchPlayingSlot === 'result' ? '■ Stop' : '▶ Play Result'}
+                    </button>
+                    <button onClick={addMatchResultToTimeline}
+                      style={{ ...btnBase, background: 'rgba(139,92,246,0.15)', color: 'rgba(167,139,250,1)', border: '1px solid rgba(139,92,246,0.3)' }}
+                    >
+                      + Add to timeline
+                    </button>
+                    <button onClick={exportMatchResult}
+                      style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+                    >
+                      ↓ Export WAV
+                    </button>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>{matchResult.duration.toFixed(1)}s</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
       {abletonImportOpen && abletonProject && (() => {
         const totalClips = abletonProject.tracks.filter(t => abletonSelected.has(t.id)).reduce((n, t) => n + t.clips.length, 0)
         const dbLabel = (v: number) => {
