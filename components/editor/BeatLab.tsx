@@ -69,6 +69,7 @@ import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel, getAllProfiles, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
 import { extractSubBuffer, extractSubCurve, spliceSegmentBack } from '@/lib/vowel-segmenter'
 import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
+import { smoothPitchCurve, smoothSpectralTransitions, applyReferenceEnvelope } from '@/lib/timbre-smooth'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1979,7 +1980,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
 
     try {
-      const curve = await detectPitchCurveAsync(source)
+      const rawCurve = await detectPitchCurveAsync(source)
+      // Smooth pitch jitter before using the curve for EQ targeting —
+      // prevents EQ cutoff frequencies from hopping between adjacent windows.
+      const curve = smoothPitchCurve(rawCurve)
 
       // HPSS: separate tonal content from transients before transformation.
       // Only the harmonic component gets synthesized; percussive content (consonants,
@@ -1997,13 +2001,14 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         const tBand = await transformVoiceToSynth(bandBuf, curve, source.sampleRate, source.duration, fullOpts)
         transformedBands.push(tBand)
       }
-      let transformed: AudioBuffer = sumBuffers(transformedBands)
-      if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
 
-      // Mix transformed harmonic back with original percussive layer
-      const rendered = mixBuffers(transformed, percussive)
+      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Smoothing…' } : c))
 
-      // Build note-event segments for the "View Segments" panel
+      // Spectral transition smoothing: blend adjacent STFT frames' magnitudes to
+      // remove frame-to-frame jitter while keeping transient timing (phase intact).
+      let transformed: AudioBuffer = smoothSpectralTransitions(sumBuffers(transformedBands))
+
+      // Build note events now so we can use them for envelope morphing below
       const midiNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
       const noteSegs = extractNoteEvents(curve).map(n => ({
         id: crypto.randomUUID(),
@@ -2013,6 +2018,21 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         noteName: `${midiNames[n.midi % 12]}${Math.floor(n.midi / 12) - 1}`,
         amplitude: n.amplitude,
       }))
+
+      // Reference envelope morphing: shape each note's attack and release to match
+      // the reference sample's acceleration/deceleration character (e.g. slow pad
+      // attack vs sharp lead attack). Only applied when a reference sample is selected.
+      if (referenceBuf) {
+        transformed = await applyReferenceEnvelope(
+          transformed, referenceBuf,
+          noteSegs.map(n => ({ start: n.startSec, end: n.endSec })),
+        )
+      }
+
+      if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
+
+      // Mix transformed harmonic back with original percussive layer
+      const rendered = mixBuffers(transformed, percussive)
 
       setAudioClips(prev => prev.map(c => c.id === clipId
         ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf, segments: noteSegs }
@@ -2034,7 +2054,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
     showToast('Re-converting note…')
     try {
-      const curve    = await detectPitchCurveAsync(source)
+      const rawCurve = await detectPitchCurveAsync(source)
+      const curve    = smoothPitchCurve(rawCurve)
       const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
       const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
       const { harmonic, percussive } = await separateHarmonicPercussive(subBuf)
@@ -2043,7 +2064,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         const bandBuf = await extractFreqBand(harmonic, band.lo, band.hi)
         segBands.push(await transformVoiceToSynth(bandBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts))
       }
-      let transformed = sumBuffers(segBands)
+      let transformed = smoothSpectralTransitions(sumBuffers(segBands))
+      if (referenceBuf) {
+        transformed = await applyReferenceEnvelope(transformed, referenceBuf, [{ start: 0, end: subBuf.duration }])
+      }
       if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
       const segResult = mixBuffers(transformed, percussive)
       const newFull   = spliceSegmentBack(clip.buf, segResult, seg.startSec)
