@@ -70,6 +70,7 @@ import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel
 import { extractSubBuffer, extractSubCurve, spliceSegmentBack } from '@/lib/vowel-segmenter'
 import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
 import { smoothPitchCurve, smoothSpectralTransitions, applyReferenceEnvelope } from '@/lib/timbre-smooth'
+import { parseAbletonProject, loadClipAudio, type AbletonProject, type AbletonTrack } from '@/lib/ableton-parser'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1632,6 +1633,71 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // Custom track types — label/color overrides for built-ins + new user-created lanes
   const [typeOverrides, setTypeOverrides] = useState<TypeOverrides>({})
+
+  // ── Ableton project bridge ────────────────────────────────────────────────
+  const [abletonProject,     setAbletonProject]     = useState<AbletonProject | null>(null)
+  const [abletonImportOpen,  setAbletonImportOpen]  = useState(false)
+  const [abletonSelected,    setAbletonSelected]    = useState<Set<string>>(new Set())
+  const [abletonLoading,     setAbletonLoading]     = useState(false)
+  const [abletonProgress,    setAbletonProgress]    = useState('')
+
+  async function openAbletonProject() {
+    try {
+      const dir = await (window as unknown as { showDirectoryPicker: (o?: object) => Promise<FileSystemDirectoryHandle> })
+        .showDirectoryPicker({ id: 'ableton-project', mode: 'read' })
+      setAbletonLoading(true)
+      setAbletonProgress('Reading project…')
+      const project = await parseAbletonProject(dir)
+      setAbletonProject(project)
+      // Pre-select all tracks that have clips
+      setAbletonSelected(new Set(project.tracks.map(t => t.id)))
+      setAbletonImportOpen(true)
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        showToast(`Ableton import failed: ${(e as Error).message}`)
+      }
+    } finally {
+      setAbletonLoading(false)
+      setAbletonProgress('')
+    }
+  }
+
+  async function importAbletonTracks() {
+    if (!abletonProject) return
+    const chosen = abletonProject.tracks.filter(t => abletonSelected.has(t.id))
+    if (chosen.length === 0) return
+    setAbletonImportOpen(false)
+    setAbletonLoading(true)
+
+    let imported = 0
+    for (const track of chosen) {
+      // Create a custom lane for this track
+      const laneId = `ableton_${track.id}`
+      const hue = (chosen.indexOf(track) * 47) % 360
+      const color = `hsl(${hue},65%,55%)`
+      setTypeOverrides(prev => ({ ...prev, [laneId]: { label: track.name, color } }))
+      setExtraLaneIds(prev => prev.includes(laneId) ? prev : [...prev, laneId])
+
+      for (const clip of track.clips) {
+        setAbletonProgress(`Loading "${clip.name}" (${imported + 1}/${chosen.reduce((n, t) => n + t.clips.length, 0)})…`)
+        try {
+          const buf = await loadClipAudio(abletonProject.dir, clip)
+          const newClip = mkClip(crypto.randomUUID(), laneId, buf, clip.timeSec, clip.name)
+          // Apply track volume from Ableton's mixer
+          newClip.gain = track.volume
+          setAudioClips(prev => [...prev, newClip])
+          imported++
+        } catch (e) {
+          showToast(`Skipped "${clip.name}": ${(e as Error).message}`)
+        }
+      }
+    }
+
+    if (abletonProject.bpm && !bpm) setBpm(abletonProject.bpm)
+    setAbletonLoading(false)
+    setAbletonProgress('')
+    showToast(`Imported ${imported} clip${imported !== 1 ? 's' : ''} from ${abletonProject.name}`)
+  }
   const [extraLaneIds, setExtraLaneIds]   = useState<string[]>([])
 
   function renameType(typeId: string, label: string, color: string) {
@@ -5191,6 +5257,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           inp.onchange = (ev) => { const f = (ev.target as HTMLInputElement).files?.[0]; if (f) loadProjectFromFile(f) }
                           inp.click(); setShowFileMenu(false)
                         }},
+                        { label: 'Open Ableton Project…', action: () => { void openAbletonProject(); setShowFileMenu(false) } },
                         { label: '─', action: null },
                         { label: 'Export Master Mix (WAV)', action: () => { void exportMasterMix(); setShowFileMenu(false) } },
                         { label: 'Export Stems (WAV)', action: () => { void exportStems(); setShowFileMenu(false) } },
@@ -6856,6 +6923,105 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           </>
         )
       })()}
+
+      {/* ── Ableton import modal ──────────────────────────────────────────── */}
+      {abletonImportOpen && abletonProject && (() => {
+        const totalClips = abletonProject.tracks.filter(t => abletonSelected.has(t.id)).reduce((n, t) => n + t.clips.length, 0)
+        const dbLabel = (v: number) => {
+          const db = 20 * Math.log10(Math.max(v, 0.001))
+          return db >= -0.1 ? '0 dB' : `${db.toFixed(1)} dB`
+        }
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 399, background: 'rgba(0,0,0,0.55)' }} onClick={() => setAbletonImportOpen(false)} />
+            <div style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              zIndex: 400, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 14, padding: 22, width: 520, maxHeight: '80vh',
+              display: 'flex', flexDirection: 'column', gap: 14,
+              boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{abletonProject.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {abletonProject.bpm} BPM · {abletonProject.tracks.length} audio track{abletonProject.tracks.length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <button onClick={() => setAbletonImportOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>
+              </div>
+
+              {/* Track list */}
+              <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5, flex: 1 }}>
+                {abletonProject.tracks.map(track => {
+                  const checked = abletonSelected.has(track.id)
+                  const panPct = Math.round(track.pan * 100)
+                  return (
+                    <label key={track.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+                      background: checked ? 'var(--bg-card)' : 'transparent',
+                      border: `1px solid ${checked ? 'var(--border)' : 'transparent'}`,
+                      opacity: track.muted ? 0.45 : 1,
+                    }}>
+                      <input type="checkbox" checked={checked} onChange={e => {
+                        setAbletonSelected(prev => {
+                          const n = new Set(prev)
+                          e.target.checked ? n.add(track.id) : n.delete(track.id)
+                          return n
+                        })
+                      }} style={{ accentColor: 'var(--accent)', width: 14, height: 14, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {track.name}{track.muted ? ' (muted)' : ''}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
+                          {track.clips.length} clip{track.clips.length !== 1 ? 's' : ''}
+                          · Vol {dbLabel(track.volume)}
+                          {track.pan !== 0 ? ` · Pan ${panPct > 0 ? 'R' : 'L'}${Math.abs(panPct)}%` : ''}
+                        </div>
+                      </div>
+                      {/* Mini volume bar */}
+                      <div style={{ width: 48, height: 4, background: 'var(--border)', borderRadius: 2, flexShrink: 0 }}>
+                        <div style={{ width: `${Math.min(100, track.volume * 100)}%`, height: '100%', background: 'var(--accent)', borderRadius: 2 }} />
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+
+              {/* Footer */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button onClick={() => setAbletonSelected(new Set(abletonProject.tracks.map(t => t.id)))}
+                  style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>
+                  All
+                </button>
+                <button onClick={() => setAbletonSelected(new Set())}
+                  style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>
+                  None
+                </button>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {totalClips} clip{totalClips !== 1 ? 's' : ''} selected
+                </div>
+                <div style={{ flex: 1 }} />
+                <button onClick={() => void importAbletonTracks()} disabled={totalClips === 0}
+                  style={{ padding: '8px 20px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: totalClips > 0 ? 'pointer' : 'default', opacity: totalClips > 0 ? 1 : 0.5 }}>
+                  Import {totalClips > 0 ? totalClips : ''} clip{totalClips !== 1 ? 's' : ''} →
+                </button>
+              </div>
+            </div>
+          </>
+        )
+      })()}
+
+      {/* Ableton loading overlay */}
+      {abletonLoading && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 500, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 18px', fontSize: 12, color: 'var(--text-primary)', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 14, height: 14, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+          {abletonProgress || 'Loading…'}
+        </div>
+      )}
 
       {/* ── Segment panel ─────────────────────────────────────────────────── */}
       {segmentPanel && (() => {
