@@ -133,7 +133,7 @@ const NOTE_MIN = 36
 const NOTE_MAX = 84
 const NOTE_RANGE = NOTE_MAX - NOTE_MIN
 const LANE_HEIGHT = 88
-const HEADER_W = 108  // lane label column width (wider to fit Input toggle)
+const HEADER_W = 164  // lane label column: 140px + 24px note axis
 
 // ── Custom type helpers ────────────────────────────────────────────────────────
 
@@ -751,7 +751,7 @@ function AutomLaneView({ def, duration, pxWidth, onPointAdd, onPointUpdate, onPo
   return (
     <div style={{ display: 'flex', height: AUTOM_H, borderTop: '1px solid rgba(139,92,246,0.12)', background: 'var(--bg-card)' }}>
       {/* Label stub */}
-      <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px' }}>
+      <div style={{ width: 140, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px' }}>
         <span style={{ fontSize: 8, fontWeight: 700, color: 'rgba(139,92,246,0.75)', letterSpacing: '0.07em' }}>{AUTOM_LABEL[def.param]}</span>
         <span onClick={onRemove} style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1 }}>×</span>
       </div>
@@ -960,7 +960,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
       <div
         onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
         style={{
-          width: 84, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
+          width: 140, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
           background: isActiveLane ? 'var(--accent-subtle)' : 'var(--bg-surface)',
           display: 'flex', flexDirection: 'column', userSelect: 'none',
           borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
@@ -970,7 +970,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         <Tooltip content={`Click to inspect\nDouble-click to ${miniMode ? 'expand' : 'collapse'}`} placement="right" delay={900}>
         <div onClick={onSelectLane} onDoubleClick={onToggleMini} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: dimmed ? 'var(--border-light)' : color }} />
-          <span style={{ fontSize: 9, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : dimmed ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>
+          <span style={{ fontSize: 9, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : dimmed ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>
             {label}
           </span>
           {!miniMode && hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
@@ -1045,24 +1045,24 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         )}
         {/* Input arm row */}
         {!miniMode && onToggleInput && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, padding: '0 3px 3px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '0 6px 4px' }}>
             <Tooltip content={inputArmed ? 'Disarm input' : 'Arm track for input (mic or MIDI)'} placement="right">
               <button
                 onClick={e => { e.stopPropagation(); onToggleInput() }}
-                style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
                   background: inputArmed ? 'rgba(220,38,38,0.18)' : 'var(--bg-card)',
                   border: `1px solid ${inputArmed ? 'rgba(220,38,38,0.5)' : 'var(--border)'}`,
                   color: inputArmed ? '#ef4444' : 'var(--text-muted)' }}
               >
-                {inputArmed ? (inputSource === 'midi' ? '♪' : '⏺') + ' In' : '⏺ In'}
+                <span style={{ fontSize: 10, lineHeight: 1 }}>⏺</span> Input
               </button>
             </Tooltip>
-            {/* Source icon — click to pick */}
+            {/* Source icon — click to change */}
             {inputArmed && onOpenInputPicker && (
-              <Tooltip content={`Input: ${inputSource === 'midi' ? 'MIDI' : 'Microphone'} — click to change`} placement="right">
+              <Tooltip content={`${inputSource === 'midi' ? 'MIDI' : 'Mic'} — click to change source`} placement="right">
                 <button
                   onClick={e => { e.stopPropagation(); onOpenInputPicker() }}
-                  style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, cursor: 'pointer', border: '1px solid rgba(220,38,38,0.35)', background: 'rgba(220,38,38,0.08)', color: '#ef4444' }}
+                  style={{ fontSize: 13, padding: '2px 5px', borderRadius: 4, cursor: 'pointer', border: '1px solid rgba(220,38,38,0.35)', background: 'rgba(220,38,38,0.08)', color: '#ef4444', lineHeight: 1 }}
                 >
                   {inputSource === 'midi' ? '♪' : '🎙'}
                 </button>
@@ -1316,7 +1316,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         {/* Add automation lane button */}
         {automOpen && (
           <div style={{ display: 'flex', alignItems: 'center', borderTop: automLanes.length > 0 ? '1px solid rgba(56,189,248,0.1)' : 'none' }}>
-            <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', height: '100%', background: 'var(--bg-base)' }} />
+            <div style={{ width: 140, flexShrink: 0, borderRight: '1px solid var(--border)', height: '100%', background: 'var(--bg-base)' }} />
             <div style={{ position: 'relative', padding: '4px 8px' }}>
               <button
                 onClick={e => { e.stopPropagation(); onAutomAddOpen() }}
@@ -1345,7 +1345,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
     {fxOpen && (
       <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-surface)', borderTop: '1px solid rgba(139,92,246,0.15)', minHeight: 80 }}>
         {/* Left stub aligns with lane header */}
-        <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 140, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.7)', fontWeight: 700, letterSpacing: '0.08em' }}>FX</span>
         </div>
         {/* Horizontal chain of effect slots */}
@@ -1391,7 +1391,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
     {/* Spectrum Analyzer sub-view */}
     {spectrumOpen && !miniMode && (
       <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-base)', borderTop: '1px solid rgba(34,211,238,0.15)' }}>
-        <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 140, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontSize: 8, color: 'rgba(34,211,238,0.7)', fontWeight: 700, letterSpacing: '0.08em' }}>FFT</span>
         </div>
         <div style={{ flex: 1, padding: '4px 8px', overflow: 'hidden' }}>
