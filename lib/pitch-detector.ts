@@ -5,6 +5,8 @@
  *   2. Build a pitch+dynamics curve for voice-to-instrument synthesis
  */
 
+import { analyzeSpectralEnvelope } from './spectral-match'
+
 export interface PitchFrame {
   time:      number        // seconds from start
   freq:      number | null // Hz, null = unvoiced / silence
@@ -251,9 +253,11 @@ export async function synthesizeFromPitchCurve(
 }
 
 // ── Audio transformation: voice → synth timbre ───────────────────────────────
-// Instead of rebuilding audio from oscillators, this transforms the original
-// recording to have synth-like harmonic character while preserving all original
-// timing, dynamics, and feel. The AI improves this function iteratively.
+// Transform the original recording to have synth-like harmonic character.
+// Always uses originalBuf as the audio source — never rebuilds from oscillators.
+// When harmProfile is provided, a per-harmonic peaking EQ chain reshapes the
+// voice's spectrum toward the reference's harmonic ratios before saturation.
+// The AI improves this function iteratively via the AI Conversion Tuner.
 export async function transformVoiceToSynth(
   originalBuf: AudioBuffer,
   pitchCurve: PitchFrame[],
@@ -264,88 +268,91 @@ export async function transformVoiceToSynth(
   const notes = extractNoteEvents(pitchCurve)
   if (notes.length === 0) throw new Error('No pitched notes detected — try singing more clearly')
 
-  const ctx = new OfflineAudioContext(1, Math.ceil(totalDuration * sampleRate), sampleRate)
-  const nyquist = sampleRate / 2
+  const ctx = new OfflineAudioContext(
+    originalBuf.numberOfChannels,
+    Math.ceil(totalDuration * sampleRate),
+    sampleRate
+  )
 
-  if (options.harmProfile && options.harmProfile.length > 1) {
-    // ── Additive resynthesis guided by reference harmonic profile ─────────────
-    // Each note is rebuilt as a sum of sine waves whose amplitudes match the
-    // reference's harmonic ratios. Timbre comes from the reference structure;
-    // pitch, timing, and dynamics come from the original voice recording.
-    const profile = options.harmProfile
-    const numHarmonics = profile.length - 1  // profile[0] unused, profile[1..N]
+  // Always start from the original audio
+  const src = ctx.createBufferSource()
+  src.buffer = originalBuf
 
-    // Normalize so the RMS of all harmonics ≈ 1 at full amplitude
-    let rmsSum = 0
-    for (let h = 1; h <= numHarmonics; h++) rmsSum += profile[h] ** 2
-    const normFactor = 1 / (Math.sqrt(rmsSum) + 1e-10)
-
-    const masterGain = ctx.createGain()
-    masterGain.gain.value = 0.7
-    masterGain.connect(ctx.destination)
-
-    for (const note of notes) {
-      const f0 = midiToFreq(note.midi + (options.pitchShift ?? 0))
-      const t0 = note.start
-      const t1 = note.end
-      const dur = Math.max(0.05, t1 - t0)
-      const attack  = Math.min(0.04, dur * 0.12)
-      const release = Math.min(0.06, dur * 0.18)
-
-      for (let h = 1; h <= numHarmonics; h++) {
-        const freq = f0 * h
-        if (freq >= nyquist) break
-        const harmAmp = profile[h]
-        if (harmAmp < 0.005) continue  // skip imperceptible harmonics
-
-        const osc = ctx.createOscillator()
-        osc.type = 'sine'
-        osc.frequency.value = freq
-
-        const g = ctx.createGain()
-        const peak = harmAmp * normFactor * note.amplitude
-        g.gain.setValueAtTime(0, t0)
-        g.gain.linearRampToValueAtTime(peak, t0 + attack)
-        g.gain.setValueAtTime(peak, Math.max(t0 + attack, t1 - release))
-        g.gain.linearRampToValueAtTime(0, t1)
-
-        osc.connect(g)
-        g.connect(masterGain)
-        osc.start(t0)
-        osc.stop(t1 + 0.01)
-      }
-    }
-  } else {
-    // ── Waveshaper + resonant filter (no reference) ───────────────────────────
-    const src = ctx.createBufferSource()
-    src.buffer = originalBuf
-
-    const shaper = ctx.createWaveShaper()
-    const n = 512
-    const curve = new Float32Array(n)
-    const k = 8
-    for (let i = 0; i < n; i++) {
-      const x = (i * 2 / (n - 1)) - 1
-      curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x))
-    }
-    shaper.curve = curve
-    shaper.oversample = '4x'
-
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = options.filterCutoff ?? 2000
-    filter.Q.value = 3.0
-
-    const gain = ctx.createGain()
-    gain.gain.value = 0.75
-
-    src.connect(shaper)
-    shaper.connect(filter)
-    filter.connect(gain)
-    gain.connect(ctx.destination)
-
-    src.start(0)
+  // Arctan saturation — k controls harmonic content (6 = warm, 12 = gritty)
+  const shaper = ctx.createWaveShaper()
+  const kSat = 8
+  const shaperCurve = new Float32Array(512)
+  for (let i = 0; i < 512; i++) {
+    const x = (i * 2 / 511) - 1
+    shaperCurve[i] = (Math.PI + kSat) * x / (Math.PI + kSat * Math.abs(x))
   }
+  shaper.curve = shaperCurve
+  shaper.oversample = '4x'
+
+  let lastNode: AudioNode = src
+  lastNode.connect(shaper)
+  lastNode = shaper
+
+  // Harmonic-profile EQ: when a reference sample was chosen, reshape the voice
+  // spectrum so its harmonics match the reference's amplitude ratios.
+  if (options.harmProfile && options.harmProfile.length > 1) {
+    const profile = options.harmProfile
+    const numHarmonics = profile.length - 1
+
+    // Median fundamental from detected notes
+    const sorted = notes.slice().sort((a, b) => a.midi - b.midi)
+    const medianMidi = sorted[Math.floor(sorted.length / 2)].midi + (options.pitchShift ?? 0)
+    const f0 = midiToFreq(medianMidi)
+
+    // Voice's average magnitude spectrum (to compute how much each harmonic needs boosting)
+    const fftSize = 4096
+    const vMag = analyzeSpectralEnvelope(originalBuf, fftSize)
+    const binHz = sampleRate / fftSize
+    const peakVoice = Math.max(...vMag) + 1e-10
+
+    for (let h = 1; h <= numHarmonics; h++) {
+      const freq = f0 * h
+      if (freq >= sampleRate / 2) break
+      if (profile[h] < 0.01) continue
+
+      // Sample voice amplitude around this harmonic (average ±3 bins)
+      const centerBin = Math.round(freq / binHz)
+      let vSum = 0, vN = 0
+      for (let d = -3; d <= 3; d++) {
+        const b = centerBin + d
+        if (b >= 0 && b < vMag.length) { vSum += vMag[b]; vN++ }
+      }
+      const voiceAmp = vN > 0 ? (vSum / vN) / peakVoice : 0.5
+
+      // How many dB to shift to reach the target harmonic amplitude
+      const gDb = Math.max(-16, Math.min(16, 20 * Math.log10((profile[h] + 1e-6) / (voiceAmp + 1e-6))))
+      if (Math.abs(gDb) < 0.5) continue
+
+      const eq = ctx.createBiquadFilter()
+      eq.type = 'peaking'
+      eq.frequency.value = freq
+      eq.Q.value = 2.5
+      eq.gain.value = gDb
+      lastNode.connect(eq)
+      lastNode = eq
+    }
+  }
+
+  // Resonant filter for synth character
+  const medianNote = notes.slice().sort((a, b) => a.midi - b.midi)[Math.floor(notes.length / 2)]
+  const baseCutoff = midiToFreq(medianNote.midi) * 4
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = Math.min(options.filterCutoff ?? baseCutoff, sampleRate / 2 - 100)
+  filter.Q.value = 2.5
+
+  const gain = ctx.createGain()
+  gain.gain.value = 0.75
+
+  lastNode.connect(filter)
+  filter.connect(gain)
+  gain.connect(ctx.destination)
+  src.start(0)
 
   return ctx.startRendering()
 }

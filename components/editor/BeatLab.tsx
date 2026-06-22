@@ -67,7 +67,8 @@ import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extract
 import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel, getAllProfiles, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
-import { detectSegments, extractSubBuffer, extractSubCurve, spliceSegmentBack, concatenateBuffers, VOWEL_COLORS, VOWEL_LABELS, type AudioSegment, type VowelType } from '@/lib/vowel-segmenter'
+import { extractSubBuffer, extractSubCurve, spliceSegmentBack } from '@/lib/vowel-segmenter'
+import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1802,7 +1803,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     reversed: boolean
     warpMarkers: WarpMarker[]
     gainEnvelope?: { t: number; v: number }[]
-    segments?: AudioSegment[]
+    segments?: { id: string; startSec: number; endSec: number; midi: number; noteName: string; amplitude: number }[]
   }
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
     return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null, fadeIn: 0, fadeOut: 0, color: null, reversed: false, warpMarkers: [] }
@@ -1860,37 +1861,35 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
     const source = clip.originalBuf ?? clip.buf
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
+
     try {
-      const curve    = await detectPitchCurveAsync(source)
-      const segments = detectSegments(source, curve)
+      const curve = await detectPitchCurveAsync(source)
 
-      // Process each segment independently so each vowel can be reshaped correctly
-      const segBufs: AudioBuffer[] = []
-      for (const seg of segments) {
-        const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
-        const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
-        if (seg.vowel === 'silence') {
-          // Pure silence — zero-fill
-          segBufs.push(new AudioBuffer({ numberOfChannels: subBuf.numberOfChannels, length: subBuf.length, sampleRate: subBuf.sampleRate }))
-        } else if (seg.vowel === 'consonant') {
-          // Consonants are percussive — keep original audio unchanged
-          segBufs.push(subBuf)
-        } else {
-          // Voiced vowel — synthesize
-          try {
-            let rendered = await transformVoiceToSynth(subBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts)
-            if (referenceBuf && !harmProfile) rendered = await matchBuffer(rendered, subBuf, referenceBuf)
-            segBufs.push(rendered)
-          } catch {
-            // Fallback to original if synthesis fails (e.g., segment too short)
-            segBufs.push(subBuf)
-          }
-        }
-      }
+      // HPSS: separate tonal content from transients before transformation.
+      // Only the harmonic component gets synthesized; percussive content (consonants,
+      // plosives, breath bursts) passes through untouched and is mixed back in.
+      const { harmonic, percussive } = await separateHarmonicPercussive(source)
 
-      const rendered = concatenateBuffers(segBufs)
+      // Transform the harmonic layer
+      let transformed = await transformVoiceToSynth(harmonic, curve, source.sampleRate, source.duration, fullOpts)
+      if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
+
+      // Mix transformed harmonic back with original percussive layer
+      const rendered = mixBuffers(transformed, percussive)
+
+      // Build note-event segments for the "View Segments" panel
+      const midiNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+      const noteSegs = extractNoteEvents(curve).map(n => ({
+        id: crypto.randomUUID(),
+        startSec: n.start,
+        endSec: n.end,
+        midi: n.midi,
+        noteName: `${midiNames[n.midi % 12]}${Math.floor(n.midi / 12) - 1}`,
+        amplitude: n.amplitude,
+      }))
+
       setAudioClips(prev => prev.map(c => c.id === clipId
-        ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf, segments }
+        ? { ...c, buf: rendered, name: 'Synth', originalBuf: c.originalBuf ?? c.buf, segments: noteSegs }
         : c
       ))
       runSynthTuner(clipId, curve, source, fullOpts, referenceBuf)
@@ -1900,23 +1899,25 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  // Re-convert a single segment and splice it back into the clip
+  // Re-synthesize a single note segment and splice it back into the clip
   async function reConvertSegment(clipId: string, segId: string, opts: SynthOptions, referenceBuf?: AudioBuffer | null, harmProfile?: Float32Array | null) {
     const clip = audioClips.find(c => c.id === clipId)
     const seg  = clip?.segments?.find(s => s.id === segId)
     if (!clip || !seg) return
     const source = clip.originalBuf ?? clip.buf
     const fullOpts: SynthOptions = harmProfile ? { ...opts, harmProfile } : opts
-    showToast('Re-converting segment…')
+    showToast('Re-converting note…')
     try {
       const curve    = await detectPitchCurveAsync(source)
       const subBuf   = extractSubBuffer(source, seg.startSec, seg.endSec)
       const subCurve = extractSubCurve(curve, seg.startSec, seg.endSec)
-      let rendered   = await transformVoiceToSynth(subBuf, subCurve, source.sampleRate, subBuf.duration, fullOpts)
-      if (referenceBuf && !harmProfile) rendered = await matchBuffer(rendered, subBuf, referenceBuf)
-      const newFull  = spliceSegmentBack(clip.buf, rendered, seg.startSec)
+      const { harmonic, percussive } = await separateHarmonicPercussive(subBuf)
+      let transformed = await transformVoiceToSynth(harmonic, subCurve, source.sampleRate, subBuf.duration, fullOpts)
+      if (referenceBuf && !harmProfile) transformed = await matchBuffer(transformed, harmonic, referenceBuf)
+      const segResult = mixBuffers(transformed, percussive)
+      const newFull   = spliceSegmentBack(clip.buf, segResult, seg.startSec)
       setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: newFull } : c))
-      showToast('Segment re-converted')
+      showToast('Note re-converted')
     } catch (e) {
       showToast(`Re-convert failed: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -6495,6 +6496,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         if (!clip?.segments?.length) { setSegmentPanel(null); return null }
         const segs = clip.segments
         const totalDur = clip.buf.duration
+        // Assign a hue per MIDI note (chromatic wheel)
+        const noteHue = (midi: number) => (midi % 12) * 30
         return (
           <>
             <div style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.45)' }} onClick={() => setSegmentPanel(null)} />
@@ -6508,65 +6511,53 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Segments — {clip.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{segs.length} segments · {totalDur.toFixed(1)}s total</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Note Segments — {clip.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {segs.length} notes · {totalDur.toFixed(1)}s · Preview or re-convert individual notes
+                  </div>
                 </div>
                 <button onClick={() => setSegmentPanel(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
               </div>
 
-              {/* Colored segment timeline */}
-              <div style={{ display: 'flex', height: 36, borderRadius: 6, overflow: 'hidden', gap: 1 }}>
+              {/* Note timeline bar */}
+              <div style={{ display: 'flex', height: 32, borderRadius: 6, overflow: 'hidden', gap: 1, background: 'var(--bg-card)' }}>
                 {segs.map(seg => {
                   const w = ((seg.endSec - seg.startSec) / totalDur) * 100
+                  const color = `hsl(${noteHue(seg.midi)}, 70%, 55%)`
                   return (
-                    <div
-                      key={seg.id}
-                      title={`${VOWEL_LABELS[seg.vowel]}: ${seg.startSec.toFixed(2)}s – ${seg.endSec.toFixed(2)}s`}
+                    <div key={seg.id} title={`${seg.noteName}: ${seg.startSec.toFixed(2)}s – ${seg.endSec.toFixed(2)}s`}
                       style={{
-                        width: `${w}%`, background: VOWEL_COLORS[seg.vowel],
+                        width: `${w}%`, background: color, minWidth: 2,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 9, fontWeight: 700, color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                        fontSize: 9, fontWeight: 700, color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.7)',
                         overflow: 'hidden', whiteSpace: 'nowrap',
-                        cursor: 'default', minWidth: 2,
                       }}
-                    >{w > 5 ? VOWEL_LABELS[seg.vowel] : ''}</div>
+                    >{w > 6 ? seg.noteName : ''}</div>
                   )
                 })}
               </div>
 
-              {/* Legend */}
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                {(['aaa','ooo','eee','iii','consonant','silence'] as VowelType[]).map(v => {
-                  const count = segs.filter(s => s.vowel === v).length
-                  if (!count) return null
-                  return (
-                    <div key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-secondary)' }}>
-                      <div style={{ width: 10, height: 10, borderRadius: 2, background: VOWEL_COLORS[v] }} />
-                      {VOWEL_LABELS[v]} ({count})
-                    </div>
-                  )
-                })}
-              </div>
-
-              {/* Segment list */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', maxHeight: 320 }}>
+              {/* Note list */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', maxHeight: 340 }}>
                 {segs.map((seg, idx) => {
                   const dur = (seg.endSec - seg.startSec).toFixed(2)
-                  const isVoiced = seg.vowel !== 'consonant' && seg.vowel !== 'silence'
+                  const color = `hsl(${noteHue(seg.midi)}, 70%, 55%)`
                   return (
                     <div key={seg.id} style={{
                       display: 'flex', alignItems: 'center', gap: 8,
                       padding: '7px 10px', borderRadius: 7,
                       background: 'var(--bg-card)', border: '1px solid var(--border)',
                     }}>
-                      {/* Color swatch */}
-                      <div style={{ width: 8, height: 32, borderRadius: 3, background: VOWEL_COLORS[seg.vowel], flexShrink: 0 }} />
-                      {/* Info */}
+                      <div style={{ width: 8, height: 34, borderRadius: 3, background: color, flexShrink: 0 }} />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{VOWEL_LABELS[seg.vowel]}</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{seg.startSec.toFixed(2)}s – {seg.endSec.toFixed(2)}s · {dur}s</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                          {seg.noteName}
+                          <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>note {idx + 1}</span>
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                          {seg.startSec.toFixed(2)}s – {seg.endSec.toFixed(2)}s · {dur}s · vol {Math.round(seg.amplitude * 100)}%
+                        </div>
                       </div>
-                      {/* Play */}
                       <button
                         onClick={() => {
                           const subBuf = extractSubBuffer(clip.buf, seg.startSec, seg.endSec)
@@ -6574,20 +6565,21 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           const src = actx.createBufferSource()
                           src.buffer = subBuf; src.connect(actx.destination); src.start()
                         }}
-                        title="Preview this segment"
-                        style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}
+                        title="Preview this note"
+                        style={{ padding: '5px 9px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}
                       >▶</button>
-                      {/* Re-convert */}
-                      {isVoiced && (
-                        <button
-                          onClick={() => reConvertSegment(clip.id, seg.id, DEFAULT_SYNTH_OPTIONS)}
-                          title="Re-synthesize just this segment"
-                          style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.1)', color: 'var(--accent-light)', fontSize: 11, cursor: 'pointer' }}
-                        >Re-convert</button>
-                      )}
+                      <button
+                        onClick={() => reConvertSegment(clip.id, seg.id, DEFAULT_SYNTH_OPTIONS)}
+                        title="Re-synthesize just this note"
+                        style={{ padding: '5px 9px', borderRadius: 5, border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.1)', color: 'var(--accent-light)', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >Re-convert</button>
                     </div>
                   )
                 })}
+              </div>
+
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                If a specific note sounds wrong, preview it to confirm, then re-convert it or describe the problem to the AI Conversion Tuner.
               </div>
             </div>
           </>
