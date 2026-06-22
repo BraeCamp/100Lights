@@ -63,7 +63,7 @@ import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
-import { detectPitchCurve, detectPitchCurveAsync, synthesizeFromPitchCurve, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
+import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { matchBuffer } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { createSidechainProcessor } from '@/lib/sidechain'
@@ -4427,7 +4427,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 13 }}>🎛</span>
               <span style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa', letterSpacing: 0.3 }}>
-                AI Synth Tuner
+                AI Conversion Tuner
               </span>
               {synthTuner.status === 'running' && (
                 <span style={{ fontSize: 10, color: '#6b7280' }}>
