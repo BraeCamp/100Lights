@@ -1830,6 +1830,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   interface BandState { def: BandDef; buf: AudioBuffer | null; muted: boolean; loading: boolean }
   const [waveMgrPanel, setWaveMgrPanel] = useState<string | null>(null)
   const [clipBands, setClipBands] = useState<Record<string, BandState[]>>({})
+  const [waveMgrIsolated, setWaveMgrIsolated] = useState<number | null>(null)  // index of isolated band
+  const waveMgrPlayRef = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
 
   function wavelengthStr(hz: number): string {
     const m = 343 / hz
@@ -6625,28 +6627,87 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 <button onClick={() => setWaveMgrPanel(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>
               </div>
 
-              {/* Quick actions */}
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={() => setClipBands(prev => ({ ...prev, [waveMgrPanel]: bands.map(b => ({ ...b, muted: false })) }))}
-                  style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>
-                  All on
-                </button>
-                <button onClick={() => setClipBands(prev => ({ ...prev, [waveMgrPanel]: bands.map(b => ({ ...b, muted: true })) }))}
-                  style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>
-                  All off
-                </button>
-                <div style={{ flex: 1 }} />
-                <button onClick={() => applyBandMutes(waveMgrPanel)}
-                  style={{ padding: '4px 14px', borderRadius: 5, border: '1px solid rgba(52,211,153,0.4)', background: 'rgba(52,211,153,0.12)', color: '#34d399', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
-                  Apply to clip →
-                </button>
-              </div>
+              {/* Global playback + mute controls */}
+              {(() => {
+                const stopPlaying = () => {
+                  try { waveMgrPlayRef.current?.src.stop() } catch { /* already stopped */ }
+                  waveMgrPlayRef.current = null
+                }
+                const playBufs = (bufs: (AudioBuffer | null)[]) => {
+                  stopPlaying()
+                  const valid = bufs.filter((b): b is AudioBuffer => !!b)
+                  if (valid.length === 0) return
+                  const first = valid[0]
+                  const actx = new AudioContext()
+                  // Mix the selected buffers
+                  const mixed = new AudioBuffer({ numberOfChannels: first.numberOfChannels, length: first.length, sampleRate: first.sampleRate })
+                  for (let ch = 0; ch < first.numberOfChannels; ch++) {
+                    const dst = mixed.getChannelData(ch)
+                    for (const b of valid) {
+                      const s = b.getChannelData(Math.min(ch, b.numberOfChannels - 1))
+                      for (let i = 0; i < dst.length; i++) dst[i] += s[i]
+                    }
+                  }
+                  const src = actx.createBufferSource()
+                  src.buffer = mixed; src.connect(actx.destination); src.start()
+                  src.onended = () => { waveMgrPlayRef.current = null }
+                  waveMgrPlayRef.current = { src, ctx: actx }
+                }
+
+                const allLoaded = bands.every(b => !b.loading)
+                const activeBufs = bands.filter(b => !b.muted).map(b => b.buf)
+                const isolatedBuf = waveMgrIsolated !== null ? bands[waveMgrIsolated]?.buf : null
+
+                return (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {/* Play all non-muted */}
+                    <button
+                      disabled={!allLoaded}
+                      onClick={() => playBufs(activeBufs)}
+                      title="Play all non-muted bands together"
+                      style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 12, cursor: allLoaded ? 'pointer' : 'default', opacity: allLoaded ? 1 : 0.5, fontWeight: 600 }}
+                    >▶ Play mix</button>
+
+                    {/* Play isolated band */}
+                    <button
+                      disabled={!isolatedBuf}
+                      onClick={() => isolatedBuf && playBufs([isolatedBuf])}
+                      title={waveMgrIsolated !== null ? `Play ${bands[waveMgrIsolated]?.def.label} in isolation` : 'Select a band to isolate first'}
+                      style={{
+                        padding: '6px 14px', borderRadius: 6, border: '1px solid',
+                        borderColor: waveMgrIsolated !== null ? (bands[waveMgrIsolated]?.def.color ?? 'var(--border)') + '88' : 'var(--border)',
+                        background: waveMgrIsolated !== null ? (bands[waveMgrIsolated]?.def.color ?? 'transparent') + '22' : 'transparent',
+                        color: waveMgrIsolated !== null ? (bands[waveMgrIsolated]?.def.color ?? 'var(--text-muted)') : 'var(--text-muted)',
+                        fontSize: 12, cursor: isolatedBuf ? 'pointer' : 'default',
+                        opacity: isolatedBuf ? 1 : 0.5, fontWeight: 600,
+                      }}
+                    >▶ {waveMgrIsolated !== null ? bands[waveMgrIsolated]?.def.label : 'Isolated'}</button>
+
+                    {waveMgrIsolated !== null && (
+                      <button onClick={() => setWaveMgrIsolated(null)}
+                        style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 10, cursor: 'pointer' }}>
+                        ✕ clear
+                      </button>
+                    )}
+
+                    <div style={{ flex: 1 }} />
+                    <button onClick={() => setClipBands(prev => ({ ...prev, [waveMgrPanel]: bands.map(b => ({ ...b, muted: false })) }))}
+                      style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>All on</button>
+                    <button onClick={() => setClipBands(prev => ({ ...prev, [waveMgrPanel]: bands.map(b => ({ ...b, muted: true })) }))}
+                      style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>All off</button>
+                    <button onClick={() => applyBandMutes(waveMgrPanel)}
+                      style={{ padding: '4px 14px', borderRadius: 5, border: '1px solid rgba(52,211,153,0.4)', background: 'rgba(52,211,153,0.12)', color: '#34d399', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                      Apply →
+                    </button>
+                  </div>
+                )
+              })()}
 
               {/* Band rows */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {bands.map((band, idx) => {
                   const { def, buf, muted, loading } = band
-                  // Mini waveform: 50 peak bars from this band's buffer
+                  const isIsolated = waveMgrIsolated === idx
                   const peaks: number[] = []
                   if (buf) {
                     const data = buf.getChannelData(0)
@@ -6663,10 +6724,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     <div key={def.id} style={{
                       display: 'flex', alignItems: 'center', gap: 10,
                       padding: '8px 12px', borderRadius: 8,
-                      background: muted ? 'rgba(255,255,255,0.02)' : 'var(--bg-card)',
-                      border: `1px solid ${muted ? 'var(--border)' : def.color + '55'}`,
-                      opacity: muted ? 0.5 : 1,
-                      transition: 'opacity 0.15s, border-color 0.15s, background 0.15s',
+                      background: isIsolated ? def.color + '18' : muted ? 'rgba(255,255,255,0.02)' : 'var(--bg-card)',
+                      border: `1px solid ${isIsolated ? def.color + 'aa' : muted ? 'var(--border)' : def.color + '44'}`,
+                      opacity: muted && !isIsolated ? 0.45 : 1,
+                      transition: 'all 0.15s',
                     }}>
                       {/* Color bar */}
                       <div style={{ width: 4, height: 42, borderRadius: 2, background: def.color, flexShrink: 0 }} />
@@ -6677,7 +6738,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
                           {def.lo >= 1000 ? `${def.lo/1000}k` : def.lo}–{def.hi >= 1000 ? `${def.hi/1000}k` : def.hi} Hz
                         </div>
-                        <div style={{ fontSize: 9, color: def.color, marginTop: 1, opacity: 0.8 }}>
+                        <div style={{ fontSize: 9, color: def.color, marginTop: 1, opacity: 0.9 }}>
                           {wavelengthStr(Math.sqrt(def.lo * def.hi))}
                         </div>
                       </div>
@@ -6688,50 +6749,44 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Analyzing…</div>
                         ) : peaks.length > 0 ? peaks.map((p, i) => {
                           const h = Math.max(2, (p / maxPeak) * 30)
-                          return (
-                            <div key={i} style={{
-                              width: '100%', height: h,
-                              background: def.color,
-                              borderRadius: 1,
-                              opacity: muted ? 0.4 : 0.85,
-                            }} />
-                          )
+                          return <div key={i} style={{ width: '100%', height: h, background: def.color, borderRadius: 1, opacity: muted && !isIsolated ? 0.35 : 0.85 }} />
                         }) : <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>No signal</div>}
                       </div>
 
-                      {/* Preview */}
+                      {/* Isolate toggle */}
                       <button
                         disabled={!buf}
-                        onClick={() => {
-                          if (!buf) return
-                          const actx = new AudioContext()
-                          const s = actx.createBufferSource()
-                          s.buffer = buf; s.connect(actx.destination); s.start()
+                        onClick={() => setWaveMgrIsolated(isIsolated ? null : idx)}
+                        title={isIsolated ? 'Clear isolation' : 'Isolate this band for solo playback'}
+                        style={{
+                          padding: '5px 9px', borderRadius: 5, border: '1px solid',
+                          borderColor: isIsolated ? def.color : 'var(--border)',
+                          background: isIsolated ? def.color + '30' : 'transparent',
+                          color: isIsolated ? def.color : 'var(--text-muted)',
+                          fontSize: 10, fontWeight: 700, cursor: buf ? 'pointer' : 'default',
+                          opacity: buf ? 1 : 0.4, flexShrink: 0, letterSpacing: 0.3,
                         }}
-                        title="Preview this frequency band alone"
-                        style={{ padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 12, cursor: buf ? 'pointer' : 'default', opacity: buf ? 1 : 0.4, flexShrink: 0 }}
-                      >▶</button>
+                      >{isIsolated ? '◎' : '○'}</button>
 
                       {/* Mute toggle */}
                       <button
                         onClick={() => toggleBandMute(waveMgrPanel, idx)}
-                        title={muted ? 'Unmute this band' : 'Mute this band'}
+                        title={muted ? 'Unmute' : 'Mute this band'}
                         style={{
-                          width: 36, padding: '5px 0', borderRadius: 5, border: '1px solid',
-                          borderColor: muted ? 'rgba(239,68,68,0.5)' : 'var(--border)',
+                          width: 34, padding: '5px 0', borderRadius: 5, border: '1px solid',
+                          borderColor: muted ? 'rgba(239,68,68,0.55)' : 'var(--border)',
                           background: muted ? 'rgba(239,68,68,0.15)' : 'transparent',
                           color: muted ? '#f87171' : 'var(--text-muted)',
                           fontSize: 10, fontWeight: 700, cursor: 'pointer', flexShrink: 0,
-                          letterSpacing: 0.5,
                         }}
-                      >{muted ? 'M' : 'M'}</button>
+                      >M</button>
                     </div>
                   )
                 })}
               </div>
 
               <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                Preview each band to hear what it contributes. Mute the band that sounds wrong, then <strong style={{ color: 'var(--text-secondary)' }}>Apply to clip</strong> to remove it permanently. You can give the AI feedback like "the hi-mid band has too much resonance."
+                Click <strong style={{ color: 'var(--text-secondary)' }}>○</strong> to isolate a band, then <strong style={{ color: 'var(--text-secondary)' }}>▶ Isolated</strong> to hear it alone. Use <strong style={{ color: 'var(--text-secondary)' }}>M</strong> to mute bands that sound wrong, then <strong style={{ color: 'var(--text-secondary)' }}>Apply →</strong> to bake the mix.
               </div>
             </div>
           </>
