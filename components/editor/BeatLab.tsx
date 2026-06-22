@@ -133,6 +133,7 @@ const NOTE_MIN = 36
 const NOTE_MAX = 84
 const NOTE_RANGE = NOTE_MAX - NOTE_MIN
 const LANE_HEIGHT = 88
+const HEADER_W = 108  // lane label column width (wider to fit Input toggle)
 
 // ── Custom type helpers ────────────────────────────────────────────────────────
 
@@ -197,7 +198,7 @@ function Waveform({ audioBuffer, pxWidth }: { audioBuffer: AudioBuffer; pxWidth:
   }, [audioBuffer, pxWidth]) // eslint-disable-line
 
   return (
-    <div style={{ paddingLeft: 88, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+    <div style={{ paddingLeft: HEADER_W, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
       <svg width={pxWidth} height={height} style={{ display: 'block' }}>
         <path d={path} fill="rgba(139,92,246,0.2)" stroke="rgba(139,92,246,0.35)" strokeWidth={0.5} />
       </svg>
@@ -750,7 +751,7 @@ function AutomLaneView({ def, duration, pxWidth, onPointAdd, onPointUpdate, onPo
   return (
     <div style={{ display: 'flex', height: AUTOM_H, borderTop: '1px solid rgba(139,92,246,0.12)', background: 'var(--bg-card)' }}>
       {/* Label stub */}
-      <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px' }}>
+      <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px' }}>
         <span style={{ fontSize: 8, fontWeight: 700, color: 'rgba(139,92,246,0.75)', letterSpacing: '0.07em' }}>{AUTOM_LABEL[def.param]}</span>
         <span onClick={onRemove} style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1 }}>×</span>
       </div>
@@ -911,9 +912,13 @@ interface LaneProps {
   onToggleSpectrum?: () => void
   loopBeats?: number  // 0 = follow global
   onLoopBeatsChange?: (beats: number) => void
+  inputArmed?: boolean
+  inputSource?: 'mic' | 'midi'
+  onToggleInput?: () => void
+  onOpenInputPicker?: () => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -955,7 +960,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
       <div
         onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
         style={{
-          width: 64, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
+          width: 84, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
           background: isActiveLane ? 'var(--accent-subtle)' : 'var(--bg-surface)',
           display: 'flex', flexDirection: 'column', userSelect: 'none',
           borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
@@ -1038,6 +1043,34 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
             </div>
           </div>
         )}
+        {/* Input arm row */}
+        {!miniMode && onToggleInput && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, padding: '0 3px 3px' }}>
+            <Tooltip content={inputArmed ? 'Disarm input' : 'Arm track for input (mic or MIDI)'} placement="right">
+              <button
+                onClick={e => { e.stopPropagation(); onToggleInput() }}
+                style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer',
+                  background: inputArmed ? 'rgba(220,38,38,0.18)' : 'var(--bg-card)',
+                  border: `1px solid ${inputArmed ? 'rgba(220,38,38,0.5)' : 'var(--border)'}`,
+                  color: inputArmed ? '#ef4444' : 'var(--text-muted)' }}
+              >
+                {inputArmed ? (inputSource === 'midi' ? '♪' : '⏺') + ' In' : '⏺ In'}
+              </button>
+            </Tooltip>
+            {/* Source icon — click to pick */}
+            {inputArmed && onOpenInputPicker && (
+              <Tooltip content={`Input: ${inputSource === 'midi' ? 'MIDI' : 'Microphone'} — click to change`} placement="right">
+                <button
+                  onClick={e => { e.stopPropagation(); onOpenInputPicker() }}
+                  style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, cursor: 'pointer', border: '1px solid rgba(220,38,38,0.35)', background: 'rgba(220,38,38,0.08)', color: '#ef4444' }}
+                >
+                  {inputSource === 'midi' ? '♪' : '🎙'}
+                </button>
+              </Tooltip>
+            )}
+          </div>
+        )}
+
         {/* Mini-mode: just M button */}
         {miniMode && (
           <button
@@ -1283,7 +1316,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         {/* Add automation lane button */}
         {automOpen && (
           <div style={{ display: 'flex', alignItems: 'center', borderTop: automLanes.length > 0 ? '1px solid rgba(56,189,248,0.1)' : 'none' }}>
-            <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', height: '100%', background: 'var(--bg-base)' }} />
+            <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', height: '100%', background: 'var(--bg-base)' }} />
             <div style={{ position: 'relative', padding: '4px 8px' }}>
               <button
                 onClick={e => { e.stopPropagation(); onAutomAddOpen() }}
@@ -1312,7 +1345,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
     {fxOpen && (
       <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-surface)', borderTop: '1px solid rgba(139,92,246,0.15)', minHeight: 80 }}>
         {/* Left stub aligns with lane header */}
-        <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontSize: 9, color: 'rgba(139,92,246,0.7)', fontWeight: 700, letterSpacing: '0.08em' }}>FX</span>
         </div>
         {/* Horizontal chain of effect slots */}
@@ -1358,7 +1391,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
     {/* Spectrum Analyzer sub-view */}
     {spectrumOpen && !miniMode && (
       <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--bg-base)', borderTop: '1px solid rgba(34,211,238,0.15)' }}>
-        <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 84, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontSize: 8, color: 'rgba(34,211,238,0.7)', fontWeight: 700, letterSpacing: '0.08em' }}>FFT</span>
         </div>
         <div style={{ flex: 1, padding: '4px 8px', overflow: 'hidden' }}>
@@ -1378,7 +1411,7 @@ function Playhead({ time, duration, pxWidth }: { time: number; duration: number;
   if (time < 0) return null
   return (
     <div style={{
-      position: 'absolute', left: (time / duration) * pxWidth + 88, top: 0, bottom: 0,
+      position: 'absolute', left: (time / duration) * pxWidth + HEADER_W, top: 0, bottom: 0,
       width: 1, background: 'var(--accent)', pointerEvents: 'none', zIndex: 20,
     }} />
   )
@@ -1710,14 +1743,39 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     }
   }
 
-  // ── Live MIDI input ────────────────────────────────────────────────────────
-  const [midiEnabled, setMidiEnabled] = useState(false)
-  const midiAccessRef = useRef<MIDIAccess | null>(null)
+  // ── Per-lane input mode ────────────────────────────────────────────────────
+  // inputLanes: which lanes have input armed; inputSource: 'mic' | 'midi' per lane
+  type InputSource = 'mic' | 'midi'
+  const [inputLanes,  setInputLanes]  = useState<Set<string>>(new Set())
+  const [inputSource, setInputSource] = useState<Record<string, InputSource>>({})
+  const [inputSourcePickerLane, setInputSourcePickerLane] = useState<string | null>(null)
+  const inputLanesRef  = useRef<Set<string>>(new Set())
+  const inputSourceRef = useRef<Record<string, InputSource>>({})
+  useEffect(() => { inputLanesRef.current  = inputLanes  }, [inputLanes])
+  useEffect(() => { inputSourceRef.current = inputSource }, [inputSource])
+
+  function toggleInputLane(laneType: string) {
+    setInputLanes(prev => {
+      const next = new Set(prev)
+      if (next.has(laneType)) {
+        next.delete(laneType)
+      } else {
+        next.add(laneType)
+        // default source to mic
+        setInputSource(s => s[laneType] ? s : { ...s, [laneType]: 'mic' })
+      }
+      return next
+    })
+  }
+
+  // ── Live MIDI input — routes to all midi-sourced input lanes ──────────────
+  const midiAccessRef  = useRef<MIDIAccess | null>(null)
+  const midiArmed      = Array.from(inputLanes).some(l => inputSource[l] === 'midi')
 
   useEffect(() => {
-    if (!midiEnabled) {
+    if (!midiArmed) {
       if (midiAccessRef.current) {
-        for (const input of midiAccessRef.current.inputs.values()) input.onmidimessage = null
+        for (const inp of midiAccessRef.current.inputs.values()) inp.onmidimessage = null
       }
       return
     }
@@ -1727,30 +1785,28 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
       const handler = (e: MIDIMessageEvent) => {
         if (!e.data) return
         const status = e.data[0]; const note = e.data[1]; const velocity = e.data[2]
-        if ((status & 0xF0) !== 0x90 || velocity === 0) return  // note-on only
-        const targetType = activeLaneTypeRef.current ?? 'synth-lead'
+        if ((status & 0xF0) !== 0x90 || velocity === 0) return
         const vel = velocity / 127
-        setHits(prev => [...prev, {
-          id: crypto.randomUUID(),
-          time: playStartRef.current
-            ? playStartRef.current.beatTime + (performance.now() - playStartRef.current.wallTime) / 1000
-            : playhead,
-          type: targetType as BeatType,
-          velocity: vel,
-          note,
-        }].sort((a, b) => a.time - b.time))
+        const midiTargets = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] === 'midi')
+        const ts = playStartRef.current
+          ? playStartRef.current.beatTime + (performance.now() - playStartRef.current.wallTime) / 1000
+          : playhead
+        setHits(prev => [
+          ...prev,
+          ...midiTargets.map(t => ({ id: crypto.randomUUID(), time: ts, type: t as BeatType, velocity: vel, note })),
+        ].sort((a, b) => a.time - b.time))
       }
-      for (const input of access.inputs.values()) input.onmidimessage = handler
+      for (const inp of access.inputs.values()) inp.onmidimessage = handler
       access.onstatechange = () => {
-        for (const input of access.inputs.values()) input.onmidimessage = handler
+        for (const inp of access.inputs.values()) inp.onmidimessage = handler
       }
-    }).catch(() => setMidiEnabled(false))
+    }).catch(() => {})
     return () => {
       if (midiAccessRef.current) {
-        for (const input of midiAccessRef.current.inputs.values()) input.onmidimessage = null
+        for (const inp of midiAccessRef.current.inputs.values()) inp.onmidimessage = null
       }
     }
-  }, [midiEnabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [midiArmed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── View mode: Arrangement vs Session ────────────────────────────────────
   const [viewMode, setViewMode] = useState<'arrangement' | 'session'>('arrangement')
@@ -1872,18 +1928,13 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     const offset = laneRecStartPlayheadRef.current
     try {
       const buf = await decodeAudio(blob)
-      // Determine target lane — use the active lane or auto-create one
-      let laneType: string
-      if (activeLaneType) {
-        laneType = activeLaneType
-      } else {
-        const newId = `cust_${Date.now()}`
-        setTypeOverrides(prev => ({ ...prev, [newId]: { label: 'Voice', color: '#8b5cf6' } }))
-        setExtraLaneIds(prev => [...prev, newId])
-        setActiveLaneType(newId as BeatType)
-        laneType = newId
-      }
-      setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneType, buf, offset, 'Voice')])
+      // Record into all mic-input lanes; fall back to active lane if none armed
+      const micLanes = Array.from(inputLanesRef.current).filter(l => inputSourceRef.current[l] === 'mic')
+      const targets  = micLanes.length > 0 ? micLanes : activeLaneType ? [activeLaneType] : []
+      setAudioClips(prev => [
+        ...prev,
+        ...targets.map(laneType => mkClip(crypto.randomUUID(), laneType, buf, offset, 'Voice')),
+      ])
       if (buf.duration + offset > duration) setDuration(buf.duration + offset)
     } catch {
       setError('Could not decode the recording. Try again.')
@@ -2274,7 +2325,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // 88px = 64px lane label + 24px note axis
   useEffect(() => {
     if (!timelineEl) return
-    const ro = new ResizeObserver(([e]) => setTimelinePx(e.contentRect.width - 88))
+    const ro = new ResizeObserver(([e]) => setTimelinePx(e.contentRect.width - HEADER_W))
     ro.observe(timelineEl)
     return () => ro.disconnect()
   }, [timelineEl])
@@ -3700,9 +3751,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </button>
             </Tooltip>
 
-            {/* Record audio as clip — only when a track is selected */}
-            {!laneRecording && activeLaneType && (
-              <Tooltip content="Record audio into selected track" placement="bottom">
+            {/* Record — only when at least one mic-input lane is armed */}
+            {!laneRecording && Array.from(inputLanes).some(l => inputSource[l] === 'mic' || !inputSource[l]) && (
+              <Tooltip content={`Record into ${Array.from(inputLanes).filter(l => inputSource[l] !== 'midi').length} armed track(s)`} placement="bottom">
                 <button
                   onClick={startLaneRecording}
                   style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}
@@ -3894,19 +3945,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               >
                 Tap
               </button>
-              {/* MIDI input toggle */}
-              {'requestMIDIAccess' in navigator && (
-                <button
-                  onClick={() => setMidiEnabled(v => !v)}
-                  title={midiEnabled ? 'MIDI input active — click to disable' : 'Enable MIDI keyboard input to active lane'}
-                  style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', letterSpacing: '0.04em',
-                    background: midiEnabled ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
-                    border: `1px solid ${midiEnabled ? 'rgba(139,92,246,0.6)' : 'var(--border)'}`,
-                    color: midiEnabled ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
-                >
-                  MIDI {midiEnabled ? '●' : '○'}
-                </button>
-              )}
               {/* Quantize strip */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
                 <Tooltip content="Snap all hits to the nearest grid line (Q)" placement="bottom">
@@ -4477,11 +4515,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 }}
               >
                 {/* Fixed-width inner column at zoom level */}
-                <div style={{ width: 88 + (timelinePx * zoomLevel), minWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                <div style={{ width: HEADER_W + (timelinePx * zoomLevel), minWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
                   <Playhead time={playhead} duration={duration} pxWidth={timelinePx * zoomLevel} />
 
-                  {/* Ruler — offset 88px to align with hit area (64 label + 24 note axis) */}
-                  <div style={{ paddingLeft: 88 }}>
+                  {/* Ruler — offset HEADER_W to align with hit area */}
+                  <div style={{ paddingLeft: HEADER_W }}>
                     <RulerTicks
                       duration={duration} px={timelinePx * zoomLevel}
                       bpm={bpm ?? (masterBpm !== 120 ? masterBpm : null)}
@@ -4557,7 +4595,7 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                       <div key={type}>
                       {/* Group header row (only for the group bus lane) */}
                       {isGroupBus && group && (
-                        <div style={{ display: 'flex', alignItems: 'center', height: 26, background: 'var(--bg-surface)', borderBottom: '1px solid rgba(139,92,246,0.2)', paddingLeft: 88 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', height: 26, background: 'var(--bg-surface)', borderBottom: '1px solid rgba(139,92,246,0.2)', paddingLeft: HEADER_W }}>
                           <button onClick={() => toggleGroupCollapse(group.id)}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '0 6px' }}>
                             {group.collapsed ? '▶' : '▼'}
@@ -4661,6 +4699,10 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                           onToggleSpectrum={() => toggleSpecLane(type)}
                           loopBeats={laneLoopBeats[type] ?? 0}
                           onLoopBeatsChange={beats => setLaneLoopBeats(prev => ({ ...prev, [type]: beats }))}
+                          inputArmed={inputLanes.has(type)}
+                          inputSource={inputSource[type]}
+                          onToggleInput={() => toggleInputLane(type)}
+                          onOpenInputPicker={() => setInputSourcePickerLane(type)}
                         />
                       </div>
                       </div>
@@ -5270,6 +5312,53 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         </Suspense>
       )}
 
+      {/* ── Input source picker ────────────────────────────────────────── */}
+      {inputSourcePickerLane && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setInputSourcePickerLane(null)} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+            zIndex: 500, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: 12, padding: 20, width: 280, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: typeColor(inputSourcePickerLane as BeatType, typeOverrides), marginRight: 8 }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>
+                Input source — {typeLabel(inputSourcePickerLane as BeatType, typeOverrides)}
+              </span>
+              <button onClick={() => setInputSourcePickerLane(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(['mic', 'midi'] as const).map(src => {
+                const active = (inputSource[inputSourcePickerLane] ?? 'mic') === src
+                return (
+                  <button key={src} onClick={() => {
+                    setInputSource(prev => ({ ...prev, [inputSourcePickerLane]: src }))
+                    setInputSourcePickerLane(null)
+                  }} style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                    borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                    background: active ? 'rgba(220,38,38,0.1)' : 'var(--bg-card)',
+                    border: `1px solid ${active ? 'rgba(220,38,38,0.45)' : 'var(--border)'}`,
+                  }}>
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>{src === 'mic' ? '🎙' : '♪'}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: active ? '#ef4444' : 'var(--text-primary)' }}>
+                        {src === 'mic' ? 'Microphone' : 'MIDI'}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
+                        {src === 'mic' ? 'Records audio from your mic into this track' : 'Routes MIDI note-ons into this track when playing'}
+                      </div>
+                    </div>
+                    {active && <span style={{ fontSize: 12, color: '#ef4444' }}>✓</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ── Command Palette (Cmd+K) ─────────────────────────────────────── */}
       <Suspense fallback={null}>
         <CommandPalette
@@ -5284,7 +5373,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
             { id: 'humanize-light', label: 'Humanize (light)', group: 'Edit', action: () => { humanizeHits(0.25); setCmdPaletteOpen(false) } },
             { id: 'humanize-heavy', label: 'Humanize (heavy)', group: 'Edit', action: () => { humanizeHits(0.7); setCmdPaletteOpen(false) } },
             { id: 'tap', label: 'Tap tempo', group: 'Transport', shortcut: 'T', action: () => { tapTempo(); setCmdPaletteOpen(false) } },
-            { id: 'midi-toggle', label: midiEnabled ? 'Disable MIDI input' : 'Enable MIDI input', group: 'Transport', action: () => { setMidiEnabled(v => !v); setCmdPaletteOpen(false) } },
             { id: 'metronome', label: metronomeOn ? 'Disable metronome' : 'Enable metronome', group: 'Transport', action: () => { setMetronomeOn(v => !v); setCmdPaletteOpen(false) } },
             // Export
             { id: 'save', label: 'Save project', group: 'File', action: () => { saveProject(); setCmdPaletteOpen(false) } },
