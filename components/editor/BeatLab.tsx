@@ -51,6 +51,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { Mic, Square, Play, Pause, Trash2, RefreshCw, ChevronDown, Volume2, VolumeX, Send } from 'lucide-react'
+import Tooltip from './Tooltip'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -961,7 +962,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         }}
       >
         {/* Label row */}
-        <div onClick={onSelectLane} onDoubleClick={onToggleMini} title="Double-click to collapse lane" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
+        <Tooltip content={`Click to inspect\nDouble-click to ${miniMode ? 'expand' : 'collapse'}`} placement="right" delay={900}>
+        <div onClick={onSelectLane} onDoubleClick={onToggleMini} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '4px 4px 2px', cursor: 'pointer' }}>
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: dimmed ? 'var(--border-light)' : color }} />
           <span style={{ fontSize: 9, fontWeight: 600, color: isActiveLane ? 'var(--text-primary)' : dimmed ? 'var(--text-muted)' : 'var(--text-secondary)', letterSpacing: '0.04em', maxWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>
             {label}
@@ -969,36 +971,40 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           {!miniMode && hits.length > 0 && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{hits.length}</span>}
           {!miniMode && loopBeats > 0 && <span style={{ fontSize: 7, color: 'rgba(167,139,250,0.8)', fontFamily: 'monospace' }}>{loopBeats}b⟳</span>}
         </div>
+        </Tooltip>
 
         {/* M · S · ··· row */}
         {!miniMode && (
           <div style={{ display: 'flex', gap: 2, padding: '0 3px 3px', justifyContent: 'center' }}>
-            <button
-              onClick={e => { e.stopPropagation(); onToggleMute() }}
-              title="Mute"
-              style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
-                background: muted ? 'rgba(239,68,68,0.18)' : 'var(--bg-card)',
-                border: `1px solid ${muted ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
-                color: muted ? '#ef4444' : 'var(--text-muted)' }}
-            >M</button>
-            <button
-              onClick={e => { e.stopPropagation(); onSoloToggle() }}
-              title="Solo"
-              style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
-                background: soloed ? 'rgba(251,191,36,0.18)' : 'var(--bg-card)',
-                border: `1px solid ${soloed ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
-                color: soloed ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
-            >S</button>
+            <Tooltip content={muted ? 'Unmute lane' : 'Mute lane (silences this track)'} placement="right">
+              <button
+                onClick={e => { e.stopPropagation(); onToggleMute() }}
+                style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
+                  background: muted ? 'rgba(239,68,68,0.18)' : 'var(--bg-card)',
+                  border: `1px solid ${muted ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+                  color: muted ? '#ef4444' : 'var(--text-muted)' }}
+              >M</button>
+            </Tooltip>
+            <Tooltip content={soloed ? 'Unsolo lane' : 'Solo lane (mutes all other tracks)'} placement="right">
+              <button
+                onClick={e => { e.stopPropagation(); onSoloToggle() }}
+                style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
+                  background: soloed ? 'rgba(251,191,36,0.18)' : 'var(--bg-card)',
+                  border: `1px solid ${soloed ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
+                  color: soloed ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
+              >S</button>
+            </Tooltip>
             {/* ··· menu */}
             <div style={{ position: 'relative' }}>
-              <button
-                onClick={e => { e.stopPropagation(); setDotMenuOpen(v => !v) }}
-                title="Lane tools"
-                style={{ fontSize: 11, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer', lineHeight: 1,
-                  background: dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)',
-                  border: `1px solid ${dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`,
-                  color: dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
-              >···</button>
+              <Tooltip content="FX, automation, piano roll, step sequencer, spectrum…" placement="right" disabled={dotMenuOpen}>
+                <button
+                  onClick={e => { e.stopPropagation(); setDotMenuOpen(v => !v) }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '1px 4px', borderRadius: 3, cursor: 'pointer', lineHeight: 1,
+                    background: dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)',
+                    border: `1px solid ${dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`,
+                    color: dotMenuOpen || effects.length > 0 || automLanes.length > 0 ? 'rgba(167,139,250,1)' : 'var(--text-muted)' }}
+                >···</button>
+              </Tooltip>
               {dotMenuOpen && (
                 <>
                   <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={() => setDotMenuOpen(false)} />
@@ -1588,8 +1594,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   // Voice synth: pitch-follow recorded audio through a sample pack sound.
   // Completely independent of the hit/beat system — produces a single continuous
   // audio file that can be previewed and downloaded. Does NOT create hits.
-  const [voiceSynthOpen,      setVoiceSynthOpen]      = useState(false)
-  const [voiceSynthRendering, setVoiceSynthRendering]  = useState(false)
   // Audio clips — raw recordings and synth renders, stored per-lane and played as AudioBuffers
   interface AudioClip {
     id: string; laneType: string; buf: AudioBuffer; startTime: number; muted: boolean; name: string
@@ -1616,69 +1620,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
     sensitivity: BeatSensitivity
     instrument: InstrumentPreset
   } | null>(null)
-
-  // Voice Synth self-contained recorder (independent of the main beat recording)
-  const [vsRecording,  setVsRecording]  = useState(false)
-  const [vsRecTime,    setVsRecTime]    = useState(0)
-  const [vsAudioBuf,   setVsAudioBuf]   = useState<AudioBuffer | null>(null)
-  const vsRecTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const vsRecChunksRef = useRef<Blob[]>([])
-  const vsRecorderRef  = useRef<MediaRecorder | null>(null)
-
-  async function startVsRecording() {
-    try {
-      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
-      vsRecChunksRef.current = []
-      recorder.ondataavailable = e => { if (e.data.size > 0) vsRecChunksRef.current.push(e.data) }
-      recorder.start(100)
-      vsRecorderRef.current = recorder
-      setVsRecording(true)
-      setVsRecTime(0)
-      setVsAudioBuf(null)
-      vsRecTimerRef.current = setInterval(() => setVsRecTime(t => t + 0.1), 100)
-    } catch { setError('Microphone access denied.') }
-  }
-
-  async function stopVsRecording() {
-    const recorder = vsRecorderRef.current
-    if (!recorder) return
-    if (vsRecTimerRef.current) clearInterval(vsRecTimerRef.current)
-    recorder.stop()
-    recorder.stream.getTracks().forEach(t => t.stop())
-    await new Promise<void>(res => { recorder.onstop = () => res() })
-    setVsRecording(false)
-    const blob = new Blob(vsRecChunksRef.current, { type: vsRecChunksRef.current[0]?.type ?? 'audio/webm' })
-    const buf  = await decodeAudio(blob).catch(() => null)
-    if (buf) setVsAudioBuf(buf)
-  }
-
-  async function runVoiceSynth() {
-    const source = vsAudioBuf ?? audioBuf
-    if (!source) return
-    setVoiceSynthRendering(true)
-    // Determine target lane
-    let laneType: string
-    if (activeLaneType) {
-      laneType = activeLaneType
-    } else {
-      const newId = `cust_${Date.now()}`
-      setTypeOverrides(prev => ({ ...prev, [newId]: { label: 'Synth', color: '#8b5cf6' } }))
-      setExtraLaneIds(prev => [...prev, newId])
-      setActiveLaneType(newId as BeatType)
-      laneType = newId
-    }
-    try {
-      const curve    = await detectPitchCurveAsync(source)
-      const rendered = await synthesizeFromPitchCurve(curve, source.sampleRate, 60, source.duration)
-      setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneType, rendered, playhead, 'Synth')])
-      if (playhead + rendered.duration > duration) setDuration(playhead + rendered.duration)
-    } catch (e) {
-      setError(`Voice synth failed: ${e instanceof Error ? e.message : String(e)}`)
-    } finally {
-      setVoiceSynthRendering(false)
-    }
-  }
 
   function openConvertCard(clipId: string, mode: 'synth' | 'beats' | 'instrument') {
     setClipMenu(null)
@@ -3716,9 +3657,11 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
         background: 'var(--bg-surface)', flexShrink: 0,
       }}>
         {phase === 'idle' && (
-          <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-            <Mic size={13} /> Sing the Beat
-          </button>
+          <Tooltip content="Record audio — tap or sing your beat" placement="bottom">
+            <button onClick={startRecording} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 6, background: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+              <Mic size={13} /> Sing the Beat
+            </button>
+          </Tooltip>
         )}
         {phase === 'recording' && (
           <>
@@ -3737,19 +3680,22 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
 
         {phase === 'editing' && (
           <>
-            <button onClick={togglePlay} style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
-              {isPlaying ? <Pause size={13} fill="#fff" /> : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
-            </button>
-
-            {/* Record voice as audio clip — always available */}
-            {!laneRecording && (
-              <button
-                onClick={startLaneRecording}
-                title="Record voice — adds as audio clip at playhead"
-                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}
-              >
-                <Mic size={11} /> Rec
+            <Tooltip content={isPlaying ? 'Pause (Space)' : 'Play (Space)'} placement="bottom">
+              <button onClick={togglePlay} style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                {isPlaying ? <Pause size={13} fill="#fff" /> : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
               </button>
+            </Tooltip>
+
+            {/* Record audio as clip — always available */}
+            {!laneRecording && (
+              <Tooltip content="Record audio — adds as a clip at the playhead position" placement="bottom">
+                <button
+                  onClick={startLaneRecording}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontSize: 11, fontWeight: 600, flexShrink: 0 }}
+                >
+                  <Mic size={11} /> Rec
+                </button>
+              </Tooltip>
             )}
             {laneRecording && (
               <>
@@ -3781,43 +3727,47 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                   title="Click to edit BPM"
                 >{bpm ?? masterBpm}</span>
               )}
-              <button
-                onClick={tapTempo}
-                title="Tap tempo (T)"
-                style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}
-              >TAP</button>
+              <Tooltip content="Tap tempo (T)" placement="bottom">
+                <button
+                  onClick={tapTempo}
+                  style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >TAP</button>
+              </Tooltip>
             </div>
 
             {/* Metronome toggle */}
-            <button
-              onClick={() => setMetronomeOn(v => !v)}
-              title="Metronome"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer', fontWeight: 600,
-                background: metronomeOn ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
-                borderColor: metronomeOn ? 'rgba(139,92,246,0.5)' : 'var(--border)',
-                color: metronomeOn ? 'var(--accent-light)' : 'var(--text-muted)' }}
-            >♩</button>
+            <Tooltip content="Metronome click while playing" placement="bottom">
+              <button
+                onClick={() => setMetronomeOn(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 11, cursor: 'pointer', fontWeight: 600,
+                  background: metronomeOn ? 'rgba(139,92,246,0.18)' : 'var(--bg-card)',
+                  borderColor: metronomeOn ? 'rgba(139,92,246,0.5)' : 'var(--border)',
+                  color: metronomeOn ? 'var(--accent-light)' : 'var(--text-muted)' }}
+              >♩</button>
+            </Tooltip>
 
             {/* Count-in toggle */}
-            <button
-              onClick={() => setCountIn(v => !v)}
-              title="1-bar count-in before recording"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 10, cursor: 'pointer', fontWeight: 600,
-                background: countIn ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
-                borderColor: countIn ? 'rgba(251,191,36,0.5)' : 'var(--border)',
-                color: countIn ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
-            >{countingIn ? `${countInBeat}` : '1•2•3•4'}</button>
+            <Tooltip content="1-bar count-in before recording starts" placement="bottom">
+              <button
+                onClick={() => setCountIn(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+                  background: countIn ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
+                  borderColor: countIn ? 'rgba(251,191,36,0.5)' : 'var(--border)',
+                  color: countIn ? 'rgb(251,191,36)' : 'var(--text-muted)' }}
+              >{countingIn ? `${countInBeat}` : '1•2•3•4'}</button>
+            </Tooltip>
 
             {/* A/B loop toggle */}
-            <button
-              onClick={() => setAbLoopEnabled(v => !v)}
-              title="Loop between A and B markers (Shift+drag ruler to set)"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 10, cursor: 'pointer', fontWeight: 700,
-                background: abLoopEnabled ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
-                borderColor: abLoopEnabled && abLoop ? 'rgba(251,191,36,0.5)' : 'var(--border)',
-                color: abLoopEnabled && abLoop ? 'rgb(251,191,36)' : 'var(--text-muted)',
-                opacity: !abLoop ? 0.5 : 1 }}
-            >A–B</button>
+            <Tooltip content="Loop between A and B markers\nShift+drag on the ruler to set range" placement="bottom">
+              <button
+                onClick={() => setAbLoopEnabled(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: '1px solid', fontSize: 10, cursor: 'pointer', fontWeight: 700,
+                  background: abLoopEnabled ? 'rgba(251,191,36,0.15)' : 'var(--bg-card)',
+                  borderColor: abLoopEnabled && abLoop ? 'rgba(251,191,36,0.5)' : 'var(--border)',
+                  color: abLoopEnabled && abLoop ? 'rgb(251,191,36)' : 'var(--text-muted)',
+                  opacity: !abLoop ? 0.5 : 1 }}
+              >A–B</button>
+            </Tooltip>
 
             {/* Multi-select badge */}
             {selectedIds.size > 1 && (
@@ -3945,7 +3895,9 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               )}
               {/* Quantize strip */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
-                <button onClick={quantizeHits} title="Quantize hits to grid (Q)" style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
+                <Tooltip content="Snap all hits to the nearest grid line (Q)" placement="bottom">
+                  <button onClick={quantizeHits} style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
+                </Tooltip>
                 <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
                 <span style={{ fontSize: 9, color: 'var(--text-muted)', paddingLeft: 4 }}>Swing</span>
                 <input
@@ -3958,10 +3910,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </div>
               {/* Edit menu */}
               <div style={{ position: 'relative' }}>
-                <button onClick={() => { setShowEditMenu(v => !v); setShowFileMenu(false) }}
-                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showEditMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showEditMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showEditMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
-                  Edit ▾
-                </button>
+                <Tooltip content="Undo, redo, quantize, humanize, command palette" placement="bottom" disabled={showEditMenu}>
+                  <button onClick={() => { setShowEditMenu(v => !v); setShowFileMenu(false) }}
+                    style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showEditMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showEditMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showEditMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                    Edit ▾
+                  </button>
+                </Tooltip>
                 {showEditMenu && (
                   <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setShowEditMenu(false)} />
@@ -3992,10 +3946,12 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </div>
               {/* File menu */}
               <div style={{ position: 'relative' }}>
-                <button onClick={() => { setShowFileMenu(v => !v); setShowEditMenu(false) }}
-                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showFileMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showFileMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showFileMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
-                  File ▾
-                </button>
+                <Tooltip content="Save / load project, export stems and MIDI" placement="bottom" disabled={showFileMenu}>
+                  <button onClick={() => { setShowFileMenu(v => !v); setShowEditMenu(false) }}
+                    style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showFileMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showFileMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showFileMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                    File ▾
+                  </button>
+                </Tooltip>
                 {showFileMenu && (
                   <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setShowFileMenu(false)} />
@@ -4035,22 +3991,25 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} title="Zoom in" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
               </div>
               {/* Inspector toggle */}
-              <button
-                onClick={() => setInspectorOpen(v => !v)}
-                title="Inspector panel (I)"
-                style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: inspectorOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${inspectorOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: inspectorOpen ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}
-              >
-                Inspector
-              </button>
+              <Tooltip content="Inspector panel — lane details, pan, tools (I)" placement="bottom" disabled={inspectorOpen}>
+                <button
+                  onClick={() => setInspectorOpen(v => !v)}
+                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: inspectorOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${inspectorOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: inspectorOpen ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  Inspector
+                </button>
+              </Tooltip>
 
               {/* + Track button */}
               <div style={{ position: 'relative' }}>
-                <button
-                  onClick={() => setAddTrackOpen(v => !v)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: addTrackOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${addTrackOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: addTrackOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
-                >
-                  + Track
-                </button>
+                <Tooltip content="Add a new instrument or drum track" placement="bottom" disabled={addTrackOpen}>
+                  <button
+                    onClick={() => setAddTrackOpen(v => !v)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: addTrackOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${addTrackOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: addTrackOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
+                  >
+                    + Track
+                  </button>
+                </Tooltip>
                 {addTrackOpen && (
                   <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setAddTrackOpen(false)} />
@@ -4094,13 +4053,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
                 )}
               </div>
 
-              <button
-                onClick={() => setVoiceSynthOpen(v => !v)}
-                title="Record and synthesize any sound as an instrument layer"
-                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: voiceSynthOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${voiceSynthOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: voiceSynthOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
-              >
-                🎙 Voice Synth
-              </button>
               {!userFeedbackMode ? (
                 <button
                   onClick={enterFeedbackMode}
@@ -4129,45 +4081,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
           </>
         )}
       </div>
-
-      {/* ── Voice Synth Panel ─────────────────────────────────────────────── */}
-      {voiceSynthOpen && phase === 'editing' && (
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(139,92,246,0.06)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-light)' }}>Voice Synth</span>
-
-          {/* Self-contained mic recorder */}
-          {vsRecording ? (
-            <>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', animation: 'pulse 0.8s ease-in-out infinite', flexShrink: 0 }} />
-              <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#dc2626', minWidth: 40 }}>{vsRecTime.toFixed(1)}s</span>
-              <button onClick={stopVsRecording}
-                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600 }}>
-                <Square size={10} fill="currentColor" /> Stop
-              </button>
-            </>
-          ) : (
-            <button onClick={startVsRecording}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', color: '#dc2626', cursor: 'pointer', fontWeight: 600 }}>
-              <Mic size={11} /> {vsAudioBuf ? `Re-record (${vsAudioBuf.duration.toFixed(1)}s)` : 'Record'}
-            </button>
-          )}
-
-          {vsAudioBuf && !vsRecording && (
-            <button onClick={runVoiceSynth} disabled={voiceSynthRendering}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 12px', borderRadius: 5, background: voiceSynthRendering ? 'var(--bg-card)' : 'var(--accent)', border: 'none', color: voiceSynthRendering ? 'var(--text-muted)' : '#fff', cursor: voiceSynthRendering ? 'default' : 'pointer', fontWeight: 600 }}>
-              {voiceSynthRendering
-                ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rendering…</>
-                : '+ Add Synth Layer'}
-            </button>
-          )}
-
-          {audioClips.filter(c => c.name === 'Synth').length > 0 && (
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-              {audioClips.filter(c => c.name === 'Synth').length} synth layer{audioClips.filter(c => c.name === 'Synth').length !== 1 ? 's' : ''} added · press Play to hear
-            </span>
-          )}
-        </div>
-      )}
 
       {/* ── Content ───────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'row', minHeight: 0 }}>
