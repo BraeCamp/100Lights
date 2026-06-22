@@ -1727,9 +1727,6 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
   }
 
   // + Track popover state
-  const [addTrackOpen,   setAddTrackOpen]   = useState(false)
-  const [addTrackFamily, setAddTrackFamily] = useState<InstrumentFamily>('drums')
-  const addTrackBtnRef = useRef<HTMLButtonElement>(null)
 
   // ── Tap tempo ──────────────────────────────────────────────────────────────
   function handleTapTempo() {
@@ -4083,61 +4080,17 @@ export default function BeatLab({ onExport, hasSong, onRequestSongPlay, onReques
               </Tooltip>
 
               {/* + Track button */}
-              <div style={{ position: 'relative' }}>
-                <Tooltip content="Add a new instrument or drum track" placement="bottom" disabled={addTrackOpen}>
-                  <button
-                    ref={addTrackBtnRef}
-                    onClick={() => setAddTrackOpen(v => !v)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: addTrackOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${addTrackOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: addTrackOpen ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}
-                  >
-                    + Track
-                  </button>
-                </Tooltip>
-                {addTrackOpen && (() => {
-                  const r = addTrackBtnRef.current?.getBoundingClientRect()
-                  return (
-                  <>
-                    <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setAddTrackOpen(false)} />
-                    <div style={{ position: 'fixed', bottom: r ? window.innerHeight - r.top + 4 : 0, right: r ? window.innerWidth - r.right : 0, zIndex: 50, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, minWidth: 200, boxShadow: '0 -8px 24px rgba(0,0,0,0.35)' }}>
-                      {/* Family tabs */}
-                      <div style={{ display: 'flex', gap: 2, marginBottom: 8, background: 'var(--bg-surface)', borderRadius: 6, padding: 2 }}>
-                        {(['drums', 'guitar', 'piano', 'synth'] as InstrumentFamily[]).map(f => (
-                          <button key={f} onClick={() => setAddTrackFamily(f)}
-                            style={{ flex: 1, padding: '3px 4px', borderRadius: 4, border: 'none', cursor: 'pointer', background: addTrackFamily === f ? 'var(--border-light)' : 'transparent', color: addTrackFamily === f ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 10, fontWeight: addTrackFamily === f ? 600 : 400 }}>
-                            {FAMILY_LABEL[f]}
-                          </button>
-                        ))}
-                      </div>
-                      {/* Types */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {addTrackFamily === 'drums'
-                          ? ALL_DRUM_TYPES.map(t => (
-                              <button key={t} onClick={() => { toggleSelectedType(t); }}
-                                style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', borderRadius: 5, border: 'none', cursor: 'pointer', background: selectedTypes.has(t) ? 'rgba(139,92,246,0.12)' : 'transparent', color: selectedTypes.has(t) ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11, textAlign: 'left' }}>
-                                <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] ?? 'var(--border)', flexShrink: 0 }} />
-                                {TYPE_LABELS[t] ?? t}
-                                {selectedTypes.has(t) && <span style={{ marginLeft: 'auto', fontSize: 9, opacity: 0.6 }}>✓</span>}
-                              </button>
-                            ))
-                          : FAMILY_VARIANTS[addTrackFamily as Exclude<InstrumentFamily, 'drums'>].map(t => {
-                              const already = activeLaneTypes.includes(t) || extraLaneIds.includes(t as string)
-                              return (
-                                <button key={t}
-                                  onClick={() => { if (!already) setExtraLaneIds(prev => [...prev, t as string]); setAddTrackOpen(false) }}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', borderRadius: 5, border: 'none', cursor: already ? 'default' : 'pointer', background: already ? 'rgba(139,92,246,0.08)' : 'transparent', color: already ? 'var(--text-muted)' : 'var(--text-secondary)', fontSize: 11, textAlign: 'left', opacity: already ? 0.6 : 1 }}>
-                                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: TYPE_COLORS[t] ?? 'var(--border)', flexShrink: 0 }} />
-                                  {TYPE_LABELS[t] ?? t}
-                                  {already && <span style={{ marginLeft: 'auto', fontSize: 9, opacity: 0.6 }}>added</span>}
-                                </button>
-                              )
-                            })
-                        }
-                      </div>
-                    </div>
-                  </>
-                  )
-                })()}
-              </div>
+              <Tooltip content="Add a new track" placement="bottom">
+                <button
+                  onClick={() => {
+                    const id = addCustomLane()
+                    setTimeout(() => { setActiveLaneType(id as BeatType); setSelectedLane(id as BeatType) }, 0)
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  + Track
+                </button>
+              </Tooltip>
 
               {!userFeedbackMode ? (
                 <button
