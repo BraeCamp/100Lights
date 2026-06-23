@@ -111,69 +111,71 @@ any hits that fall outside the declared types.
 `
   }
 
-  // Build a concise summary of past corrections the user has confirmed
+  // Summarise past corrections as positive spectral examples, not a correction narrative.
+  // Group by correctedTo so Claude sees "a kick sounds like this: ..." rather than a
+  // confusing "was X, changed to Y" list that could read as a demotion of Y.
   let pastCorrectionsSection = ''
   if (pastCorrections.length > 0) {
-    const lines = pastCorrections.map(c => {
+    const byType = new Map<string, string[]>()
+    for (const c of pastCorrections) {
       const s = c.spectral
-      const bands = s ? `lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hi=${fmt(s.hi)}` : 'no spectral'
-      return `  - was labeled "${c.detectedAs}", user corrected to "${c.correctedTo}" (${bands})`
-    })
-    pastCorrectionsSection = `
-USER'S PAST CORRECTIONS (most recent ${pastCorrections.length} — treat these as ground truth for this user's voice):
+      if (!s) continue
+      const desc = `lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hiMid=${fmt(s.hiMid)} hi=${fmt(s.hi)} attack=${fmt(s.attackTime,4)}s`
+      if (!byType.has(c.correctedTo)) byType.set(c.correctedTo, [])
+      byType.get(c.correctedTo)!.push(desc)
+    }
+    if (byType.size > 0) {
+      const lines: string[] = []
+      for (const [type, examples] of byType.entries()) {
+        lines.push(`  ${type}: ${examples.slice(0, 4).join(' | ')}`)
+      }
+      pastCorrectionsSection = `
+THIS USER'S CONFIRMED SOUND SIGNATURES (from ${pastCorrections.length} past corrections):
 ${lines.join('\n')}
 
-When you see similar spectral shapes to a past correction, FOLLOW the user's correction
-rather than your default heuristics. This user's beatbox voice has specific characteristics
-that differ from the average — their corrections reveal those patterns.
+These are the actual spectral measurements of sounds THIS user confirmed as correct.
+Weight these heavily — this user's mouth produces sounds that may not match textbook
+beatbox norms. When current hits have similar band ratios, prefer the confirmed type.
 `
+    }
   }
 
   const prompt = `You are an expert at classifying beatbox drum sounds from spectral data.
 
 A user beatboxed a drum pattern and the app detected ${hits.length} sound events.
-Your job is to independently classify each one using ONLY the spectral data below.
-Do NOT anchor on any prior label — analyze each hit fresh from its acoustics.
-If a hit looks like noise, breath, or a false detection (very low velocity, no clear
-spectral peak, or inconsistent with any beatbox sound), classify it as "delete".
+Classify each hit as one of: ${enabledTypes.join(', ')}
+Every hit must receive a label — do NOT delete any hits. The user has already reviewed
+and removed false positives; assume every hit in this list is a real drum sound.
 ${groundTruthSection}${pastCorrectionsSection}
 CRITICAL BEATBOX FACTS:
 - Human mouths CANNOT produce real sub-bass (<100 Hz). Sub values will always be low.
-- Beatbox KICKS peak in "lowMid" (150-600 Hz) — not sub. lowMid is the kick indicator.
+- Beatbox KICKS peak in "lowMid" (150–600 Hz) — not sub. lowMid is the kick indicator.
 - SNARES and CLAPS are mid-range dominant (mid band). Snares have some lowMid body; claps are brighter.
 - HI-HATS are high frequency (hiMid + hi dominant). Closed hats are short; open hats sustain.
 - TOM is like kick but with more "mid" body riding on top.
-- The user was beatboxing these types: ${enabledTypes.join(', ')}
 
-SPECTRAL BANDS (each is a fraction 0-1 of total energy at that hit):
+SPECTRAL BANDS (each is a fraction 0–1 of total energy at that hit):
 - sub: 0–150 Hz
 - lowMid: 150–600 Hz  ← beatbox kicks/toms peak here
 - mid: 600–3000 Hz    ← snares/claps
 - hiMid: 3–8 kHz      ← hi-hats, snare crack
-- hi: 8+ kHz           ← hi-hats, sibilants
+- hi: 8+ kHz          ← hi-hats, sibilants
 
 HIT DATA:
 ${table}
 
-CLASSIFICATION RULES OF THUMB:
-- lowMid is highest band → kick (or tom if mid also high)
-- hiMid+hi > 0.50 → hihat family (open-hihat if hi is very high and sustained)
-- mid is highest, sub low → snare or clap (snare has more lowMid body; clap is sharper)
+CLASSIFICATION RULES:
+- lowMid is highest band → kick (or tom if mid also significant)
+- hiMid+hi > 0.50 → hihat family (open-hihat if high and sustained)
+- mid is highest, sub low → snare or clap (snare has more lowMid body)
 - mid > 0.45 and sub < 0.12 → rim
-- Look for rhythmic patterns: kicks on beats 1/3, snares on 2/4, hihats subdivide
+- attackTime < 0.005s = sharp transient (kick, clap). attackTime > 0.02s = soft onset (tom, open-hat)
+- roughness > 0.4 = buzzy/noisy (snare wire). harmonicRatio > 0.5 = pitched (tom, rim)
+- mfcc[1] strongly separates kick (negative) from hihat (positive)
 
-ADDITIONAL FEATURE GUIDANCE:
-- attackTime < 0.005s = sharp transient (kick, rimshot, clap). attackTime > 0.02s = soft onset (tom, open-hat)
-- roughness > 0.4 = buzzy/noisy (snare wire, clap layers). roughness < 0.1 = clean decay (kick body)
-- harmonicRatio > 0.5 = pitched sound (tom, rim). harmonicRatio < 0.2 = noise-dominant (snare, clap, hihat)
-- flatness > 0.5 = noise-like (hihat, snare wire). flatness < 0.1 = tonal (kick body, tom)
-- dynamicRange > 20 dB = impulsive transient. dynamicRange < 10 dB = sustained or noise-floored
-- mfcc[1] strongly separates kick (negative) from hihat (positive) in most beatbox recordings
-
-Respond with ONLY a valid JSON array of exactly ${hits.length} strings, in the same order as the input hits.
-Use only these labels: ${VALID_TYPES.join(', ')}, delete
-"delete" means the hit is noise or a false detection that should be removed.
-Example format: ["kick","hihat","delete","snare","hihat"]`
+Respond with ONLY a valid JSON array of exactly ${hits.length} strings.
+Use only these labels: ${enabledTypes.join(', ')}
+Example: ["kick","hihat","snare","hihat","kick"]`
 
   // Prefill with "[" to force Claude to emit a bare JSON array with no preamble
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -203,8 +205,8 @@ Example format: ["kick","hihat","delete","snare","hihat"]`
   // The prefilled "[" is not included in the completion text, so prepend it
   const rawText = '[' + (data.content.find(b => b.type === 'text')?.text ?? '')
 
-  // Parse JSON array — be lenient: pad short arrays with original type, truncate long ones
-  const VALID_WITH_DELETE = [...VALID_TYPES, 'delete'] as const
+  // Parse JSON array — lenient: unknown labels and "delete" fall back to the original type
+  const VALID_SET = new Set<string>([...VALID_TYPES, 'delete'])
   let raw: string[]
   try {
     const match = rawText.match(/\[[\s\S]*?\]/)
@@ -213,7 +215,9 @@ Example format: ["kick","hihat","delete","snare","hihat"]`
     if (!Array.isArray(parsed)) throw new Error('not an array')
     raw = hits.map((h, i) => {
       const val = parsed[i] as string | undefined
-      return (val != null && (VALID_WITH_DELETE as readonly string[]).includes(val)) ? val : h.type
+      // "delete" is no longer offered in the prompt; treat it as the original type
+      if (val == null || val === 'delete' || !VALID_SET.has(val)) return h.type
+      return val
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -221,13 +225,11 @@ Example format: ["kick","hihat","delete","snare","hihat"]`
     return Response.json({ error: `Failed to parse AI response: ${msg}` }, { status: 500 })
   }
 
-  // Split into reclassifications vs. deletions
+  // Only reclassifications — deletions are disabled; user removes false hits manually
   const corrections: Record<string, BeatType> = {}
   const deletions: string[] = []
   hits.forEach((h, i) => {
-    if (raw[i] === 'delete') {
-      deletions.push(h.id)
-    } else if (raw[i] !== h.type) {
+    if (raw[i] !== h.type) {
       corrections[h.id] = raw[i] as BeatType
     }
   })
