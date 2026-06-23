@@ -2018,11 +2018,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   async function beatLoadRef(file: File) {
     try {
       const decoded = await decodeAudio(file)
+      // Clear all previous session data before loading the new reference
+      setBeatBox(null); setBeatBoxName(''); setBeatBoxOffset(0)
+      setBeatPendingHits(null); setBeatDetectedHits(null); setBeatPlacedLanes(null)
+      setBeatResult(null); setBeatGridBpm(null); setBeatClusterK(3); setBeatClusterNames({})
       setBeatRef(decoded)
       setBeatRefName(file.name)
       setBeatRefBpm(quickBpmEstimate(decoded))
-      setBeatResult(null)
-      setBeatBox(null)      // clear stale beatBox so verify doesn't mix old and new audio
       setBeatStep(1)
     } catch { showToast('Could not decode audio file') }
   }
@@ -2036,12 +2038,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
       const decoded = await decodeAudio(new Blob([await res.arrayBuffer()]))
       const name = url.split('/').pop()?.split('?')[0] ?? 'Beat'
+      setBeatBox(null); setBeatBoxName(''); setBeatBoxOffset(0)
+      setBeatPendingHits(null); setBeatDetectedHits(null); setBeatPlacedLanes(null)
+      setBeatResult(null); setBeatGridBpm(null); setBeatClusterK(3); setBeatClusterNames({})
       setBeatRef(decoded)
       setBeatRefName(name)
       setBeatRefBpm(quickBpmEstimate(decoded))
       setBeatRefUrl('')
-      setBeatResult(null)
-      setBeatBox(null)      // clear stale beatBox
       setBeatStep(1)
     } catch (e) {
       showToast(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -2209,19 +2212,30 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  function closeBeatStudio() {
+  function resetBeatTranscription() {
+    // Stop any in-progress recording so its async onstop can't re-set beatBox after we clear it
+    stopBeatRecord()
     beatStopPlay()
     stopVerifyPlayback()
-    setBeatStudioOpen(false)
-    // Reset transcription so the next session starts clean
+    setBeatBox(null)
+    setBeatBoxName('')
+    setBeatBoxOffset(0)
+    setBeatRef(null)
+    setBeatRefName('')
+    setBeatRefBpm(null)
+    setBeatResult(null)
+    setBeatStep(1)
     setBeatPendingHits(null)
     setBeatDetectedHits(null)
     setBeatPlacedLanes(null)
-    setBeatBox(null)
-    setBeatRef(null)
-    setBeatRefName('')
-    setBeatResult(null)
-    setBeatStep(1)
+    setBeatGridBpm(null)
+    setBeatClusterK(3)
+    setBeatClusterNames({})
+  }
+
+  function closeBeatStudio() {
+    resetBeatTranscription()
+    setBeatStudioOpen(false)
   }
 
   function addBeatResultToTimeline() {
@@ -8400,7 +8414,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     {beatTranscribeLoading ? 'Detecting…' : '▣ Separate Sounds from Beat'}
                   </button>
                   <button
-                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatRef(d); setBeatRefName(f.name); setBeatBox(null) } catch { showToast('Could not decode file') } }; inp.click() }}
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatBox(null); setBeatBoxName(''); setBeatPendingHits(null); setBeatDetectedHits(null); setBeatPlacedLanes(null); setBeatRef(d); setBeatRefName(f.name) } catch { showToast('Could not decode file') } }; inp.click() }}
                     style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '7px 14px', fontSize: 10 }}>
                     Import Beat
                   </button>
