@@ -1,5 +1,5 @@
 import { runMatchPipeline, AudioBuf } from '@/lib/server/pipeline'
-import { decodeWav, encodeWav } from '@/lib/wav-codec'
+import { decodeAudioAny, encodeWav } from '@/lib/wav-codec'
 
 export const maxDuration = 60
 
@@ -24,8 +24,8 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    const vocalWav  = decodeWav(await vocalFile.arrayBuffer())
-    const targetWav = decodeWav(await targetFile.arrayBuffer())
+    const vocalWav  = decodeAudioAny(await vocalFile.arrayBuffer())
+    const targetWav = decodeAudioAny(await targetFile.arrayBuffer())
 
     const vocalBuf  = AudioBuf.fromChannels(vocalWav.channels,  vocalWav.sampleRate)
     const targetBuf = AudioBuf.fromChannels(targetWav.channels, targetWav.sampleRate)

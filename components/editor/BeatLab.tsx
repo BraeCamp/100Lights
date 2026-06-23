@@ -71,7 +71,7 @@ import { extractSubBuffer, extractSubCurve, spliceSegmentBack } from '@/lib/vowe
 import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
 import { smoothPitchCurve, smoothSpectralTransitions, applyReferenceEnvelope } from '@/lib/timbre-smooth'
 import { parseAbletonProject, loadClipAudio, type AbletonProject, type AbletonTrack } from '@/lib/ableton-parser'
-import { encodeWav, decodeWav } from '@/lib/wav-codec'
+import { encodeWav, decodeWav, decodeAiff } from '@/lib/wav-codec'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -180,7 +180,21 @@ type Phase = 'idle' | 'recording' | 'analyzing' | 'editing'
 type RecMode = 'hits' | 'loop'
 
 async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
-  const ab  = await blob.arrayBuffer()
+  const ab    = await blob.arrayBuffer()
+  const bytes = new Uint8Array(ab, 0, Math.min(12, ab.byteLength))
+  // Chrome does not support AIFF in decodeAudioData — detect and decode manually
+  const isAiff =
+    bytes[0] === 0x46 && bytes[1] === 0x4F && bytes[2] === 0x52 && bytes[3] === 0x4D &&
+    bytes[8] === 0x41 && bytes[9] === 0x49  // "FORM...AI..."
+  if (isAiff) {
+    const { channels, sampleRate } = decodeAiff(ab)
+    const ctx = new AudioContext()
+    try {
+      const out = ctx.createBuffer(channels.length, channels[0].length, sampleRate)
+      for (let ch = 0; ch < channels.length; ch++) out.getChannelData(ch).set(channels[ch])
+      return out
+    } finally { ctx.close() }
+  }
   const ctx = new AudioContext()
   try { return await ctx.decodeAudioData(ab) } finally { ctx.close() }
 }
@@ -1684,8 +1698,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function matchLoadFile(file: File, slot: 'target' | 'vocal') {
     try {
-      const ctx = new AudioContext()
-      const decoded = await ctx.decodeAudioData(await file.arrayBuffer()).finally(() => ctx.close())
+      const decoded = await decodeAudio(file)
       if (slot === 'target') { setMatchTarget(decoded); setMatchTargetName(file.name) }
       else                   { setMatchVocal(decoded);  setMatchVocalName(file.name) }
     } catch { showToast('Could not decode audio file') }
@@ -1698,8 +1711,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     try {
       const res = await fetch(`/api/fetch-audio?url=${encodeURIComponent(url)}`)
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
-      const ctx = new AudioContext()
-      const decoded = await ctx.decodeAudioData(await res.arrayBuffer()).finally(() => ctx.close())
+      const decoded = await decodeAudio(new Blob([await res.arrayBuffer()]))
       const name = url.split('/').pop()?.split('?')[0] ?? 'Track'
       setMatchTarget(decoded)
       setMatchTargetName(name)
@@ -6591,10 +6603,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           if (!file) return
                           setConvertCard(c => c ? { ...c, referenceId: 'custom', referenceLoading: true } : c)
                           try {
-                            const arrayBuf = await file.arrayBuffer()
-                            const tmpCtx = new AudioContext()
-                            const buf = await tmpCtx.decodeAudioData(arrayBuf)
-                            await tmpCtx.close()
+                            const buf = await decodeAudio(file)
                             const profile = extractHarmonicProfile(buf)
                             setConvertCard(c => c ? { ...c, referenceBuf: buf, harmProfile: profile, referenceLoading: false } : c)
                           } catch {

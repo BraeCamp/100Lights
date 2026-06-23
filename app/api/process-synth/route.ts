@@ -1,5 +1,5 @@
 import { runPipeline, AudioBuf } from '@/lib/server/pipeline'
-import { decodeWav, encodeWav } from '@/lib/wav-codec'
+import { decodeAudioAny, encodeWav } from '@/lib/wav-codec'
 
 // Allow up to 60 seconds (Vercel Pro) and 8MB body
 export const maxDuration = 60
@@ -24,14 +24,14 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    // Decode source audio
-    const srcWav = decodeWav(await audioFile.arrayBuffer())
+    // Decode source audio (WAV or AIFF)
+    const srcWav = decodeAudioAny(await audioFile.arrayBuffer())
     const srcBuf = AudioBuf.fromChannels(srcWav.channels, srcWav.sampleRate)
 
-    // Decode reference audio (optional)
+    // Decode reference audio (optional, WAV or AIFF)
     let refBuf: AudioBuf | null = null
     if (refFile) {
-      const refWav = decodeWav(await refFile.arrayBuffer())
+      const refWav = decodeAudioAny(await refFile.arrayBuffer())
       refBuf = AudioBuf.fromChannels(refWav.channels, refWav.sampleRate)
     }
 
