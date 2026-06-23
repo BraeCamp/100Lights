@@ -2611,12 +2611,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const placed: { type: string; count: number; laneId: string }[] = []
     for (const [type, typeHits] of byType.entries()) {
       let sampleBuf: AudioBuffer
-      if (beatKitCustom[type]) {
-        sampleBuf = beatKitCustom[type]
+      // Cut a 400 ms excerpt from beatBox at the first hit of this type
+      const firstHit = typeHits[0]
+      if (beatBox && firstHit) {
+        const sr2 = beatBox.sampleRate
+        const s   = Math.floor(firstHit.time * sr2)
+        const e   = Math.min(beatBox.length, s + Math.floor(0.4 * sr2))
+        const len = Math.max(1, e - s)
+        sampleBuf = ctx.createBuffer(1, len, sr2)
+        sampleBuf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
       } else {
         const d = synthDrum(type, sr)
-        sampleBuf = ctx.createBuffer(1, d.length, sr)
-        sampleBuf.getChannelData(0).set(d)
+        sampleBuf = ctx.createBuffer(1, d.length, sr); sampleBuf.getChannelData(0).set(d)
       }
       const laneId = addCustomLane()
       setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
@@ -8749,22 +8755,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Detect beats in your beatbox → place real drum sounds on separate lanes you can swap</div>
                   </div>
 
-                  {/* Drum kit configurator */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-                    {DRUM_TYPES.map(type => (
-                      <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(0,0,0,0.2)', border: `1px solid ${beatKitCustom[type] ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 8, padding: '5px 10px' }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#6b7280', flexShrink: 0, display: 'inline-block' }} />
-                        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)' }}>{DRUM_LABELS[type]}</span>
-                        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{beatKitCustom[type] ? 'custom' : 'synth'}</span>
-                        <button onClick={() => previewDrumType(type)} title="Preview" style={{ ...btnBase, padding: '1px 5px', fontSize: 9, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>▶</button>
-                        <button onClick={() => uploadKitSample(type)} title="Upload custom" style={{ ...btnBase, padding: '1px 5px', fontSize: 9, background: 'none', color: 'rgba(250,204,21,0.6)', border: '1px solid rgba(234,179,8,0.2)' }}>↑</button>
-                        {beatKitCustom[type] && (
-                          <button onClick={() => setBeatKitCustom(prev => { const n = { ...prev }; delete n[type]; return n })} style={{ ...btnBase, padding: '1px 4px', fontSize: 9, background: 'none', color: 'var(--text-muted)', border: 'none' }}>✕</button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
                   {/* ── Musical grid setup — controls how hits are snapped and repeated ── */}
                   <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 9, padding: '10px 12px', marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 9 }}>
                     {/* Row 1: BPM */}
@@ -9126,13 +9116,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           </button>
 
                           {!isClusterMode && (
-                            <button onClick={beatPlayPreview}
-                              title="Preview hits as synthesized drum sounds"
-                              style={{ ...btnBase, background: beatPreviewPlaying ? 'rgba(234,179,8,0.2)' : 'rgba(255,255,255,0.06)', color: beatPreviewPlaying ? 'rgba(250,204,21,1)' : 'var(--text-muted)', border: `1px solid ${beatPreviewPlaying ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, padding: '5px 10px', fontSize: 10 }}>
-                              {beatPreviewPlaying ? '■' : '▶ Kit'}
-                            </button>
-                          )}
-                          {!isClusterMode && (
                             <button onClick={beatAiCheck} disabled={beatAiChecking}
                               style={{ ...btnBase, background: beatAiChecking ? 'rgba(167,139,250,0.08)' : 'rgba(167,139,250,0.14)', color: 'rgba(196,181,253,1)', border: '1px solid rgba(139,92,246,0.35)', padding: '5px 12px' }}>
                               {beatAiChecking ? '♦ Checking…' : '♦ AI Check'}
@@ -9278,10 +9261,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#6b7280', flexShrink: 0, display: 'inline-block' }} />
                             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', minWidth: 70 }}>{DRUM_LABELS[type] ?? type}</span>
                             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{count} hit{count !== 1 ? 's' : ''}</span>
-                            <button onClick={() => swapLaneSample(laneId)}
-                              style={{ ...btnBase, marginLeft: 'auto', padding: '4px 12px', fontSize: 10, background: 'rgba(234,179,8,0.08)', color: 'rgba(250,204,21,0.8)', border: '1px solid rgba(234,179,8,0.2)' }}>
-                              ↑ Swap sample
-                            </button>
                           </div>
                         ))}
                       </div>
