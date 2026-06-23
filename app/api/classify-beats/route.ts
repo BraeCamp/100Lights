@@ -61,10 +61,12 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid request' }, { status: 400 })
   }
 
-  const fmt = (n?: number, d = 3) => n != null ? n.toFixed(d) : '—'
+  const fmt = (n?: number, d = 3) => (n != null && isFinite(n)) ? n.toFixed(d) : '—'
   const table = hits.map((h, i) => {
     const s = h.spectral
-    const mfcc1 = s.mfcc ? s.mfcc.slice(1, 5).map(v => v.toFixed(1)).join(' ') : '—'
+    const mfcc1 = (s.mfcc && s.mfcc.length > 1)
+      ? s.mfcc.slice(1, 5).map(v => (v != null && isFinite(v)) ? v.toFixed(1) : '—').join(' ')
+      : '—'
     return [
       `${String(i + 1).padStart(2)}. t=${h.time.toFixed(3)}s  v=${h.velocity.toFixed(2)}`,
       `    bands  sub=${fmt(s.sub)} lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hiMid=${fmt(s.hiMid)} hi=${fmt(s.hi)}`,
@@ -157,14 +159,15 @@ Example format: ["kick","hihat","delete","snare","hihat"]`
     },
     body: JSON.stringify({
       model:      'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      max_tokens: Math.max(512, hits.length * 12 + 128),
       messages:   [{ role: 'user', content: prompt }],
     }),
   })
 
   if (!res.ok) {
-    const err = await res.text()
-    return Response.json({ error: err }, { status: res.status })
+    let errMsg = `AI API error ${res.status}`
+    try { const j = await res.json() as { error?: { message?: string } }; if (j.error?.message) errMsg = j.error.message } catch { /* keep default */ }
+    return Response.json({ error: errMsg }, { status: res.status })
   }
 
   const data = await res.json() as { content: Array<{ type: string; text: string }> }

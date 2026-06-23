@@ -2248,7 +2248,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           enabledTypes: ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
         }),
       })
-      if (!res.ok) { showToast('AI check failed'); setBeatAiChecking(false); return }
+      if (!res.ok) {
+        let reason = `HTTP ${res.status}`
+        try { const j = await res.json() as { error?: string }; if (j.error) reason = j.error } catch { /* keep default */ }
+        showToast(`AI check failed: ${reason}`)
+        setBeatAiChecking(false)
+        return
+      }
       const { corrections, deletions } = await res.json() as { corrections: Record<string, string>; deletions: string[] }
       const delSet = new Set(deletions)
       const totalChanges = Object.keys(corrections).length + deletions.length
