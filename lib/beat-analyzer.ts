@@ -149,13 +149,16 @@ import { computeHitFeatures } from './beat-features'
 
 export interface BeatHit {
   id: string
-  time: number      // seconds from start of recording
+  time: number       // seconds from start of recording — set to the quiet valley before the attack
   type: BeatType
   clusterId?: string // anonymous cluster letter ("A"–"F") — set when the user hasn't named sounds yet
-  velocity: number  // 0–1
-  note: number      // MIDI note — always set
-  duration?: number // seconds; undefined = short attack hit (~50ms default display)
+  velocity: number   // 0–1
+  note: number       // MIDI note — always set
+  duration?: number  // seconds; undefined = short attack hit (~50ms default display)
   spectral?: HitSpectral // stored during drum classification for AI review
+  // ── Enriched by detectLoopPeriod / annotatePitchDeltas before clustering ──
+  loopPhase?: number  // 0–1, position within the detected repeating loop period
+  pitchDelta?: number // 0–1, normalized absolute pitch change from the previous hit
 }
 
 export interface BeatAnalysis {
@@ -374,14 +377,34 @@ function vecDist(a: number[], b: number[]): number {
 // (from saved user corrections). Any remaining slots are filled with k-means++.
 export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): Record<string, number> {
   const actualK = Math.max(1, Math.min(CLUSTER_LETTERS.length, k))
-  const vecs  = hits.map(h => ({ id: h.id, v: h.spectral ? hitToVec(h.spectral) : null }))
+
+  // Build extended feature vectors from spectral + loop phase + pitch delta.
+  // Loop phase is encoded as sin/cos so phase 0.0 and 1.0 are adjacent (circular).
+  // Both loop phase dimensions are weighted 3× relative to a typical spectral
+  // feature — same position in the pattern is the strongest possible evidence
+  // that two hits are the same sound.
+  const vecs = hits.map(h => {
+    if (!h.spectral) return { id: h.id, v: null }
+    const base = hitToVec(h.spectral)
+    // Loop phase (circular encoding, 3× weight)
+    if (h.loopPhase !== undefined) {
+      base.push(Math.sin(2 * Math.PI * h.loopPhase) * 3.0)
+      base.push(Math.cos(2 * Math.PI * h.loopPhase) * 3.0)
+    } else {
+      base.push(0, 0)  // no loop detected — neutral, doesn't pull toward any phase
+    }
+    // Pitch delta (2× weight): tonal sounds at different pitches should be separate
+    base.push((h.pitchDelta ?? 0) * 2.0)
+    return { id: h.id, v: base }
+  })
+
   const valid = vecs.filter((x): x is { id: string; v: number[] } => x.v !== null)
 
   const assign: Record<string, number> = {}
   if (valid.length === 0) { hits.forEach(h => { assign[h.id] = 0 }); return assign }
 
   const kk = Math.min(actualK, valid.length)
-  const dim = valid[0].v.length
+  const dim = valid[0]?.v.length ?? 0
 
   // Seed centroids from user corrections first, then fill with k-means++
   const centroids: number[][] = []
@@ -425,6 +448,82 @@ export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): 
   for (const x of vecs) if (x.v === null) assign[x.id] = 0
 
   return assign
+}
+
+// ── Loop period detection ─────────────────────────────────────────────────────
+//
+// Finds the most likely repeating pattern period by scoring candidate periods
+// against all inter-onset intervals (IOIs). A period P scores +1 for each IOI
+// that falls within 10% of any integer multiple of P (e.g. P, 2P, 3P, …).
+// This handles rests, tied notes, and multi-hit patterns.
+//
+// Returns the period in seconds, or null if no convincing period is found.
+// Used to annotate each hit with its phase (0–1) within the loop, which
+// becomes a very strong clustering feature: same phase = same position in
+// the pattern = almost certainly the same sound.
+export function detectLoopPeriod(hits: BeatHit[]): number | null {
+  if (hits.length < 4) return null
+  const times = hits.map(h => h.time)
+  const totalDur = times[times.length - 1] - times[0]
+  if (totalDur < 0.15) return null
+
+  const iois: number[] = []
+  for (let i = 1; i < times.length; i++) {
+    const d = times[i] - times[i - 1]
+    if (d > 0.03 && d < totalDur * 0.8) iois.push(d)
+  }
+  if (iois.length < 2) return null
+
+  const minP = Math.min(...iois) * 0.5
+  const maxP = Math.min(4.0, totalDur * 0.65)
+
+  // Coarse pass: 5 ms steps
+  let bestP = 0, bestScore = -1
+  for (let p = Math.max(0.06, minP); p <= maxP; p += 0.005) {
+    let score = 0
+    for (const ioi of iois) {
+      const nearest = Math.round(ioi / p)
+      if (nearest < 1) continue
+      if (Math.abs(ioi / p - nearest) / nearest < 0.10) score++
+    }
+    if (score > bestScore) { bestScore = score; bestP = p }
+  }
+
+  if (bestScore < Math.max(2, iois.length * 0.35)) return null
+
+  // Fine pass: 0.5 ms steps around the best candidate
+  for (let p = Math.max(0.06, bestP - 0.012); p <= bestP + 0.012; p += 0.0005) {
+    let score = 0
+    for (const ioi of iois) {
+      const nearest = Math.round(ioi / p)
+      if (nearest < 1) continue
+      if (Math.abs(ioi / p - nearest) / nearest < 0.08) score++
+    }
+    if (score > bestScore) { bestScore = score; bestP = p }
+  }
+
+  return bestP > 0 ? bestP : null
+}
+
+// ── Pitch delta annotation ────────────────────────────────────────────────────
+//
+// For each consecutive pair of tonal hits (pitchConfidence > 0.3), computes how
+// much f0 changed and stores it as pitchDelta (0–1) on the later hit.
+// A ratio of 2× (one octave) gives pitchDelta = 1.0.
+// This gives the clustering algorithm explicit evidence of tonal changes:
+// two hits with very different pitches should never be in the same group.
+export function annotatePitchDeltas(hits: BeatHit[]): void {
+  for (let i = 1; i < hits.length; i++) {
+    const prev = hits[i - 1], curr = hits[i]
+    const prevConf = prev.spectral?.pitchConfidence ?? 0
+    const currConf = curr.spectral?.pitchConfidence ?? 0
+    const prevF0   = prevConf > 0.30 ? (prev.spectral?.f0 ?? 0) : 0
+    const currF0   = currConf > 0.30 ? (curr.spectral?.f0 ?? 0) : 0
+    if (prevF0 > 20 && currF0 > 20) {
+      const ratio = Math.max(prevF0, currF0) / Math.min(prevF0, currF0)
+      curr.pitchDelta = Math.min(1.0, (ratio - 1.0) / 2.0)  // octave = 1.0
+    }
+  }
 }
 
 export async function analyzeBeats(
@@ -542,6 +641,26 @@ export async function analyzeBeats(
     return { hits: [], bpm: null, duration: audioBuffer.duration }
   }
 
+  // ── Step 3c: Refine onsets to the quiet valley before each attack ──────────
+  // The peak-picker lands at the frame of maximum energy RISE, which is slightly
+  // into the sound body. The true natural splice point is the quietest moment
+  // just before the attack begins — where one sound has fully decayed and the
+  // next hasn't started. We scan back up to 35 ms from each rough onset and
+  // snap to the minimum-energy frame in that window.
+  //
+  // Feature extraction in Step 5 still uses the rough onset (to see the full
+  // attack transient), but hit.time is set to the valley so clips start at the
+  // cleanest possible cut point.
+  const lookbackFrames = Math.max(1, Math.floor((0.035 * sr) / hopSize))
+  const refinedSamples = filteredSamples.map(roughSample => {
+    const roughFrame = Math.floor(roughSample / hopSize)
+    let valleyFrame = roughFrame, minE = energy[roughFrame] ?? Infinity
+    for (let f = Math.max(0, roughFrame - lookbackFrames); f < roughFrame; f++) {
+      if ((energy[f] ?? Infinity) < minE) { minE = energy[f]; valleyFrame = f }
+    }
+    return valleyFrame * hopSize
+  })
+
   // ── Step 4: Velocity — normalized to recording's dynamic range ────────────
   // Scaling by onset * 40 (previous approach) clips immediately for any
   // reasonable microphone level. Instead, normalize against the peak onset
@@ -556,21 +675,23 @@ export async function analyzeBeats(
   let hits: BeatHit[]
 
   if (melodicType) {
-    hits = filteredSamples.map((sampleIdx) => ({
+    hits = filteredSamples.map((roughIdx, si) => ({
       id: crypto.randomUUID(),
-      time: sampleIdx / sr,
+      time: refinedSamples[si] / sr,  // splice at valley, not at energy peak
       type: melodicType,
-      velocity: toVelocity(Math.floor(sampleIdx / hopSize)),
+      velocity: toVelocity(Math.floor(roughIdx / hopSize)),
       note: DEFAULT_NOTES[melodicType],
     }))
   } else {
     // Full perceptual feature extraction via FFT (no OfflineAudioContext renders needed).
-    // computeHitFeatures returns all 30+ dimensions defined in lib/beat-features.ts.
+    // Feature extraction uses the ROUGH onset (sees the full transient); hit.time uses
+    // the REFINED valley (clean splice point in the silence before the attack).
     hits = []
     let prevSpectrum: Float32Array | null = null
     for (let si = 0; si < filteredSamples.length; si++) {
-      const sampleIdx      = filteredSamples[si]
-      const nextOnsetSample = filteredSamples[si + 1] ?? null
+      const sampleIdx       = filteredSamples[si]   // rough — for feature window
+      const refinedSampleIdx = refinedSamples[si]   // valley — for hit.time
+      const nextOnsetSample  = filteredSamples[si + 1] ?? null
       const { spectral, spectrum, highSustained } = computeHitFeatures(raw, sampleIdx, sr, prevSpectrum, nextOnsetSample)
       prevSpectrum = spectrum
 
@@ -643,7 +764,7 @@ export async function analyzeBeats(
 
       hits.push({
         id: crypto.randomUUID(),
-        time: sampleIdx / sr,
+        time: refinedSampleIdx / sr,  // valley before attack = natural splice point
         type,
         velocity: toVelocity(Math.floor(sampleIdx / hopSize)),
         note: DEFAULT_NOTES[type],
@@ -734,6 +855,9 @@ export async function analyzeBeats(
     duration: audioBuffer.duration.toFixed(2) + 's',
     rawOnsets: filteredSamples.length,
     afterDedup: dedupedHits.length,
+    onsetRefinedMs: filteredSamples.map((r, i) =>
+      ((filteredSamples[i] - refinedSamples[i]) / sr * 1000).toFixed(1) + 'ms'
+    ).join(' '),
     bpm,
     bpmSource: (hits.length >= 4 ? ioiBpm : null) != null ? 'IOI' : 'envelope',
     byType,
