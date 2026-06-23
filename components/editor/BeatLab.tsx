@@ -57,7 +57,8 @@ import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping
 import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
-import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, CLUSTER_LETTERS, CLUSTER_COLORS } from '@/lib/beat-analyzer'
+import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance } from '@/lib/beat-analyzer'
+import { clusterCorrectionGetAll, clusterCorrectionAdd } from '@/lib/cluster-corrections'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
@@ -1000,7 +1001,7 @@ interface LaneProps {
   liveRecPeaks?: number[]
 }
 
-function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRemove, onClose }: {
+function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRemove, onClose, onCorrect }: {
   hit: BeatHit
   beatBox: AudioBuffer
   clusterLabel: string
@@ -1008,6 +1009,7 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
   onUpdate: (id: string, time: number, dur: number) => void
   onRemove: (id: string) => void
   onClose: () => void
+  onCorrect?: (spectral: HitSpectral, label: string) => Promise<void>
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const clipDur   = hit.duration ?? 0.30
@@ -1087,12 +1089,21 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
     window.addEventListener('mouseup', onUp)
   }
 
+  const [saved, setSaved] = useState(false)
+
   function play() {
     const actx = new AudioContext()
     const src  = actx.createBufferSource()
     src.buffer = beatBox; src.connect(actx.destination)
     src.start(0, hit.time, clipDur)
     src.onended = () => actx.close()
+  }
+
+  async function saveCorrection() {
+    if (!hit.spectral || !onCorrect) return
+    await onCorrect(hit.spectral, clusterLabel)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '3px 9px', borderRadius: 5, fontSize: 10, fontWeight: 600, cursor: 'pointer' }
@@ -1106,7 +1117,16 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
         </span>
         <button onClick={play} style={{ ...btn, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.35)' }}>▶ Play</button>
         <button onClick={() => onRemove(hit.id)} style={{ ...btn, background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>× Remove</button>
-        <button onClick={onClose} style={{ ...btn, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>Done ✓</button>
+        {hit.spectral && onCorrect && (
+          <button
+            onClick={saveCorrection}
+            title="Save this clip as a correction — next separation will auto-label matching sounds"
+            style={{ ...btn, background: saved ? 'rgba(34,197,94,0.2)' : 'rgba(34,197,94,0.1)', color: saved ? '#4ade80' : 'rgba(134,239,172,0.8)', border: `1px solid ${saved ? 'rgba(74,222,128,0.5)' : 'rgba(34,197,94,0.25)'}` }}
+          >
+            {saved ? '✓ Saved!' : '✓ Correct'}
+          </button>
+        )}
+        <button onClick={onClose} style={{ ...btn, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>Done</button>
       </div>
       <canvas
         ref={canvasRef}
@@ -2503,6 +2523,24 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       for (const letter of CLUSTER_LETTERS) {
         if (taggedHits.some(h => h.clusterId === letter)) labels[letter] = `Sound ${letter}`
       }
+
+      // Auto-label clusters that match saved corrections (nearest-neighbour by spectral distance)
+      try {
+        const corrections = await clusterCorrectionGetAll()
+        if (corrections.length > 0) {
+          for (const [letter, clusterHitList] of byClusterForDur.entries()) {
+            let bestDist = 0.42, bestLabel: string | null = null
+            for (const h of clusterHitList) {
+              if (!h.spectral) continue
+              for (const corr of corrections) {
+                const d = spectralDistance(h.spectral, corr.spectral)
+                if (d < bestDist) { bestDist = d; bestLabel = corr.label }
+              }
+            }
+            if (bestLabel !== null) labels[letter] = bestLabel
+          }
+        }
+      } catch { /* corrections load failure is non-fatal */ }
 
       setDtHits(taggedHits)
       setDtClusterLabels(labels)
@@ -8936,6 +8974,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                               onUpdate={(id, time, dur) => setDtHits(prev => prev ? prev.map(h => h.id === id ? { ...h, time, duration: dur } : h) : null)}
                               onRemove={id => { setDtHits(prev => prev ? prev.filter(h => h.id !== id) : null); setDtSelectedHitId(null) }}
                               onClose={() => setDtSelectedHitId(null)}
+                              onCorrect={async (spectral, label) => {
+                                await clusterCorrectionAdd({ id: crypto.randomUUID(), spectral, label, savedAt: new Date().toISOString() })
+                              }}
                             />
                           </div>
                         )}
