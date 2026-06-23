@@ -2951,7 +2951,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setTypeOverrides(prev => ({ ...prev, [typeId]: { label, color } }))
   }
   function addCustomLane() {
-    const id = `cust_${Date.now()}`
+    const id = `cust_${crypto.randomUUID()}`
     setTypeOverrides(prev => ({ ...prev, [id]: { label: 'New Sound', color: '#6b7280' } }))
     setExtraLaneIds(prev => [...prev, id])
     return id
@@ -2961,7 +2961,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   useEffect(() => {
     setExtraLaneIds(prev => {
       if (prev.length > 0) return prev
-      const id = `cust_${Date.now()}`
+      const id = `cust_${crypto.randomUUID()}`
       setTypeOverrides(o => ({ ...o, [id]: { label: 'Track 1', color: '#8b5cf6' } }))
       // Select it so Rec is available immediately
       setTimeout(() => { setActiveLaneType(id as BeatType); setSelectedLane(id as BeatType) }, 0)
@@ -4401,17 +4401,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   // Project-scoped autosave key.
-  // Saved projects use their server projectId. New (unsaved) projects use a per-tab session
-  // ID stored in sessionStorage — this resets when the tab closes so a new project never
-  // inherits a previous project's autosave data.
-  const localSessionId = useRef<string | null>(null)
-  if (localSessionId.current === null) {
-    const key = 'beatlab-local-session-id'
-    // sessionStorage: survives page reload within the same tab, but not across tabs or sessions.
-    let sid = typeof window !== 'undefined' ? sessionStorage.getItem(key) : null
-    if (!sid) { sid = `local-${Date.now()}`; if (typeof window !== 'undefined') sessionStorage.setItem(key, sid) }
-    localSessionId.current = sid
-  }
+  // Saved projects restore from their server projectId slot.
+  // Unsaved (new) projects get a unique key per mount so they never inherit old autosave data.
+  const localSessionId = useRef(`local-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   const autosaveKey = `beatlab-autosave-${projectId ?? localSessionId.current}`
 
   // Restore audio clips from IndexedDB on mount
@@ -8907,7 +8899,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     const HitGrid = () => {
                       const gridRef = useRef<HTMLCanvasElement>(null)
                       const REF_H = 40
-                      const dotOffset = beatRef ? REF_H + 4 : 0
+                      const dotOffset = beatBox ? REF_H + 4 : 0
                       const canvasH = Math.max(68, types.length * ROW_H + 8 + dotOffset)
 
                       useEffect(() => {
@@ -8917,22 +8909,20 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         c.clearRect(0, 0, W, H)
                         c.fillStyle = '#0d0d10'; c.fillRect(0, 0, W, H)
 
-                        // Reference audio waveform strip (purple, top of canvas)
-                        if (beatRef && beatBox) {
-                          const refWav = beatBox ? beatRef.getChannelData(0) : null
-                          if (refWav) {
-                            const timelineWidth = W - LABEL_W
-                            c.fillStyle = 'rgba(139,92,246,0.55)'
-                            for (let px = 0; px < timelineWidth; px++) {
-                              const idx = Math.floor((px / timelineWidth) * refWav.length)
-                              const p = Math.abs(refWav[idx] ?? 0)
-                              const bh = Math.max(1, p * REF_H * 0.9)
-                              c.fillRect(LABEL_W + px, (REF_H - bh) / 2, 1, bh)
-                            }
-                            c.fillStyle = 'rgba(139,92,246,0.7)'; c.font = 'bold 8px ui-monospace,monospace'; c.textBaseline = 'middle'
-                            c.fillText('Ref', 4, REF_H / 2)
+                        // Source audio waveform strip (purple, top of canvas) — shows beatBox (what's being analyzed)
+                        if (beatBox) {
+                          const srcWav = beatBox.getChannelData(0)
+                          const timelineWidth = W - LABEL_W
+                          c.fillStyle = 'rgba(139,92,246,0.55)'
+                          for (let px = 0; px < timelineWidth; px++) {
+                            const idx = Math.floor((px / timelineWidth) * srcWav.length)
+                            const p = Math.abs(srcWav[idx] ?? 0)
+                            const bh = Math.max(1, p * REF_H * 0.9)
+                            c.fillRect(LABEL_W + px, (REF_H - bh) / 2, 1, bh)
                           }
-                          // Separator line below ref strip
+                          c.fillStyle = 'rgba(139,92,246,0.7)'; c.font = 'bold 8px ui-monospace,monospace'; c.textBaseline = 'middle'
+                          c.fillText('Src', 4, REF_H / 2)
+                          // Separator line below strip
                           c.strokeStyle = 'rgba(255,255,255,0.08)'; c.lineWidth = 1
                           c.beginPath(); c.moveTo(0, REF_H + 2); c.lineTo(W, REF_H + 2); c.stroke()
                         }
@@ -9017,7 +9007,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             else { c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 0.5; c.stroke() }
                           }
                         })
-                      }, [pending, reclassifyTarget, beatGridBpm, beatRefBpm, beatTimeSig, beatSubdiv, beatPatternLen, beatRef, beatClusterNames])
+                      }, [pending, reclassifyTarget, beatGridBpm, beatRefBpm, beatTimeSig, beatSubdiv, beatPatternLen, beatRef, beatBox, beatClusterNames])
 
                       const hitAtPoint = (canvas: HTMLCanvasElement, ex: number, ey: number) => {
                         const rect = canvas.getBoundingClientRect()
