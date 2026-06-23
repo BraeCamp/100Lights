@@ -1,7 +1,6 @@
 import { sql } from '@/lib/db'
 import AdminLogout from './AdminLogout'
 import CorrectionsPanel from './CorrectionsPanel'
-import SamplePackPanel from './SamplePackPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 
 export const dynamic = 'force-dynamic'
@@ -129,12 +128,6 @@ export default async function AdminPage() {
         </p>
         <SoundLibraryPanel />
 
-        {/* Sample pack — per-type kit samples used by BeatLab synth */}
-        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Sample Pack</h2>
-        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-          Upload audio files for each instrument type. BeatLab pitch-shifts the active sample to match each hit&apos;s MIDI note. Click ★ to set the active variation per type.
-        </p>
-        <SamplePackPanel />
 
         {/* Beat Lab corrections — client-side IndexedDB */}
         <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Beat Lab corrections</h2>
