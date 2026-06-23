@@ -2022,6 +2022,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       setBeatRefName(file.name)
       setBeatRefBpm(quickBpmEstimate(decoded))
       setBeatResult(null)
+      setBeatBox(null)      // clear stale beatBox so verify doesn't mix old and new audio
       setBeatStep(1)
     } catch { showToast('Could not decode audio file') }
   }
@@ -2040,6 +2041,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       setBeatRefBpm(quickBpmEstimate(decoded))
       setBeatRefUrl('')
       setBeatResult(null)
+      setBeatBox(null)      // clear stale beatBox
       setBeatStep(1)
     } catch (e) {
       showToast(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -2365,25 +2367,43 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // Play reference + beatbox audio simultaneously so the user can hear both while
   // reviewing the dot grid. beatBoxOffset is applied so they start at the right times.
-  function startVerifyPlayback() {
-    stopVerifyPlayback()
+  async function startVerifyPlayback() {
+    // Stop any running sources first (but keep the AudioContext alive for reuse)
+    cancelAnimationFrame(beatVerifyRafRef.current)
+    for (const src of beatVerifySrcRef.current) {
+      try { src.stop(); src.disconnect() } catch { /* already stopped */ }
+    }
+    beatVerifySrcRef.current = []
+    // Disconnect old gain nodes so they don't stack up on the destination
+    try { beatVerifyGainRef.current.ref?.disconnect() } catch { /* ok */ }
+    try { beatVerifyGainRef.current.box?.disconnect() } catch { /* ok */ }
+    beatVerifyGainRef.current = { ref: null, box: null }
+    setBeatVerifyPlaying(false)
+
     if (!beatBox) return
+
+    // Reuse a single AudioContext across Listen clicks to avoid Chrome's per-context
+    // volume throttling that kicks in when multiple contexts are created in quick succession.
+    let ctx = beatVerifyCtxRef.current
+    if (!ctx || ctx.state === 'closed') {
+      ctx = new AudioContext()
+      beatVerifyCtxRef.current = ctx
+    }
+    // Ensure the context is running (user gesture grants this)
+    if (ctx.state === 'suspended') await ctx.resume()
 
     // offset > 0: beatbox starts |offset| seconds after ref; offset < 0: ref starts later
     const refDelay = beatBoxOffset < 0 ? -beatBoxOffset : 0
     const boxDelay = beatBoxOffset > 0 ?  beatBoxOffset : 0
 
-    // When beatBox IS the reference (separation flow), only one track exists
+    // When beatBox IS the reference (separation flow), only one track exists —
+    // playing both would double the audio and sum to 1.5 gain, causing clipping.
     const sameBuffer = beatRef === beatBox
     const totalDuration = sameBuffer
       ? boxDelay + beatBox.duration
       : Math.max(refDelay + (beatRef?.duration ?? 0), boxDelay + beatBox.duration)
 
-    const ctx = new AudioContext()
-    beatVerifyCtxRef.current = ctx
-    beatVerifySrcRef.current = []
     const now = ctx.currentTime
-
     const refGain = ctx.createGain()
     const boxGain = ctx.createGain()
     refGain.gain.value = beatVerifyRefMuted ? 0 : 0.75
@@ -2392,8 +2412,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     boxGain.connect(ctx.destination)
     beatVerifyGainRef.current = { ref: refGain, box: boxGain }
 
-    // Only play beatRef separately when it's a distinct buffer from beatBox —
-    // if they're the same (Separate Sounds flow), playing both would double the audio.
     if (beatRef && !sameBuffer) {
       const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain)
       src.start(now + refDelay)
@@ -2402,9 +2420,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
     const boxSrc = ctx.createBufferSource()
     boxSrc.buffer = beatBox
-    boxSrc.connect(sameBuffer ? refGain : boxGain)   // use ref gain node so mute/vol controls still work
-    const capturedCtx = ctx
-    boxSrc.onended = () => { if (beatVerifyCtxRef.current === capturedCtx) stopVerifyPlayback() }
+    // In same-buffer mode, route through refGain so the mute/vol button still controls it
+    boxSrc.connect(sameBuffer ? refGain : boxGain)
+    boxSrc.onended = () => stopVerifyPlayback()
     boxSrc.start(now + boxDelay)
     beatVerifySrcRef.current.push(boxSrc)
 
@@ -2420,14 +2438,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   function stopVerifyPlayback() {
     cancelAnimationFrame(beatVerifyRafRef.current)
-    // Stop source nodes explicitly so the AudioContext releases hardware immediately
     for (const src of beatVerifySrcRef.current) {
       try { src.stop(); src.disconnect() } catch { /* already stopped */ }
     }
     beatVerifySrcRef.current = []
-    try { beatVerifyCtxRef.current?.close() } catch { /* ok */ }
-    beatVerifyCtxRef.current = null
+    try { beatVerifyGainRef.current.ref?.disconnect() } catch { /* ok */ }
+    try { beatVerifyGainRef.current.box?.disconnect() } catch { /* ok */ }
     beatVerifyGainRef.current = { ref: null, box: null }
+    // Keep the AudioContext alive — closing and recreating it is what causes volume decay.
+    // It will be closed on unmount via the cleanup effect.
     setBeatVerifyPlaying(false)
     setBeatVerifyPos(0)
   }
@@ -4451,6 +4470,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // Cancel RAF on unmount to avoid dangling callbacks
   useEffect(() => () => cancelAnimationFrame(playRafRef.current), [])
+  // Close the verify AudioContext on unmount (kept alive between Listen clicks to avoid volume decay)
+  useEffect(() => () => { try { beatVerifyCtxRef.current?.close() } catch { /* ok */ } }, [])
 
   // ── Recording ──────────────────────────────────────────────────────────────
 
@@ -8364,7 +8385,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     {beatTranscribeLoading ? 'Detecting…' : '▣ Separate Sounds from Beat'}
                   </button>
                   <button
-                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatRef(d); setBeatRefName(f.name) } catch { showToast('Could not decode file') } }; inp.click() }}
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatRef(d); setBeatRefName(f.name); setBeatBox(null) } catch { showToast('Could not decode file') } }; inp.click() }}
                     style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '7px 14px', fontSize: 10 }}>
                     Import Beat
                   </button>
@@ -8980,7 +9001,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           </div>
 
                           {/* Listen to ref + beatbox together */}
-                          <button onClick={() => beatVerifyPlaying ? stopVerifyPlayback() : startVerifyPlayback()}
+                          <button onClick={() => beatVerifyPlaying ? stopVerifyPlayback() : void startVerifyPlayback()}
                             style={{ ...btnBase, marginLeft: 'auto', background: beatVerifyPlaying ? 'rgba(139,92,246,0.22)' : 'rgba(139,92,246,0.12)', color: 'rgba(196,181,253,1)', border: `1px solid rgba(139,92,246,${beatVerifyPlaying ? '0.6' : '0.3'})`, padding: '5px 12px' }}>
                             {beatVerifyPlaying ? '■ Stop' : '▶ Listen'}
                           </button>
