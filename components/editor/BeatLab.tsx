@@ -63,7 +63,7 @@ import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll, correctionsClear } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
-import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
+import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
 import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel, getAllProfiles, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
@@ -96,15 +96,7 @@ import { addTakeToGroup } from '@/lib/loop-recorder'
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
-const DEFAULT_ENABLED: BeatType[] = ['kick', 'snare', 'hihat', 'clap']
-
-type InstrumentFamily = 'drums' | 'guitar' | 'piano' | 'synth'
-const FAMILY_LABEL: Record<InstrumentFamily, string> = { drums: 'Drums', guitar: 'Guitar', piano: 'Piano', synth: 'Synth' }
-const FAMILY_VARIANTS: Record<Exclude<InstrumentFamily, 'drums'>, BeatType[]> = {
-  guitar: ['guitar-acoustic', 'guitar-electric', 'guitar-nylon'],
-  piano:  ['piano-grand', 'piano-electric', 'piano-rhodes'],
-  synth:  ['synth-lead', 'synth-pad', 'synth-bass', 'synth-arp'],
-}
+const DEFAULT_ENABLED: BeatType[] = []
 
 const TYPE_COLORS: Record<BeatType, string> = {
   kick:              '#7c3aed',
@@ -1529,7 +1521,7 @@ interface BeatLabProps {
   hasSong?: boolean
   onRequestSongPlay?: () => void
   onRequestSongStop?: () => void
-  requestedFamily?: InstrumentFamily | null
+  requestedFamily?: string | null
   onHitsChange?: (hits: BeatHit[], duration: number, bpm: number | null) => void
   onAddTrack?: (entry: BeatTrackEntry) => void
   requestRecord?: number  // increment to trigger recording (plays song automatically)
@@ -1679,13 +1671,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [mutedTypes, setMutedTypes] = useState<Set<BeatType>>(new Set())
   const [audioBuf, setAudioBuf] = useState<AudioBuffer | null>(null)
   const [selectedTypes, setSelectedTypes] = useState<Set<BeatType>>(new Set(DEFAULT_ENABLED))
-  const [instrumentFamily, setInstrumentFamily] = useState<InstrumentFamily>('drums')
-  const [melodicVariant, setMelodicVariant] = useState<BeatType>('piano-grand')
-
-  // Let the parent switch modes (e.g. AudioEditor's "Voice Transcription" button)
-  useEffect(() => {
-    if (requestedFamily) setInstrumentFamily(requestedFamily)
-  }, [requestedFamily])
 
   // External trigger: increment requestRecord to start a recording with song auto-playing
   const prevRequestRecordRef = useRef(0)
@@ -3129,13 +3114,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     showToast('Band mix applied to clip')
   }
   type BeatSensitivity = 'low' | 'medium' | 'high'
-  type InstrumentPreset = 'piano' | 'strings' | 'bells' | 'bass' | 'organ'
   const [convertCard, setConvertCard] = useState<{
     clipId: string
-    mode: 'synth' | 'beats' | 'instrument'
+    mode: 'synth' | 'beats'
     synthOpts: SynthOptions
     sensitivity: BeatSensitivity
-    instrument: InstrumentPreset
     referenceBuf?: AudioBuffer | null
     referenceId?: string
     referenceLoading?: boolean
@@ -3144,9 +3127,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     refCategory?: string
   } | null>(null)
 
-  function openConvertCard(clipId: string, mode: 'synth' | 'beats' | 'instrument') {
+  function openConvertCard(clipId: string, mode: 'synth' | 'beats') {
     setClipMenu(null)
-    setConvertCard({ clipId, mode, synthOpts: { ...DEFAULT_SYNTH_OPTIONS }, sensitivity: 'medium', instrument: 'piano' })
+    setConvertCard({ clipId, mode, synthOpts: { ...DEFAULT_SYNTH_OPTIONS }, sensitivity: 'medium' })
   }
 
   async function runConvertToBeats(clipId: string, sensitivity: BeatSensitivity) {
@@ -3489,26 +3472,83 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setSynthTuner(prev => prev ? { ...prev, status: 'done' } : null)
   }
 
-  async function runConvertToInstrument(clipId: string, preset: InstrumentPreset) {
+  // + Track popover state
+
+  // ── Separate Sounds ───────────────────────────────────────────────────────
+  // Right-click flow: analyze an audio clip, slice out each hit, create one
+  // lane per drum type with real audio excerpts from the source clip.
+  async function runSeparateSounds(clipId: string) {
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
-    setConvertCard(null)
-    setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: 'Converting…' } : c))
-    const source = clip.originalBuf ?? clip.buf
+    setClipMenu(null)
+    showToast('Detecting sounds…')
+    captureHistory()
     try {
-      const curve  = await detectPitchCurveAsync(source)
-      const notes  = extractNoteEvents(curve)
-      if (notes.length === 0) throw new Error('No notes detected — try humming or singing a clear melody.')
-      const rendered = await synthesizeInstrument(notes, source.duration, source.sampleRate, preset)
-      const label: Record<InstrumentPreset, string> = { piano: 'Piano', strings: 'Strings', bells: 'Bells', bass: 'Bass', organ: 'Organ' }
-      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, buf: rendered, name: label[preset], originalBuf: c.originalBuf ?? c.buf } : c))
+      const DRUM_ALLOWED: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
+      const result = await analyzeBeats(clip.buf, { allowedTypes: DRUM_ALLOWED, referenceSounds })
+      if (result.hits.length === 0) {
+        showToast('No drum sounds detected in this clip')
+        return
+      }
+      const byType = new Map<string, BeatHit[]>()
+      for (const h of result.hits) {
+        if (!byType.has(h.type)) byType.set(h.type, [])
+        byType.get(h.type)!.push(h)
+      }
+      const ctx = new AudioContext()
+      const sr = ctx.sampleRate
+      const srcBuf = clip.buf
+      const newClips: AudioClip[] = []
+      for (const [type, typeHits] of byType.entries()) {
+        // Use a 400ms excerpt from the source at the first hit as the per-lane sample
+        let sampleBuf: AudioBuffer
+        if (beatKitCustom[type]) {
+          sampleBuf = beatKitCustom[type]
+        } else {
+          const firstHit = typeHits[0]
+          const srcSr = srcBuf.sampleRate
+          const s = Math.floor(firstHit.time * srcSr)
+          const e = Math.min(srcBuf.length, s + Math.floor(0.4 * srcSr))
+          const len = Math.max(1, e - s)
+          sampleBuf = ctx.createBuffer(1, len, srcSr)
+          sampleBuf.getChannelData(0).set(srcBuf.getChannelData(0).subarray(s, e))
+        }
+        const laneId = addCustomLane()
+        setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: DRUM_COLORS[type] ?? '#6b7280' } }))
+        newClips.push(...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type)))
+      }
+      setAudioClips(prev => [...prev, ...newClips])
+      ctx.close()
+      showToast(`Separated ${result.hits.length} hits → ${byType.size} track${byType.size !== 1 ? 's' : ''}`)
     } catch (e) {
-      showToast(`Instrument conversion failed: ${e instanceof Error ? e.message : String(e)}`)
-      setAudioClips(prev => prev.map(c => c.id === clipId ? { ...c, name: clip.name } : c))
+      showToast(`Separation failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
-  // + Track popover state
+  // Beat Studio calibration flow: analyze beatRef and queue results for review
+  async function runSeparateFromRef() {
+    if (!beatRef) return
+    setBeatTranscribeLoading(true)
+    setBeatPendingHits(null)
+    setBeatPlacedLanes(null)
+    try {
+      const DRUM_ALLOWED: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
+      const result = await analyzeBeats(beatRef, { allowedTypes: DRUM_ALLOWED, sensitivityMultiplier: 0.55 })
+      if (result.hits.length === 0) {
+        showToast('No drum sounds detected — try adjusting sensitivity or a different file')
+      } else {
+        // Set beatBox to the reference so the hit-grid viewer has a waveform to draw
+        setBeatBox(beatRef)
+        setBeatBoxName(beatRefName ?? 'Reference')
+        setBeatDetectedHits(result.hits)
+        setBeatPendingHits(result.hits)
+        setBeatClusterNames({})
+      }
+    } catch (e) {
+      showToast(`Separation failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setBeatTranscribeLoading(false)
+  }
 
   // handleTapTempo was a legacy duplicate that only set bpm (not masterBpm).
   // Replaced with a direct alias to tapTempo, which sets both.
@@ -4430,19 +4470,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       setLoopPlaying(false)
       setPhase('editing')
     } else {
-      // Universal mode: detect all types. Nearest-neighbour against the sample
-      // pack gives us the best type match across drums AND melodic sounds.
-      // If sample fingerprints are loaded as referenceSounds, the NN classifier
-      // handles the melodic/drum distinction automatically.
-      const allAllowed = instrumentFamily === 'drums'
-        ? Array.from(selectedTypes)
-        : undefined  // undefined = all types (universal)
-
-      const opts = instrumentFamily !== 'drums'
-        ? { melodicType: melodicVariant, stemMode: isStem }
-        : { allowedTypes: allAllowed, referenceSounds, stemMode: isStem }
-
-      const result = await analyzeBeats(buf, opts)
+      const allowed = selectedTypes.size > 0 ? Array.from(selectedTypes) : undefined
+      const result = await analyzeBeats(buf, { allowedTypes: allowed, referenceSounds, stemMode: isStem })
       setAudioBuf(buf)
       setAnalysis(result)
       setHits(result.hits)
@@ -4454,8 +4483,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       setPhase('editing')
       if (result.hits.some(h => h.spectral)) {
         setAiLoading(true)
-        const allowedForAi = instrumentFamily === 'drums' ? Array.from(selectedTypes) : undefined
-        aiClassifyHits(result.hits, allowedForAi ?? [], groundTruth.trim() || undefined).then(aiResult => {
+        aiClassifyHits(result.hits, allowed ?? [], groundTruth.trim() || undefined).then(aiResult => {
           if (aiResult) {
             setAiSuggestions(aiResult.suggestions.size > 0 ? aiResult.suggestions : null)
             setAiDeletions(aiResult.deletions)
@@ -6702,82 +6730,31 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               )}
             </div>
 
-            {/* Instrument selector — hits mode only */}
+            {/* Sound type selector — hits mode only */}
             {recMode === 'hits' && <div style={{ width: '100%', maxWidth: 420 }}>
-              {/* Family tabs */}
-              <div style={{ display: 'flex', gap: 3, marginBottom: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 3 }}>
-                {(['drums', 'guitar', 'piano', 'synth'] as InstrumentFamily[]).map(f => (
-                  <button key={f} onClick={() => setInstrumentFamily(f)} style={{
-                    flex: 1, padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                    background: instrumentFamily === f ? 'var(--border-light)' : 'transparent',
-                    color: instrumentFamily === f ? 'var(--text-primary)' : 'var(--text-muted)',
-                    fontSize: 12, fontWeight: instrumentFamily === f ? 600 : 400, transition: 'all 0.15s',
-                  }}>
-                    {FAMILY_LABEL[f]}
-                  </button>
-                ))}
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
+                Sounds to detect
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                {ALL_DRUM_TYPES.map(type => {
+                  const active = selectedTypes.has(type)
+                  const color = TYPE_COLORS[type]
+                  return (
+                    <button key={type} onClick={() => toggleSelectedType(type)} style={{
+                      padding: '8px 4px', borderRadius: 7,
+                      border: `1.5px solid ${active ? color : 'var(--border)'}`,
+                      background: active ? `${color}18` : 'var(--bg-card)',
+                      cursor: 'pointer', color: active ? color : 'var(--text-muted)',
+                      fontSize: 11, fontWeight: active ? 700 : 400,
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+                      transition: 'all 0.15s',
+                    }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
+                      {TYPE_LABELS[type]}
+                    </button>
+                  )
+                })}
               </div>
-
-              {/* Drums: sound type grid */}
-              {instrumentFamily === 'drums' && (
-                <>
-                  <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
-                    Sounds to detect
-                  </p>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                    {ALL_DRUM_TYPES.map(type => {
-                      const active = selectedTypes.has(type)
-                      const color = TYPE_COLORS[type]
-                      return (
-                        <button key={type} onClick={() => toggleSelectedType(type)} style={{
-                          padding: '8px 4px', borderRadius: 7,
-                          border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                          background: active ? `${color}18` : 'var(--bg-card)',
-                          cursor: 'pointer', color: active ? color : 'var(--text-muted)',
-                          fontSize: 11, fontWeight: active ? 700 : 400,
-                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
-                          transition: 'all 0.15s',
-                        }}>
-                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
-                          {TYPE_LABELS[type]}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-
-              {/* Melodic: variant picker */}
-              {instrumentFamily !== 'drums' && (
-                <>
-                  <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
-                    Select variant
-                  </p>
-                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                    {FAMILY_VARIANTS[instrumentFamily as Exclude<InstrumentFamily, 'drums'>].map(type => {
-                      const active = melodicVariant === type
-                      const color = TYPE_COLORS[type]
-                      return (
-                        <button key={type} onClick={() => setMelodicVariant(type)} style={{
-                          padding: '10px 16px', borderRadius: 8, flex: 1,
-                          border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                          background: active ? `${color}18` : 'var(--bg-card)',
-                          cursor: 'pointer', color: active ? color : 'var(--text-muted)',
-                          fontSize: 12, fontWeight: active ? 700 : 400,
-                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
-                          transition: 'all 0.15s',
-                        }}>
-                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
-                          {TYPE_LABELS[type]}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 10, lineHeight: 1.6 }}>
-                    Hum or play a melody — each note will be mapped to the {FAMILY_LABEL[instrumentFamily].toLowerCase()} sound
-                  </p>
-                </>
-              )}
             </div>}
 
             {hasSong && (
@@ -6797,7 +6774,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             </button>
 
             {/* Ground truth — helps AI correct misclassifications */}
-            {instrumentFamily === 'drums' && (
+            {recMode === 'hits' && (
               <div style={{ width: '100%', maxWidth: 320 }}>
                 <button
                   onClick={() => setShowGroundTruth(v => !v)}
@@ -6838,9 +6815,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
                 {recMode === 'loop'
                   ? 'Recording loop…'
-                  : instrumentFamily === 'drums'
+                  : selectedTypes.size > 0
                     ? `Detecting: ${Array.from(selectedTypes).map(t => TYPE_LABELS[t]).join(', ')}`
-                    : `Detecting melody → ${TYPE_LABELS[melodicVariant]} (${FAMILY_LABEL[instrumentFamily]})`}
+                    : 'Detecting all drum sounds'}
               </p>
               {startedSongRef.current && (
                 <p style={{ fontSize: 11, color: 'var(--accent-light)', marginTop: 2 }}>♪ Song playing in background</p>
@@ -7638,7 +7615,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         if (!clip) return null
         const mode = convertCard.mode
         const isSynth = mode === 'synth'
-        const isInstrument = mode === 'instrument'
         const o = convertCard.synthOpts
         const srcDur = (clip.originalBuf ?? clip.buf).duration
 
@@ -7668,7 +7644,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               borderRadius: 14, padding: 24, width: isSynth ? 400 : 340, boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
             }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>
-                Convert to {isSynth ? 'Synth' : isInstrument ? 'Instrument' : 'Beats'}
+                Convert to {isSynth ? 'Synth' : 'Beats'}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
                 {clip.name} · {srcDur.toFixed(1)}s{clip.originalBuf ? ' · from original' : ''}
@@ -7788,20 +7764,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     )}
                   </>
                 )
-              })() : isInstrument ? (
-                <>
-                  {sectionLabel('Instrument')}
-                  {chipGroup(
-                    [{ label: 'Piano', value: 'piano' }, { label: 'Strings', value: 'strings' }, { label: 'Bells', value: 'bells' }, { label: 'Bass', value: 'bass' }, { label: 'Organ', value: 'organ' }],
-                    convertCard.instrument,
-                    v => setConvertCard(c => c ? { ...c, instrument: v as InstrumentPreset } : c)
-                  )}
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.4 }}>
-                    Detects stable notes in your recording and renders each as a synthesized instrument. Hum or sing a melody for best results.
-                    {clip.originalBuf && <span style={{ color: 'var(--accent-light)' }}> Always re-converts from your original recording.</span>}
-                  </div>
-                </>
-              ) : (
+              })() : (
                 <>
                   {sectionLabel('Sensitivity')}
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
@@ -7822,7 +7785,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 <button
                   onClick={() => {
                     if (isSynth) runConvertToSynth(convertCard.clipId, convertCard.synthOpts, convertCard.referenceBuf, convertCard.harmProfile)
-                    else if (isInstrument) runConvertToInstrument(convertCard.clipId, convertCard.instrument)
                     else runConvertToBeats(convertCard.clipId, convertCard.sensitivity)
                   }}
                   style={{ flex: 2, padding: '9px 0', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
@@ -7876,10 +7838,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {clipMenu.convertOpen && (
                 <div style={{ marginLeft: 8, display: 'flex', flexDirection: 'column', gap: 1, borderLeft: '2px solid var(--border)', paddingLeft: 6 }}>
                   <button onClick={() => openConvertCard(clip.id, 'synth')} style={btnStyle()}>Synth</button>
-                  <button onClick={() => openConvertCard(clip.id, 'instrument')} style={btnStyle()}>Instrument</button>
                   <button onClick={() => openConvertCard(clip.id, 'beats')} style={btnStyle()}>Beat</button>
                 </div>
               )}
+
+              <button
+                onClick={() => void runSeparateSounds(clip.id)}
+                style={{ ...btnStyle(), color: 'rgba(250,204,21,0.9)', fontWeight: 600 }}
+              >
+                ▣ Separate Sounds
+              </button>
 
               {clip.segments && clip.segments.length > 0 && (
                 <button
@@ -8337,6 +8305,43 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                       )}
                     </div>
                   </>
+                )}
+              </div>
+
+              {/* ── Separate Sounds — calibration tool ── */}
+              <div style={{ background: 'var(--bg-card)', border: '1px solid rgba(250,204,21,0.2)', borderRadius: 10, padding: 18, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Separate Sounds</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Detect each drum type from the reference beat — review results before placing on the timeline</div>
+                </div>
+
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+                  {beatRef
+                    ? <>Loaded: <strong style={{ color: 'var(--text-secondary)' }}>{beatRefName}</strong> — click below to detect drum tracks and review in the grid</>
+                    : 'Load a reference beat in Step 1 first, then separate its drum sounds here.'}
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={runSeparateFromRef}
+                    disabled={!beatRef || beatTranscribeLoading}
+                    style={{ ...btnBase, flex: 1,
+                      background: beatRef ? 'rgba(250,204,21,0.15)' : 'rgba(255,255,255,0.04)',
+                      color: beatRef ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
+                      border: `1px solid ${beatRef ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
+                    {beatTranscribeLoading ? 'Detecting…' : '▣ Separate Sounds from Beat'}
+                  </button>
+                  <button
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatRef(d); setBeatRefName(f.name) } catch { showToast('Could not decode file') } }; inp.click() }}
+                    style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '7px 14px', fontSize: 10 }}>
+                    Import Beat
+                  </button>
+                </div>
+
+                {beatPendingHits && !beatBox?.length && (
+                  <div style={{ marginTop: 10, fontSize: 10, color: 'rgba(250,204,21,0.8)', background: 'rgba(250,204,21,0.05)', border: '1px solid rgba(234,179,8,0.2)', borderRadius: 6, padding: '6px 10px' }}>
+                    {beatPendingHits.length} hits detected — scroll down to review and place on timeline
+                  </div>
                 )}
               </div>
 
