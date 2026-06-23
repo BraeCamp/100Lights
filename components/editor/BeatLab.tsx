@@ -61,7 +61,7 @@ import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, CLUSTER_LET
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
-import { correctionsAdd, correctionsGetAll, correctionsClear } from '@/lib/correction-store'
+import { correctionsGetAll, correctionsClear } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { AddToLibraryModal } from './SoundLibrary'
 import { sampleGetAll } from '@/lib/sample-pack'
@@ -1035,10 +1035,11 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
       <div
         onContextMenu={e => { e.preventDefault(); onLaneContextMenu(e) }}
         style={{
-          width: 140, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border)',
+          width: 140, flexShrink: 0, borderRight: '1px solid var(--border)',
           background: isActiveLane ? 'var(--accent-subtle)' : 'var(--bg-surface)',
           display: 'flex', flexDirection: 'column', userSelect: 'none',
           borderLeft: isActiveLane ? `2px solid ${color}` : '2px solid transparent',
+          position: 'sticky', left: 24, zIndex: 3,
         }}
       >
         {/* Label row */}
@@ -2079,8 +2080,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const decoded = await decodeAudio(file)
       // Clear all previous session data before loading the new reference
       setBeatBox(null); setBeatBoxName(''); setBeatBoxOffset(0)
-      setBeatPendingHits(null); setBeatDetectedHits(null); setBeatPlacedLanes(null)
-      setBeatResult(null); setBeatGridBpm(null); setBeatClusterK(3); setBeatClusterNames({})
+      setDtHits(null); setDtBpm(null)
+      setBeatResult(null)
       setBeatRef(decoded)
       setBeatRefName(file.name)
       setBeatRefBpm(quickBpmEstimate(decoded))
@@ -2098,8 +2099,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const decoded = await decodeAudio(new Blob([await res.arrayBuffer()]))
       const name = url.split('/').pop()?.split('?')[0] ?? 'Beat'
       setBeatBox(null); setBeatBoxName(''); setBeatBoxOffset(0)
-      setBeatPendingHits(null); setBeatDetectedHits(null); setBeatPlacedLanes(null)
-      setBeatResult(null); setBeatGridBpm(null); setBeatClusterK(3); setBeatClusterNames({})
+      setDtHits(null); setDtBpm(null)
+      setBeatResult(null)
       setBeatRef(decoded)
       setBeatRefName(name)
       setBeatRefBpm(quickBpmEstimate(decoded))
@@ -2151,7 +2152,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function startBeatRecord() {
     beatStopPlay()
-    const bpm     = activeBeatBpm()
+    const bpm     = beatRefBpm
     const useMet  = beatMetronomeOn && bpm != null
     const timeSig = beatTimeSig
 
@@ -2272,11 +2273,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   function resetBeatTranscription() {
-    beatSepGenRef.current++    // invalidate any in-flight runSeparateFromRef / runBeatTranscribe
-    // Stop any in-progress recording so its async onstop can't re-set beatBox after we clear it
+    beatSepGenRef.current++
+    dtGenRef.current++
     stopBeatRecord()
     beatStopPlay()
-    stopVerifyPlayback()
     setBeatBox(null)
     setBeatBoxName('')
     setBeatBoxOffset(0)
@@ -2285,12 +2285,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setBeatRefBpm(null)
     setBeatResult(null)
     setBeatStep(1)
-    setBeatPendingHits(null)
-    setBeatDetectedHits(null)
-    setBeatPlacedLanes(null)
-    setBeatGridBpm(null)
-    setBeatClusterK(3)
-    setBeatClusterNames({})
+    setDtHits(null)
+    setDtBpm(null)
   }
 
   function closeBeatStudio() {
@@ -2307,510 +2303,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   // ── Drum transcription state ──────────────────────────────────────────────
-  // Kit custom samples: drumType → AudioBuffer (user-uploaded overrides for synth)
-  // Drum transcription — two-phase: detect (pending) → verify/edit → commit to timeline
-  const [beatKitCustom,        setBeatKitCustom]        = useState<Record<string, AudioBuffer>>({})
-  const [beatDetectedHits,     setBeatDetectedHits]     = useState<BeatHit[] | null>(null)  // immutable original
-  const [beatPendingHits,      setBeatPendingHits]      = useState<BeatHit[] | null>(null)  // mutable working copy
-  const [beatPlacedLanes,      setBeatPlacedLanes]      = useState<{ type: string; count: number; laneId: string }[] | null>(null)
-  const [beatTranscribeLoading, setBeatTranscribeLoading] = useState(false)
+  const [beatKitCustom,         setBeatKitCustom]         = useState<Record<string, AudioBuffer>>({})
+  const [beatTranscribeLoading,  setBeatTranscribeLoading]  = useState(false)
   const beatSepGenRef = useRef(0)  // incremented on reset to discard in-flight async results
-  // Musical grid settings — govern how hits snap and how the grid is drawn
-  const [beatGridBpm,          setBeatGridBpm]          = useState<number | null>(null)   // overrides beatRefBpm when set manually
-  const [beatTimeSig,          setBeatTimeSig]          = useState<[number, number]>([4, 4])
-  const [beatSubdiv,           setBeatSubdiv]           = useState<number>(8)             // 4=quarters, 8=eighths, 16=sixteenths, 12=triplets
-  const [beatPatternLen,       setBeatPatternLen]       = useState<number>(1)             // bars to use as repeating template
-  const [beatBpmDetecting,     setBeatBpmDetecting]     = useState(false)
-  const [beatConfirming,       setBeatConfirming]       = useState(false)
-  const [beatPreviewPlaying,   setBeatPreviewPlaying]   = useState(false)
-  const [beatAiChecking,       setBeatAiChecking]       = useState(false)
-  // Must live here (top level) — cannot be inside the conditional IIFE or React will throw a hooks-order error
-  const [beatReclassifyTarget, setBeatReclassifyTarget] = useState<{ id: string; screenX: number; screenY: number } | null>(null)
-  const [beatVerifyPlaying,    setBeatVerifyPlaying]    = useState(false)
-  const [beatVerifyRefMuted,   setBeatVerifyRefMuted]   = useState(false)
-  const [beatVerifyBoxMuted,   setBeatVerifyBoxMuted]   = useState(false)
-  const [beatVerifyPos,        setBeatVerifyPos]        = useState(0)   // 0–1 playhead fraction
-  const [beatClusterK,         setBeatClusterK]         = useState(3)   // number of anonymous clusters
-  const [beatClusterNames,     setBeatClusterNames]     = useState<Record<string, string>>({})  // letter → user name
-  const beatPreviewRef      = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
-  const beatVerifyCtxRef   = useRef<AudioContext | null>(null)
-  const beatVerifyGainRef  = useRef<{ ref: GainNode | null; box: GainNode | null }>({ ref: null, box: null })
-  const beatVerifySrcRef   = useRef<AudioBufferSourceNode[]>([])
-  const beatVerifyRafRef   = useRef(0)
-  const clusterSampleCtxRef = useRef<AudioContext | null>(null)
-
-  async function previewDrumType(type: string) {
-    const ctx = new AudioContext()
-    const data = beatKitCustom[type]
-      ? beatKitCustom[type].getChannelData(0)
-      : synthDrum(type, ctx.sampleRate)
-    const buf = ctx.createBuffer(1, data.length, ctx.sampleRate)
-    buf.getChannelData(0).set(data)
-    const src = ctx.createBufferSource()
-    src.buffer = buf; src.connect(ctx.destination); src.onended = () => ctx.close(); src.start(0)
-  }
-
-  async function uploadKitSample(type: string) {
-    const inp = document.createElement('input')
-    inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'
-    inp.onchange = async () => {
-      const f = inp.files?.[0]; if (!f) return
-      decodeAudio(f)
-        .then(buf => { setBeatKitCustom(prev => ({ ...prev, [type]: buf })); showToast(`${DRUM_LABELS[type] ?? type} sample loaded`) })
-        .catch(() => showToast('Could not load audio file'))
-    }
-    inp.click()
-  }
-
-  async function runBeatTranscribe() {
-    if (!beatBox) return
-    // In the Separate Sounds flow, beatBox IS beatRef. Analyzing the same buffer as both
-    // reference template and target produces a circular comparison and returns no hits.
-    if (beatBox === beatRef) { return runSeparateFromRef() }
-    const myGen = ++beatSepGenRef.current
-    const capturedBox = beatBox
-    const capturedRef = beatRef
-    stopVerifyPlayback()
-    setBeatTranscribeLoading(true)
-    setBeatPendingHits(null)
-    setBeatPlacedLanes(null)
-    try {
-      const allowedTypes: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
-      let mergedRefs: ReferenceSound[] = [...referenceSounds]
-
-      if (capturedRef) {
-        showToast('Analyzing reference audio…')
-        const refAnalysis = await analyzeBeats(capturedRef, {
-          allowedTypes,
-          sensitivityMultiplier: 0.5,
-          stemMode: true,
-        })
-        if (myGen !== beatSepGenRef.current) return
-        const referenceTemplates: ReferenceSound[] = refAnalysis.hits
-          .filter(h => h.spectral != null)
-          .map(h => ({ category: h.type, spectral: h.spectral! }))
-        mergedRefs = [...referenceTemplates, ...referenceSounds]
-      }
-
-      const result = await analyzeBeats(capturedBox, {
-        allowedTypes,
-        referenceSounds: mergedRefs,
-        sensitivityMultiplier: 0.65,
-      })
-      if (myGen !== beatSepGenRef.current) return
-      if (result.hits.length === 0) {
-        showToast('No drum hits detected — try recording louder or closer to the mic')
-      } else {
-        const shifted = beatBoxOffset !== 0
-          ? result.hits
-              .map(h => ({ ...h, time: Math.max(0, h.time + beatBoxOffset) }))
-              .filter(h => h.time >= 0)
-          : result.hits
-        const bpm = beatGridBpm ?? beatRefBpm
-        const snapped = bpm
-          ? shifted.map(h => ({ ...h, time: Math.round(h.time / ((60/bpm)*(4/beatSubdiv))) * ((60/bpm)*(4/beatSubdiv)) }))
-          : shifted
-        const assignments = clusterHits(snapped, beatClusterK)
-        const clustered = snapped.map(h => ({ ...h, clusterId: CLUSTER_LETTERS[assignments[h.id] ?? 0] as string }))
-        setBeatClusterNames({})
-        setBeatDetectedHits(clustered)
-        setBeatPendingHits(clustered)
-      }
-    } catch (e) {
-      if (myGen === beatSepGenRef.current) {
-        showToast(`Transcription failed: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    }
-    if (myGen === beatSepGenRef.current) setBeatTranscribeLoading(false)
-  }
-
-  // Mix and play all pending hits so the user can hear the transcription before committing
-  async function beatPlayPreview() {
-    if (beatPreviewRef.current) {
-      try { beatPreviewRef.current.src.stop() } catch { /* ok */ }
-      beatPreviewRef.current.ctx.close()
-      beatPreviewRef.current = null
-      setBeatPreviewPlaying(false)
-      return
-    }
-    const hits = beatPendingHits
-    if (!hits || hits.length === 0) return
-    const ctx  = new AudioContext()
-    const sr   = ctx.sampleRate
-    const maxT = Math.max(...hits.map(h => h.time)) + 0.6
-    const totalN = Math.ceil(maxT * sr)
-    const out  = ctx.createBuffer(1, totalN, sr)
-    const data = out.getChannelData(0)
-    for (const hit of hits) {
-      const sampleData = beatKitCustom[hit.type]
-        ? beatKitCustom[hit.type].getChannelData(0)
-        : synthDrum(hit.type, sr)
-      const offset = Math.floor(hit.time * sr)
-      for (let i = 0; i < sampleData.length && offset + i < totalN; i++) {
-        data[offset + i] += sampleData[i] * hit.velocity * 0.9
-      }
-    }
-    const src = ctx.createBufferSource()
-    src.buffer = out; src.connect(ctx.destination)
-    const capturedPreviewCtx = ctx
-    src.onended = () => { if (beatPreviewRef.current?.ctx === capturedPreviewCtx) { ctx.close(); beatPreviewRef.current = null; setBeatPreviewPlaying(false) } }
-    src.start(0)
-    beatPreviewRef.current = { src, ctx }
-    setBeatPreviewPlaying(true)
-  }
-
-  // Play reference + beatbox audio simultaneously so the user can hear both while
-  // reviewing the dot grid. beatBoxOffset is applied so they start at the right times.
-  async function startVerifyPlayback() {
-    // Stop any running sources first (but keep the AudioContext alive for reuse)
-    cancelAnimationFrame(beatVerifyRafRef.current)
-    for (const src of beatVerifySrcRef.current) {
-      try { src.stop(); src.disconnect() } catch { /* already stopped */ }
-    }
-    beatVerifySrcRef.current = []
-    // Disconnect old gain nodes so they don't stack up on the destination
-    try { beatVerifyGainRef.current.ref?.disconnect() } catch { /* ok */ }
-    try { beatVerifyGainRef.current.box?.disconnect() } catch { /* ok */ }
-    beatVerifyGainRef.current = { ref: null, box: null }
-    setBeatVerifyPlaying(false)
-
-    if (!beatBox) return
-
-    // Reuse a single AudioContext across Listen clicks to avoid Chrome's per-context
-    // volume throttling that kicks in when multiple contexts are created in quick succession.
-    let ctx = beatVerifyCtxRef.current
-    if (!ctx || ctx.state === 'closed') {
-      ctx = new AudioContext()
-      beatVerifyCtxRef.current = ctx
-    }
-    // Ensure the context is running (user gesture grants this)
-    if (ctx.state === 'suspended') await ctx.resume()
-
-    // offset > 0: beatbox starts |offset| seconds after ref; offset < 0: ref starts later
-    const refDelay = beatBoxOffset < 0 ? -beatBoxOffset : 0
-    const boxDelay = beatBoxOffset > 0 ?  beatBoxOffset : 0
-
-    // When beatBox IS the reference (separation flow), only one track exists —
-    // playing both would double the audio and sum to 1.5 gain, causing clipping.
-    const sameBuffer = beatRef === beatBox
-    const totalDuration = sameBuffer
-      ? boxDelay + beatBox.duration
-      : Math.max(refDelay + (beatRef?.duration ?? 0), boxDelay + beatBox.duration)
-
-    const now = ctx.currentTime
-    const refGain = ctx.createGain()
-    const boxGain = ctx.createGain()
-    refGain.gain.value = beatVerifyRefMuted ? 0 : 0.75
-    boxGain.gain.value = beatVerifyBoxMuted ? 0 : 0.75
-    refGain.connect(ctx.destination)
-    boxGain.connect(ctx.destination)
-    beatVerifyGainRef.current = { ref: refGain, box: boxGain }
-
-    if (beatRef && !sameBuffer) {
-      const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain)
-      src.start(now + refDelay)
-      beatVerifySrcRef.current.push(src)
-    }
-
-    const boxSrc = ctx.createBufferSource()
-    boxSrc.buffer = beatBox
-    // In same-buffer mode, route through refGain so the mute/vol button still controls it
-    boxSrc.connect(sameBuffer ? refGain : boxGain)
-    boxSrc.onended = () => stopVerifyPlayback()
-    boxSrc.start(now + boxDelay)
-    beatVerifySrcRef.current.push(boxSrc)
-
-    const wallStart = performance.now()
-    setBeatVerifyPlaying(true)
-    const tick = () => {
-      const pos = Math.min(1, (performance.now() - wallStart) / 1000 / totalDuration)
-      setBeatVerifyPos(pos)
-      if (pos < 1) beatVerifyRafRef.current = requestAnimationFrame(tick)
-    }
-    beatVerifyRafRef.current = requestAnimationFrame(tick)
-  }
-
-  function stopVerifyPlayback() {
-    cancelAnimationFrame(beatVerifyRafRef.current)
-    for (const src of beatVerifySrcRef.current) {
-      try { src.stop(); src.disconnect() } catch { /* already stopped */ }
-    }
-    beatVerifySrcRef.current = []
-    try { beatVerifyGainRef.current.ref?.disconnect() } catch { /* ok */ }
-    try { beatVerifyGainRef.current.box?.disconnect() } catch { /* ok */ }
-    beatVerifyGainRef.current = { ref: null, box: null }
-    // Keep the AudioContext alive — closing and recreating it is what causes volume decay.
-    // It will be closed on unmount via the cleanup effect.
-    setBeatVerifyPlaying(false)
-    setBeatVerifyPos(0)
-  }
-
-  function toggleVerifyRefMute() {
-    const next = !beatVerifyRefMuted
-    setBeatVerifyRefMuted(next)
-    if (beatVerifyGainRef.current.ref) beatVerifyGainRef.current.ref.gain.value = next ? 0 : 0.75
-  }
-
-  function toggleVerifyBoxMute() {
-    const next = !beatVerifyBoxMuted
-    setBeatVerifyBoxMuted(next)
-    if (beatVerifyGainRef.current.box) beatVerifyGainRef.current.box.gain.value = next ? 0 : 0.75
-  }
-
-  // Re-run clustering with a new k (without re-detecting onsets)
-  function reCluster(k: number) {
-    setBeatClusterK(k)
-    const detected = beatDetectedHits
-    if (!detected || detected.length === 0) return
-    const assignments = clusterHits(detected, k)
-    setBeatClusterNames({})
-    setBeatPendingHits(detected.map(h => ({ ...h, clusterId: CLUSTER_LETTERS[assignments[h.id] ?? 0] as string })))
-  }
-
-  // Play a short excerpt from beatBox at the first hit in a cluster so the user can hear the sound
-  function playClusterSample(letter: string) {
-    // Close any previously playing sample so contexts don't accumulate
-    try { clusterSampleCtxRef.current?.close() } catch { /* ok */ }
-    clusterSampleCtxRef.current = null
-
-    const hit = beatPendingHits?.find(h => h.clusterId === letter)
-    if (!hit || !beatBox) return
-    const ctx = new AudioContext()
-    clusterSampleCtxRef.current = ctx
-    const sr = beatBox.sampleRate
-    const start = Math.floor(hit.time * sr)
-    const end   = Math.min(beatBox.length, start + Math.floor(0.45 * sr))
-    const len   = Math.max(1, end - start)
-    const buf = ctx.createBuffer(beatBox.numberOfChannels, len, sr)
-    for (let ch = 0; ch < beatBox.numberOfChannels; ch++) buf.getChannelData(ch).set(beatBox.getChannelData(ch).subarray(start, end))
-    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination)
-    const capturedCtx = ctx
-    src.onended = () => {
-      if (clusterSampleCtxRef.current === capturedCtx) { ctx.close(); clusterSampleCtxRef.current = null }
-    }
-    src.start()
-  }
-
-  // Place the verified pending hits onto the timeline as individual clips per lane
-  async function beatCommitToTimeline() {
-    const hits = beatPendingHits
-    if (!hits || hits.length === 0) return
-    const isClusterMode = hits.some(h => h.clusterId != null)
-
-    if (isClusterMode) {
-      // Group by cluster letter, use user-chosen names as lane labels
-      const byCluster = new Map<string, BeatHit[]>()
-      for (const h of hits) {
-        const key = h.clusterId ?? 'A'
-        if (!byCluster.has(key)) byCluster.set(key, [])
-        byCluster.get(key)!.push(h)
-      }
-      // Sort clusters alphabetically so lane order is A, B, C…
-      const sortedClusters = [...byCluster.entries()].sort(([a], [b]) => a.localeCompare(b))
-      const ctx = new AudioContext()
-      const placed: { type: string; count: number; laneId: string }[] = []
-      for (const [letter, clusterHitsArr] of sortedClusters) {
-        const name  = beatClusterNames[letter]?.trim() || `Sound ${letter}`
-        const color = CLUSTER_COLORS[letter] ?? '#6b7280'
-        // Use a 400 ms excerpt from beatBox at the first hit as the sample
-        let sampleBuf: AudioBuffer
-        const firstHit = clusterHitsArr[0]
-        if (beatBox && firstHit) {
-          const sr2  = beatBox.sampleRate
-          const s    = Math.floor(firstHit.time * sr2)
-          const e    = Math.min(beatBox.length, s + Math.floor(0.4 * sr2))
-          const len  = Math.max(1, e - s)
-          sampleBuf  = ctx.createBuffer(1, len, sr2)
-          sampleBuf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
-        } else {
-          const d = synthDrum('kick', ctx.sampleRate)
-          sampleBuf = ctx.createBuffer(1, d.length, ctx.sampleRate); sampleBuf.getChannelData(0).set(d)
-        }
-        const laneId = addCustomLane()
-        setTypeOverrides(prev => ({ ...prev, [laneId]: { label: name, color } }))
-        setAudioClips(prev => [...prev, ...clusterHitsArr.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, name))])
-        placed.push({ type: letter, count: clusterHitsArr.length, laneId })
-      }
-      ctx.close()
-      stopVerifyPlayback()
-      setBeatPendingHits(null)
-      setBeatPlacedLanes(placed)
-      showToast(`Added ${hits.length} hits across ${placed.length} sounds`)
-      return
-    }
-
-    // ── Non-cluster path: drum-type-based commit ──────────────────────────────
-    const byType = new Map<string, BeatHit[]>()
-    for (const h of hits) {
-      if (!byType.has(h.type)) byType.set(h.type, [])
-      byType.get(h.type)!.push(h)
-    }
-    const ctx = new AudioContext()
-    const sr  = ctx.sampleRate
-    const placed: { type: string; count: number; laneId: string }[] = []
-    for (const [type, typeHits] of byType.entries()) {
-      let sampleBuf: AudioBuffer
-      // Cut a 400 ms excerpt from beatBox at the first hit of this type
-      const firstHit = typeHits[0]
-      if (beatBox && firstHit) {
-        const sr2 = beatBox.sampleRate
-        const s   = Math.floor(firstHit.time * sr2)
-        const e   = Math.min(beatBox.length, s + Math.floor(0.4 * sr2))
-        const len = Math.max(1, e - s)
-        sampleBuf = ctx.createBuffer(1, len, sr2)
-        sampleBuf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
-      } else {
-        const d = synthDrum(type, sr)
-        sampleBuf = ctx.createBuffer(1, d.length, sr); sampleBuf.getChannelData(0).set(d)
-      }
-      const laneId = addCustomLane()
-      setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
-      setAudioClips(prev => [...prev, ...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type))])
-      placed.push({ type, count: typeHits.length, laneId })
-    }
-    ctx.close()
-    setBeatPendingHits(null)
-    setBeatPlacedLanes(placed)
-    showToast(`Added ${hits.length} drum hits across ${placed.length} lanes`)
-    // Persist corrections so future NN classification can learn
-    if (beatDetectedHits) {
-      const origById = new Map(beatDetectedHits.map(h => [h.id, h]))
-      for (const h of hits) {
-        const orig = origById.get(h.id)
-        if (orig && orig.type !== h.type && h.spectral) {
-          correctionsAdd({ id: crypto.randomUUID(), spectral: h.spectral, detectedAs: orig.type, correctedTo: h.type, savedAt: new Date().toISOString() }).catch(() => {})
-        }
-      }
-      sendBeatReflection(beatDetectedHits, hits)
-    }
-  }
-
-  // Reclassify pending hits using two phases:
-  // 1. Local NN classifier against stored corrections (fast, deterministic, actually learns)
-  // 2. Claude API only for hits where the NN has no confident reference (novel sounds)
-  async function beatAiCheck() {
-    const hits = beatPendingHits
-    if (!hits || hits.length === 0 || beatAiChecking) return
-    setBeatAiChecking(true)
-    try {
-      const storedCorrections = await correctionsGetAll().catch(() => [] as Awaited<ReturnType<typeof correctionsGetAll>>)
-      const allowedTypes = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'] as BeatType[]
-      const allowedSet   = new Set<BeatType>(allowedTypes)
-
-      // Build reference list from all stored corrections
-      const references: ReferenceSound[] = storedCorrections
-        .filter(c => c.spectral)
-        .map(c => ({ category: c.correctedTo, spectral: c.spectral }))
-
-      // Phase 1 — NN classification for hits that have spectral data
-      const nnCorrections: Record<string, BeatType> = {}
-      const uncertainHits: typeof hits = []
-
-      for (const h of hits) {
-        if (!h.spectral) { uncertainHits.push(h); continue }
-        const { type, confidence } = classifyHitLocally(h.spectral, references, allowedSet)
-        if (type && confidence > 0.15) {
-          if (type !== h.type) nnCorrections[h.id] = type
-        } else {
-          uncertainHits.push(h)
-        }
-      }
-
-      // Phase 2 — Claude only for hits the NN couldn't confidently resolve
-      const claudeCorrections: Record<string, string> = {}
-      const claudeDeletions:   string[]               = []
-      let   deletionsSuppressed                        = false
-
-      if (uncertainHits.length > 0) {
-        const pastCorrections = storedCorrections.slice(-120).map(c => ({ detectedAs: c.detectedAs, correctedTo: c.correctedTo, spectral: c.spectral }))
-        const res = await fetch('/api/classify-beats', {
-          method:  'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            hits:            uncertainHits.map(h => ({ id: h.id, time: h.time, type: h.type, velocity: h.velocity, spectral: h.spectral ?? {} })),
-            enabledTypes:    allowedTypes,
-            pastCorrections,
-          }),
-        })
-        if (!res.ok) {
-          let reason = `HTTP ${res.status}`
-          try { const j = await res.json() as { error?: string }; if (j.error) reason = j.error } catch { /* keep default */ }
-          showToast(`AI check failed: ${reason}`)
-          setBeatAiChecking(false)
-          return
-        }
-        const data = await res.json() as { corrections: Record<string, string>; deletions: string[]; deletionsSuppressed?: boolean }
-        Object.assign(claudeCorrections, data.corrections)
-        claudeDeletions.push(...data.deletions)
-        deletionsSuppressed = data.deletionsSuppressed ?? false
-      }
-
-      // Merge: NN corrections take priority over Claude (NN has ground truth from user)
-      const allCorrections = { ...claudeCorrections, ...nnCorrections }
-      const delSet = new Set(claudeDeletions)
-
-      const nnCount    = Object.keys(nnCorrections).length
-      const totalChanged = Object.keys(allCorrections).length + claudeDeletions.length
-
-      setBeatPendingHits(prev => prev
-        ? prev
-          .filter(h => !delSet.has(h.id))
-          .map(h => allCorrections[h.id] ? { ...h, type: allCorrections[h.id] as BeatHit['type'] } : h)
-        : null
-      )
-
-      if (deletionsSuppressed) {
-        showToast('AI wanted to remove most hits — kept them all, only applied reclassifications')
-      } else if (totalChanged === 0 && uncertainHits.length === 0) {
-        showToast('All hits matched your correction history — looks correct')
-      } else if (totalChanged === 0) {
-        showToast('Looks correct')
-      } else {
-        const nnNote = nnCount > 0 ? ` (${nnCount} from your corrections, ${totalChanged - nnCount} from AI)` : ''
-        showToast(`Updated ${totalChanged} hit${totalChanged !== 1 ? 's' : ''}${nnNote}`)
-      }
-    } catch (e) {
-      showToast(`AI check failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    setBeatAiChecking(false)
-  }
-
-  // After the user corrects hits and commits, send the diff to /api/beat-reflection
-  // so the classifier learns from this session's mistakes
-  async function sendBeatReflection(originalHits: BeatHit[], committedHits: BeatHit[]) {
-    const origById = new Map(originalHits.map(h => [h.id, h]))
-    const corrections = committedHits
-      .filter(h => { const o = origById.get(h.id); return o && o.type !== h.type })
-      .map(h => {
-        const orig = origById.get(h.id)!
-        return { time: h.time, machineLabel: orig.type, finalLabel: h.type, spectral: h.spectral }
-      })
-    if (corrections.length === 0) return
-    fetch('/api/beat-reflection', {
-      method:  'POST',
-      headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify({ corrections }),
-    }).catch(() => { /* non-critical */ })
-  }
-
-  async function swapLaneSample(laneId: string) {
-    const inp = document.createElement('input')
-    inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'
-    inp.onchange = async () => {
-      const f = inp.files?.[0]; if (!f) return
-      try {
-        const newBuf = await decodeAudio(f)
-        setAudioClips(prev => prev.map(c => c.laneType === laneId ? { ...c, buf: newBuf } : c))
-        showToast('Sample swapped')
-      } catch { showToast('Could not load audio file') }
-    }
-    inp.click()
-  }
-
-  // ── Musical grid helpers ──────────────────────────────────────────────────
-
-  // The effective BPM: user override > reference beat BPM > null
-  function activeBeatBpm(): number | null { return beatGridBpm ?? beatRefBpm }
+  const [beatTimeSig,           setBeatTimeSig]           = useState<[number, number]>([4, 4])
+  // ── New drum transcription state ──────────────────────────────────────────
+  const [dtHits,    setDtHits]    = useState<BeatHit[] | null>(null)
+  const [dtLoading, setDtLoading] = useState(false)
+  const [dtBpm,     setDtBpm]     = useState<number | null>(null)
+  const dtGenRef    = useRef(0)
+  const dtCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
   // Snap a time value to the nearest allowed subdivision position
   function snapToGrid(time: number, bpm: number, subdiv: number): number {
@@ -2818,65 +2320,76 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     return Math.round(time / subLen) * subLen
   }
 
-  // Quantize all pending hits to the nearest grid position in-place
-  function quantizeHitsToGrid() {
-    const bpm = activeBeatBpm()
-    if (!bpm || !beatPendingHits) return
-    setBeatPendingHits(prev => prev?.map(h => ({ ...h, time: snapToGrid(h.time, bpm, beatSubdiv) })) ?? null)
-  }
-
-  // Take the first patternLen bars and tile them for the full duration
-  function repeatBeatPattern() {
-    const bpm  = activeBeatBpm()
-    const hits = beatPendingHits
-    if (!bpm || !hits || !beatBox) return
-    const [num, denom] = beatTimeSig
-    const barLen     = num * (60 / bpm) * (4 / denom)
-    const patternEnd = beatPatternLen * barLen
-    const template   = hits.filter(h => h.time < patternEnd)
-    if (template.length === 0) { showToast('No hits in the first bar — adjust pattern length'); return }
-    const totalDur = beatBox.duration
-    const result: BeatHit[] = [...template]
-    let offset = patternEnd
-    while (offset < totalDur - 0.05) {
-      for (const h of template) {
-        const t = h.time + offset
-        if (t < totalDur) result.push({ ...h, id: crypto.randomUUID(), time: t })
-      }
-      offset += patternEnd
+  async function runDrumDetect() {
+    if (!beatBox || dtLoading) return
+    const myGen = ++dtGenRef.current
+    setDtLoading(true)
+    setDtHits(null)
+    try {
+      const DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
+      const result = await analyzeBeats(beatBox, { allowedTypes: DRUM_TYPES, referenceSounds })
+      if (myGen !== dtGenRef.current) return
+      setDtHits(result.hits)
+      if (!dtBpm && !beatRefBpm && result.bpm) setDtBpm(result.bpm)
+    } catch {
+      if (myGen === dtGenRef.current) showToast('Drum detection failed')
+    } finally {
+      if (myGen === dtGenRef.current) setDtLoading(false)
     }
-    setBeatPendingHits(result.sort((a, b) => a.time - b.time))
-    showToast(`Pattern repeated across ${Math.floor(totalDur / barLen)} bars`)
   }
 
-  // Detect BPM from the beatbox audio
-  async function detectTranscribeBpm() {
-    if (!beatBox || beatBpmDetecting) return
-    setBeatBpmDetecting(true)
-    const bpm = quickBpmEstimate(beatBox)
-    if (bpm) { setBeatGridBpm(Math.round(bpm)); showToast(`Detected ~${Math.round(bpm)} BPM`) }
-    else showToast('Could not detect BPM — enter it manually')
-    setBeatBpmDetecting(false)
+  async function dtCommitToTimeline() {
+    const hits = dtHits
+    if (!hits || hits.length === 0 || !beatBox) return
+    captureHistory()
+    const byType = new Map<string, BeatHit[]>()
+    for (const h of hits) {
+      if (!byType.has(h.type)) byType.set(h.type, [])
+      byType.get(h.type)!.push(h)
+    }
+    const ctx = new AudioContext()
+    for (const [type, typeHits] of byType.entries()) {
+      const firstHit = typeHits[0]
+      const sr = beatBox.sampleRate
+      const s  = Math.floor(firstHit.time * sr)
+      const e  = Math.min(beatBox.length, s + Math.floor(0.4 * sr))
+      const len = Math.max(1, e - s)
+      const sampleBuf = ctx.createBuffer(1, len, sr)
+      sampleBuf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
+      const laneId = addCustomLane()
+      setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
+      setAudioClips(prev => [...prev, ...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type))])
+    }
+    ctx.close()
+    setDtHits(null)
+    showToast(`Added ${hits.length} hits across ${byType.size} lanes`)
   }
 
-  // Tell the AI this pattern is correct so it can learn from it
-  async function confirmBeatPattern() {
-    const hits = beatPendingHits
-    if (!hits || hits.length === 0 || beatConfirming) return
-    setBeatConfirming(true)
-    const bpm = activeBeatBpm()
-    const [num, denom] = beatTimeSig
-    await fetch('/api/beat-reflection', {
-      method:  'POST',
-      headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify({
-        corrections: [],
-        userNotes: `User confirmed this drum pattern as CORRECT. BPM=${bpm ?? 'unknown'}, time sig=${num}/${denom}, subdiv=1/${beatSubdiv} notes. ${hits.length} hits: ${hits.map(h => `${h.type}@${h.time.toFixed(3)}s`).join(', ')}`,
-      }),
-    }).catch(() => {})
-    showToast('Pattern confirmed — AI will reference this next time')
-    setBeatConfirming(false)
-  }
+  useEffect(() => {
+    const canvas = dtCanvasRef.current
+    if (!canvas || !dtHits || !beatBox) { if (canvas) { const c = canvas.getContext('2d'); c?.clearRect(0, 0, canvas.width, canvas.height) }; return }
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const W = canvas.width, H = canvas.height
+    ctx.clearRect(0, 0, W, H)
+    // waveform background
+    const ch = beatBox.getChannelData(0)
+    const step = Math.max(1, Math.floor(ch.length / W))
+    ctx.fillStyle = 'rgba(234,179,8,0.12)'
+    for (let x = 0; x < W; x++) {
+      let max = 0
+      for (let i = 0; i < step; i++) { const v = Math.abs(ch[x * step + i] ?? 0); if (v > max) max = v }
+      const h = Math.round(max * (H / 2))
+      ctx.fillRect(x, (H / 2) - h, 1, h * 2)
+    }
+    // hit dots
+    const dur = beatBox.duration
+    for (const hit of dtHits) {
+      const x = Math.round((hit.time / dur) * W)
+      ctx.fillStyle = DRUM_COLORS[hit.type] ?? '#888'
+      ctx.beginPath(); ctx.arc(x, H / 2, 5, 0, Math.PI * 2); ctx.fill()
+    }
+  }, [dtHits, beatBox])
 
   function exportBeatResult() {
     if (!beatResult) return
@@ -3126,7 +2639,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [compGroups, setCompGroups] = useState<CompGroup[]>([])
   const [openCompGroup, setOpenCompGroup] = useState<string | null>(null)
   const clipboardRef = useRef<AudioClip[]>([])
-  const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
+  const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean; applyOpen?: boolean } | null>(null)
+  const [applyLibraryEntries, setApplyLibraryEntries] = useState<import('@/lib/sound-library').LibraryEntry[]>([])
   const [segmentPanel, setSegmentPanel] = useState<string | null>(null)  // clipId whose segments are shown
   const [saveToLibBuf, setSaveToLibBuf] = useState<AudioBuffer | null>(null)  // open AddToLibraryModal pre-loaded
 
@@ -3663,8 +3177,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const myGen = ++beatSepGenRef.current
     const capturedRef = beatRef          // capture before the await so state changes can't affect it
     setBeatTranscribeLoading(true)
-    setBeatPendingHits(null)
-    setBeatPlacedLanes(null)
+    setDtHits(null)
     setBeatBox(null)                     // immediately collapse Drum Transcription section
     try {
       const DRUM_ALLOWED: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
@@ -3675,9 +3188,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       } else {
         setBeatBox(capturedRef)
         setBeatBoxName(beatRefName ?? 'Reference')
-        setBeatDetectedHits(result.hits)
-        setBeatPendingHits(result.hits)
-        setBeatClusterNames({})
+        setDtHits(result.hits)
       }
     } catch (e) {
       if (myGen === beatSepGenRef.current) {
@@ -4098,20 +3609,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  // Two-sided learning: reference sounds from Sound Library (Side A) + accepted corrections (Side B)
+  // Reference sounds from Sound Library (used by analyzeBeats for classification)
   const [referenceSounds, setReferenceSounds] = useState<ReferenceSound[]>([])
   useEffect(() => {
     async function loadReferences() {
-      const [library, corrections] = await Promise.all([
-        libraryGetAll().catch(() => []),
-        correctionsGetAll().catch(() => []),
-      ])
+      correctionsClear().catch(() => {})  // clear old learning data
+      const library = await libraryGetAll().catch(() => [] as import('@/lib/sound-library').LibraryEntry[])
       const fromLibrary: ReferenceSound[] = library
         .filter(e => e.spectral && e.category !== 'voice' && e.category !== 'custom')
         .map(e => ({ category: e.category as BeatType, spectral: e.spectral! }))
-      const fromCorrections: ReferenceSound[] = corrections
-        .map(e => ({ category: e.correctedTo, spectral: e.spectral }))
-      setReferenceSounds([...fromLibrary, ...fromCorrections])
+      setReferenceSounds(fromLibrary)
     }
     loadReferences()
   }, [])
@@ -4573,9 +4080,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // Cancel RAF on unmount to avoid dangling callbacks
   useEffect(() => () => cancelAnimationFrame(playRafRef.current), [])
-  // Close the verify AudioContext on unmount (kept alive between Listen clicks to avoid volume decay)
-  useEffect(() => () => { try { beatVerifyCtxRef.current?.close() } catch { /* ok */ } }, [])
-
   // ── Recording ──────────────────────────────────────────────────────────────
 
   async function startRecording() {
@@ -5382,13 +4886,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [hitMenu, setHitMenu] = useState<{ hitId: string; x: number; y: number } | null>(null)
 
   function changeHitType(id: string, newType: BeatType) {
-    setHits(prev => prev.map(h => {
-      if (h.id !== id) return h
-      if (newType !== h.type && h.spectral) {
-        correctionsAdd({ id: crypto.randomUUID(), spectral: h.spectral, detectedAs: h.type, correctedTo: newType, savedAt: new Date().toISOString() }).catch(() => {})
-      }
-      return { ...h, type: newType }
-    }))
+    setHits(prev => prev.map(h => h.id !== id ? h : { ...h, type: newType }))
   }
   function changeHitVelocity(id: string, v: number) {
     setHits(prev => prev.map(h => h.id === id ? { ...h, velocity: v } : h))
@@ -5439,37 +4937,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   function changeSelectedType(type: BeatType) {
     if (selectedIds.size === 0) return
     captureHistory()
-    setHits(prev => prev.map(h => {
-      if (!selectedIds.has(h.id)) return h
-      if (type !== h.type && h.spectral) {
-        correctionsAdd({
-          id:          crypto.randomUUID(),
-          spectral:    h.spectral,
-          detectedAs:  h.type,
-          correctedTo: type,
-          savedAt:     new Date().toISOString(),
-        }).catch(() => {})
-      }
-      return { ...h, type }
-    }))
+    setHits(prev => prev.map(h => selectedIds.has(h.id) ? { ...h, type } : h))
     setShowTypeMenu(false)
   }
 
   function rejectAiForHit(hitId: string) {
     if (!aiSuggestions) return
-    const suggested = aiSuggestions.get(hitId)
-    if (!suggested) return
-    // Save inverse: AI said X, but the current label Y is correct
-    const hit = hits.find(h => h.id === hitId)
-    if (hit && hit.spectral && suggested !== hit.type) {
-      correctionsAdd({
-        id:          crypto.randomUUID(),
-        spectral:    hit.spectral,
-        detectedAs:  suggested,
-        correctedTo: hit.type,
-        savedAt:     new Date().toISOString(),
-      }).catch(() => {})
-    }
     setAiSuggestions(prev => {
       if (!prev) return null
       const next = new Map(prev)
@@ -5562,21 +5035,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  // User confirms the feedback panel — save corrections + request AI reflection
+  // User confirms the feedback panel — request AI reflection
   async function confirmFeedback() {
     if (!feedbackItems) return
-    const now = new Date().toISOString()
-    for (const f of feedbackItems) {
-      if (f.current !== f.original && f.spectral) {
-        correctionsAdd({
-          id:          crypto.randomUUID(),
-          spectral:    f.spectral,
-          detectedAs:  f.original,
-          correctedTo: f.current,
-          savedAt:     now,
-        }).catch(() => {})
-      }
-    }
     const changed = feedbackItems.filter(f => f.current !== f.original)
     setFeedbackItems(null)
     if (changed.length === 0) return
@@ -5644,21 +5105,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function sendFeedback() {
     if (feedbackSending) return
-    const now = new Date().toISOString()
     const corrections: Array<{ time: number; machineLabel: string; finalLabel: string; spectral?: HitSpectral }> = []
 
     for (const hit of hits) {
       const original = feedbackSnapshot?.get(hit.id)
       if (original !== undefined && original !== hit.type) {
-        if (hit.spectral) {
-          correctionsAdd({
-            id:          crypto.randomUUID(),
-            spectral:    hit.spectral,
-            detectedAs:  original,
-            correctedTo: hit.type,
-            savedAt:     now,
-          }).catch(() => {})
-        }
         corrections.push({ time: hit.time, machineLabel: original, finalLabel: hit.type, spectral: hit.spectral })
       }
     }
@@ -5691,19 +5142,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     if (!aiSuggestions) return
     const suggested = aiSuggestions.get(hitId)
     if (!suggested) return
-    setHits(prev => prev.map(h => {
-      if (h.id !== hitId) return h
-      if (h.spectral && suggested !== h.type) {
-        correctionsAdd({
-          id:          crypto.randomUUID(),
-          spectral:    h.spectral,
-          detectedAs:  h.type,
-          correctedTo: suggested,
-          savedAt:     new Date().toISOString(),
-        }).catch(() => {})
-      }
-      return { ...h, type: suggested }
-    }))
+    setHits(prev => prev.map(h => h.id !== hitId ? h : { ...h, type: suggested }))
     setAiSuggestions(prev => {
       if (!prev) return null
       const next = new Map(prev)
@@ -5714,22 +5153,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   function programWasRight() {
     if (!aiSuggestions && aiDeletions.size === 0) return
-    const now = new Date().toISOString()
-    if (aiSuggestions) {
-      for (const [hitId, suggested] of aiSuggestions.entries()) {
-        const hit = hits.find(h => h.id === hitId)
-        if (hit && hit.spectral && suggested !== hit.type) {
-          correctionsAdd({
-            id:          crypto.randomUUID(),
-            spectral:    hit.spectral,
-            detectedAs:  suggested,
-            correctedTo: hit.type,
-            savedAt:     now,
-          }).catch(() => {})
-        }
-      }
-    }
-    // Deletion suggestions: AI was wrong to flag these — no correction type to save, just dismiss
+    // Dismiss all AI suggestions — no corrections to save
     setAiSuggestions(null)
     setAiDeletions(new Set())
     setShowFeedbackCard(false)
@@ -5738,7 +5162,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   function aiWasRight() {
     if (!aiSuggestions && aiDeletions.size === 0) return
     const sixteenth = bpm ? (60 / bpm) / 4 : null
-    const now = new Date().toISOString()
     const toDelete = new Set(aiDeletions)
     setHits(prev => {
       let updated = prev
@@ -5746,15 +5169,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         .map(h => {
           const suggested = aiSuggestions?.get(h.id)
           if (!suggested || suggested === h.type) return h
-          if (h.spectral) {
-            correctionsAdd({
-              id:          crypto.randomUUID(),
-              spectral:    h.spectral,
-              detectedAs:  h.type,
-              correctedTo: suggested,
-              savedAt:     now,
-            }).catch(() => {})
-          }
           return { ...h, type: suggested }
         })
       if (sixteenth) updated = updated.map(h => ({ ...h, time: Math.round(h.time / sixteenth) * sixteenth }))
@@ -7300,9 +6714,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         return (
                           <div
                             key={type}
-                            draggable={!isGroupBus}
-                            onDragStart={e => { if (!isGroupBus) { e.dataTransfer.effectAllowed = 'move'; setDragLane(type); if (!laneOrder) setLaneOrder(activeLaneTypes.map(t => t as string)) } }}
-                            onDragEnd={() => { setDragLane(null); setDragInsertBefore(null) }}
                             onDragOver={e => {
                               if (!dragLane || dragLane === type) return
                               e.preventDefault(); e.dataTransfer.dropEffect = 'move'
@@ -7327,7 +6738,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           >
                           <div style={{ display: 'flex' }}>
                             <Tooltip content="Drag to reorder track" placement="right" delay={600}>
-                            <div style={{ width: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isGroupBus ? 'default' : 'grab', color: 'var(--text-muted)', fontSize: 10, opacity: 0.5, userSelect: 'none' }}>
+                            <div
+                              draggable={!isGroupBus}
+                              onDragStart={e => { if (!isGroupBus) { e.dataTransfer.effectAllowed = 'move'; setDragLane(type); if (!laneOrder) setLaneOrder(activeLaneTypes.map(t => t as string)) } }}
+                              onDragEnd={() => { setDragLane(null); setDragInsertBefore(null) }}
+                              style={{
+                                width: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                cursor: isGroupBus ? 'default' : 'grab', color: 'var(--text-muted)', fontSize: 10,
+                                opacity: 0.5, userSelect: 'none',
+                                position: 'sticky', left: 0, zIndex: 4,
+                                background: 'var(--bg-surface)',
+                              }}
+                            >
                               {!isGroupBus && '⠿'}
                             </div>
                           </Tooltip>
@@ -8093,6 +7515,41 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 + Save to Library
               </button>
 
+              <button
+                onClick={() => {
+                  setClipMenu(m => m ? { ...m, applyOpen: !m.applyOpen } : m)
+                  if (!clipMenu?.applyOpen) libraryGetAll().then(setApplyLibraryEntries).catch(() => {})
+                }}
+                style={{ ...btnStyle(), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
+                Apply sample <span style={{ opacity: 0.5, fontSize: 10 }}>{clipMenu?.applyOpen ? '▲' : '▶'}</span>
+              </button>
+              {clipMenu?.applyOpen && (
+                <div style={{ marginLeft: 8, borderLeft: '2px solid var(--border)', paddingLeft: 6, maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {applyLibraryEntries.length === 0 ? (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '4px 0' }}>No library samples yet</div>
+                  ) : applyLibraryEntries.map(entry => (
+                    <button
+                      key={entry.id}
+                      onClick={async () => {
+                        try {
+                          const ctx = new AudioContext()
+                          const buf = await ctx.decodeAudioData(await entry.audioBlob.arrayBuffer())
+                          await ctx.close()
+                          setAudioClips(prev => prev.map(c => c.id === clip.id ? { ...c, buf, name: entry.name, originalBuf: c.buf } : c))
+                          setClipMenu(null)
+                        } catch { showToast('Could not decode sample') }
+                      }}
+                      style={{ ...btnStyle(), fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0, display: 'inline-block' }} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{entry.name}</span>
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>{entry.duration.toFixed(1)}s</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {clip.segments && clip.segments.length > 0 && (
                 <button
                   onClick={() => { setSegmentPanel(clip.id); setClipMenu(null) }}
@@ -8583,17 +8040,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     {beatTranscribeLoading ? 'Detecting…' : '▣ Separate Sounds from Beat'}
                   </button>
                   <button
-                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatBox(null); setBeatBoxName(''); setBeatPendingHits(null); setBeatDetectedHits(null); setBeatPlacedLanes(null); setBeatRef(d); setBeatRefName(f.name) } catch { showToast('Could not decode file') } }; inp.click() }}
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatBox(null); setBeatBoxName(''); setBeatRef(d); setBeatRefName(f.name) } catch { showToast('Could not decode file') } }; inp.click() }}
                     style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '7px 14px', fontSize: 10 }}>
                     Import Beat
                   </button>
                 </div>
 
-                {beatPendingHits && !beatBox?.length && (
-                  <div style={{ marginTop: 10, fontSize: 10, color: 'rgba(250,204,21,0.8)', background: 'rgba(250,204,21,0.05)', border: '1px solid rgba(234,179,8,0.2)', borderRadius: 6, padding: '6px 10px' }}>
-                    {beatPendingHits.length} hits detected — scroll down to review and place on timeline
-                  </div>
-                )}
               </div>
 
               {/* ── Step 2: Record beatbox ── */}
@@ -8621,9 +8073,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 {beatMetronomeOn && (
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 10, background: 'rgba(250,204,21,0.05)', border: '1px solid rgba(234,179,8,0.15)', borderRadius: 7, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span>♩</span>
-                    {activeBeatBpm()
-                      ? <>Metronome at <strong style={{ color: 'rgba(250,204,21,0.9)' }}>{activeBeatBpm()} BPM · {beatTimeSig[0]}/{beatTimeSig[1]}</strong> — 3-bar countdown then record starts automatically</>
-                      : <>No BPM set — <strong style={{ color: 'rgba(250,204,21,0.9)' }}>set one in the grid setup below</strong> to enable the countdown</>
+                    {beatRefBpm
+                      ? <>Metronome at <strong style={{ color: 'rgba(250,204,21,0.9)' }}>{beatRefBpm} BPM · {beatTimeSig[0]}/{beatTimeSig[1]}</strong> — 3-bar countdown then record starts automatically</>
+                      : <>No BPM detected yet — load a reference beat to auto-detect it</>
                     }
                   </div>
                 )}
@@ -8663,8 +8115,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   <div style={{ border: '1.5px dashed rgba(239,68,68,0.4)', borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(239,68,68,0.04)', marginBottom: 8 }}>
                     <span style={{ fontSize: 16, animation: 'pulse 1s infinite' }}>🔴</span>
                     <span style={{ fontSize: 11, color: '#f87171', flex: 1 }}>Recording… beatbox the rhythm, then tap Stop</span>
-                    {beatMetronomeOn && activeBeatBpm() && (
-                      <span style={{ fontSize: 10, color: 'rgba(250,204,21,0.6)' }}>♩ {activeBeatBpm()} BPM</span>
+                    {beatMetronomeOn && beatRefBpm && (
+                      <span style={{ fontSize: 10, color: 'rgba(250,204,21,0.6)' }}>♩ {beatRefBpm} BPM</span>
                     )}
                   </div>
                 )}
@@ -8835,526 +8287,73 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
               {/* ── Drum Transcription ── */}
               {beatBox && (
-                <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatPendingHits || beatPlacedLanes ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginTop: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <div style={{ background: 'var(--bg-card)', border: `1px solid ${dtHits ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Drum Transcription</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Detect beats in your beatbox → place real drum sounds on separate lanes you can swap</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Detect drum hits in your beatbox and place them on separate lanes</div>
                   </div>
 
-                  {/* ── Musical grid setup — controls how hits are snapped and repeated ── */}
-                  <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 9, padding: '10px 12px', marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 9 }}>
-                    {/* Row 1: BPM */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>BPM</span>
-                      <input
-                        type="number" min={40} max={300} step={1}
-                        value={beatGridBpm ?? beatRefBpm ?? ''}
-                        onChange={e => { const v = parseInt(e.target.value); setBeatGridBpm(isNaN(v) ? null : v) }}
-                        placeholder={beatRefBpm ? String(beatRefBpm) : 'auto'}
-                        style={{ width: 64, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-primary)', fontSize: 11, padding: '4px 7px', textAlign: 'center' }}
-                      />
-                      <button onClick={detectTranscribeBpm} disabled={beatBpmDetecting}
-                        style={{ ...btnBase, padding: '4px 9px', fontSize: 10, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                        {beatBpmDetecting ? '…' : '⟳ Detect'}
-                      </button>
-                      {(beatGridBpm ?? beatRefBpm) && (
-                        <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                          beat = {((60 / (beatGridBpm ?? beatRefBpm!)) ).toFixed(3)}s
-                        </span>
-                      )}
-                    </div>
+                  <button
+                    onClick={runDrumDetect}
+                    disabled={dtLoading}
+                    style={{ ...btnBase, background: dtLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '7px 16px', fontSize: 12, fontWeight: 600, marginBottom: 12 }}
+                  >
+                    {dtLoading ? '⟳ Detecting hits…' : '▣ Detect Drum Hits'}
+                  </button>
 
-                    {/* Row 2: Time signature */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>Sig</span>
-                      {([[ 4,4],[ 3,4],[ 6,8],[ 5,4],[ 7,8]] as [number,number][]).map(([n,d]) => (
-                        <button key={`${n}/${d}`}
-                          onClick={() => setBeatTimeSig([n, d])}
-                          style={{ ...btnBase, padding: '3px 8px', fontSize: 10,
-                            background: beatTimeSig[0]===n && beatTimeSig[1]===d ? 'rgba(250,204,21,0.18)' : 'var(--bg-card)',
-                            color: beatTimeSig[0]===n && beatTimeSig[1]===d ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
-                            border: `1px solid ${beatTimeSig[0]===n && beatTimeSig[1]===d ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
-                          {n}/{d}
-                        </button>
-                      ))}
-                    </div>
+                  {dtHits && dtHits.length === 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>No drum hits detected — try with a clearer beatbox recording.</div>
+                  )}
 
-                    {/* Row 3: Sound groups (k-means clusters) */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>Sounds</span>
-                      {[2, 3, 4, 5].map(k => (
-                        <button key={k}
-                          onClick={() => beatPendingHits ? reCluster(k) : setBeatClusterK(k)}
-                          style={{ ...btnBase, padding: '3px 10px', fontSize: 10,
-                            background: beatClusterK === k ? 'rgba(250,204,21,0.18)' : 'var(--bg-card)',
-                            color: beatClusterK === k ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
-                            border: `1px solid ${beatClusterK === k ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
-                          {k}
-                        </button>
-                      ))}
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>distinct sounds in the pattern</span>
-                    </div>
-
-                    {/* Row 4: Subdivision (how finely hits snap) */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>Snap</span>
-                      {([{v:4,l:'¼'},{v:8,l:'⅛'},{v:16,l:'¹⁄₁₆'},{v:12,l:'⅓'}] as {v:number;l:string}[]).map(({v,l}) => (
-                        <button key={v} onClick={() => setBeatSubdiv(v)}
-                          style={{ ...btnBase, padding: '3px 9px', fontSize: 10,
-                            background: beatSubdiv===v ? 'rgba(250,204,21,0.18)' : 'var(--bg-card)',
-                            color: beatSubdiv===v ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
-                            border: `1px solid ${beatSubdiv===v ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
-                          {l} note
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={runBeatTranscribe} disabled={beatTranscribeLoading}
-                      style={{ ...btnBase, background: beatTranscribeLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', flex: 1 }}>
-                      {beatTranscribeLoading ? 'Detecting hits…' : '▣ Detect drum hits'}
-                    </button>
-                    <button
-                      onClick={() => { correctionsClear().catch(() => {}); setReferenceSounds([]); showToast('Learning data cleared') }}
-                      title="Clear all stored correction data and reference sounds"
-                      style={{ ...btnBase, background: 'rgba(239,68,68,0.08)', color: 'rgba(248,113,113,0.85)', border: '1px solid rgba(239,68,68,0.25)', padding: '6px 12px', flexShrink: 0, fontSize: 11 }}>
-                      ✕ Clear learning data
-                    </button>
-                  </div>
-
-                  {/* ── Phase 2: Verify hits before committing ── */}
-                  {beatPendingHits && (() => {
-                    const pending = beatPendingHits
-                    const duration = beatBox?.duration ?? 4
-                    const isClusterMode = pending.some(h => h.clusterId != null)
-                    // In cluster mode rows are cluster letters (A, B, C…); otherwise drum type strings
-                    const types: string[] = isClusterMode
-                      ? [...new Set(pending.map(h => h.clusterId ?? 'A'))].sort()
-                      : [...new Set(pending.map(h => h.type))]
-                    const typeColor  = (t: string) => isClusterMode ? (CLUSTER_COLORS[t] ?? '#888') : (DRUM_COLORS[t] ?? '#888')
-                    const typeLabel  = (t: string) => isClusterMode ? (beatClusterNames[t]?.trim() || `Sound ${t}`) : (DRUM_LABELS[t] ?? t)
-                    const hitsOfType = (t: string) => isClusterMode ? pending.filter(h => h.clusterId === t) : pending.filter(h => h.type === t)
-                    const LABEL_W = 64, ROW_H = 34
-
-                    // Right-click popup state is hoisted to component level (beatReclassifyTarget) to avoid hooks-order crash
-                    const reclassifyTarget    = beatReclassifyTarget
-                    const setReclassifyTarget = setBeatReclassifyTarget
-
-                    // Canvas hit grid — left-click: remove/add · right-click: reclassify type
-                    const HitGrid = () => {
-                      const gridRef = useRef<HTMLCanvasElement>(null)
-                      const REF_H = 40
-                      const dotOffset = beatBox ? REF_H + 4 : 0
-                      const canvasH = Math.max(68, types.length * ROW_H + 8 + dotOffset)
-
-                      useEffect(() => {
-                        const canvas = gridRef.current; if (!canvas) return
-                        const c = canvas.getContext('2d'); if (!c) return
-                        const W = canvas.width, H = canvas.height
-                        c.clearRect(0, 0, W, H)
-                        c.fillStyle = '#0d0d10'; c.fillRect(0, 0, W, H)
-
-                        // Source audio waveform strip (purple, top of canvas) — shows beatBox (what's being analyzed)
-                        if (beatBox) {
-                          const srcWav = beatBox.getChannelData(0)
-                          const timelineWidth = W - LABEL_W
-                          c.fillStyle = 'rgba(139,92,246,0.55)'
-                          for (let px = 0; px < timelineWidth; px++) {
-                            const idx = Math.floor((px / timelineWidth) * srcWav.length)
-                            const p = Math.abs(srcWav[idx] ?? 0)
-                            const bh = Math.max(1, p * REF_H * 0.9)
-                            c.fillRect(LABEL_W + px, (REF_H - bh) / 2, 1, bh)
-                          }
-                          c.fillStyle = 'rgba(139,92,246,0.7)'; c.font = 'bold 8px ui-monospace,monospace'; c.textBaseline = 'middle'
-                          c.fillText('Src', 4, REF_H / 2)
-                          // Separator line below strip
-                          c.strokeStyle = 'rgba(255,255,255,0.08)'; c.lineWidth = 1
-                          c.beginPath(); c.moveTo(0, REF_H + 2); c.lineTo(W, REF_H + 2); c.stroke()
-                        }
-
-                        // Beatbox waveform ghost (yellow, dot area only)
-                        if (beatBox) {
-                          const wav = beatBox.getChannelData(0)
-                          const bars = Math.floor((W - LABEL_W) / 2)
-                          const spb  = Math.floor(wav.length / bars)
-                          const dotH = H - dotOffset
-                          c.fillStyle = 'rgba(250,204,21,0.08)'
-                          for (let i = 0; i < bars; i++) {
-                            let p = 0; for (let j = 0; j < spb; j++) p = Math.max(p, Math.abs(wav[i*spb+j]??0))
-                            const bh = Math.max(1, p * dotH * 0.45)
-                            c.fillRect(LABEL_W + i*2, dotOffset + (dotH - bh) / 2, 1, bh)
-                          }
-                        }
-
-                        // Musical grid lines — measure > beat > subdivision (dot area only)
-                        const bpm = activeBeatBpm()
-                        if (bpm) {
-                          const [num, denom] = beatTimeSig
-                          const beatLen  = (60 / bpm) * (4 / denom)   // one beat in seconds
-                          const barLen   = num * beatLen                // one measure
-                          const subLen   = (60 / bpm) * (4 / beatSubdiv)  // one subdivision
-
-                          // Subdivision lines (faintest)
-                          c.strokeStyle = 'rgba(255,255,255,0.04)'; c.lineWidth = 0.5
-                          for (let t = 0; t <= duration; t += subLen) {
-                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
-                          }
-                          // Beat lines (medium)
-                          c.strokeStyle = 'rgba(255,255,255,0.10)'; c.lineWidth = 1
-                          for (let t = 0; t <= duration; t += beatLen) {
-                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
-                          }
-                          // Measure (bar) lines — strong + numbered
-                          c.lineWidth = 1.5
-                          for (let t = 0, bar = 1; t <= duration; t += barLen, bar++) {
-                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.strokeStyle = 'rgba(255,255,255,0.22)'; c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
-                            c.fillStyle = 'rgba(255,255,255,0.25)'; c.font = '8px ui-monospace,monospace'; c.textBaseline = 'top'
-                            c.fillText(String(bar), x + 2, dotOffset + 2)
-                          }
-                          // Pattern-length marker (shows what will be repeated)
-                          const patEnd = beatPatternLen * barLen
-                          if (patEnd < duration) {
-                            const px = LABEL_W + (patEnd/duration)*(W-LABEL_W)
-                            c.strokeStyle = 'rgba(250,204,21,0.35)'; c.lineWidth = 1.5; c.setLineDash([4,3])
-                            c.beginPath(); c.moveTo(px, dotOffset); c.lineTo(px, H); c.stroke()
-                            c.setLineDash([])
-                          }
-                        } else {
-                          // No BPM — plain 0.5s grid
-                          c.strokeStyle = 'rgba(255,255,255,0.06)'; c.lineWidth = 1
-                          for (let t = 0; t <= duration; t += 0.5) {
-                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
-                          }
-                        }
-
-                        types.forEach((type, ti) => {
-                          const ry = dotOffset + 4 + ti * ROW_H
-                          const col = typeColor(type)
-                          if (ti % 2 === 0) { c.fillStyle = 'rgba(255,255,255,0.022)'; c.fillRect(0, ry, W, ROW_H) }
-                          c.fillStyle = col
-                          c.font = 'bold 10px ui-monospace,monospace'; c.textBaseline = 'middle'
-                          c.fillText(typeLabel(type).slice(0, 6), 4, ry + ROW_H/2)
-                          const rowHits = hitsOfType(type)
-                          c.fillStyle = 'rgba(255,255,255,0.3)'; c.font = '9px ui-monospace,monospace'
-                          c.fillText(`×${rowHits.length}`, LABEL_W - 22, ry + ROW_H/2)
-                          for (const hit of rowHits) {
-                            const x = LABEL_W + (hit.time/duration)*(W-LABEL_W)
-                            const y = ry + ROW_H/2
-                            const r = 4 + hit.velocity * 4
-                            const isSelected = reclassifyTarget?.id === hit.id
-                            c.beginPath(); c.arc(x, y, r, 0, Math.PI*2)
-                            c.fillStyle = col; c.fill()
-                            if (isSelected) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke() }
-                            else { c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 0.5; c.stroke() }
-                          }
-                        })
-                      }, [pending, reclassifyTarget, beatGridBpm, beatRefBpm, beatTimeSig, beatSubdiv, beatPatternLen, beatRef, beatBox, beatClusterNames])
-
-                      const hitAtPoint = (canvas: HTMLCanvasElement, ex: number, ey: number) => {
-                        const rect = canvas.getBoundingClientRect()
-                        const cx = (ex - rect.left) * (canvas.width / rect.width)
-                        const cy = (ey - rect.top)  * (canvas.height / rect.height)
-                        for (const hit of pending) {
-                          const key = isClusterMode ? (hit.clusterId ?? '') : hit.type
-                          const ti = types.indexOf(key); if (ti < 0) continue
-                          const x = LABEL_W + (hit.time/duration)*(canvas.width-LABEL_W)
-                          const y = dotOffset + 4 + ti*ROW_H + ROW_H/2
-                          if (Math.hypot(cx-x, cy-y) < 12) return { hit, cx, cy }
-                        }
-                        return null
-                      }
-
-                      const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-                        setReclassifyTarget(null)
-                        const canvas = gridRef.current; if (!canvas) return
-                        const found = hitAtPoint(canvas, e.clientX, e.clientY)
-                        if (found) {
-                          setBeatPendingHits(prev => prev?.filter(h => h.id !== found.hit.id) ?? null)
-                          return
-                        }
-                        // Add hit in clicked row
-                        const rect = canvas.getBoundingClientRect()
-                        const cx = (e.clientX - rect.left) * (canvas.width / rect.width)
-                        const cy = (e.clientY - rect.top)  * (canvas.height / rect.height)
-                        const ti = Math.floor((cy - dotOffset - 4) / ROW_H)
-                        if (ti >= 0 && ti < types.length && cx >= LABEL_W) {
-                          const rawTime = ((cx-LABEL_W)/(canvas.width-LABEL_W)) * duration
-                          const bpm     = activeBeatBpm()
-                          const time    = bpm ? snapToGrid(rawTime, bpm, beatSubdiv) : rawTime
-                          const newHit: BeatHit = isClusterMode
-                            ? { id: crypto.randomUUID(), type: 'other', clusterId: types[ti], time, velocity: 0.75, note: 60 }
-                            : { id: crypto.randomUUID(), type: types[ti] as BeatHit['type'], time, velocity: 0.75, note: 60 }
-                          setBeatPendingHits(prev => prev ? [...prev, newHit] : null)
-                        }
-                      }
-
-                      const onContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
-                        e.preventDefault()
-                        const canvas = gridRef.current; if (!canvas) return
-                        const found = hitAtPoint(canvas, e.clientX, e.clientY)
-                        if (found) setReclassifyTarget({ id: found.hit.id, screenX: e.clientX, screenY: e.clientY })
-                        else setReclassifyTarget(null)
-                      }
-
-                      return (
-                        <canvas ref={gridRef} width={560} height={canvasH}
-                          onClick={onClick} onContextMenu={onContextMenu}
-                          title="Left-click dot: remove · Right-click dot: change type · Left-click empty: add hit"
-                          style={{ width:'100%', height: canvasH, display:'block', cursor:'crosshair', borderRadius:8 }} />
-                      )
+                  {dtHits && dtHits.length > 0 && (() => {
+                    const byType = new Map<string, BeatHit[]>()
+                    for (const h of dtHits) {
+                      if (!byType.has(h.type)) byType.set(h.type, [])
+                      byType.get(h.type)!.push(h)
                     }
-
-                    // Reclassify popup — shown when user right-clicks a hit dot
-                    const ReclassifyPopup = () => {
-                      if (!reclassifyTarget) return null
-                      const currentHit = pending.find(h => h.id === reclassifyTarget.id)
-                      const popupStyle: React.CSSProperties = {
-                        position: 'fixed', zIndex: 9999,
-                        left: reclassifyTarget.screenX + 8, top: reclassifyTarget.screenY - 8,
-                        background: 'var(--bg-elevated, #1a1a1f)', border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-                        display: 'flex', flexDirection: 'column', gap: 3, minWidth: 140,
-                      }
-                      const deleteBtnStyle: React.CSSProperties = { display:'flex', alignItems:'center', gap:7, padding:'5px 8px', borderRadius:6, background:'transparent', border:'none', cursor:'pointer', color:'rgba(248,113,113,0.9)', fontSize:11, borderTop:'1px solid rgba(255,255,255,0.07)', marginTop:2 }
-
-                      if (isClusterMode) {
-                        return (
-                          <>
-                            <div onClick={() => setReclassifyTarget(null)} style={{ position:'fixed', inset:0, zIndex:9998 }} />
-                            <div style={popupStyle}>
-                              <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px', marginBottom: 2 }}>Move to group:</div>
-                              {types.map(letter => (
-                                <button key={letter} onClick={() => {
-                                  setBeatPendingHits(prev => prev?.map(h => h.id === reclassifyTarget.id ? { ...h, clusterId: letter } : h) ?? null)
-                                  setReclassifyTarget(null)
-                                }} style={{ display:'flex', alignItems:'center', gap:7, padding:'5px 8px', borderRadius:6, background: currentHit?.clusterId === letter ? 'rgba(255,255,255,0.1)' : 'transparent', border:'none', cursor:'pointer', color:'var(--text-primary)', fontSize:11, textAlign:'left' }}>
-                                  <span style={{ width:8, height:8, borderRadius:'50%', background: CLUSTER_COLORS[letter]??'#888', flexShrink:0, display:'inline-block' }} />
-                                  {beatClusterNames[letter]?.trim() || `Sound ${letter}`}
-                                  {currentHit?.clusterId === letter && <span style={{ marginLeft:'auto', fontSize:9, color:'var(--text-muted)' }}>current</span>}
-                                </button>
-                              ))}
-                              <button onClick={() => { setBeatPendingHits(prev => prev?.filter(h => h.id !== reclassifyTarget.id) ?? null); setReclassifyTarget(null) }} style={deleteBtnStyle}>
-                                ✕ Delete this hit
-                              </button>
-                            </div>
-                          </>
-                        )
-                      }
-
-                      const allTypes: BeatHit['type'][] = ['kick','snare','hihat','open-hihat','clap','tom','rim']
-                      return (
-                        <>
-                          <div onClick={() => setReclassifyTarget(null)} style={{ position:'fixed', inset:0, zIndex:9998 }} />
-                          <div style={popupStyle}>
-                            <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 6px', marginBottom: 2 }}>Change type to:</div>
-                            {allTypes.map(t => (
-                              <button key={t} onClick={() => {
-                                setBeatPendingHits(prev => prev?.map(h => h.id === reclassifyTarget.id ? { ...h, type: t } : h) ?? null)
-                                setReclassifyTarget(null)
-                              }} style={{ display:'flex', alignItems:'center', gap:7, padding:'5px 8px', borderRadius:6, background: currentHit?.type === t ? 'rgba(255,255,255,0.1)' : 'transparent', border:'none', cursor:'pointer', color:'var(--text-primary)', fontSize:11, textAlign:'left' }}>
-                                <span style={{ width:8, height:8, borderRadius:'50%', background: DRUM_COLORS[t] ?? '#888', flexShrink:0, display:'inline-block' }} />
-                                {DRUM_LABELS[t] ?? t}
-                                {currentHit?.type === t && <span style={{ marginLeft:'auto', fontSize:9, color:'var(--text-muted)' }}>current</span>}
-                              </button>
-                            ))}
-                            <button onClick={() => { setBeatPendingHits(prev => prev?.filter(h => h.id !== reclassifyTarget.id) ?? null); setReclassifyTarget(null) }} style={deleteBtnStyle}>
-                              ✕ Delete this hit
-                            </button>
-                          </div>
-                        </>
-                      )
-                    }
-
-                    const bpmActive = activeBeatBpm()
                     return (
-                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {/* Row 1: hit count + listen controls */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(250,204,21,1)' }}>
-                            {pending.length} hit{pending.length !== 1 ? 's' : ''} · {types.length} {isClusterMode ? `sound${types.length !== 1 ? 's' : ''}` : `type${types.length !== 1 ? 's' : ''}`}
-                            {bpmActive && <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>@ {bpmActive} BPM {beatTimeSig[0]}/{beatTimeSig[1]}</span>}
-                          </div>
-
-                          {/* Listen to ref + beatbox together */}
-                          <button onClick={() => beatVerifyPlaying ? stopVerifyPlayback() : void startVerifyPlayback()}
-                            style={{ ...btnBase, marginLeft: 'auto', background: beatVerifyPlaying ? 'rgba(139,92,246,0.22)' : 'rgba(139,92,246,0.12)', color: 'rgba(196,181,253,1)', border: `1px solid rgba(139,92,246,${beatVerifyPlaying ? '0.6' : '0.3'})`, padding: '5px 12px' }}>
-                            {beatVerifyPlaying ? '■ Stop' : '▶ Listen'}
-                          </button>
-                          {/* Mute toggles — only useful while something is loaded */}
-                          {beatRef && (
-                            <button onClick={toggleVerifyRefMute}
-                              title="Mute / unmute reference audio"
-                              style={{ ...btnBase, padding: '5px 10px', fontSize: 10, background: beatVerifyRefMuted ? 'rgba(139,92,246,0.06)' : 'rgba(139,92,246,0.14)', color: beatVerifyRefMuted ? 'rgba(139,92,246,0.4)' : 'rgba(196,181,253,0.9)', border: '1px solid rgba(139,92,246,0.3)', textDecoration: beatVerifyRefMuted ? 'line-through' : 'none' }}>
-                              Ref
-                            </button>
-                          )}
-                          <button onClick={toggleVerifyBoxMute}
-                            title="Mute / unmute your beatbox recording"
-                            style={{ ...btnBase, padding: '5px 10px', fontSize: 10, background: beatVerifyBoxMuted ? 'rgba(250,204,21,0.04)' : 'rgba(250,204,21,0.10)', color: beatVerifyBoxMuted ? 'rgba(250,204,21,0.35)' : 'rgba(250,204,21,0.85)', border: '1px solid rgba(234,179,8,0.3)', textDecoration: beatVerifyBoxMuted ? 'line-through' : 'none' }}>
-                            Box
-                          </button>
-
-                          {!isClusterMode && (
-                            <button onClick={beatAiCheck} disabled={beatAiChecking}
-                              style={{ ...btnBase, background: beatAiChecking ? 'rgba(167,139,250,0.08)' : 'rgba(167,139,250,0.14)', color: 'rgba(196,181,253,1)', border: '1px solid rgba(139,92,246,0.35)', padding: '5px 12px' }}>
-                              {beatAiChecking ? '♦ Checking…' : '♦ AI Check'}
-                            </button>
-                          )}
-                          <button onClick={runBeatTranscribe} title="Re-detect from scratch"
-                            style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '5px 9px' }}>
-                            ↺
-                          </button>
+                      <>
+                        <div style={{ fontSize: 11, color: 'rgba(250,204,21,0.9)', marginBottom: 10 }}>
+                          {dtHits.length} hits detected across {byType.size} sound type{byType.size !== 1 ? 's' : ''}
                         </div>
 
-                        {/* Alignment offset row — only when reference is loaded */}
-                        {beatRef && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.18)', borderRadius: 7, padding: '6px 10px' }}>
-                            <span style={{ fontSize: 10, color: 'rgba(96,165,250,0.85)', flexShrink: 0 }}>Align offset</span>
-                            <input
-                              type="range"
-                              min={-Math.min(5, beatRef.duration * 0.8)}
-                              max={Math.min(5, beatBox?.duration ? beatBox.duration * 0.8 : 5)}
-                              step={0.01}
-                              value={beatBoxOffset}
-                              onChange={e => setBeatBoxOffset(parseFloat(e.target.value))}
-                              style={{ flex: 1, accentColor: 'rgba(96,165,250,1)', height: 4 }}
-                            />
-                            <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums', minWidth: 54 }}>
-                              {beatBoxOffset >= 0 ? '+' : ''}{(beatBoxOffset * 1000).toFixed(0)} ms
-                            </span>
-                            <button onClick={autoAlignBeatBox}
-                              style={{ fontSize: 9, padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(96,165,250,0.3)', background: 'rgba(96,165,250,0.1)', color: 'rgba(96,165,250,0.9)', cursor: 'pointer', flexShrink: 0 }}>
-                              ⟳ Auto
-                            </button>
-                            <button onClick={() => setBeatBoxOffset(0)}
-                              style={{ fontSize: 9, padding: '3px 7px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
-                              Reset
-                            </button>
-                          </div>
-                        )}
+                        {/* Waveform + hit dots */}
+                        <canvas
+                          ref={dtCanvasRef}
+                          width={560} height={60}
+                          style={{ width: '100%', height: 60, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.25)', marginBottom: 12, cursor: 'crosshair' }}
+                          onClick={e => {
+                            const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
+                            const frac = (e.clientX - rect.left) / rect.width
+                            const time = frac * (beatBox?.duration ?? 0)
+                            setDtHits(prev => prev ? prev.filter(h => Math.abs(h.time - time) > 0.05) : null)
+                          }}
+                          title="Click near a dot to remove that hit"
+                        />
 
-                        {/* Row 2: grid tools — quantize + repeat */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: 'rgba(0,0,0,0.15)', borderRadius: 7, padding: '7px 10px' }}>
-                          <button onClick={quantizeHitsToGrid} disabled={!bpmActive}
-                            title={bpmActive ? `Snap all hits to nearest 1/${beatSubdiv} note` : 'Set a BPM first'}
-                            style={{ ...btnBase, padding: '4px 11px', fontSize: 10, background: bpmActive ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.04)', color: bpmActive ? 'rgba(250,204,21,0.9)' : 'var(--text-muted)', border: '1px solid rgba(234,179,8,0.25)' }}>
-                            ⊞ Snap to grid
-                          </button>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 6 }}>
-                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Repeat</span>
-                            <select value={beatPatternLen} onChange={e => setBeatPatternLen(+e.target.value)}
-                              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-primary)', fontSize: 10, padding: '3px 5px' }}>
-                              <option value={1}>1 bar</option>
-                              <option value={2}>2 bars</option>
-                              <option value={4}>4 bars</option>
-                            </select>
-                            <button onClick={repeatBeatPattern} disabled={!bpmActive}
-                              title={bpmActive ? 'Tile the first N bars for the full duration' : 'Set a BPM first'}
-                              style={{ ...btnBase, padding: '4px 11px', fontSize: 10, background: bpmActive ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.04)', color: bpmActive ? 'rgba(250,204,21,0.9)' : 'var(--text-muted)', border: '1px solid rgba(234,179,8,0.25)' }}>
-                              ⟳ Tile
-                            </button>
-                          </div>
-                          <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 'auto', lineHeight: 1.4 }}>
-                            {bpmActive ? `Yellow dashes = end of ${beatPatternLen}-bar template` : 'Set BPM above to enable grid tools'}
-                          </span>
+                        {/* Hit type breakdown */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>
+                          {[...byType.entries()].map(([type, typeHits]) => (
+                            <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#888', flexShrink: 0, display: 'inline-block' }} />
+                              <span style={{ fontSize: 11, color: 'var(--text-primary)', minWidth: 80 }}>{DRUM_LABELS[type] ?? type}</span>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{typeHits.length} hit{typeHits.length !== 1 ? 's' : ''}</span>
+                            </div>
+                          ))}
                         </div>
 
-                        {/* Cluster naming rows — one per detected sound group */}
-                        {isClusterMode && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {types.map(letter => {
-                              const cnt   = hitsOfType(letter).length
-                              const color = CLUSTER_COLORS[letter] ?? '#888'
-                              return (
-                                <div key={letter} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderRadius: 7, background: 'rgba(255,255,255,0.04)', border: `1px solid rgba(255,255,255,0.06)` }}>
-                                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-                                  <span style={{ fontSize: 12, fontWeight: 700, color, minWidth: 16 }}>{letter}</span>
-                                  <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 44 }}>{cnt} hit{cnt !== 1 ? 's' : ''}</span>
-                                  <button onClick={() => playClusterSample(letter)}
-                                    title="Play a sample from this sound group"
-                                    style={{ ...btnBase, fontSize: 10, padding: '2px 9px', background: 'rgba(255,255,255,0.07)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
-                                    ▶
-                                  </button>
-                                  <input
-                                    value={beatClusterNames[letter] ?? ''}
-                                    onChange={e => setBeatClusterNames(prev => ({ ...prev, [letter]: e.target.value }))}
-                                    placeholder={`What sound is this? (e.g. kick, snare…)`}
-                                    style={{ flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, padding: '4px 9px', color: 'var(--text-primary)', fontSize: 11, outline: 'none', fontFamily: 'inherit' }}
-                                  />
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-
-                        {/* Instructions */}
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                          {isClusterMode
-                            ? <><strong style={{ color: 'var(--text-secondary)' }}>▶</strong> preview a sample · <strong style={{ color: 'var(--text-secondary)' }}>Name</strong> each group above · <strong style={{ color: 'var(--text-secondary)' }}>Left-click</strong> dot to remove · <strong style={{ color: 'var(--text-secondary)' }}>Right-click</strong> to move to another group</>
-                            : <><strong style={{ color: 'var(--text-secondary)' }}>Left-click</strong> a dot to remove · <strong style={{ color: 'var(--text-secondary)' }}>Right-click</strong> to change its type · <strong style={{ color: 'var(--text-secondary)' }}>Click empty row</strong> to add (snaps to grid if BPM set)</>
-                          }
-                        </div>
-
-                        {/* Hit grid canvas + reclassify popup + playhead */}
-                        <div style={{ background: '#0d0d10', borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
-                          <HitGrid />
-                          <ReclassifyPopup />
-                          {/* Playhead: thin vertical line that sweeps during Listen playback */}
-                          {beatVerifyPlaying && (
-                            <div style={{
-                              position: 'absolute', top: 0, bottom: 0, width: 2, pointerEvents: 'none',
-                              background: 'rgba(255,255,255,0.85)',
-                              boxShadow: '0 0 6px rgba(255,255,255,0.5)',
-                              left: `calc(${LABEL_W}px + ${beatVerifyPos} * (100% - ${LABEL_W}px))`,
-                            }} />
-                          )}
-                        </div>
-
-                        {/* Bottom action row: place on timeline (+ confirm for non-cluster mode) */}
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          {!isClusterMode && (
-                            <button onClick={confirmBeatPattern} disabled={beatConfirming}
-                              title="Tell the AI this pattern is correct so it can learn from it"
-                              style={{ ...btnBase, flex: '0 0 auto', background: beatConfirming ? 'rgba(34,197,94,0.06)' : 'rgba(34,197,94,0.1)', color: 'rgba(134,239,172,1)', border: '1px solid rgba(34,197,94,0.3)', padding: '9px 14px', fontSize: 11 }}>
-                              {beatConfirming ? '✓ Saving…' : '✓ This is correct'}
-                            </button>
-                          )}
-                          <button onClick={beatCommitToTimeline}
-                            style={{ ...btnBase, flex: 1, background: 'rgba(234,179,8,0.85)', color: '#000', border: 'none', fontSize: 12, fontWeight: 700, padding: '9px 0' }}>
-                            + Place {pending.length} hits on timeline →
-                          </button>
-                        </div>
-                      </div>
+                        <button
+                          onClick={dtCommitToTimeline}
+                          style={{ ...btnBase, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.4)', padding: '8px 18px', fontSize: 12, fontWeight: 600 }}
+                        >
+                          Place {dtHits.length} hits on timeline →
+                        </button>
+                      </>
                     )
                   })()}
-
-                  {/* ── Phase 3: After committing, show lane summary with swap buttons ── */}
-                  {beatPlacedLanes && !beatPendingHits && (
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(250,204,21,1)', marginBottom: 10 }}>
-                        On timeline — {beatPlacedLanes.reduce((n, r) => n + r.count, 0)} hits across {beatPlacedLanes.length} lanes
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {beatPlacedLanes.map(({ type, count, laneId }) => (
-                          <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.15)', borderRadius: 7, padding: '7px 12px' }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#6b7280', flexShrink: 0, display: 'inline-block' }} />
-                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', minWidth: 70 }}>{DRUM_LABELS[type] ?? type}</span>
-                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{count} hit{count !== 1 ? 's' : ''}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8 }}>
-                        Each lane has one clip per hit. ↑ Swap sample bulk-replaces all clips on a lane. You can also drag any audio file onto an individual clip to replace just that hit.
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
+
 
             </div>
           </div>

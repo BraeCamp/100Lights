@@ -863,10 +863,23 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
               const isDownloaded = downloadedCatalogIds.has(catalogEntryId(sample.id))
               const isPreviewing = catalogPreviewing === sample.id
               const isDownloading = downloading.has(sample.id)
+              const entryId = catalogEntryId(sample.id)
               return (
                 <div
                   key={sample.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}
+                  draggable={isDownloaded}
+                  onDragStart={isDownloaded ? e => {
+                    e.dataTransfer.effectAllowed = 'copy'
+                    e.dataTransfer.setData('application/x-library-entry-id', entryId)
+                    e.dataTransfer.setData('text/plain', sample.name)
+                    const ghost = document.createElement('div')
+                    ghost.textContent = `♪ ${sample.name}`
+                    ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:#1e1e2e;color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+                    document.body.appendChild(ghost)
+                    e.dataTransfer.setDragImage(ghost, 0, 0)
+                    setTimeout(() => document.body.removeChild(ghost), 0)
+                  } : undefined}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderBottom: '1px solid rgba(255,255,255,0.03)', cursor: isDownloaded ? 'grab' : 'default' }}
                 >
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: CAT_COLORS[sample.category] ?? '#94a3b8', flexShrink: 0, display: 'inline-block' }} />
                   <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sample.name}</span>
@@ -879,12 +892,12 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
                     {isPreviewing ? '■' : '▶'}
                   </button>
                   {isDownloaded ? (
-                    <span style={{ fontSize: 9, color: 'rgba(134,239,172,0.8)', flexShrink: 0 }}>✓</span>
+                    <span title="Downloaded — drag to timeline" style={{ fontSize: 9, color: 'rgba(134,239,172,0.8)', flexShrink: 0 }}>✓</span>
                   ) : (
                     <button
                       onClick={() => downloadSample(sample.id, sample.url, sample.name, sample.category, sample.duration)}
                       disabled={isDownloading}
-                      title="Download to your library"
+                      title="Download to your library so you can drag it to the timeline"
                       style={{ background: 'none', border: '1px solid rgba(139,92,246,0.3)', cursor: isDownloading ? 'default' : 'pointer', color: 'rgba(167,139,250,0.8)', padding: '2px 6px', borderRadius: 4, fontSize: 9, flexShrink: 0 }}
                     >
                       {isDownloading ? '…' : '↓'}
