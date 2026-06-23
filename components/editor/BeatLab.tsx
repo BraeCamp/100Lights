@@ -1540,6 +1540,29 @@ interface BeatLabProps {
   onStemAnalyzed?: () => void      // called after stem analysis completes (or fails)
 }
 
+function WaveViz({ buf, color = '#a855f7', width = 480, height = 52 }: { buf: AudioBuffer | null; color?: string; width?: number; height?: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas || !buf) return
+    const ctx2d = canvas.getContext('2d')
+    if (!ctx2d) return
+    const W = canvas.width, H = canvas.height
+    ctx2d.clearRect(0, 0, W, H)
+    const data = buf.getChannelData(0)
+    const bars = Math.floor(W / 3)
+    const sPerBar = Math.floor(data.length / bars)
+    ctx2d.fillStyle = color
+    for (let i = 0; i < bars; i++) {
+      let peak = 0
+      for (let j = 0; j < sPerBar; j++) peak = Math.max(peak, Math.abs(data[i * sPerBar + j] ?? 0))
+      const bh = Math.max(2, peak * H * 0.9)
+      ctx2d.fillRect(i * 3, (H - bh) / 2, 2, bh)
+    }
+  }, [buf, color])
+  return <canvas ref={ref} width={width} height={height} style={{ width: '100%', height, display: 'block', opacity: buf ? 1 : 0 }} />
+}
+
 export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('editing')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
@@ -4345,7 +4368,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const prevStemUrlRef = useRef<string | null>(null)
   useEffect(() => {
     if (!analyzeStemUrl || analyzeStemUrl === prevStemUrlRef.current) return
-    if (phase !== 'idle') return
     prevStemUrlRef.current = analyzeStemUrl
     async function analyzeFromUrl() {
       setError(null)
@@ -4366,7 +4388,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       }
     }
     void analyzeFromUrl()
-  }, [analyzeStemUrl, phase]) // eslint-disable-line
+  }, [analyzeStemUrl]) // eslint-disable-line
 
   // ── Playback ───────────────────────────────────────────────────────────────
 
@@ -8096,29 +8118,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       {/* ── Ableton import modal ──────────────────────────────────────────── */}
       {/* ── Beat Studio ──────────────────────────────────────────────────── */}
       {beatStudioOpen && (() => {
-        const WaveViz = ({ buf, color = '#a855f7' }: { buf: AudioBuffer | null; color?: string }) => {
-          const ref = useRef<HTMLCanvasElement>(null)
-          useEffect(() => {
-            const canvas = ref.current
-            if (!canvas || !buf) return
-            const ctx2d = canvas.getContext('2d')
-            if (!ctx2d) return
-            const W = canvas.width, H = canvas.height
-            ctx2d.clearRect(0, 0, W, H)
-            const data = buf.getChannelData(0)
-            const bars = Math.floor(W / 3)
-            const sPerBar = Math.floor(data.length / bars)
-            ctx2d.fillStyle = color
-            for (let i = 0; i < bars; i++) {
-              let peak = 0
-              for (let j = 0; j < sPerBar; j++) peak = Math.max(peak, Math.abs(data[i * sPerBar + j] ?? 0))
-              const bh = Math.max(2, peak * H * 0.9)
-              ctx2d.fillRect(i * 3, (H - bh) / 2, 2, bh)
-            }
-          }, [buf, color])
-          return <canvas ref={ref} width={480} height={52} style={{ width: '100%', height: 52, display: 'block', opacity: buf ? 1 : 0 }} />
-        }
-
         const btnBase: React.CSSProperties = { padding: '7px 16px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600 }
         const stepActive = (n: number) => beatStep === n
         const stepDone   = (n: number) => beatStep > n || (n === 1 && !!beatRef) || (n === 2 && !!beatBox)
@@ -8936,30 +8935,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
       {/* ── Match Studio ─────────────────────────────────────────────────── */}
       {matchStudioOpen && (() => {
-        // Waveform mini-renderer using a canvas
-        const WaveViz = ({ buf, color = '#a855f7' }: { buf: AudioBuffer | null; color?: string }) => {
-          const ref = useRef<HTMLCanvasElement>(null)
-          useEffect(() => {
-            const canvas = ref.current
-            if (!canvas || !buf) return
-            const ctx2d = canvas.getContext('2d')
-            if (!ctx2d) return
-            const W = canvas.width, H = canvas.height
-            ctx2d.clearRect(0, 0, W, H)
-            const data = buf.getChannelData(0)
-            const bars = Math.floor(W / 3)
-            const sPerBar = Math.floor(data.length / bars)
-            ctx2d.fillStyle = color
-            for (let i = 0; i < bars; i++) {
-              let peak = 0
-              for (let j = 0; j < sPerBar; j++) peak = Math.max(peak, Math.abs(data[i * sPerBar + j] ?? 0))
-              const bh = Math.max(2, peak * H * 0.9)
-              ctx2d.fillRect(i * 3, (H - bh) / 2, 2, bh)
-            }
-          }, [buf, color])
-          return <canvas ref={ref} width={420} height={56} style={{ width: '100%', height: 56, display: 'block', opacity: buf ? 1 : 0 }} />
-        }
-
         const slotStyle = (active: boolean): React.CSSProperties => ({
           flex: 1, background: 'var(--bg-card)', border: `1px solid ${active ? 'rgba(236,72,153,0.5)' : 'var(--border)'}`,
           borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
