@@ -1563,6 +1563,72 @@ function WaveViz({ buf, color = '#a855f7', width = 480, height = 52 }: { buf: Au
   return <canvas ref={ref} width={width} height={height} style={{ width: '100%', height, display: 'block', opacity: buf ? 1 : 0 }} />
 }
 
+// Stacked alignment canvas — reference on top, beatbox on bottom, both drawn at their
+// respective time positions so the user can see and correct the offset between them.
+function AlignCanvas({ refBuf, boxBuf, offset }: { refBuf: AudioBuffer; boxBuf: AudioBuffer; offset: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const W = canvas.width, H = canvas.height
+    const rowH = H / 2
+    ctx.clearRect(0, 0, W, H)
+
+    // Total timeline duration to fit both tracks
+    const refStart  = offset < 0 ? -offset : 0
+    const boxStart  = offset > 0 ?  offset : 0
+    const totalDur  = Math.max(refStart + refBuf.duration, boxStart + boxBuf.duration) * 1.02
+    const pixPerSec = W / totalDur
+
+    function drawTrack(buf: AudioBuffer, startSec: number, yOff: number, color: string) {
+      const data    = buf.getChannelData(0)
+      const startPx = startSec * pixPerSec
+      const trackW  = buf.duration * pixPerSec
+      const bars    = Math.max(1, Math.floor(trackW / 2))
+      const sPerBar = Math.floor(buf.length / bars)
+      ctx!.fillStyle = color
+      for (let i = 0; i < bars; i++) {
+        let peak = 0
+        const base = i * sPerBar
+        for (let j = 0; j < sPerBar; j++) peak = Math.max(peak, Math.abs(data[base + j] ?? 0))
+        const bh = Math.max(2, peak * rowH * 0.85)
+        ctx!.fillRect(startPx + i * (trackW / bars), yOff + (rowH - bh) / 2, Math.max(1, trackW / bars - 1), bh)
+      }
+    }
+
+    // Reference track (top half) — yellow
+    ctx.fillStyle = 'rgba(250,204,21,0.06)'
+    ctx.fillRect(0, 0, W, rowH)
+    drawTrack(refBuf, refStart, 0, 'rgba(250,204,21,0.75)')
+
+    // Beatbox track (bottom half) — blue
+    ctx.fillStyle = 'rgba(96,165,250,0.06)'
+    ctx.fillRect(0, rowH, W, rowH)
+    drawTrack(boxBuf, boxStart, rowH, 'rgba(96,165,250,0.75)')
+
+    // Divider
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+    ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(0, rowH); ctx.lineTo(W, rowH); ctx.stroke()
+
+    // Playhead at time 0 of each track (so user can see where each starts)
+    const drawMark = (xSec: number, color: string) => {
+      const x = xSec * pixPerSec
+      ctx!.strokeStyle = color; ctx!.lineWidth = 1.5
+      ctx!.setLineDash([3, 3])
+      ctx!.beginPath(); ctx!.moveTo(x, 0); ctx!.lineTo(x, H); ctx!.stroke()
+      ctx!.setLineDash([])
+    }
+    drawMark(refStart, 'rgba(250,204,21,0.5)')
+    drawMark(boxStart, 'rgba(96,165,250,0.5)')
+  }, [refBuf, boxBuf, offset])
+
+  return <canvas ref={canvasRef} width={640} height={80}
+    style={{ width: '100%', height: 80, display: 'block', borderRadius: 6, border: '1px solid rgba(255,255,255,0.07)' }} />
+}
+
 export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('editing')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
@@ -1833,6 +1899,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatRefBpm,      setBeatRefBpm]      = useState<number | null>(null)
   const [beatBox,         setBeatBox]         = useState<AudioBuffer | null>(null)
   const [beatBoxName,     setBeatBoxName]     = useState('')
+  // beatBoxOffset: seconds the beatbox starts AFTER the reference (negative = beatbox starts before ref)
+  const [beatBoxOffset,   setBeatBoxOffset]   = useState(0)
   const [beatResult,        setBeatResult]        = useState<AudioBuffer | null>(null)
   const [beatLoading,       setBeatLoading]       = useState(false)
   const [beatProgress,      setBeatProgress]      = useState('')
@@ -1888,6 +1956,51 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     while (bpm < 60)  bpm *= 2
     while (bpm > 220) bpm /= 2
     return bpm
+  }
+
+  // Cross-correlation on RMS envelopes to find how many seconds beatBox is offset from ref.
+  // Returns positive value = beatbox starts AFTER ref, negative = beatbox starts BEFORE ref.
+  function autoAlignBeatBox() {
+    if (!beatRef || !beatBox) return
+    const FRAME_MS  = 20                         // 20ms per RMS frame
+    const MAX_LAG_S = Math.min(10, Math.min(beatRef.duration, beatBox.duration) * 0.8)
+
+    function rmsEnv(buf: AudioBuffer): Float32Array {
+      const sr       = buf.sampleRate
+      const hopSize  = Math.round((FRAME_MS / 1000) * sr)
+      const n        = Math.floor(buf.length / hopSize)
+      const data     = buf.getChannelData(0)
+      const out      = new Float32Array(n)
+      for (let i = 0; i < n; i++) {
+        let sum = 0
+        for (let j = 0; j < hopSize; j++) sum += (data[i * hopSize + j] ?? 0) ** 2
+        out[i] = Math.sqrt(sum / hopSize)
+      }
+      return out
+    }
+
+    const refEnv = rmsEnv(beatRef)
+    const boxEnv = rmsEnv(beatBox)
+    const maxLagFrames = Math.floor(MAX_LAG_S / (FRAME_MS / 1000))
+
+    // Normalize envelopes (zero-mean)
+    const mean = (a: Float32Array) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s / a.length }
+    const refMu = mean(refEnv), boxMu = mean(boxEnv)
+    const refN = refEnv.map(v => v - refMu)
+    const boxN = boxEnv.map(v => v - boxMu)
+
+    let bestLag = 0, bestCorr = -Infinity
+    for (let lag = -maxLagFrames; lag <= maxLagFrames; lag++) {
+      let corr = 0, count = 0
+      for (let i = 0; i < refN.length; i++) {
+        const j = i - lag
+        if (j >= 0 && j < boxN.length) { corr += refN[i] * boxN[j]; count++ }
+      }
+      if (count > 0) { const norm = corr / count; if (norm > bestCorr) { bestCorr = norm; bestLag = lag } }
+    }
+
+    const offsetSec = parseFloat((bestLag * FRAME_MS / 1000).toFixed(3))
+    setBeatBoxOffset(offsetSec)
   }
 
   function beatStopPlay() {
@@ -2037,6 +2150,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         const decoded = await decodeAudio(blob)
         setBeatBox(decoded)
         setBeatBoxName('Beatbox recording')
+        setBeatBoxOffset(0)
         setBeatStep(3)
       } catch { showToast('Recording decode failed') }
       setBeatRecording(false)
@@ -2200,11 +2314,20 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       if (result.hits.length === 0) {
         showToast('No drum hits detected — try recording louder or closer to the mic')
       } else {
+        // Shift hit times by the alignment offset so they align with the reference timeline.
+        // beatBoxOffset > 0 means beatbox starts after ref, so hit times increase by that amount.
+        // beatBoxOffset < 0 means beatbox started before ref, so we remove the pre-roll.
+        const shifted = beatBoxOffset !== 0
+          ? result.hits
+              .map(h => ({ ...h, time: Math.max(0, h.time + beatBoxOffset) }))
+              .filter(h => h.time >= 0)
+          : result.hits
+
         // Auto-quantize to grid if BPM is known, otherwise keep raw times
         const bpm = beatGridBpm ?? beatRefBpm
         const snapped = bpm
-          ? result.hits.map(h => ({ ...h, time: Math.round(h.time / ((60/bpm)*(4/beatSubdiv))) * ((60/bpm)*(4/beatSubdiv)) }))
-          : result.hits
+          ? shifted.map(h => ({ ...h, time: Math.round(h.time / ((60/bpm)*(4/beatSubdiv))) * ((60/bpm)*(4/beatSubdiv)) }))
+          : shifted
         // Cluster by spectral similarity — no drum-type assumptions
         const assignments = clusterHits(snapped, beatClusterK)
         const clustered = snapped.map(h => ({ ...h, clusterId: CLUSTER_LETTERS[assignments[h.id] ?? 0] as string }))
@@ -2254,13 +2377,24 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   // Play reference + beatbox audio simultaneously so the user can hear both while
-  // reviewing the dot grid. Each track has an independent gain node for muting.
+  // reviewing the dot grid. beatBoxOffset is applied so they start at the right times.
   function startVerifyPlayback() {
     stopVerifyPlayback()
     if (!beatBox) return
-    const duration = beatBox.duration
+
+    // Determine which track starts first and compute each track's delay from t=0
+    // offset > 0: beatbox starts |offset| seconds after ref (ref starts first)
+    // offset < 0: ref starts |offset| seconds after beatbox (beatbox starts first)
+    const refDelay = beatBoxOffset < 0 ? -beatBoxOffset : 0
+    const boxDelay = beatBoxOffset > 0 ?  beatBoxOffset : 0
+    const totalDuration = Math.max(
+      refDelay + (beatRef?.duration ?? 0),
+      boxDelay + beatBox.duration,
+    )
+
     const ctx = new AudioContext()
     beatVerifyCtxRef.current = ctx
+    const now = ctx.currentTime
 
     const refGain = ctx.createGain()
     const boxGain = ctx.createGain()
@@ -2271,21 +2405,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     beatVerifyGainRef.current = { ref: refGain, box: boxGain }
 
     if (beatRef) {
-      const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain); src.start()
+      const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain)
+      src.start(now + refDelay)
     }
     const boxSrc = ctx.createBufferSource(); boxSrc.buffer = beatBox; boxSrc.connect(boxGain)
-    // Capture ctx so this callback can't accidentally kill a later playback session.
-    // When ctx.close() is called (e.g. user presses ▶ Listen again), onended fires on
-    // the old boxSrc — without this guard it would call stopVerifyPlayback() and close
-    // the brand-new context that was just created.
     const capturedCtx = ctx
     boxSrc.onended = () => { if (beatVerifyCtxRef.current === capturedCtx) stopVerifyPlayback() }
-    boxSrc.start()
+    boxSrc.start(now + boxDelay)
 
     const wallStart = performance.now()
     setBeatVerifyPlaying(true)
     const tick = () => {
-      const pos = Math.min(1, (performance.now() - wallStart) / 1000 / duration)
+      const pos = Math.min(1, (performance.now() - wallStart) / 1000 / totalDuration)
       setBeatVerifyPos(pos)
       if (pos < 1) beatVerifyRafRef.current = requestAnimationFrame(tick)
     }
@@ -8214,12 +8345,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               </div>
 
               {/* ── Step 2: Record beatbox ── */}
-              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatBox ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginBottom: 12, opacity: beatRef ? 1 : 0.4, pointerEvents: beatRef ? 'auto' : 'none', position: 'relative' }}>
+              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatBox ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginBottom: 12, position: 'relative' }}>
                 <div style={stepHeaderStyle(2)}>
                   <div style={stepNumStyle(2)}>{stepDone(2) ? '✓' : '2'}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Record your beatbox</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>Listen to the beat above until you have it memorised, then record your attempt</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Record your beatbox <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>(or import a file)</span></div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>Beatbox or import any audio — a reference beat in step 1 is optional but improves accuracy</div>
                   </div>
                   {/* Metronome toggle */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
@@ -8257,7 +8388,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     {beatRecording ? '■ Stop recording' : '⏺ Record beatbox'}
                   </button>
                   <button
-                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatBox(d); setBeatBoxName(f.name); setBeatStep(3) } catch { showToast('Could not decode file') } }; inp.click() }}
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatBox(d); setBeatBoxName(f.name); setBeatBoxOffset(0); setBeatStep(3) } catch { showToast('Could not decode file') } }; inp.click() }}
                     style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
                   >
                     Browse file
@@ -8309,6 +8440,53 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   </>
                 )}
               </div>
+
+              {/* ── Alignment panel (shown when both ref and beatbox are loaded) ── */}
+              {beatRef && beatBox && (
+                <div style={{ background: 'var(--bg-card)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: 10, padding: 18, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Align tracks</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                        Drag the slider or click Auto-align to sync the beatbox (blue) with the reference (yellow). The AI trains more accurately when they line up.
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button onClick={autoAlignBeatBox}
+                        style={{ ...btnBase, background: 'rgba(96,165,250,0.12)', color: 'rgba(96,165,250,1)', border: '1px solid rgba(96,165,250,0.35)', padding: '5px 12px', fontSize: 10 }}>
+                        ⟳ Auto-align
+                      </button>
+                      <button onClick={() => setBeatBoxOffset(0)}
+                        style={{ ...btnBase, background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '5px 10px', fontSize: 10 }}>
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 8 }}>
+                    <AlignCanvas refBuf={beatRef} boxBuf={beatBox} offset={beatBoxOffset} />
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0, minWidth: 56, textAlign: 'right' }}>
+                      {beatBoxOffset >= 0 ? '+' : ''}{(beatBoxOffset * 1000).toFixed(0)} ms
+                    </span>
+                    <input
+                      type="range"
+                      min={-Math.min(5, beatRef.duration * 0.8)}
+                      max={Math.min(5, beatBox.duration * 0.8)}
+                      step={0.01}
+                      value={beatBoxOffset}
+                      onChange={e => setBeatBoxOffset(parseFloat(e.target.value))}
+                      style={{ flex: 1, accentColor: 'rgba(96,165,250,1)' }}
+                    />
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <span style={{ fontSize: 9, color: 'rgba(250,204,21,0.8)', background: 'rgba(250,204,21,0.08)', borderRadius: 3, padding: '1px 5px' }}>■ Ref</span>
+                      <span style={{ fontSize: 9, color: 'rgba(96,165,250,0.8)', background: 'rgba(96,165,250,0.08)', borderRadius: 3, padding: '1px 5px' }}>■ Box</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ── Step 3: Transform & result ── */}
               <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatResult ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, opacity: beatRef && beatBox ? 1 : 0.4, pointerEvents: beatRef && beatBox ? 'auto' : 'none' }}>
@@ -8805,6 +8983,33 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             ↺
                           </button>
                         </div>
+
+                        {/* Alignment offset row — only when reference is loaded */}
+                        {beatRef && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.18)', borderRadius: 7, padding: '6px 10px' }}>
+                            <span style={{ fontSize: 10, color: 'rgba(96,165,250,0.85)', flexShrink: 0 }}>Align offset</span>
+                            <input
+                              type="range"
+                              min={-Math.min(5, beatRef.duration * 0.8)}
+                              max={Math.min(5, beatBox?.duration ? beatBox.duration * 0.8 : 5)}
+                              step={0.01}
+                              value={beatBoxOffset}
+                              onChange={e => setBeatBoxOffset(parseFloat(e.target.value))}
+                              style={{ flex: 1, accentColor: 'rgba(96,165,250,1)', height: 4 }}
+                            />
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums', minWidth: 54 }}>
+                              {beatBoxOffset >= 0 ? '+' : ''}{(beatBoxOffset * 1000).toFixed(0)} ms
+                            </span>
+                            <button onClick={autoAlignBeatBox}
+                              style={{ fontSize: 9, padding: '3px 8px', borderRadius: 4, border: '1px solid rgba(96,165,250,0.3)', background: 'rgba(96,165,250,0.1)', color: 'rgba(96,165,250,0.9)', cursor: 'pointer', flexShrink: 0 }}>
+                              ⟳ Auto
+                            </button>
+                            <button onClick={() => setBeatBoxOffset(0)}
+                              style={{ fontSize: 9, padding: '3px 7px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+                              Reset
+                            </button>
+                          </div>
+                        )}
 
                         {/* Row 2: grid tools — quantize + repeat */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: 'rgba(0,0,0,0.15)', borderRadius: 7, padding: '7px 10px' }}>
