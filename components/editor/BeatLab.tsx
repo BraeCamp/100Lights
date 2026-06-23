@@ -96,7 +96,7 @@ import { addTakeToGroup } from '@/lib/loop-recorder'
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim']
-const DEFAULT_ENABLED: BeatType[] = []
+const DEFAULT_ENABLED: BeatType[] = ['kick', 'snare', 'hihat', 'clap']
 
 type InstrumentFamily = 'drums' | 'guitar' | 'piano' | 'synth'
 const FAMILY_LABEL: Record<InstrumentFamily, string> = { drums: 'Drums', guitar: 'Guitar', piano: 'Piano', synth: 'Synth' }
@@ -1024,8 +1024,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
 
   function handleLaneRightClick(e: React.MouseEvent<HTMLDivElement>) {
     e.preventDefault()
-    const [t, note] = calcLaneHit(e)
-    onAddHit(t, note)
+    onLaneContextMenu(e)
   }
 
   const dimmed = muted || (anySoloed && !soloed)
@@ -1545,6 +1544,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [phase, setPhase] = useState<Phase>('editing')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
+  const hitsRef = useRef<BeatHit[]>([])
+  useEffect(() => { hitsRef.current = hits }, [hits])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeLaneType, setActiveLaneType] = useState<BeatType | null>(null)
   const activeLaneTypeRef = useRef<BeatType | null>(null)
@@ -3355,18 +3356,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // + Track popover state
 
-  // ── Tap tempo ──────────────────────────────────────────────────────────────
-  function handleTapTempo() {
-    const now = Date.now()
-    tapTimesRef.current = [...tapTimesRef.current, now].filter(t => now - t < 3000).slice(-8)
-    const taps = tapTimesRef.current
-    if (taps.length >= 2) {
-      const intervals = taps.slice(1).map((t, i) => t - taps[i])
-      const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length
-      const detected = Math.round(60000 / avg)
-      if (detected >= 40 && detected <= 300) setBpm(detected)
-    }
-  }
+  // handleTapTempo was a legacy duplicate that only set bpm (not masterBpm).
+  // Replaced with a direct alias to tapTempo, which sets both.
+  const handleTapTempo = tapTempo
 
   // ── Per-lane input mode ────────────────────────────────────────────────────
   // inputLanes: which lanes have input armed
@@ -3543,11 +3535,78 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   // Session view clip grid: Record<laneType, (SceneClip | null)[]>
   const [sessionClips, setSessionClips] = useState<Record<string, (SceneClip | null)[]>>({})
   const [sessionPlaying, setSessionPlaying] = useState<Record<string, number | null>>({})
+  // Per-lane session playback timers (loop reschedule) and active scene info
+  const sessionTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const sessionPlayingSceneRef = useRef<Map<string, number>>(new Map())
 
   function getSessionLaneClips(laneType: string): (SceneClip | null)[] {
     const existing = sessionClips[laneType]
     if (existing && existing.length === SCENE_COUNT) return existing
     return Array(SCENE_COUNT).fill(null)
+  }
+
+  // Stop session audio for one lane (does not update sessionPlaying state — caller must do that)
+  function stopSessionLaneAudio(laneType: string) {
+    const timer = sessionTimersRef.current.get(laneType)
+    if (timer != null) clearTimeout(timer)
+    sessionTimersRef.current.delete(laneType)
+    sessionPlayingSceneRef.current.delete(laneType)
+  }
+
+  // Start looping a session clip's hits for a lane. Re-schedules itself before each loop boundary.
+  async function startSessionClipAudio(laneType: string, sceneIdx: number) {
+    stopSessionLaneAudio(laneType)
+    const clip = sessionClips[laneType]?.[sceneIdx]
+    if (!clip) return
+    const ctx = getAudioCtx()
+    const bpmVal = effectiveBpmRef.current || 120
+    const lapSec = Math.max(0.1, clip.durationBars * 4 * (60 / bpmVal))
+    const laneHits = hitsRef.current.filter(h => h.type === laneType && h.time < lapSec)
+    sessionPlayingSceneRef.current.set(laneType, sceneIdx)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let drumMod: any, melMod: any
+    try {
+      drumMod = await import('@/lib/drum-samples')
+      melMod  = await import('@/lib/instrument-synth')
+    } catch { stopSessionLaneAudio(laneType); return }
+    const playDrumHit:    (ctx: AudioContext, mode: string, type: string, when: number, vel: number, note: number, buf?: AudioBuffer, dest?: AudioNode) => void = drumMod.playDrumHit
+    const playMelodicNote: (ctx: AudioContext, type: string, note: number, when: number, vel: number, dest?: AudioNode) => void = melMod.playMelodicNote
+    const MELODIC_TYPES:   Set<string> = melMod.MELODIC_TYPES
+
+    function playLap(lapStart: number) {
+      if (sessionPlayingSceneRef.current.get(laneType) !== sceneIdx) return
+      for (const hit of laneHits) {
+        const when = lapStart + hit.time
+        if (when < ctx.currentTime - 0.01) continue
+        if (MELODIC_TYPES.has(hit.type)) playMelodicNote(ctx, hit.type, hit.note, when, hit.velocity, ctx.destination)
+        else playDrumHit(ctx, 'synth', hit.type, when, hit.velocity, hit.note ?? 60, undefined, ctx.destination)
+      }
+      // Schedule follow action / loop before end of lap
+      const nextLap = lapStart + lapSec
+      const msUntilNext = (nextLap - ctx.currentTime) * 1000 - 80
+      const timer = setTimeout(() => {
+        if (sessionPlayingSceneRef.current.get(laneType) !== sceneIdx) return
+        const followAction = clip?.followAction ?? 'loop'
+        if (followAction === 'stop') {
+          stopSessionLaneAudio(laneType)
+          setSessionPlaying(prev => ({ ...prev, [laneType]: null }))
+        } else if (followAction === 'next') {
+          const nextSceneIdx = sceneIdx + 1
+          if (sessionClips[laneType]?.[nextSceneIdx]) {
+            setSessionPlaying(prev => ({ ...prev, [laneType]: nextSceneIdx }))
+            void startSessionClipAudio(laneType, nextSceneIdx)
+          } else {
+            stopSessionLaneAudio(laneType)
+            setSessionPlaying(prev => ({ ...prev, [laneType]: null }))
+          }
+        } else {
+          playLap(nextLap)
+        }
+      }, Math.max(0, msUntilNext))
+      sessionTimersRef.current.set(laneType, timer)
+    }
+    playLap(ctx.currentTime)
   }
 
   // ── Locators ──────────────────────────────────────────────────────────────
@@ -3594,6 +3653,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function startLaneRecording() {
     setError(null)
+    // Warn if AB loop is active — recording will auto-create a CompGroup which may surprise the user
+    if (abLoopEnabled && abLoop && !window.confirm(
+      'AB loop is active. Recording will automatically create a Comp Group for this loop range.\n\nContinue?'
+    )) return
+    // Stop active playback so the metronome click doesn't bleed into the mic
+    if (isPlaying) stopPlayback()
     try {
       // Count-in: play click track for 1 bar before recording
       if (countIn) {
@@ -3887,6 +3952,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     automLanes: AutomLaneDef[]
     locators: Locator[]
     typeOverrides: TypeOverrides
+    groupDefs: GroupDef[]
   }
   const historyRef    = useRef<HistorySnapshot[]>([])
   const historyIdxRef = useRef(-1)
@@ -3899,6 +3965,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       automLanes: automLanes.map(a => ({ ...a, points: [...a.points] })),
       locators: [...locators],
       typeOverrides: { ...typeOverrides },
+      groupDefs: groupDefsRef.current.map(g => ({ ...g, childTypes: [...g.childTypes] })),
     }
     historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
     historyRef.current.push(snap)
@@ -3913,6 +3980,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setAutomLanes(snap.automLanes)
     setLocators(snap.locators)
     setTypeOverrides(snap.typeOverrides)
+    if (snap.groupDefs) setGroupDefs(snap.groupDefs)
   }
 
   function undo() {
@@ -3947,7 +4015,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       version: '1.0',
       hits, laneEffects, lanePans, laneReverb, laneDelay,
       automLanes, typeOverrides, locators, bpm, masterVolume,
-      quantizeSwing, sessionClips, extraLaneIds,
+      quantizeSwing, sessionClips, extraLaneIds, groupDefs,
     }
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -3976,18 +4044,28 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         if (s.quantizeSwing != null) setQuantizeSwing(s.quantizeSwing)
         if (s.sessionClips)  setSessionClips(s.sessionClips)
         if (s.extraLaneIds)  setExtraLaneIds(s.extraLaneIds)
+        if (s.groupDefs)     setGroupDefs(s.groupDefs as GroupDef[])
       } catch { /* ignore bad files */ }
     }
     reader.readAsText(file)
   }
 
-  // Project-scoped autosave key — new projects (no ID) never restore or overwrite
-  const autosaveKey = projectId ? `beatlab-autosave-${projectId}` : null
+  // Project-scoped autosave key.
+  // If no server projectId exists, generate a stable session ID in localStorage so new
+  // projects autosave too (previously they silently lost all work on reload).
+  const localSessionId = useRef<string | null>(null)
+  if (localSessionId.current === null) {
+    const key = 'beatlab-local-session-id'
+    let sid = typeof window !== 'undefined' ? localStorage.getItem(key) : null
+    if (!sid) { sid = `local-${Date.now()}`; if (typeof window !== 'undefined') localStorage.setItem(key, sid) }
+    localSessionId.current = sid
+  }
+  const autosaveKey = `beatlab-autosave-${projectId ?? localSessionId.current}`
 
   // Restore audio clips from IndexedDB on mount
   useEffect(() => {
     async function restoreClips() {
-      if (!autosaveKey) return  // new project — start fresh
+      if (!autosaveKey) return
       try {
         // One-time migration: move legacy shared key to project-scoped key
         const legacy = localStorage.getItem('beatlab-autosave')
@@ -5540,30 +5618,123 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const sr = 44100
     const totalSamples = Math.ceil(sr * (duration + 2))
     const offCtx = new OfflineAudioContext(2, totalSamples, sr)
+
+    // Master chain: gain → brickwall limiter → destination
     const masterGain = offCtx.createGain()
     masterGain.gain.value = masterVolume
     const exportLimiter = offCtx.createDynamicsCompressor()
-    exportLimiter.threshold.value = -0.3
-    exportLimiter.knee.value      = 0
-    exportLimiter.ratio.value     = 20
-    exportLimiter.attack.value    = 0.001
-    exportLimiter.release.value   = 0.1
-    masterGain.connect(exportLimiter)
-    exportLimiter.connect(offCtx.destination)
+    exportLimiter.threshold.value = -0.3; exportLimiter.knee.value = 0
+    exportLimiter.ratio.value = 20; exportLimiter.attack.value = 0.001; exportLimiter.release.value = 0.1
+    masterGain.connect(exportLimiter); exportLimiter.connect(offCtx.destination)
 
-    // Build per-lane mixer chains (pan only — no per-lane gain control in this app) into master
-    const getLaneNode = (() => {
-      const cache = new Map<string, AudioNode>()
-      return (laneType: string) => {
-        if (!cache.has(laneType)) {
-          const panVal = lanePansRef.current[laneType] ?? 0
-          const p = offCtx.createStereoPanner(); p.pan.value = panVal
-          p.connect(masterGain)
-          cache.set(laneType, p)
-        }
-        return cache.get(laneType)!
+    // Global reverb return (synthetic IR)
+    const revIR   = makeReverbIR(offCtx as unknown as AudioContext)
+    const revNode = offCtx.createConvolver(); revNode.buffer = revIR; revNode.connect(masterGain)
+    const dlyNode = offCtx.createDelay(5)
+    dlyNode.delayTime.value = effectiveBpmRef.current > 0 ? 60 / effectiveBpmRef.current / 2 : 0.25
+    const dlyFb = offCtx.createGain(); dlyFb.gain.value = 0.4
+    dlyNode.connect(dlyFb); dlyFb.connect(dlyNode); dlyNode.connect(masterGain)
+
+    // Build group buses (mirrors live playback)
+    const groupBuses = new Map<string, GainNode>()
+    for (const g of groupDefsRef.current) {
+      const bus = offCtx.createGain(); bus.gain.value = 1; bus.connect(masterGain)
+      groupBuses.set(g.id, bus)
+    }
+
+    // Build per-lane signal chain: input → FX → pan → group|master + sends
+    const laneInputs = new Map<string, GainNode>()
+    function getLaneNode(laneType: string): GainNode {
+      if (laneInputs.has(laneType)) return laneInputs.get(laneType)!
+
+      const inp = offCtx.createGain()
+      // FX chain — replicate live buildFxNodes using the offline context
+      let chainOut: AudioNode = inp
+      for (const fx of laneEffectsRef.current[laneType] ?? []) {
+        if (!fx.enabled) continue
+        const p = fx.params
+        try {
+          switch (fx.type) {
+            case 'eq3': {
+              const lo  = offCtx.createBiquadFilter(); lo.type  = 'lowshelf';  lo.frequency.value = 200;  lo.gain.value = p.low  ?? 0
+              const mid = offCtx.createBiquadFilter(); mid.type = 'peaking';   mid.frequency.value = p.midFreq ?? 1000; mid.Q.value = 1; mid.gain.value = p.mid ?? 0
+              const hi  = offCtx.createBiquadFilter(); hi.type  = 'highshelf'; hi.frequency.value = 8000; hi.gain.value = p.high ?? 0
+              chainOut.connect(lo); lo.connect(mid); mid.connect(hi); chainOut = hi; break
+            }
+            case 'comp': {
+              const comp = offCtx.createDynamicsCompressor()
+              comp.threshold.value = p.threshold ?? -24; comp.ratio.value = p.ratio ?? 4
+              comp.attack.value = p.attack ?? 0.003; comp.release.value = p.release ?? 0.25; comp.knee.value = p.knee ?? 6
+              chainOut.connect(comp); chainOut = comp; break
+            }
+            case 'saturator': {
+              const drive = Math.max(1, Math.min(20, p.drive ?? 3)); const wet = Math.max(0, Math.min(1, p.wet ?? 1))
+              const curve = new Float32Array(2048)
+              for (let i = 0; i < 2048; i++) { const x = (i * 2 / 2047 - 1) * drive; curve[i] = Math.tanh(x) / Math.tanh(drive) }
+              const ws = offCtx.createWaveShaper(); ws.curve = curve; ws.oversample = '4x'
+              const i2 = offCtx.createGain(); const o2 = offCtx.createGain()
+              const dryG = offCtx.createGain(); dryG.gain.value = 1 - wet
+              const wetG = offCtx.createGain(); wetG.gain.value = wet
+              i2.connect(dryG); dryG.connect(o2); i2.connect(wetG); wetG.connect(ws); ws.connect(o2)
+              chainOut.connect(i2); chainOut = o2; break
+            }
+            case 'crush': {
+              const bits = Math.max(1, Math.min(16, p.bits ?? 8))
+              const step = Math.pow(2, bits); const curve = new Float32Array(2048)
+              for (let i = 0; i < 2048; i++) { const x = i * 2 / 2047 - 1; curve[i] = Math.round(x * step) / step }
+              const ws = offCtx.createWaveShaper(); ws.curve = curve
+              chainOut.connect(ws); chainOut = ws; break
+            }
+            case 'delay': {
+              const wet = Math.max(0, Math.min(1, p.wet ?? 0.3))
+              const dly = offCtx.createDelay(5); dly.delayTime.value = Math.max(0.01, Math.min(5, p.time ?? 0.25))
+              const fb  = offCtx.createGain(); fb.gain.value = Math.max(0, Math.min(0.95, p.feedback ?? 0.4))
+              dly.connect(fb); fb.connect(dly)
+              const i2 = offCtx.createGain(); const o2 = offCtx.createGain()
+              const dryG = offCtx.createGain(); dryG.gain.value = 1 - wet; const wetG = offCtx.createGain(); wetG.gain.value = wet
+              i2.connect(dryG); dryG.connect(o2); i2.connect(wetG); wetG.connect(dly); dly.connect(o2)
+              chainOut.connect(i2); chainOut = o2; break
+            }
+            case 'autofilter': {
+              const filt = offCtx.createBiquadFilter(); filt.type = 'lowpass'
+              filt.frequency.value = Math.max(80, p.freq ?? 800); filt.Q.value = Math.max(0.5, p.Q ?? 1.5)
+              chainOut.connect(filt); chainOut = filt; break
+            }
+            // chorus, phaser, flanger, lfo, beatrepeat: LFOs not supported in OfflineAudioContext reliably
+            // — pass audio through dry to preserve timing
+            default: break
+          }
+        } catch { /* skip broken FX in export */ }
       }
-    })()
+
+      const panner = offCtx.createStereoPanner(); panner.pan.value = lanePansRef.current[laneType] ?? 0
+      chainOut.connect(panner)
+
+      // Route to group bus or master
+      const groupForLane = groupDefsRef.current.find(g => g.childTypes.includes(laneType))
+      const dest = groupForLane ? (groupBuses.get(groupForLane.id) ?? masterGain) : masterGain
+      panner.connect(dest)
+
+      // Reverb and delay sends
+      const revSend = offCtx.createGain(); revSend.gain.value = laneReverbRef.current[laneType] ?? 0
+      const dlySend = offCtx.createGain(); dlySend.gain.value = laneDelayRef.current[laneType] ?? 0
+      panner.connect(revSend); revSend.connect(revNode)
+      panner.connect(dlySend); dlySend.connect(dlyNode)
+
+      // Automation: volume and pan lanes applied via scheduled gain/pan values
+      for (const al of automLanes.filter(a => a.laneType === laneType)) {
+        const sorted = [...al.points].sort((a, b) => a.time - b.time)
+        if (sorted.length < 2) continue
+        if (al.param === 'volume') {
+          for (const pt of sorted) inp.gain.setValueAtTime(pt.value, pt.time)
+        } else if (al.param === 'pan') {
+          for (const pt of sorted) panner.pan.setValueAtTime(pt.value * 2 - 1, pt.time)
+        }
+      }
+
+      laneInputs.set(laneType, inp)
+      return inp
+    }
 
     // Render all hits
     const allLaneTypes = Array.from(new Set(hits.map(h => h.type)))
@@ -6348,7 +6519,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'row', minHeight: 0 }}>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
-        {false && phase === 'idle' && (
+        {phase === 'idle' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: 40, overflowY: 'auto' }}>
             {/* Mode selector */}
             <div style={{ display: 'flex', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 3 }}>
@@ -6750,7 +6921,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
                       <Suspense fallback={null}>
                       <SessionView
-                        bpm={effectiveBpmRef.current}
+                        bpm={bpm ?? masterBpm}
                         lanes={activeLaneTypes.map(type => ({
                           type,
                           label: typeLabel(type, typeOverrides),
@@ -6760,17 +6931,28 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         }) satisfies SessionLane)}
                         playing={sessionPlaying}
                         onLaunchScene={sceneIdx => {
-                          setSessionPlaying(prev => {
-                            const next = { ...prev }
-                            activeLaneTypes.forEach(t => { next[t] = sessionClips[t]?.[sceneIdx] ? sceneIdx : null })
-                            return next
+                          activeLaneTypes.forEach(t => {
+                            if (sessionClips[t]?.[sceneIdx]) {
+                              setSessionPlaying(prev => ({ ...prev, [t]: sceneIdx }))
+                              void startSessionClipAudio(t, sceneIdx)
+                            } else {
+                              stopSessionLaneAudio(t)
+                              setSessionPlaying(prev => ({ ...prev, [t]: null }))
+                            }
                           })
                         }}
                         onLaunchClip={(laneType, sceneIdx) => {
                           setSessionPlaying(prev => ({ ...prev, [laneType]: sceneIdx }))
+                          void startSessionClipAudio(laneType, sceneIdx)
                         }}
-                        onStopLane={laneType => setSessionPlaying(prev => ({ ...prev, [laneType]: null }))}
-                        onStopAll={() => setSessionPlaying({})}
+                        onStopLane={laneType => {
+                          stopSessionLaneAudio(laneType)
+                          setSessionPlaying(prev => ({ ...prev, [laneType]: null }))
+                        }}
+                        onStopAll={() => {
+                          for (const lt of sessionTimersRef.current.keys()) stopSessionLaneAudio(lt)
+                          setSessionPlaying({})
+                        }}
                         onAddClip={(laneType, sceneIdx, clip) => {
                           setSessionClips(prev => {
                             const row = getSessionLaneClips(laneType).slice()
@@ -9153,7 +9335,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           const subBuf = extractSubBuffer(clip.buf, seg.startSec, seg.endSec)
                           const actx = new AudioContext()
                           const src = actx.createBufferSource()
-                          src.buffer = subBuf; src.connect(actx.destination); src.start()
+                          src.buffer = subBuf; src.connect(actx.destination)
+                          src.onended = () => actx.close()
+                          src.start()
                         }}
                         title="Preview this note"
                         style={{ padding: '5px 9px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}

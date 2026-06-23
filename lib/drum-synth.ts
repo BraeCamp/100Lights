@@ -153,5 +153,5 @@ export const DRUM_LABELS: Record<string, string> = {
   crash:       'Crash',
 }
 
-// Ordered list for the kit configurator UI
-export const DRUM_TYPES = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'] as const
+// Ordered list for the kit configurator UI (must match what synthDrum supports)
+export const DRUM_TYPES = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim', 'crash'] as const
