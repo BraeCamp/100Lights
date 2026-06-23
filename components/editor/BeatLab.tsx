@@ -4205,13 +4205,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   // Project-scoped autosave key.
-  // If no server projectId exists, generate a stable session ID in localStorage so new
-  // projects autosave too (previously they silently lost all work on reload).
+  // Saved projects use their server projectId. New (unsaved) projects use a per-tab session
+  // ID stored in sessionStorage — this resets when the tab closes so a new project never
+  // inherits a previous project's autosave data.
   const localSessionId = useRef<string | null>(null)
   if (localSessionId.current === null) {
     const key = 'beatlab-local-session-id'
-    let sid = typeof window !== 'undefined' ? localStorage.getItem(key) : null
-    if (!sid) { sid = `local-${Date.now()}`; if (typeof window !== 'undefined') localStorage.setItem(key, sid) }
+    // sessionStorage: survives page reload within the same tab, but not across tabs or sessions.
+    let sid = typeof window !== 'undefined' ? sessionStorage.getItem(key) : null
+    if (!sid) { sid = `local-${Date.now()}`; if (typeof window !== 'undefined') sessionStorage.setItem(key, sid) }
     localSessionId.current = sid
   }
   const autosaveKey = `beatlab-autosave-${projectId ?? localSessionId.current}`
@@ -4221,12 +4223,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     async function restoreClips() {
       if (!autosaveKey) return
       try {
-        // One-time migration: move legacy shared key to project-scoped key
-        const legacy = localStorage.getItem('beatlab-autosave')
-        if (legacy && !localStorage.getItem(autosaveKey)) {
-          localStorage.setItem(autosaveKey, legacy)
-          localStorage.removeItem('beatlab-autosave')
-        }
         const raw = typeof window !== 'undefined' ? localStorage.getItem(autosaveKey) : null
         if (!raw) return
         const s = JSON.parse(raw) as Record<string, unknown>
