@@ -2110,7 +2110,14 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatAiChecking,       setBeatAiChecking]       = useState(false)
   // Must live here (top level) — cannot be inside the conditional IIFE or React will throw a hooks-order error
   const [beatReclassifyTarget, setBeatReclassifyTarget] = useState<{ id: string; screenX: number; screenY: number } | null>(null)
-  const beatPreviewRef = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
+  const [beatVerifyPlaying,    setBeatVerifyPlaying]    = useState(false)
+  const [beatVerifyRefMuted,   setBeatVerifyRefMuted]   = useState(false)
+  const [beatVerifyBoxMuted,   setBeatVerifyBoxMuted]   = useState(false)
+  const [beatVerifyPos,        setBeatVerifyPos]        = useState(0)   // 0–1 playhead fraction
+  const beatPreviewRef    = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
+  const beatVerifyCtxRef  = useRef<AudioContext | null>(null)
+  const beatVerifyGainRef = useRef<{ ref: GainNode | null; box: GainNode | null }>({ ref: null, box: null })
+  const beatVerifyRafRef  = useRef(0)
 
   async function previewDrumType(type: string) {
     const ctx = new AudioContext()
@@ -2136,6 +2143,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function runBeatTranscribe() {
     if (!beatBox) return
+    stopVerifyPlayback()
     setBeatTranscribeLoading(true)
     setBeatPendingHits(null)
     setBeatPlacedLanes(null)
@@ -2211,6 +2219,61 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     src.start(0)
     beatPreviewRef.current = { src, ctx }
     setBeatPreviewPlaying(true)
+  }
+
+  // Play reference + beatbox audio simultaneously so the user can hear both while
+  // reviewing the dot grid. Each track has an independent gain node for muting.
+  function startVerifyPlayback() {
+    stopVerifyPlayback()
+    if (!beatBox) return
+    const duration = beatBox.duration
+    const ctx = new AudioContext()
+    beatVerifyCtxRef.current = ctx
+
+    const refGain = ctx.createGain()
+    const boxGain = ctx.createGain()
+    refGain.gain.value = beatVerifyRefMuted ? 0 : 0.75
+    boxGain.gain.value = beatVerifyBoxMuted ? 0 : 0.75
+    refGain.connect(ctx.destination)
+    boxGain.connect(ctx.destination)
+    beatVerifyGainRef.current = { ref: refGain, box: boxGain }
+
+    if (beatRef) {
+      const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain); src.start()
+    }
+    const boxSrc = ctx.createBufferSource(); boxSrc.buffer = beatBox; boxSrc.connect(boxGain)
+    boxSrc.onended = () => stopVerifyPlayback()
+    boxSrc.start()
+
+    const wallStart = performance.now()
+    setBeatVerifyPlaying(true)
+    const tick = () => {
+      const pos = Math.min(1, (performance.now() - wallStart) / 1000 / duration)
+      setBeatVerifyPos(pos)
+      if (pos < 1) beatVerifyRafRef.current = requestAnimationFrame(tick)
+    }
+    beatVerifyRafRef.current = requestAnimationFrame(tick)
+  }
+
+  function stopVerifyPlayback() {
+    cancelAnimationFrame(beatVerifyRafRef.current)
+    try { beatVerifyCtxRef.current?.close() } catch { /* ok */ }
+    beatVerifyCtxRef.current = null
+    beatVerifyGainRef.current = { ref: null, box: null }
+    setBeatVerifyPlaying(false)
+    setBeatVerifyPos(0)
+  }
+
+  function toggleVerifyRefMute() {
+    const next = !beatVerifyRefMuted
+    setBeatVerifyRefMuted(next)
+    if (beatVerifyGainRef.current.ref) beatVerifyGainRef.current.ref.gain.value = next ? 0 : 0.75
+  }
+
+  function toggleVerifyBoxMute() {
+    const next = !beatVerifyBoxMuted
+    setBeatVerifyBoxMuted(next)
+    if (beatVerifyGainRef.current.box) beatVerifyGainRef.current.box.gain.value = next ? 0 : 0.75
   }
 
   // Place the verified pending hits onto the timeline as individual clips per lane
@@ -8377,15 +8440,36 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     const bpmActive = activeBeatBpm()
                     return (
                       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {/* Row 1: hit count + hear/AI/re-detect */}
+                        {/* Row 1: hit count + listen controls */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(250,204,21,1)' }}>
                             {pending.length} hits · {types.length} type{types.length !== 1 ? 's' : ''}
                             {bpmActive && <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>@ {bpmActive} BPM {beatTimeSig[0]}/{beatTimeSig[1]}</span>}
                           </div>
+
+                          {/* Listen to ref + beatbox together */}
+                          <button onClick={() => beatVerifyPlaying ? stopVerifyPlayback() : startVerifyPlayback()}
+                            style={{ ...btnBase, marginLeft: 'auto', background: beatVerifyPlaying ? 'rgba(139,92,246,0.22)' : 'rgba(139,92,246,0.12)', color: 'rgba(196,181,253,1)', border: `1px solid rgba(139,92,246,${beatVerifyPlaying ? '0.6' : '0.3'})`, padding: '5px 12px' }}>
+                            {beatVerifyPlaying ? '■ Stop' : '▶ Listen'}
+                          </button>
+                          {/* Mute toggles — only useful while something is loaded */}
+                          {beatRef && (
+                            <button onClick={toggleVerifyRefMute}
+                              title="Mute / unmute reference audio"
+                              style={{ ...btnBase, padding: '5px 10px', fontSize: 10, background: beatVerifyRefMuted ? 'rgba(139,92,246,0.06)' : 'rgba(139,92,246,0.14)', color: beatVerifyRefMuted ? 'rgba(139,92,246,0.4)' : 'rgba(196,181,253,0.9)', border: '1px solid rgba(139,92,246,0.3)', textDecoration: beatVerifyRefMuted ? 'line-through' : 'none' }}>
+                              Ref
+                            </button>
+                          )}
+                          <button onClick={toggleVerifyBoxMute}
+                            title="Mute / unmute your beatbox recording"
+                            style={{ ...btnBase, padding: '5px 10px', fontSize: 10, background: beatVerifyBoxMuted ? 'rgba(250,204,21,0.04)' : 'rgba(250,204,21,0.10)', color: beatVerifyBoxMuted ? 'rgba(250,204,21,0.35)' : 'rgba(250,204,21,0.85)', border: '1px solid rgba(234,179,8,0.3)', textDecoration: beatVerifyBoxMuted ? 'line-through' : 'none' }}>
+                            Box
+                          </button>
+
                           <button onClick={beatPlayPreview}
-                            style={{ ...btnBase, marginLeft: 'auto', background: beatPreviewPlaying ? 'rgba(234,179,8,0.2)' : 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '5px 12px' }}>
-                            {beatPreviewPlaying ? '■ Stop' : '▶ Hear it'}
+                            title="Preview hits as synthesized drum sounds"
+                            style={{ ...btnBase, background: beatPreviewPlaying ? 'rgba(234,179,8,0.2)' : 'rgba(255,255,255,0.06)', color: beatPreviewPlaying ? 'rgba(250,204,21,1)' : 'var(--text-muted)', border: `1px solid ${beatPreviewPlaying ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, padding: '5px 10px', fontSize: 10 }}>
+                            {beatPreviewPlaying ? '■' : '▶ Kit'}
                           </button>
                           <button onClick={beatAiCheck} disabled={beatAiChecking}
                             style={{ ...btnBase, background: beatAiChecking ? 'rgba(167,139,250,0.08)' : 'rgba(167,139,250,0.14)', color: 'rgba(196,181,253,1)', border: '1px solid rgba(139,92,246,0.35)', padding: '5px 12px' }}>
@@ -8428,10 +8512,19 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           <strong style={{ color: 'var(--text-secondary)' }}>Left-click</strong> a dot to remove · <strong style={{ color: 'var(--text-secondary)' }}>Right-click</strong> to change its type · <strong style={{ color: 'var(--text-secondary)' }}>Click empty row</strong> to add (snaps to grid if BPM set)
                         </div>
 
-                        {/* Hit grid canvas + reclassify popup */}
+                        {/* Hit grid canvas + reclassify popup + playhead */}
                         <div style={{ background: '#0d0d10', borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
                           <HitGrid />
                           <ReclassifyPopup />
+                          {/* Playhead: thin vertical line that sweeps during Listen playback */}
+                          {beatVerifyPlaying && (
+                            <div style={{
+                              position: 'absolute', top: 0, bottom: 0, width: 2, pointerEvents: 'none',
+                              background: 'rgba(255,255,255,0.85)',
+                              boxShadow: '0 0 6px rgba(255,255,255,0.5)',
+                              left: `calc(${LABEL_W}px + ${beatVerifyPos} * (100% - ${LABEL_W}px))`,
+                            }} />
+                          )}
                         </div>
 
                         {/* Bottom action row: confirm correct + place on timeline */}
