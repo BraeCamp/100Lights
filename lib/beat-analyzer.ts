@@ -151,6 +151,7 @@ export interface BeatHit {
   id: string
   time: number      // seconds from start of recording
   type: BeatType
+  clusterId?: string // anonymous cluster letter ("A"–"F") — set when the user hasn't named sounds yet
   velocity: number  // 0–1
   note: number      // MIDI note — always set
   duration?: number // seconds; undefined = short attack hit (~50ms default display)
@@ -307,6 +308,80 @@ export function classifyHitLocally(
 export interface ReferenceSound {
   category: BeatType
   spectral:  HitSpectral
+}
+
+// ── Anonymous clustering ──────────────────────────────────────────────────────
+// Groups hits by spectral similarity without assuming any drum type names.
+// Returns a map of hit.id → cluster index (0, 1, 2…).
+
+export const CLUSTER_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'] as const
+export const CLUSTER_COLORS: Record<string, string> = {
+  A: '#3b82f6', B: '#ef4444', C: '#22c55e',
+  D: '#f97316', E: '#a855f7', F: '#06b6d4',
+}
+
+function hitToVec(s: HitSpectral): number[] {
+  return [
+    s.sub           ?? 0,
+    s.lowMid        ?? 0,
+    s.mid           ?? 0,
+    s.hiMid         ?? 0,
+    s.hi            ?? 0,
+    (s.attackTime   ?? 0) * 8,           // scale 0–0.1 → 0–0.8
+    s.roughness     ?? 0,
+    s.harmonicRatio ?? 0,
+    s.flatness      ?? 0,
+    ((s.mfcc?.[1]   ?? 0) + 20) / 40,   // normalize mfcc[1] (~−20–+20) → 0–1
+  ]
+}
+
+function vecDist(a: number[], b: number[]): number {
+  let s = 0; for (let i = 0; i < a.length; i++) s += (a[i] - b[i]) ** 2; return Math.sqrt(s)
+}
+
+export function clusterHits(hits: BeatHit[], k: number): Record<string, number> {
+  const actualK = Math.max(1, Math.min(CLUSTER_LETTERS.length, k))
+  const vecs  = hits.map(h => ({ id: h.id, v: h.spectral ? hitToVec(h.spectral) : null }))
+  const valid = vecs.filter((x): x is { id: string; v: number[] } => x.v !== null)
+
+  const assign: Record<string, number> = {}
+  if (valid.length === 0) { hits.forEach(h => { assign[h.id] = 0 }); return assign }
+
+  const kk = Math.min(actualK, valid.length)
+
+  // K-means++ initialisation
+  const centroids: number[][] = [valid[Math.floor(Math.random() * valid.length)].v]
+  while (centroids.length < kk) {
+    const dists = valid.map(x => Math.min(...centroids.map(c => vecDist(x.v, c))) ** 2)
+    const total = dists.reduce((a, b) => a + b, 0)
+    let r = Math.random() * total
+    for (let i = 0; i < valid.length; i++) {
+      r -= dists[i]
+      if (r <= 0) { centroids.push([...valid[i].v]); break }
+    }
+    if (centroids.length < kk) centroids.push([...valid[valid.length - 1].v])
+  }
+
+  // Iterate until stable (max 60 rounds)
+  for (let iter = 0; iter < 60; iter++) {
+    let changed = false
+    for (const x of valid) {
+      let best = 0, bd = Infinity
+      for (let c = 0; c < centroids.length; c++) { const d = vecDist(x.v, centroids[c]); if (d < bd) { bd = d; best = c } }
+      if (assign[x.id] !== best) { assign[x.id] = best; changed = true }
+    }
+    if (!changed) break
+    for (let c = 0; c < centroids.length; c++) {
+      const members = valid.filter(x => assign[x.id] === c)
+      if (!members.length) continue
+      for (let d = 0; d < centroids[0].length; d++) centroids[c][d] = members.reduce((s, x) => s + x.v[d], 0) / members.length
+    }
+  }
+
+  // Hits with no spectral data → nearest centroid by velocity, or cluster 0
+  for (const x of vecs) if (x.v === null) assign[x.id] = 0
+
+  return assign
 }
 
 export async function analyzeBeats(
