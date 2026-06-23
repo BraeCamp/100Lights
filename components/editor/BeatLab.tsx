@@ -2209,12 +2209,27 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
+  function closeBeatStudio() {
+    beatStopPlay()
+    stopVerifyPlayback()
+    setBeatStudioOpen(false)
+    // Reset transcription so the next session starts clean
+    setBeatPendingHits(null)
+    setBeatDetectedHits(null)
+    setBeatPlacedLanes(null)
+    setBeatBox(null)
+    setBeatRef(null)
+    setBeatRefName('')
+    setBeatResult(null)
+    setBeatStep(1)
+  }
+
   function addBeatResultToTimeline() {
     if (!beatResult) return
     const laneId = addCustomLane()
     setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneId, beatResult, 0, `Beat — ${beatRefName || 'result'}`)])
     showToast('Added to timeline')
-    setBeatStudioOpen(false)
+    closeBeatStudio()
   }
 
   // ── Drum transcription state ──────────────────────────────────────────────
@@ -6680,7 +6695,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* Beat Studio button */}
               <Tooltip content="Beat Studio — beatbox a track, AI reproduces it using only your beatbox" placement="bottom" disabled={beatStudioOpen}>
                 <button
-                  onClick={() => setBeatStudioOpen(v => !v)}
+                  onClick={() => beatStudioOpen ? closeBeatStudio() : setBeatStudioOpen(true)}
                   style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: beatStudioOpen ? 'rgba(234,179,8,0.15)' : 'var(--bg-card)', border: `1px solid ${beatStudioOpen ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, color: beatStudioOpen ? 'rgba(250,204,21,1)' : 'var(--text-muted)', cursor: 'pointer' }}
                 >
                   ▣ Beat
@@ -8283,7 +8298,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 801, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
-            onClick={e => { if (e.target === e.currentTarget) { beatStopPlay(); setBeatStudioOpen(false) } }}>
+            onClick={e => { if (e.target === e.currentTarget) closeBeatStudio() }}>
             <div style={{ background: 'var(--bg-modal, #18181b)', border: '1px solid var(--border)', borderRadius: 14, padding: 28, width: 'min(680px,94vw)', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
 
               {/* Header */}
@@ -8292,7 +8307,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Beat Studio</div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Load a beat, listen to it, then beatbox it — the AI reproduces it using only your beatbox recording as source material</div>
                 </div>
-                <button onClick={() => { beatStopPlay(); setBeatStudioOpen(false) }} style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', padding: '5px 10px' }}>✕</button>
+                <button onClick={closeBeatStudio} style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', padding: '5px 10px' }}>✕</button>
               </div>
 
               {/* ── Step 1: Load the beat ── */}
