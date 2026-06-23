@@ -50,12 +50,19 @@ export async function POST(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return Response.json({ error: 'AI not configured' }, { status: 503 })
 
-  let hits: HitInput[], enabledTypes: BeatType[], groundTruth: string | undefined
+  interface PastCorrection {
+    detectedAs: string
+    correctedTo: string
+    spectral: HitInput['spectral']
+  }
+
+  let hits: HitInput[], enabledTypes: BeatType[], groundTruth: string | undefined, pastCorrections: PastCorrection[]
   try {
     const body = await req.json()
     hits = body.hits
     enabledTypes = body.enabledTypes ?? VALID_TYPES
     groundTruth = typeof body.groundTruth === 'string' && body.groundTruth.trim() ? body.groundTruth.trim() : undefined
+    pastCorrections = Array.isArray(body.pastCorrections) ? body.pastCorrections as PastCorrection[] : []
     if (!Array.isArray(hits) || hits.length === 0) throw new Error()
   } catch {
     return Response.json({ error: 'Invalid request' }, { status: 400 })
@@ -104,6 +111,24 @@ any hits that fall outside the declared types.
 `
   }
 
+  // Build a concise summary of past corrections the user has confirmed
+  let pastCorrectionsSection = ''
+  if (pastCorrections.length > 0) {
+    const lines = pastCorrections.map(c => {
+      const s = c.spectral
+      const bands = s ? `lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hi=${fmt(s.hi)}` : 'no spectral'
+      return `  - was labeled "${c.detectedAs}", user corrected to "${c.correctedTo}" (${bands})`
+    })
+    pastCorrectionsSection = `
+USER'S PAST CORRECTIONS (most recent ${pastCorrections.length} — treat these as ground truth for this user's voice):
+${lines.join('\n')}
+
+When you see similar spectral shapes to a past correction, FOLLOW the user's correction
+rather than your default heuristics. This user's beatbox voice has specific characteristics
+that differ from the average — their corrections reveal those patterns.
+`
+  }
+
   const prompt = `You are an expert at classifying beatbox drum sounds from spectral data.
 
 A user beatboxed a drum pattern and the app detected ${hits.length} sound events.
@@ -111,7 +136,7 @@ Your job is to independently classify each one using ONLY the spectral data belo
 Do NOT anchor on any prior label — analyze each hit fresh from its acoustics.
 If a hit looks like noise, breath, or a false detection (very low velocity, no clear
 spectral peak, or inconsistent with any beatbox sound), classify it as "delete".
-${groundTruthSection}
+${groundTruthSection}${pastCorrectionsSection}
 CRITICAL BEATBOX FACTS:
 - Human mouths CANNOT produce real sub-bass (<100 Hz). Sub values will always be low.
 - Beatbox KICKS peak in "lowMid" (150-600 Hz) — not sub. lowMid is the kick indicator.

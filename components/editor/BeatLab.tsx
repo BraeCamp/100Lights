@@ -2230,8 +2230,17 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setBeatPendingHits(null)
     setBeatPlacedLanes(placed)
     showToast(`Added ${hits.length} drum hits across ${placed.length} lanes`)
-    // Fire-and-forget: teach the AI from any corrections made before committing
-    if (beatDetectedHits) sendBeatReflection(beatDetectedHits, hits)
+    // Persist any corrections to IndexedDB so future AI checks and local NN can learn
+    if (beatDetectedHits) {
+      const origById = new Map(beatDetectedHits.map(h => [h.id, h]))
+      for (const h of hits) {
+        const orig = origById.get(h.id)
+        if (orig && orig.type !== h.type && h.spectral) {
+          correctionsAdd({ id: crypto.randomUUID(), spectral: h.spectral, detectedAs: orig.type, correctedTo: h.type, savedAt: new Date().toISOString() }).catch(() => {})
+        }
+      }
+      sendBeatReflection(beatDetectedHits, hits)
+    }
   }
 
   // Send current hits to Claude for reclassification; apply suggested corrections automatically
@@ -2240,12 +2249,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     if (!hits || hits.length === 0 || beatAiChecking) return
     setBeatAiChecking(true)
     try {
+      // Load stored corrections so Claude can learn from past user feedback
+      const storedCorrections = await correctionsGetAll().catch(() => [] as Awaited<ReturnType<typeof correctionsGetAll>>)
       const res = await fetch('/api/classify-beats', {
         method:  'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          hits:         hits.map(h => ({ id: h.id, time: h.time, type: h.type, velocity: h.velocity, spectral: h.spectral ?? {} })),
-          enabledTypes: ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
+          hits:              hits.map(h => ({ id: h.id, time: h.time, type: h.type, velocity: h.velocity, spectral: h.spectral ?? {} })),
+          enabledTypes:      ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
+          pastCorrections:   storedCorrections.slice(-60).map(c => ({ detectedAs: c.detectedAs, correctedTo: c.correctedTo, spectral: c.spectral })),
         }),
       })
       if (!res.ok) {
