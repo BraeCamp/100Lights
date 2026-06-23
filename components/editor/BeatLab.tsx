@@ -1014,10 +1014,18 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const clipDur   = hit.duration ?? 0.30
-  const PAD       = Math.min(0.08, hit.time)
-  const windowStart = Math.max(0, hit.time - PAD)
-  const windowEnd   = Math.min(beatBox.duration, hit.time + clipDur + PAD)
-  const windowDur   = windowEnd - windowStart
+
+  // Freeze the visible audio window on mount so dragging handles never changes
+  // how many samples-per-pixel the canvas shows. Without this, the window shrinks
+  // as the user drags (fewer samples per pixel → lower peaks → waveform shrinks).
+  const fixedWindowRef = useRef<{ start: number; dur: number } | null>(null)
+  if (!fixedWindowRef.current) {
+    const PAD   = Math.min(0.12, hit.time)
+    const start = Math.max(0, hit.time - PAD)
+    const end   = Math.min(beatBox.duration, hit.time + (hit.duration ?? 0.30) + 0.5)
+    fixedWindowRef.current = { start, dur: end - start }
+  }
+  const { start: windowStart, dur: windowDur } = fixedWindowRef.current
 
   useEffect(() => {
     const canvas = canvasRef.current
