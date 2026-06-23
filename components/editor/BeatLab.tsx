@@ -2257,7 +2257,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         body: JSON.stringify({
           hits:              hits.map(h => ({ id: h.id, time: h.time, type: h.type, velocity: h.velocity, spectral: h.spectral ?? {} })),
           enabledTypes:      ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
-          pastCorrections:   storedCorrections.slice(-60).map(c => ({ detectedAs: c.detectedAs, correctedTo: c.correctedTo, spectral: c.spectral })),
+          pastCorrections:   storedCorrections.slice(-120).map(c => ({ detectedAs: c.detectedAs, correctedTo: c.correctedTo, spectral: c.spectral })),
         }),
       })
       if (!res.ok) {

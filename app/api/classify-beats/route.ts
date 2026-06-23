@@ -111,31 +111,89 @@ any hits that fall outside the declared types.
 `
   }
 
-  // Summarise past corrections as positive spectral examples, not a correction narrative.
-  // Group by correctedTo so Claude sees "a kick sounds like this: ..." rather than a
-  // confusing "was X, changed to Y" list that could read as a demotion of Y.
+  // Build a rich user-specific voice profile from all past corrections.
+  // Strategy: compute the MEAN of every spectral feature across all corrections
+  // for each confirmed type, then also surface confusion pairs (what the machine
+  // keeps getting wrong for this specific user).
   let pastCorrectionsSection = ''
   if (pastCorrections.length > 0) {
-    const byType = new Map<string, string[]>()
-    for (const c of pastCorrections) {
-      const s = c.spectral
-      if (!s) continue
-      const desc = `lowMid=${fmt(s.lowMid)} mid=${fmt(s.mid)} hiMid=${fmt(s.hiMid)} hi=${fmt(s.hi)} attack=${fmt(s.attackTime,4)}s`
-      if (!byType.has(c.correctedTo)) byType.set(c.correctedTo, [])
-      byType.get(c.correctedTo)!.push(desc)
-    }
-    if (byType.size > 0) {
-      const lines: string[] = []
-      for (const [type, examples] of byType.entries()) {
-        lines.push(`  ${type}: ${examples.slice(0, 4).join(' | ')}`)
-      }
-      pastCorrectionsSection = `
-THIS USER'S CONFIRMED SOUND SIGNATURES (from ${pastCorrections.length} past corrections):
-${lines.join('\n')}
+    type SpectralAccum = { n: number; sub: number; lowMid: number; mid: number; hiMid: number; hi: number; attackTime: number; roughness: number; harmonicRatio: number; flatness: number; brightness: number; mfcc1: number }
+    const confirmed = new Map<string, SpectralAccum>()   // keyed by correctedTo
+    const confusion  = new Map<string, SpectralAccum>()  // keyed by `detectedAs→correctedTo`
 
-These are the actual spectral measurements of sounds THIS user confirmed as correct.
-Weight these heavily — this user's mouth produces sounds that may not match textbook
-beatbox norms. When current hits have similar band ratios, prefer the confirmed type.
+    const acc0 = (): SpectralAccum => ({ n: 0, sub: 0, lowMid: 0, mid: 0, hiMid: 0, hi: 0, attackTime: 0, roughness: 0, harmonicRatio: 0, flatness: 0, brightness: 0, mfcc1: 0 })
+    const accumulate = (map: Map<string, SpectralAccum>, key: string, s: PastCorrection['spectral']) => {
+      if (!s) return
+      if (!map.has(key)) map.set(key, acc0())
+      const a = map.get(key)!
+      a.n++
+      a.sub            += s.sub      ?? 0
+      a.lowMid         += s.lowMid   ?? 0
+      a.mid            += s.mid      ?? 0
+      a.hiMid          += s.hiMid    ?? 0
+      a.hi             += s.hi       ?? 0
+      a.attackTime     += s.attackTime    ?? 0
+      a.roughness      += s.roughness     ?? 0
+      a.harmonicRatio  += s.harmonicRatio ?? 0
+      a.flatness       += s.flatness      ?? 0
+      a.brightness     += s.brightness    ?? 0
+      a.mfcc1          += (s.mfcc && s.mfcc[1] != null) ? s.mfcc[1] : 0
+    }
+    const mean = (a: SpectralAccum) => ({
+      sub:           a.sub           / a.n,
+      lowMid:        a.lowMid        / a.n,
+      mid:           a.mid           / a.n,
+      hiMid:         a.hiMid         / a.n,
+      hi:            a.hi            / a.n,
+      attackTime:    a.attackTime    / a.n,
+      roughness:     a.roughness     / a.n,
+      harmonicRatio: a.harmonicRatio / a.n,
+      flatness:      a.flatness      / a.n,
+      brightness:    a.brightness    / a.n,
+      mfcc1:         a.mfcc1         / a.n,
+    })
+
+    for (const c of pastCorrections) {
+      accumulate(confirmed, c.correctedTo, c.spectral)
+      if (c.detectedAs !== c.correctedTo) {
+        accumulate(confusion, `${c.detectedAs}→${c.correctedTo}`, c.spectral)
+      }
+    }
+
+    const profileLines: string[] = []
+    for (const [type, a] of confirmed.entries()) {
+      const m = mean(a)
+      profileLines.push(
+        `  ${type.toUpperCase()} (${a.n} sample${a.n !== 1 ? 's' : ''})\n` +
+        `    bands:  sub=${fmt(m.sub)} lowMid=${fmt(m.lowMid)} mid=${fmt(m.mid)} hiMid=${fmt(m.hiMid)} hi=${fmt(m.hi)}\n` +
+        `    timbre: attack=${fmt(m.attackTime,4)}s  roughness=${fmt(m.roughness)}  harmRatio=${fmt(m.harmonicRatio)}  flatness=${fmt(m.flatness)}  brightness=${fmt(m.brightness)}  mfcc1=${fmt(m.mfcc1,1)}`
+      )
+    }
+
+    const confusionLines: string[] = []
+    for (const [pair, a] of confusion.entries()) {
+      if (a.n < 2) continue  // only surface repeated mistakes
+      const m = mean(a)
+      const [from, to] = pair.split('→')
+      confusionLines.push(
+        `  Machine says "${from}" → user corrected to "${to}" (×${a.n}):\n` +
+        `    avg bands: sub=${fmt(m.sub)} lowMid=${fmt(m.lowMid)} mid=${fmt(m.mid)} hiMid=${fmt(m.hiMid)} hi=${fmt(m.hi)}  attack=${fmt(m.attackTime,4)}s  roughness=${fmt(m.roughness)}`
+      )
+    }
+
+    if (profileLines.length > 0) {
+      pastCorrectionsSection = `
+═══ THIS USER'S VOICE PROFILE (${pastCorrections.length} confirmed correction${pastCorrections.length !== 1 ? 's' : ''}) ═══
+These are AVERAGED spectral measurements across everything this user confirmed.
+Override your default heuristics with these — this user's mouth sounds different.
+
+${profileLines.join('\n\n')}
+${confusionLines.length > 0 ? `\nREPEATED MISTAKES TO FIX:\n${confusionLines.join('\n\n')}` : ''}
+
+INSTRUCTION: For each hit, compute how close its spectral features are to the profiles
+above. If a hit closely matches a confirmed profile, USE THAT TYPE — even if it contradicts
+your general beatbox knowledge. The user's corrections are ground truth for their voice.
+═══════════════════════════════════════════════════════════════════════════════
 `
     }
   }
