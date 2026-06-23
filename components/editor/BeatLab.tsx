@@ -2019,6 +2019,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatPendingHits,      setBeatPendingHits]      = useState<BeatHit[] | null>(null)  // mutable working copy
   const [beatPlacedLanes,      setBeatPlacedLanes]      = useState<{ type: string; count: number; laneId: string }[] | null>(null)
   const [beatTranscribeLoading, setBeatTranscribeLoading] = useState(false)
+  // Musical grid settings — govern how hits snap and how the grid is drawn
+  const [beatGridBpm,          setBeatGridBpm]          = useState<number | null>(null)   // overrides beatRefBpm when set manually
+  const [beatTimeSig,          setBeatTimeSig]          = useState<[number, number]>([4, 4])
+  const [beatSubdiv,           setBeatSubdiv]           = useState<number>(8)             // 4=quarters, 8=eighths, 16=sixteenths, 12=triplets
+  const [beatPatternLen,       setBeatPatternLen]       = useState<number>(1)             // bars to use as repeating template
+  const [beatBpmDetecting,     setBeatBpmDetecting]     = useState(false)
+  const [beatConfirming,       setBeatConfirming]       = useState(false)
   const [beatPreviewPlaying,   setBeatPreviewPlaying]   = useState(false)
   const [beatAiChecking,       setBeatAiChecking]       = useState(false)
   // Must live here (top level) — cannot be inside the conditional IIFE or React will throw a hooks-order error
@@ -2062,9 +2069,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       if (result.hits.length === 0) {
         showToast('No drum hits detected — try recording louder or closer to the mic')
       } else {
-        // Store full BeatHit objects (with spectral data) — do NOT place on timeline yet
-        setBeatDetectedHits(result.hits)
-        setBeatPendingHits(result.hits)
+        // Auto-quantize to grid if BPM is known, otherwise keep raw times
+        const bpm = beatGridBpm ?? beatRefBpm
+        const snapped = bpm
+          ? result.hits.map(h => ({ ...h, time: Math.round(h.time / ((60/bpm)*(4/beatSubdiv))) * ((60/bpm)*(4/beatSubdiv)) }))
+          : result.hits
+        setBeatDetectedHits(snapped)
+        setBeatPendingHits(snapped)
       }
     } catch (e) {
       showToast(`Transcription failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -2205,6 +2216,77 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       } catch { showToast('Could not load audio file') }
     }
     inp.click()
+  }
+
+  // ── Musical grid helpers ──────────────────────────────────────────────────
+
+  // The effective BPM: user override > reference beat BPM > null
+  function activeBeatBpm(): number | null { return beatGridBpm ?? beatRefBpm }
+
+  // Snap a time value to the nearest allowed subdivision position
+  function snapToGrid(time: number, bpm: number, subdiv: number): number {
+    const subLen = (60 / bpm) * (4 / subdiv)  // e.g. 8ths = 0.25s at 120 BPM
+    return Math.round(time / subLen) * subLen
+  }
+
+  // Quantize all pending hits to the nearest grid position in-place
+  function quantizeHitsToGrid() {
+    const bpm = activeBeatBpm()
+    if (!bpm || !beatPendingHits) return
+    setBeatPendingHits(prev => prev?.map(h => ({ ...h, time: snapToGrid(h.time, bpm, beatSubdiv) })) ?? null)
+  }
+
+  // Take the first patternLen bars and tile them for the full duration
+  function repeatBeatPattern() {
+    const bpm  = activeBeatBpm()
+    const hits = beatPendingHits
+    if (!bpm || !hits || !beatBox) return
+    const [num, denom] = beatTimeSig
+    const barLen     = num * (60 / bpm) * (4 / denom)
+    const patternEnd = beatPatternLen * barLen
+    const template   = hits.filter(h => h.time < patternEnd)
+    if (template.length === 0) { showToast('No hits in the first bar — adjust pattern length'); return }
+    const totalDur = beatBox.duration
+    const result: BeatHit[] = [...template]
+    let offset = patternEnd
+    while (offset < totalDur - 0.05) {
+      for (const h of template) {
+        const t = h.time + offset
+        if (t < totalDur) result.push({ ...h, id: crypto.randomUUID(), time: t })
+      }
+      offset += patternEnd
+    }
+    setBeatPendingHits(result.sort((a, b) => a.time - b.time))
+    showToast(`Pattern repeated across ${Math.floor(totalDur / barLen)} bars`)
+  }
+
+  // Detect BPM from the beatbox audio
+  async function detectTranscribeBpm() {
+    if (!beatBox || beatBpmDetecting) return
+    setBeatBpmDetecting(true)
+    const bpm = quickBpmEstimate(beatBox)
+    if (bpm) { setBeatGridBpm(Math.round(bpm)); showToast(`Detected ~${Math.round(bpm)} BPM`) }
+    else showToast('Could not detect BPM — enter it manually')
+    setBeatBpmDetecting(false)
+  }
+
+  // Tell the AI this pattern is correct so it can learn from it
+  async function confirmBeatPattern() {
+    const hits = beatPendingHits
+    if (!hits || hits.length === 0 || beatConfirming) return
+    setBeatConfirming(true)
+    const bpm = activeBeatBpm()
+    const [num, denom] = beatTimeSig
+    await fetch('/api/beat-reflection', {
+      method:  'POST',
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify({
+        corrections: [],
+        userNotes: `User confirmed this drum pattern as CORRECT. BPM=${bpm ?? 'unknown'}, time sig=${num}/${denom}, subdiv=1/${beatSubdiv} notes. ${hits.length} hits: ${hits.map(h => `${h.type}@${h.time.toFixed(3)}s`).join(', ')}`,
+      }),
+    }).catch(() => {})
+    showToast('Pattern confirmed — AI will reference this next time')
+    setBeatConfirming(false)
   }
 
   function exportBeatResult() {
@@ -7805,6 +7887,59 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     ))}
                   </div>
 
+                  {/* ── Musical grid setup — controls how hits are snapped and repeated ── */}
+                  <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 9, padding: '10px 12px', marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 9 }}>
+                    {/* Row 1: BPM */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>BPM</span>
+                      <input
+                        type="number" min={40} max={300} step={1}
+                        value={beatGridBpm ?? beatRefBpm ?? ''}
+                        onChange={e => { const v = parseInt(e.target.value); setBeatGridBpm(isNaN(v) ? null : v) }}
+                        placeholder={beatRefBpm ? String(beatRefBpm) : 'auto'}
+                        style={{ width: 64, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-primary)', fontSize: 11, padding: '4px 7px', textAlign: 'center' }}
+                      />
+                      <button onClick={detectTranscribeBpm} disabled={beatBpmDetecting}
+                        style={{ ...btnBase, padding: '4px 9px', fontSize: 10, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                        {beatBpmDetecting ? '…' : '⟳ Detect'}
+                      </button>
+                      {(beatGridBpm ?? beatRefBpm) && (
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                          beat = {((60 / (beatGridBpm ?? beatRefBpm!)) ).toFixed(3)}s
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Row 2: Time signature */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>Sig</span>
+                      {([[ 4,4],[ 3,4],[ 6,8],[ 5,4],[ 7,8]] as [number,number][]).map(([n,d]) => (
+                        <button key={`${n}/${d}`}
+                          onClick={() => setBeatTimeSig([n, d])}
+                          style={{ ...btnBase, padding: '3px 8px', fontSize: 10,
+                            background: beatTimeSig[0]===n && beatTimeSig[1]===d ? 'rgba(250,204,21,0.18)' : 'var(--bg-card)',
+                            color: beatTimeSig[0]===n && beatTimeSig[1]===d ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
+                            border: `1px solid ${beatTimeSig[0]===n && beatTimeSig[1]===d ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
+                          {n}/{d}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Row 3: Subdivision (how finely hits snap) */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 28 }}>Snap</span>
+                      {([{v:4,l:'¼'},{v:8,l:'⅛'},{v:16,l:'¹⁄₁₆'},{v:12,l:'⅓'}] as {v:number;l:string}[]).map(({v,l}) => (
+                        <button key={v} onClick={() => setBeatSubdiv(v)}
+                          style={{ ...btnBase, padding: '3px 9px', fontSize: 10,
+                            background: beatSubdiv===v ? 'rgba(250,204,21,0.18)' : 'var(--bg-card)',
+                            color: beatSubdiv===v ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
+                            border: `1px solid ${beatSubdiv===v ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
+                          {l} note
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <button onClick={runBeatTranscribe} disabled={beatTranscribeLoading}
                     style={{ ...btnBase, background: beatTranscribeLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', width: '100%' }}>
                     {beatTranscribeLoading ? 'Detecting hits…' : '▣ Detect drum hits'}
@@ -7846,11 +7981,49 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           }
                         }
 
-                        // Time grid lines every 0.5s
-                        c.strokeStyle = 'rgba(255,255,255,0.06)'; c.lineWidth = 1
-                        for (let t = 0; t <= duration; t += 0.5) {
-                          const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                          c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                        // Musical grid lines — measure > beat > subdivision
+                        const bpm = activeBeatBpm()
+                        if (bpm) {
+                          const [num, denom] = beatTimeSig
+                          const beatLen  = (60 / bpm) * (4 / denom)   // one beat in seconds
+                          const barLen   = num * beatLen                // one measure
+                          const subLen   = (60 / bpm) * (4 / beatSubdiv)  // one subdivision
+
+                          // Subdivision lines (faintest)
+                          c.strokeStyle = 'rgba(255,255,255,0.04)'; c.lineWidth = 0.5
+                          for (let t = 0; t <= duration; t += subLen) {
+                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
+                            c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                          }
+                          // Beat lines (medium)
+                          c.strokeStyle = 'rgba(255,255,255,0.10)'; c.lineWidth = 1
+                          for (let t = 0; t <= duration; t += beatLen) {
+                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
+                            c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                          }
+                          // Measure (bar) lines — strong + numbered
+                          c.lineWidth = 1.5
+                          for (let t = 0, bar = 1; t <= duration; t += barLen, bar++) {
+                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
+                            c.strokeStyle = 'rgba(255,255,255,0.22)'; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                            c.fillStyle = 'rgba(255,255,255,0.25)'; c.font = '8px ui-monospace,monospace'; c.textBaseline = 'top'
+                            c.fillText(String(bar), x + 2, 2)
+                          }
+                          // Pattern-length marker (shows what will be repeated)
+                          const patEnd = beatPatternLen * barLen
+                          if (patEnd < duration) {
+                            const px = LABEL_W + (patEnd/duration)*(W-LABEL_W)
+                            c.strokeStyle = 'rgba(250,204,21,0.35)'; c.lineWidth = 1.5; c.setLineDash([4,3])
+                            c.beginPath(); c.moveTo(px, 0); c.lineTo(px, H); c.stroke()
+                            c.setLineDash([])
+                          }
+                        } else {
+                          // No BPM — plain 0.5s grid
+                          c.strokeStyle = 'rgba(255,255,255,0.06)'; c.lineWidth = 1
+                          for (let t = 0; t <= duration; t += 0.5) {
+                            const x = LABEL_W + (t/duration)*(W-LABEL_W)
+                            c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                          }
                         }
 
                         types.forEach((type, ti) => {
@@ -7873,7 +8046,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             else { c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 0.5; c.stroke() }
                           }
                         })
-                      }, [pending, reclassifyTarget])
+                      }, [pending, reclassifyTarget, beatGridBpm, beatRefBpm, beatTimeSig, beatSubdiv, beatPatternLen])
 
                       const hitAtPoint = (canvas: HTMLCanvasElement, ex: number, ey: number) => {
                         const rect = canvas.getBoundingClientRect()
@@ -7902,7 +8075,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         const cy = (e.clientY - rect.top)  * (canvas.height / rect.height)
                         const ti = Math.floor((cy - 4) / ROW_H)
                         if (ti >= 0 && ti < types.length && cx >= LABEL_W) {
-                          const time = ((cx-LABEL_W)/(canvas.width-LABEL_W)) * duration
+                          const rawTime = ((cx-LABEL_W)/(canvas.width-LABEL_W)) * duration
+                          const bpm     = activeBeatBpm()
+                          const time    = bpm ? snapToGrid(rawTime, bpm, beatSubdiv) : rawTime
                           setBeatPendingHits(prev => prev ? [...prev, { id: crypto.randomUUID(), type: types[ti] as BeatHit['type'], time, velocity: 0.75, note: 60 }] : null)
                         }
                       }
@@ -7964,19 +8139,20 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                       )
                     }
 
+                    const bpmActive = activeBeatBpm()
                     return (
                       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {/* Header + controls row */}
+                        {/* Row 1: hit count + hear/AI/re-detect */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(250,204,21,1)' }}>
                             {pending.length} hits · {types.length} type{types.length !== 1 ? 's' : ''}
+                            {bpmActive && <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>@ {bpmActive} BPM {beatTimeSig[0]}/{beatTimeSig[1]}</span>}
                           </div>
                           <button onClick={beatPlayPreview}
                             style={{ ...btnBase, marginLeft: 'auto', background: beatPreviewPlaying ? 'rgba(234,179,8,0.2)' : 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '5px 12px' }}>
                             {beatPreviewPlaying ? '■ Stop' : '▶ Hear it'}
                           </button>
                           <button onClick={beatAiCheck} disabled={beatAiChecking}
-                            title="Ask Claude to reclassify all hits based on their spectral content"
                             style={{ ...btnBase, background: beatAiChecking ? 'rgba(167,139,250,0.08)' : 'rgba(167,139,250,0.14)', color: 'rgba(196,181,253,1)', border: '1px solid rgba(139,92,246,0.35)', padding: '5px 12px' }}>
                             {beatAiChecking ? '♦ Checking…' : '♦ AI Check'}
                           </button>
@@ -7986,11 +8162,35 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           </button>
                         </div>
 
+                        {/* Row 2: grid tools — quantize + repeat */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: 'rgba(0,0,0,0.15)', borderRadius: 7, padding: '7px 10px' }}>
+                          <button onClick={quantizeHitsToGrid} disabled={!bpmActive}
+                            title={bpmActive ? `Snap all hits to nearest 1/${beatSubdiv} note` : 'Set a BPM first'}
+                            style={{ ...btnBase, padding: '4px 11px', fontSize: 10, background: bpmActive ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.04)', color: bpmActive ? 'rgba(250,204,21,0.9)' : 'var(--text-muted)', border: '1px solid rgba(234,179,8,0.25)' }}>
+                            ⊞ Snap to grid
+                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 6 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Repeat</span>
+                            <select value={beatPatternLen} onChange={e => setBeatPatternLen(+e.target.value)}
+                              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-primary)', fontSize: 10, padding: '3px 5px' }}>
+                              <option value={1}>1 bar</option>
+                              <option value={2}>2 bars</option>
+                              <option value={4}>4 bars</option>
+                            </select>
+                            <button onClick={repeatBeatPattern} disabled={!bpmActive}
+                              title={bpmActive ? 'Tile the first N bars for the full duration' : 'Set a BPM first'}
+                              style={{ ...btnBase, padding: '4px 11px', fontSize: 10, background: bpmActive ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.04)', color: bpmActive ? 'rgba(250,204,21,0.9)' : 'var(--text-muted)', border: '1px solid rgba(234,179,8,0.25)' }}>
+                              ⟳ Tile
+                            </button>
+                          </div>
+                          <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 'auto', lineHeight: 1.4 }}>
+                            {bpmActive ? `Yellow dashes = end of ${beatPatternLen}-bar template` : 'Set BPM above to enable grid tools'}
+                          </span>
+                        </div>
+
                         {/* Instructions */}
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.03)', borderRadius: 7, padding: '7px 10px', lineHeight: 1.5 }}>
-                          <strong style={{ color: 'var(--text-secondary)' }}>Hear it</strong> to check if the types are right.&nbsp;
-                          <strong style={{ color: 'var(--text-secondary)' }}>AI Check</strong> asks Claude to reclassify anything it thinks is wrong.&nbsp;
-                          You can also <strong style={{ color: 'var(--text-secondary)' }}>right-click any dot</strong> to manually change its type, or click to remove false hits.
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                          <strong style={{ color: 'var(--text-secondary)' }}>Left-click</strong> a dot to remove · <strong style={{ color: 'var(--text-secondary)' }}>Right-click</strong> to change its type · <strong style={{ color: 'var(--text-secondary)' }}>Click empty row</strong> to add (snaps to grid if BPM set)
                         </div>
 
                         {/* Hit grid canvas + reclassify popup */}
@@ -7999,11 +8199,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           <ReclassifyPopup />
                         </div>
 
-                        {/* Commit button */}
-                        <button onClick={beatCommitToTimeline}
-                          style={{ ...btnBase, background: 'rgba(234,179,8,0.85)', color: '#000', border: 'none', fontSize: 12, fontWeight: 700, padding: '9px 0', width: '100%' }}>
-                          + Place {pending.length} hits on timeline →
-                        </button>
+                        {/* Bottom action row: confirm correct + place on timeline */}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={confirmBeatPattern} disabled={beatConfirming}
+                            title="Tell the AI this pattern is correct so it can learn from it"
+                            style={{ ...btnBase, flex: '0 0 auto', background: beatConfirming ? 'rgba(34,197,94,0.06)' : 'rgba(34,197,94,0.1)', color: 'rgba(134,239,172,1)', border: '1px solid rgba(34,197,94,0.3)', padding: '9px 14px', fontSize: 11 }}>
+                            {beatConfirming ? '✓ Saving…' : '✓ This is correct'}
+                          </button>
+                          <button onClick={beatCommitToTimeline}
+                            style={{ ...btnBase, flex: 1, background: 'rgba(234,179,8,0.85)', color: '#000', border: 'none', fontSize: 12, fontWeight: 700, padding: '9px 0' }}>
+                            + Place {pending.length} hits on timeline →
+                          </button>
+                        </div>
                       </div>
                     )
                   })()}
