@@ -2021,6 +2021,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatTranscribeLoading, setBeatTranscribeLoading] = useState(false)
   const [beatPreviewPlaying,   setBeatPreviewPlaying]   = useState(false)
   const [beatAiChecking,       setBeatAiChecking]       = useState(false)
+  // Must live here (top level) — cannot be inside the conditional IIFE or React will throw a hooks-order error
+  const [beatReclassifyTarget, setBeatReclassifyTarget] = useState<{ id: string; screenX: number; screenY: number } | null>(null)
   const beatPreviewRef = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
 
   async function previewDrumType(type: string) {
@@ -7815,8 +7817,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     const types = [...new Set(pending.map(h => h.type))]
                     const LABEL_W = 64, ROW_H = 34
 
-                    // Right-click popup: which hit is being reclassified + screen position
-                    const [reclassifyTarget, setReclassifyTarget] = useState<{ id: string; screenX: number; screenY: number } | null>(null)
+                    // Right-click popup state is hoisted to component level (beatReclassifyTarget) to avoid hooks-order crash
+                    const reclassifyTarget    = beatReclassifyTarget
+                    const setReclassifyTarget = setBeatReclassifyTarget
 
                     // Canvas hit grid — left-click: remove/add · right-click: reclassify type
                     const HitGrid = () => {
