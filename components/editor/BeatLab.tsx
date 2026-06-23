@@ -61,7 +61,7 @@ import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, CLUSTER_LET
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
-import { correctionsGetAll, correctionsClear } from '@/lib/correction-store'
+import { correctionsGetAll, correctionsAdd, correctionsClear } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { AddToLibraryModal } from './SoundLibrary'
 import { sampleGetAll } from '@/lib/sample-pack'
@@ -398,6 +398,8 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDel
     e.stopPropagation()
     e.preventDefault()
     onSelect(e.shiftKey || e.metaKey || e.ctrlKey)
+    // Cmd/Ctrl held = selection-only mode: skip all drag behavior
+    if (e.metaKey || e.ctrlKey) return
 
     const startX = e.clientX
     const startY = e.clientY
@@ -991,9 +993,33 @@ interface LaneProps {
   allLaneTypes?: string[]
   sidechains?: Record<string, string>  // key: effectId, value: source lane type
   onSidechainChange?: (effectId: string, val: string) => void
+  // Live recording waveform
+  liveRecording?: boolean
+  liveRecStartSec?: number
+  liveRecElapsed?: number
+  liveRecPeaks?: number[]
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, onMultiSelect, selectedClipIds, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange }: LaneProps) {
+function RecordingWave({ peaks }: { peaks: number[] }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || peaks.length === 0) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const W = canvas.width, H = canvas.height
+    ctx.clearRect(0, 0, W, H)
+    const barW = Math.max(1, W / peaks.length)
+    ctx.fillStyle = 'rgba(248,113,113,0.8)'
+    peaks.forEach((peak, i) => {
+      const h = Math.max(1, Math.round(peak * (H - 2)))
+      ctx.fillRect(Math.floor(i * barW), Math.round((H - h) / 2), Math.max(1, Math.ceil(barW) - 1), h)
+    })
+  }, [peaks])
+  return <canvas ref={canvasRef} width={800} height={56} style={{ width: '100%', height: '100%', display: 'block' }} />
+}
+
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, onMultiSelect, selectedClipIds, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange, liveRecording = false, liveRecStartSec = 0, liveRecElapsed = 0, liveRecPeaks = [] }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -1224,6 +1250,26 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         }}
       >
         <NoteGrid />
+        {/* Live recording waveform — grows rightward as audio is captured */}
+        {liveRecording && liveRecElapsed > 0.05 && duration > 0 && (
+          <div style={{
+            position: 'absolute',
+            left:  Math.round((liveRecStartSec / duration) * pxWidth),
+            top:   0,
+            width: Math.max(4, Math.round((liveRecElapsed / duration) * pxWidth)),
+            height: '100%',
+            background: 'rgba(220,38,38,0.12)',
+            border: '1.5px solid rgba(239,68,68,0.75)',
+            borderRadius: 3,
+            overflow: 'hidden',
+            pointerEvents: 'none',
+            zIndex: 3,
+          }}>
+            <RecordingWave peaks={liveRecPeaks} />
+            {/* Pulsing right-edge marker */}
+            <div style={{ position: 'absolute', right: 0, top: 0, width: 3, height: '100%', background: '#ef4444', animation: 'pulse 0.7s ease-in-out infinite' }} />
+          </div>
+        )}
         {hits.map(hit => (
           <HitBlock
             key={hit.id}
@@ -1266,7 +1312,13 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
               onMouseLeave={e => { e.currentTarget.style.cursor = isConverting ? 'wait' : 'grab' }}
               onMouseDown={e => {
                 if (e.button !== 0 || isConverting) return
-                e.stopPropagation(); e.preventDefault()
+                e.stopPropagation()
+                // Cmd held = selection mode only: select the clip, skip all drag/resize/volume ops
+                if (e.metaKey || e.ctrlKey) {
+                  onClipSelect(clip.id, true)
+                  return
+                }
+                e.preventDefault()
                 const r = e.currentTarget.getBoundingClientRect()
                 const rx = e.clientX - r.left
                 const ry = e.clientY - r.top
@@ -2277,9 +2329,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const beatSepGenRef = useRef(0)  // incremented on reset to discard in-flight async results
   const [beatTimeSig,           setBeatTimeSig]           = useState<[number, number]>([4, 4])
   // ── New drum transcription state ──────────────────────────────────────────
-  const [dtHits,    setDtHits]    = useState<BeatHit[] | null>(null)
-  const [dtLoading, setDtLoading] = useState(false)
-  const [dtBpm,     setDtBpm]     = useState<number | null>(null)
+  const [dtHits,          setDtHits]          = useState<BeatHit[] | null>(null)
+  const [dtLoading,       setDtLoading]       = useState(false)
+  const [dtBpm,           setDtBpm]           = useState<number | null>(null)
+  const [dtSelectedHitId, setDtSelectedHitId] = useState<string | null>(null)
   const dtGenRef    = useRef(0)
   const dtCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -2308,21 +2361,68 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   async function dtCommitToTimeline() {
-    const hits = dtHits
+    let hits = dtHits
     if (!hits || hits.length === 0 || !beatBox) return
     captureHistory()
+
+    const raw = beatBox.getChannelData(0)
+    const sr  = beatBox.sampleRate
+
+    // Peak amplitude in first 25ms after a hit time — used to pick winner when deduping
+    function peakAt(timeSec: number): number {
+      const start = Math.floor(timeSec * sr)
+      const end   = Math.min(raw.length, start + Math.floor(0.025 * sr))
+      let peak = 0
+      for (let i = start; i < end; i++) { const v = Math.abs(raw[i]); if (v > peak) peak = v }
+      return peak
+    }
+
+    // ── Pass 1: Cross-type dedup ──────────────────────────────────────────────
+    // If two hits of DIFFERENT types land within 40ms of each other, they likely
+    // represent the same physical transient mislabeled twice. Keep only the louder.
+    const CROSS_WINDOW = 0.040
+    const sorted = [...hits].sort((a, b) => a.time - b.time)
+    const crossDeduped: BeatHit[] = []
+    for (const h of sorted) {
+      const prev = crossDeduped[crossDeduped.length - 1]
+      if (prev && h.time - prev.time < CROSS_WINDOW) {
+        if (peakAt(h.time) > peakAt(prev.time)) crossDeduped[crossDeduped.length - 1] = h
+        // else keep prev
+      } else {
+        crossDeduped.push(h)
+      }
+    }
+
+    // ── Pass 2: Per-type dedup ────────────────────────────────────────────────
+    // Within each type, enforce 60ms minimum gap. Keep the louder of any pair
+    // that's too close — this catches cases where the same hit is double-detected.
+    const MIN_TYPE_GAP = 0.060
     const byType = new Map<string, BeatHit[]>()
-    for (const h of hits) {
+    for (const h of crossDeduped) {
       if (!byType.has(h.type)) byType.set(h.type, [])
       byType.get(h.type)!.push(h)
     }
-    for (const arr of byType.values()) arr.sort((a, b) => a.time - b.time)
+    for (const arr of byType.values()) {
+      arr.sort((a, b) => a.time - b.time)
+      for (let i = arr.length - 1; i > 0; i--) {
+        if (arr[i].time - arr[i - 1].time < MIN_TYPE_GAP) {
+          if (peakAt(arr[i].time) > peakAt(arr[i - 1].time)) {
+            arr.splice(i - 1, 1)
+          } else {
+            arr.splice(i, 1)
+          }
+        }
+      }
+    }
 
-    const MAX_DUR = 0.32  // hard cap per clip (seconds)
+    // ── Build clips ───────────────────────────────────────────────────────────
+    const MAX_DUR     = 0.32   // hard cap per clip
+    const MIN_CLIP_DUR = 0.040  // clips shorter than 40ms are noise artifacts
     const ctx = new AudioContext()
-    const sr  = beatBox.sampleRate
 
+    let totalPlaced = 0
     for (const [type, typeHits] of byType.entries()) {
+      if (typeHits.length === 0) continue
       const laneId = addCustomLane()
       const label  = DRUM_LABELS[type] ?? type
       setTypeOverrides(prev => ({ ...prev, [laneId]: { label, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
@@ -2330,20 +2430,22 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       for (let i = 0; i < typeHits.length; i++) {
         const hit     = typeHits[i]
         const nextHit = typeHits[i + 1]
-        // Trim to 95% of the gap to the next same-type hit, capped at MAX_DUR
         const gap = nextHit ? (nextHit.time - hit.time) * 0.95 : MAX_DUR
         const dur = Math.min(gap, MAX_DUR)
+        if (dur < MIN_CLIP_DUR) continue  // skip sub-40ms artifacts
         const s   = Math.floor(hit.time * sr)
         const e   = Math.min(beatBox.length, s + Math.floor(dur * sr))
         const buf = ctx.createBuffer(1, Math.max(1, e - s), sr)
-        buf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
+        buf.getChannelData(0).set(raw.subarray(s, e))
         newClips.push(mkClip(crypto.randomUUID(), laneId, buf, hit.time, label))
+        totalPlaced++
       }
-      setAudioClips(prev => [...prev, ...newClips])
+      if (newClips.length > 0) setAudioClips(prev => [...prev, ...newClips])
     }
     ctx.close()
     setDtHits(null)
-    showToast(`Added ${hits.length} hits across ${byType.size} lanes`)
+    setDtSelectedHitId(null)
+    showToast(`Added ${totalPlaced} hits across ${byType.size} lanes`)
   }
 
   useEffect(() => {
@@ -2367,10 +2469,17 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const dur = beatBox.duration
     for (const hit of dtHits) {
       const x = Math.round((hit.time / dur) * W)
+      const isSelected = hit.id === dtSelectedHitId
+      if (isSelected) {
+        // Selection ring
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+        ctx.lineWidth = 2
+        ctx.beginPath(); ctx.arc(x, H / 2, 8, 0, Math.PI * 2); ctx.stroke()
+      }
       ctx.fillStyle = DRUM_COLORS[hit.type] ?? '#888'
-      ctx.beginPath(); ctx.arc(x, H / 2, 5, 0, Math.PI * 2); ctx.fill()
+      ctx.beginPath(); ctx.arc(x, H / 2, isSelected ? 6 : 5, 0, Math.PI * 2); ctx.fill()
     }
-  }, [dtHits, beatBox])
+  }, [dtHits, beatBox, dtSelectedHitId])
 
   function exportBeatResult() {
     if (!beatResult) return
@@ -3474,6 +3583,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   // Each entry = one device being recorded + which lanes it feeds
   const laneRecordersRef = useRef<{ recorder: MediaRecorder; chunks: Blob[]; lanes: string[] }[]>([])
   const laneRecStartPlayheadRef = useRef(0)
+  // Live waveform during recording
+  const laneRecAnalyserRef  = useRef<AnalyserNode | null>(null)
+  const laneRecAudioCtxRef  = useRef<AudioContext | null>(null)
+  const laneRecAnimRef      = useRef<number>(0)
+  const [laneRecPeaks, setLaneRecPeaks] = useState<number[]>([])
 
   async function startLaneRecording() {
     setError(null)
@@ -3540,6 +3654,29 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           return newT
         })
       }, 100)
+
+      // Live waveform visualizer — connect first stream to an AnalyserNode
+      const firstStream = entries[0]?.recorder.stream
+      if (firstStream) {
+        const liveCtx = new AudioContext()
+        const analyser = liveCtx.createAnalyser()
+        analyser.fftSize = 1024
+        liveCtx.createMediaStreamSource(firstStream).connect(analyser)
+        laneRecAnalyserRef.current = analyser
+        laneRecAudioCtxRef.current = liveCtx
+        const tdBuf = new Uint8Array(analyser.fftSize)
+        const peaks: number[] = []
+        function animFrame() {
+          laneRecAnimRef.current = requestAnimationFrame(animFrame)
+          analyser.getByteTimeDomainData(tdBuf)
+          let peak = 0
+          for (let i = 0; i < tdBuf.length; i++) { const v = Math.abs(tdBuf[i] - 128) / 128; if (v > peak) peak = v }
+          peaks.push(peak)
+          if (peaks.length % 4 === 0) setLaneRecPeaks([...peaks])
+        }
+        animFrame()
+      }
+
       startPlaybackFrom(playhead)
     } catch {
       setError('Microphone access denied.')
@@ -3557,6 +3694,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     entries.forEach(e => { e.recorder.stop(); e.recorder.stream.getTracks().forEach(t => t.stop()) })
     stopPlayback()
     await Promise.all(entries.map(e => new Promise<void>(res => { e.recorder.onstop = () => res() })))
+
+    // Clean up live waveform analyser
+    cancelAnimationFrame(laneRecAnimRef.current)
+    laneRecAudioCtxRef.current?.close().catch(() => {})
+    laneRecAnalyserRef.current = null
+    laneRecAudioCtxRef.current = null
+    setLaneRecPeaks([])
 
     setLaneRecording(false)
     laneRecordersRef.current = []
@@ -3838,6 +3982,23 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const target = e.target as HTMLElement
     if (!target.closest('[data-hit-area]')) return   // only on lane backgrounds
 
+    const isCmdHeld = e.metaKey || e.ctrlKey
+
+    if (!isCmdHeld) {
+      // Without Cmd: just register a deselect-on-click handler (no rubber band)
+      const sx = e.clientX, sy = e.clientY
+      const onUp = (me: MouseEvent) => {
+        window.removeEventListener('mouseup', onUp)
+        if (Math.hypot(me.clientX - sx, me.clientY - sy) < 5 && !me.metaKey && !me.ctrlKey && !me.shiftKey) {
+          setSelectedClipIds(new Set())
+          setSelectedIds(new Set())
+        }
+      }
+      window.addEventListener('mouseup', onUp)
+      return
+    }
+
+    // Cmd held → rubber band selection
     const container = laneRowsRef.current
     if (!container) return
 
@@ -7152,6 +7313,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           onSidechainChange={(effectId, val) =>
                             setLaneSidechains(prev => ({ ...prev, [`${type as string}:${effectId}`]: val }))
                           }
+                          liveRecording={laneRecording && activeLaneType === type}
+                          liveRecStartSec={laneRecStartPlayheadRef.current}
+                          liveRecElapsed={laneRecordingTime}
+                          liveRecPeaks={laneRecPeaks}
                         />
                           </div>
                           </div>
@@ -8609,15 +8774,70 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         <canvas
                           ref={dtCanvasRef}
                           width={560} height={60}
-                          style={{ width: '100%', height: 60, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.25)', marginBottom: 12, cursor: 'crosshair' }}
+                          style={{ width: '100%', height: 60, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.25)', marginBottom: 8, cursor: 'pointer' }}
                           onClick={e => {
+                            if (!beatBox) return
                             const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
                             const frac = (e.clientX - rect.left) / rect.width
-                            const time = frac * (beatBox?.duration ?? 0)
-                            setDtHits(prev => prev ? prev.filter(h => Math.abs(h.time - time) > 0.05) : null)
+                            const time = frac * beatBox.duration
+                            // Find nearest hit within 3% of total duration
+                            const nearest = dtHits?.reduce<BeatHit | null>((best, h) => {
+                              const d = Math.abs(h.time - time)
+                              return (!best || d < Math.abs(best.time - time)) ? h : best
+                            }, null)
+                            if (nearest && Math.abs(nearest.time - time) / beatBox.duration < 0.03) {
+                              setDtSelectedHitId(prev => prev === nearest.id ? null : nearest.id)
+                            } else {
+                              setDtSelectedHitId(null)
+                            }
                           }}
-                          title="Click near a dot to remove that hit"
+                          title="Click a dot to inspect or reclassify a hit"
                         />
+
+                        {/* Hit editor popup */}
+                        {(() => {
+                          const selHit = dtHits?.find(h => h.id === dtSelectedHitId) ?? null
+                          if (!selHit) return null
+                          return (
+                            <div style={{ background: 'rgba(17,17,27,0.97)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, padding: '10px 14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[selHit.type] ?? '#888', flexShrink: 0, display: 'inline-block' }} />
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>Detected as</span>
+                              <select
+                                value={selHit.type}
+                                onChange={e => {
+                                  const newType = e.target.value as BeatType
+                                  setDtHits(prev => prev ? prev.map(h => h.id === selHit.id ? { ...h, type: newType } : h) : null)
+                                }}
+                                style={{ fontSize: 11, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}
+                              >
+                                {(['kick','snare','hihat','open-hihat','clap','tom','crash','rim'] as BeatType[]).map(t => (
+                                  <option key={t} value={t}>{DRUM_LABELS[t] ?? t}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={async () => {
+                                  if (selHit.spectral) {
+                                    await correctionsAdd({ id: crypto.randomUUID(), spectral: selHit.spectral, detectedAs: selHit.type, correctedTo: selHit.type, savedAt: new Date().toISOString() }).catch(() => {})
+                                  }
+                                  setDtSelectedHitId(null)
+                                  showToast('Saved — classifier will remember this')
+                                }}
+                                style={{ ...btnBase, fontSize: 10, padding: '3px 9px', background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.35)' }}
+                              >
+                                ✓ This is correct
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setDtHits(prev => prev ? prev.filter(h => h.id !== selHit.id) : null)
+                                  setDtSelectedHitId(null)
+                                }}
+                                style={{ ...btnBase, fontSize: 10, padding: '3px 9px', background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}
+                              >
+                                × Remove
+                              </button>
+                            </div>
+                          )
+                        })()}
 
                         {/* Hit type breakdown */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>

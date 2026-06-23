@@ -2596,29 +2596,25 @@ export default function VideoEditor({
               onMouseLeave={() => setShowModulesMenu(false)}
             >
               <div className="px-3 py-2 text-xs font-semibold" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                Loaded modules
+                Switch module
               </div>
               {MODULE_DEFS.map(mod => {
                 const active = activeModules.includes(mod.key)
-                const isLast = active && activeModules.length === 1
                 return (
                   <button
                     key={mod.key}
                     onClick={async () => {
-                      if (isLast) return
-                      const newMods = active
-                        ? activeModules.filter(k => k !== mod.key)
-                        : [...activeModules, mod.key]
+                      if (active) return  // already on this module
+                      const newMods = [mod.key]  // exclusive: one module at a time
                       setActiveModules(newMods)
                       setShowModulesMenu(false)
-                      // Save immediately with new modules (avoids stale-closure on activeModules)
                       await saveToCloud({ silent: true, modulesOverride: newMods })
                       onModulesChange?.(newMods)
                     }}
-                    disabled={isLast}
+                    disabled={active}
                     className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-left"
-                    style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)', opacity: isLast ? 0.38 : 1, cursor: isLast ? 'not-allowed' : 'pointer' }}
-                    onMouseEnter={e => { if (!isLast) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-card-hover)' }}
+                    style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)', opacity: active ? 1 : 0.75, cursor: active ? 'default' : 'pointer' }}
+                    onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-card-hover)' }}
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
                   >
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? mod.color : 'var(--border)', flexShrink: 0 }} />
@@ -2627,9 +2623,6 @@ export default function VideoEditor({
                   </button>
                 )
               })}
-              <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
-                Changes apply immediately
-              </div>
             </div>
           )}
         </div>
