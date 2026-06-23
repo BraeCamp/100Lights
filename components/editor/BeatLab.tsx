@@ -1796,6 +1796,200 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     URL.revokeObjectURL(a.href)
   }
 
+  // ── Beat Studio ────────────────────────────────────────────────────────────
+  // Guided workflow: load a beat → listen to it → record beatbox → transform.
+  // Uses the same /api/match-vocal pipeline as Match Studio but with defaults
+  // tuned for rhythm reproduction (low strength preserves beatbox pattern;
+  // high gap-fill pulls in bass, synths, and production elements from the target).
+
+  const [beatStudioOpen,  setBeatStudioOpen]  = useState(false)
+  const [beatRef,         setBeatRef]         = useState<AudioBuffer | null>(null)
+  const [beatRefName,     setBeatRefName]     = useState('')
+  const [beatRefBpm,      setBeatRefBpm]      = useState<number | null>(null)
+  const [beatBox,         setBeatBox]         = useState<AudioBuffer | null>(null)
+  const [beatBoxName,     setBeatBoxName]     = useState('')
+  const [beatResult,      setBeatResult]      = useState<AudioBuffer | null>(null)
+  const [beatLoading,     setBeatLoading]     = useState(false)
+  const [beatProgress,    setBeatProgress]    = useState('')
+  const [beatStrength,    setBeatStrength]    = useState(55)
+  const [beatGapFill,     setBeatGapFill]     = useState(72)
+  const [beatRefUrl,      setBeatRefUrl]      = useState('')
+  const [beatRecording,   setBeatRecording]   = useState(false)
+  const [beatPlayingSlot, setBeatPlayingSlot] = useState<'ref' | 'beatbox' | 'result' | null>(null)
+  const [beatLooping,     setBeatLooping]     = useState(false)
+  const [beatStep,        setBeatStep]        = useState<1|2|3>(1)
+  const beatRecordRef = useRef<MediaRecorder | null>(null)
+  const beatPlayRef   = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
+
+  // BPM estimation via onset-energy autocorrelation (runs client-side, no server needed)
+  function quickBpmEstimate(buf: AudioBuffer): number | null {
+    const sr       = buf.sampleRate
+    const data     = buf.getChannelData(0)
+    const hopSize  = Math.round(0.01 * sr)   // 10 ms per frame
+    const numFrames = Math.floor(data.length / hopSize)
+    if (numFrames < 200) return null          // need ≥2 s
+
+    // RMS envelope
+    const env = new Float32Array(numFrames)
+    for (let i = 0; i < numFrames; i++) {
+      let sum = 0
+      for (let j = 0; j < hopSize; j++) sum += (data[i * hopSize + j] ?? 0) ** 2
+      env[i] = Math.sqrt(sum / hopSize)
+    }
+
+    // Positive onset strength
+    const onset = new Float32Array(numFrames)
+    for (let i = 1; i < numFrames; i++) onset[i] = Math.max(0, env[i] - env[i - 1])
+
+    // Autocorrelation over tempo range 60–200 BPM
+    const envSr    = sr / hopSize
+    const minLag   = Math.floor(envSr * 60 / 200)
+    const maxLag   = Math.floor(envSr * 60 / 60)
+    let bestLag = minLag, bestCorr = 0
+    const scanFrames = Math.min(numFrames - maxLag, 600)
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let corr = 0
+      for (let i = 0; i < scanFrames; i++) corr += onset[i] * onset[i + lag]
+      if (corr > bestCorr) { bestCorr = corr; bestLag = lag }
+    }
+
+    let bpm = Math.round(60 / (bestLag / envSr))
+    while (bpm < 60)  bpm *= 2
+    while (bpm > 220) bpm /= 2
+    return bpm
+  }
+
+  function beatStopPlay() {
+    if (beatPlayRef.current) {
+      try { beatPlayRef.current.src.stop() } catch { /* already ended */ }
+      beatPlayRef.current.ctx.close()
+      beatPlayRef.current = null
+    }
+    setBeatPlayingSlot(null)
+    setBeatLooping(false)
+  }
+
+  function beatPlaySlot(slot: 'ref' | 'beatbox' | 'result', loop = false) {
+    beatStopPlay()
+    const buf = slot === 'ref' ? beatRef : slot === 'beatbox' ? beatBox : beatResult
+    if (!buf) return
+    const ctx = new AudioContext()
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.loop   = loop
+    src.connect(ctx.destination)
+    src.onended = () => { if (!loop) { ctx.close(); setBeatPlayingSlot(null); setBeatLooping(false) } }
+    src.start(0)
+    beatPlayRef.current = { src, ctx }
+    setBeatPlayingSlot(slot)
+    setBeatLooping(loop)
+  }
+
+  async function beatLoadRef(file: File) {
+    try {
+      const decoded = await decodeAudio(file)
+      setBeatRef(decoded)
+      setBeatRefName(file.name)
+      setBeatRefBpm(quickBpmEstimate(decoded))
+      setBeatResult(null)
+      setBeatStep(1)
+    } catch { showToast('Could not decode audio file') }
+  }
+
+  async function beatFetchUrl() {
+    const url = beatRefUrl.trim()
+    if (!url) return
+    setBeatProgress('Fetching…')
+    try {
+      const res = await fetch(`/api/fetch-audio?url=${encodeURIComponent(url)}`)
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      const decoded = await decodeAudio(new Blob([await res.arrayBuffer()]))
+      const name = url.split('/').pop()?.split('?')[0] ?? 'Beat'
+      setBeatRef(decoded)
+      setBeatRefName(name)
+      setBeatRefBpm(quickBpmEstimate(decoded))
+      setBeatRefUrl('')
+      setBeatResult(null)
+      setBeatStep(1)
+    } catch (e) {
+      showToast(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setBeatProgress('')
+  }
+
+  async function startBeatRecord() {
+    beatStopPlay()  // stop looping reference when recording starts
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const chunks: BlobPart[] = []
+      const mr = new MediaRecorder(stream)
+      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        try {
+          const blob = new Blob(chunks, { type: mr.mimeType })
+          const decoded = await decodeAudio(blob)
+          setBeatBox(decoded)
+          setBeatBoxName('Beatbox recording')
+          setBeatStep(3)
+        } catch { showToast('Recording decode failed') }
+        setBeatRecording(false)
+      }
+      beatRecordRef.current = mr
+      mr.start()
+      setBeatRecording(true)
+    } catch { showToast('Microphone access denied') }
+  }
+
+  function stopBeatRecord() {
+    beatRecordRef.current?.stop()
+    beatRecordRef.current = null
+  }
+
+  async function runBeatStudio() {
+    if (!beatRef || !beatBox) return
+    setBeatLoading(true)
+    setBeatProgress('Uploading…')
+    setBeatResult(null)
+    try {
+      const form = new FormData()
+      form.append('vocal',  new Blob([audioBufToWav(beatBox)],  { type: 'audio/wav' }), 'beatbox.wav')
+      form.append('target', new Blob([audioBufToWav(beatRef)],  { type: 'audio/wav' }), 'beat.wav')
+      form.append('opts', JSON.stringify({ strength: beatStrength / 100, gapFill: beatGapFill / 100 }))
+      setBeatProgress('Transforming…')
+      const res = await fetch('/api/match-vocal', { method: 'POST', body: form })
+      if (!res.ok) {
+        const err = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(err?.error ?? `Server error ${res.status}`)
+      }
+      setBeatProgress('Decoding…')
+      const result = await wavToAudioBuf(await res.arrayBuffer())
+      setBeatResult(result)
+    } catch (e) {
+      showToast(`Beat transform failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setBeatProgress('')
+    setBeatLoading(false)
+  }
+
+  function addBeatResultToTimeline() {
+    if (!beatResult) return
+    const laneId = addCustomLane()
+    setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneId, beatResult, 0, `Beat — ${beatRefName || 'result'}`)])
+    showToast('Added to timeline')
+    setBeatStudioOpen(false)
+  }
+
+  function exportBeatResult() {
+    if (!beatResult) return
+    const blob = new Blob([audioBufToWav(beatResult)], { type: 'audio/wav' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `beatbox-match-${beatRefName || 'result'}.wav`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
   async function openAbletonProject() {
     try {
       const dir = await (window as unknown as { showDirectoryPicker: (o?: object) => Promise<FileSystemDirectoryHandle> })
@@ -5470,6 +5664,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 </button>
               </Tooltip>
 
+              {/* Beat Studio button */}
+              <Tooltip content="Beat Studio — beatbox a track, AI reproduces it using only your beatbox" placement="bottom" disabled={beatStudioOpen}>
+                <button
+                  onClick={() => setBeatStudioOpen(v => !v)}
+                  style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: beatStudioOpen ? 'rgba(234,179,8,0.15)' : 'var(--bg-card)', border: `1px solid ${beatStudioOpen ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, color: beatStudioOpen ? 'rgba(250,204,21,1)' : 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  ▣ Beat
+                </button>
+              </Tooltip>
+
               {/* + Track button */}
               <Tooltip content="Add a new track" placement="bottom">
                 <button
@@ -7080,6 +7284,251 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       })()}
 
       {/* ── Ableton import modal ──────────────────────────────────────────── */}
+      {/* ── Beat Studio ──────────────────────────────────────────────────── */}
+      {beatStudioOpen && (() => {
+        const WaveViz = ({ buf, color = '#a855f7' }: { buf: AudioBuffer | null; color?: string }) => {
+          const ref = useRef<HTMLCanvasElement>(null)
+          useEffect(() => {
+            const canvas = ref.current
+            if (!canvas || !buf) return
+            const ctx2d = canvas.getContext('2d')
+            if (!ctx2d) return
+            const W = canvas.width, H = canvas.height
+            ctx2d.clearRect(0, 0, W, H)
+            const data = buf.getChannelData(0)
+            const bars = Math.floor(W / 3)
+            const sPerBar = Math.floor(data.length / bars)
+            ctx2d.fillStyle = color
+            for (let i = 0; i < bars; i++) {
+              let peak = 0
+              for (let j = 0; j < sPerBar; j++) peak = Math.max(peak, Math.abs(data[i * sPerBar + j] ?? 0))
+              const bh = Math.max(2, peak * H * 0.9)
+              ctx2d.fillRect(i * 3, (H - bh) / 2, 2, bh)
+            }
+          }, [buf, color])
+          return <canvas ref={ref} width={480} height={52} style={{ width: '100%', height: 52, display: 'block', opacity: buf ? 1 : 0 }} />
+        }
+
+        const btnBase: React.CSSProperties = { padding: '7px 16px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600 }
+        const stepActive = (n: number) => beatStep === n
+        const stepDone   = (n: number) => beatStep > n || (n === 1 && !!beatRef) || (n === 2 && !!beatBox)
+
+        const stepHeaderStyle = (n: 1|2|3): React.CSSProperties => ({
+          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
+        })
+        const stepNumStyle = (n: 1|2|3): React.CSSProperties => ({
+          width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 700, flexShrink: 0,
+          background: stepDone(n) ? 'rgba(234,179,8,0.25)' : stepActive(n) ? 'rgba(234,179,8,0.15)' : 'rgba(255,255,255,0.04)',
+          border: `1px solid ${stepDone(n) ? 'rgba(234,179,8,0.6)' : stepActive(n) ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`,
+          color: stepDone(n) ? 'rgba(250,204,21,1)' : stepActive(n) ? 'rgba(250,204,21,0.7)' : 'var(--text-muted)',
+        })
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 801, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+            onClick={e => { if (e.target === e.currentTarget) { beatStopPlay(); setBeatStudioOpen(false) } }}>
+            <div style={{ background: 'var(--bg-modal, #18181b)', border: '1px solid var(--border)', borderRadius: 14, padding: 28, width: 'min(680px,94vw)', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Beat Studio</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Load a beat, listen to it, then beatbox it — the AI reproduces it using only your beatbox recording as source material</div>
+                </div>
+                <button onClick={() => { beatStopPlay(); setBeatStudioOpen(false) }} style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', padding: '5px 10px' }}>✕</button>
+              </div>
+
+              {/* ── Step 1: Load the beat ── */}
+              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatRef ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginBottom: 12 }}>
+                <div style={stepHeaderStyle(1)}>
+                  <div style={stepNumStyle(1)}>{stepDone(1) ? '✓' : '1'}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Load the beat you want to replicate</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>Drop a file, paste a URL, or browse — WAV, MP3, AIFF all work</div>
+                  </div>
+                  {beatRef && beatRefBpm && (
+                    <div style={{ marginLeft: 'auto', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 700, color: 'rgba(250,204,21,1)' }}>
+                      ~{beatRefBpm} BPM
+                    </div>
+                  )}
+                </div>
+
+                {/* Drop zone */}
+                <div
+                  style={{ border: '1.5px dashed var(--border)', borderRadius: 8, padding: '16px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)', marginBottom: 10 }}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) beatLoadRef(f) }}
+                  onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = () => { const f = inp.files?.[0]; if (f) beatLoadRef(f) }; inp.click() }}
+                >
+                  {beatRef
+                    ? <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{beatRefName}</span>
+                    : <><div style={{ fontSize: 20, marginBottom: 4 }}>🎵</div>Drop your beat here or click to browse</>}
+                </div>
+
+                {/* URL import */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  <input value={beatRefUrl} onChange={e => setBeatRefUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && beatFetchUrl()}
+                    placeholder="Or paste a direct audio URL…"
+                    style={{ flex: 1, fontSize: 10, padding: '5px 8px', borderRadius: 6, background: 'var(--bg-input, #27272a)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  <button onClick={beatFetchUrl} style={{ ...btnBase, background: 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '5px 12px', fontSize: 10 }}>Fetch</button>
+                </div>
+
+                {/* Waveform + playback */}
+                {beatRef && (
+                  <>
+                    <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: '6px 8px', marginBottom: 8 }}>
+                      <WaveViz buf={beatRef} color="rgba(250,204,21,0.75)" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        onClick={() => beatLooping ? beatStopPlay() : beatPlaySlot('ref', true)}
+                        style={{ ...btnBase, background: beatLooping ? 'rgba(234,179,8,0.2)' : 'rgba(234,179,8,0.08)', color: beatLooping ? 'rgba(250,204,21,1)' : 'rgba(250,204,21,0.6)', border: '1px solid rgba(234,179,8,0.3)', padding: '6px 14px' }}
+                      >
+                        {beatLooping ? '■ Stop loop' : '↻ Loop to memorise'}
+                      </button>
+                      <button
+                        onClick={() => beatPlayingSlot === 'ref' && !beatLooping ? beatStopPlay() : beatPlaySlot('ref', false)}
+                        style={{ ...btnBase, background: beatPlayingSlot === 'ref' && !beatLooping ? 'rgba(234,179,8,0.15)' : 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', padding: '6px 12px' }}
+                      >
+                        {beatPlayingSlot === 'ref' && !beatLooping ? '■' : '▶'}
+                      </button>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{beatRef.duration.toFixed(1)}s</span>
+                      {beatStep === 1 && beatRef && (
+                        <button onClick={() => setBeatStep(2)}
+                          style={{ ...btnBase, marginLeft: 'auto', background: 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '6px 14px' }}>
+                          Ready to beatbox →
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* ── Step 2: Record beatbox ── */}
+              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatBox ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginBottom: 12, opacity: beatRef ? 1 : 0.4, pointerEvents: beatRef ? 'auto' : 'none' }}>
+                <div style={stepHeaderStyle(2)}>
+                  <div style={stepNumStyle(2)}>{stepDone(2) ? '✓' : '2'}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Record your beatbox</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>Listen to the beat above until you have it memorised, then record your attempt</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <button
+                    onClick={() => beatRecording ? stopBeatRecord() : startBeatRecord()}
+                    style={{ ...btnBase, flex: 1, background: beatRecording ? 'rgba(239,68,68,0.18)' : 'rgba(234,179,8,0.12)', color: beatRecording ? '#f87171' : 'rgba(250,204,21,1)', border: `1px solid ${beatRecording ? 'rgba(239,68,68,0.4)' : 'rgba(234,179,8,0.3)'}` }}
+                  >
+                    {beatRecording ? '■ Stop recording' : '⏺ Record beatbox'}
+                  </button>
+                  <button
+                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'; inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const d = await decodeAudio(f); setBeatBox(d); setBeatBoxName(f.name); setBeatStep(3) } catch { showToast('Could not decode file') } }; inp.click() }}
+                    style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+                  >
+                    Browse file
+                  </button>
+                </div>
+
+                {beatRecording && (
+                  <div style={{ border: '1.5px dashed rgba(239,68,68,0.4)', borderRadius: 8, padding: '14px 12px', textAlign: 'center', background: 'rgba(239,68,68,0.04)', fontSize: 11, color: '#f87171', marginBottom: 8 }}>
+                    🔴 Recording… beatbox the rhythm, then tap Stop
+                  </div>
+                )}
+
+                {beatBox && !beatRecording && (
+                  <>
+                    <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: '6px 8px', marginBottom: 8 }}>
+                      <WaveViz buf={beatBox} color="rgba(234,179,8,0.75)" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        onClick={() => beatPlayingSlot === 'beatbox' ? beatStopPlay() : beatPlaySlot('beatbox')}
+                        style={{ ...btnBase, background: beatPlayingSlot === 'beatbox' ? 'rgba(234,179,8,0.15)' : 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', padding: '6px 12px' }}
+                      >
+                        {beatPlayingSlot === 'beatbox' ? '■' : '▶'} {beatBoxName}
+                      </button>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{beatBox.duration.toFixed(1)}s</span>
+                      {beatStep === 2 && (
+                        <button onClick={() => setBeatStep(3)}
+                          style={{ ...btnBase, marginLeft: 'auto', background: 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '6px 14px' }}>
+                          Transform →
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* ── Step 3: Transform & result ── */}
+              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatResult ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, opacity: beatRef && beatBox ? 1 : 0.4, pointerEvents: beatRef && beatBox ? 'auto' : 'none' }}>
+                <div style={stepHeaderStyle(3)}>
+                  <div style={stepNumStyle(3)}>{beatResult ? '✓' : '3'}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Transform</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>The AI uses your beatbox as the rhythmic skeleton and fills in the beat's sound</div>
+                  </div>
+                </div>
+
+                {/* Sliders */}
+                <div style={{ display: 'flex', gap: 20, marginBottom: 16, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 5 }}>
+                      Beatbox presence <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{beatStrength}%</span>
+                    </div>
+                    <input type="range" min={20} max={100} value={beatStrength} onChange={e => setBeatStrength(+e.target.value)}
+                      style={{ width: '100%', accentColor: 'rgba(250,204,21,0.9)' }} />
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Lower = more of the target sound; higher = more of your original beatbox</div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 5 }}>
+                      Beat fill <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{beatGapFill}%</span>
+                    </div>
+                    <input type="range" min={0} max={100} value={beatGapFill} onChange={e => setBeatGapFill(+e.target.value)}
+                      style={{ width: '100%', accentColor: 'rgba(250,204,21,0.9)' }} />
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>How much bass, synths, and production from the target to blend in</div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', marginBottom: 16 }}>
+                  <button onClick={runBeatStudio} disabled={!beatRef || !beatBox || beatLoading}
+                    style={{ ...btnBase, fontSize: 13, padding: '10px 40px', background: (!beatRef || !beatBox || beatLoading) ? 'rgba(234,179,8,0.1)' : 'rgba(234,179,8,0.85)', color: beatLoading ? 'rgba(250,204,21,0.6)' : '#000', cursor: (!beatRef || !beatBox || beatLoading) ? 'not-allowed' : 'pointer', opacity: (!beatRef || !beatBox) ? 0.5 : 1 }}>
+                    {beatLoading ? beatProgress || 'Processing…' : '▣ Transform Beat'}
+                  </button>
+                </div>
+
+                {/* Result */}
+                {beatResult && (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(250,204,21,1)', marginBottom: 8 }}>Result</div>
+                    <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: '6px 8px', marginBottom: 10 }}>
+                      <WaveViz buf={beatResult} color="rgba(250,204,21,0.9)" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <button
+                        onClick={() => beatPlayingSlot === 'result' ? beatStopPlay() : beatPlaySlot('result')}
+                        style={{ ...btnBase, background: beatPlayingSlot === 'result' ? 'rgba(234,179,8,0.2)' : 'var(--bg-card)', color: beatPlayingSlot === 'result' ? 'rgba(250,204,21,1)' : 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                      >
+                        {beatPlayingSlot === 'result' ? '■ Stop' : '▶ Play result'}
+                      </button>
+                      <button onClick={addBeatResultToTimeline}
+                        style={{ ...btnBase, background: 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)' }}>
+                        + Add to timeline
+                      </button>
+                      <button onClick={exportBeatResult}
+                        style={{ ...btnBase, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                        ↓ Export WAV
+                      </button>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>{beatResult.duration.toFixed(1)}s</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )
+      })()}
+
       {/* ── Match Studio ─────────────────────────────────────────────────── */}
       {matchStudioOpen && (() => {
         // Waveform mini-renderer using a canvas
