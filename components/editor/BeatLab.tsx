@@ -2558,8 +2558,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       for (let i = 0; i < clusterHitList.length; i++) {
         const hit     = clusterHitList[i]
         const nextHit = clusterHitList[i + 1]
-        const gap = nextHit ? (nextHit.time - hit.time) * 0.95 : MAX_DUR
-        const dur = Math.min(gap, MAX_DUR)
+        // Use user-cropped duration if set, otherwise fall back to gap to next hit
+        const fallbackGap = nextHit ? (nextHit.time - hit.time) * 0.95 : MAX_DUR
+        const dur = hit.duration != null ? hit.duration : Math.min(fallbackGap, MAX_DUR)
         if (dur < MIN_CLIP_DUR) continue
         const s   = Math.floor(hit.time * sr)
         const e   = Math.min(beatBox.length, s + Math.floor(dur * sr))
