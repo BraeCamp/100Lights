@@ -2347,18 +2347,30 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       if (!byType.has(h.type)) byType.set(h.type, [])
       byType.get(h.type)!.push(h)
     }
+    for (const arr of byType.values()) arr.sort((a, b) => a.time - b.time)
+
+    const MAX_DUR = 0.32  // hard cap per clip (seconds)
     const ctx = new AudioContext()
+    const sr  = beatBox.sampleRate
+
     for (const [type, typeHits] of byType.entries()) {
-      const firstHit = typeHits[0]
-      const sr = beatBox.sampleRate
-      const s  = Math.floor(firstHit.time * sr)
-      const e  = Math.min(beatBox.length, s + Math.floor(0.4 * sr))
-      const len = Math.max(1, e - s)
-      const sampleBuf = ctx.createBuffer(1, len, sr)
-      sampleBuf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
       const laneId = addCustomLane()
-      setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
-      setAudioClips(prev => [...prev, ...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type))])
+      const label  = DRUM_LABELS[type] ?? type
+      setTypeOverrides(prev => ({ ...prev, [laneId]: { label, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
+      const newClips: AudioClip[] = []
+      for (let i = 0; i < typeHits.length; i++) {
+        const hit     = typeHits[i]
+        const nextHit = typeHits[i + 1]
+        // Trim to 95% of the gap to the next same-type hit, capped at MAX_DUR
+        const gap = nextHit ? (nextHit.time - hit.time) * 0.95 : MAX_DUR
+        const dur = Math.min(gap, MAX_DUR)
+        const s   = Math.floor(hit.time * sr)
+        const e   = Math.min(beatBox.length, s + Math.floor(dur * sr))
+        const buf = ctx.createBuffer(1, Math.max(1, e - s), sr)
+        buf.getChannelData(0).set(beatBox.getChannelData(0).subarray(s, e))
+        newClips.push(mkClip(crypto.randomUUID(), laneId, buf, hit.time, label))
+      }
+      setAudioClips(prev => [...prev, ...newClips])
     }
     ctx.close()
     setDtHits(null)
