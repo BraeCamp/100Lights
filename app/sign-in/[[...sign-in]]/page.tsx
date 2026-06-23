@@ -27,19 +27,19 @@ export default function SignInPage() {
         appearance={{
           variables: {
             colorBackground: '#1e1e30',
-            colorInputBackground: '#2a2a42',
+            colorInputBackground: '#ffffff',
             colorText: '#ffffff',
-            colorTextSecondary: '#ffffff',
-            colorInputText: '#f4f3ff',
+            colorTextSecondary: '#a09ec0',
+            colorInputText: '#111111',
             colorNeutral: '#9896b8',
             colorPrimary: '#8b5cf6',
           },
           elements: {
             headerTitle: { color: '#ffffff' },
-            headerSubtitle: { color: '#ffffff' },
-            formFieldLabel: { color: '#ffffff' },
-            formFieldInput: { color: '#ffffff' },
-            otpCodeFieldInput: { color: '#ffffff' },
+            headerSubtitle: { color: '#a09ec0' },
+            formFieldLabel: { color: '#d4d2f0' },
+            formFieldInput: { color: '#111111', background: '#ffffff', borderColor: 'rgba(139,92,246,0.3)' },
+            otpCodeFieldInput: { color: '#111111', background: '#ffffff' },
           },
         }}
       />
