@@ -72,6 +72,7 @@ import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
 import { smoothPitchCurve, smoothSpectralTransitions, applyReferenceEnvelope } from '@/lib/timbre-smooth'
 import { parseAbletonProject, loadClipAudio, type AbletonProject, type AbletonTrack } from '@/lib/ableton-parser'
 import { encodeWav, decodeWav, decodeAiff } from '@/lib/wav-codec'
+import { synthDrum, DRUM_COLORS, DRUM_LABELS, DRUM_TYPES } from '@/lib/drum-synth'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -1978,6 +1979,118 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setAudioClips(prev => [...prev, mkClip(crypto.randomUUID(), laneId, beatResult, 0, `Beat — ${beatRefName || 'result'}`)])
     showToast('Added to timeline')
     setBeatStudioOpen(false)
+  }
+
+  // ── Drum transcription state ──────────────────────────────────────────────
+  // Kit custom samples: drumType → AudioBuffer (user-uploaded overrides for synth)
+  const [beatKitCustom,       setBeatKitCustom]       = useState<Record<string, AudioBuffer>>({})
+  const [beatTranscribeResult, setBeatTranscribeResult] = useState<{ type: string; count: number; laneId: string }[] | null>(null)
+  const [beatTranscribeLoading, setBeatTranscribeLoading] = useState(false)
+
+  async function previewDrumType(type: string) {
+    const ctx = new AudioContext()
+    const data = beatKitCustom[type]
+      ? beatKitCustom[type].getChannelData(0)
+      : synthDrum(type, ctx.sampleRate)
+    const buf = ctx.createBuffer(1, data.length, ctx.sampleRate)
+    buf.getChannelData(0).set(data)
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(ctx.destination)
+    src.onended = () => ctx.close()
+    src.start(0)
+  }
+
+  async function uploadKitSample(type: string) {
+    const inp = document.createElement('input')
+    inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'
+    inp.onchange = async () => {
+      const f = inp.files?.[0]; if (!f) return
+      try {
+        const buf = await decodeAudio(f)
+        setBeatKitCustom(prev => ({ ...prev, [type]: buf }))
+        showToast(`${DRUM_LABELS[type] ?? type} sample loaded`)
+      } catch { showToast('Could not load audio file') }
+    }
+    inp.click()
+  }
+
+  async function runBeatTranscribe() {
+    if (!beatBox) return
+    setBeatTranscribeLoading(true)
+    setBeatTranscribeResult(null)
+    try {
+      const { analyzeBeats } = await import('@/lib/beat-analyzer')
+      const result = await analyzeBeats(beatBox, {
+        allowedTypes: ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
+        referenceSounds,
+        sensitivityMultiplier: 0.65,  // lower threshold → more sensitive for soft beatbox
+      })
+
+      if (result.hits.length === 0) {
+        showToast('No drum hits detected — try recording louder or closer to the mic')
+        setBeatTranscribeLoading(false)
+        return
+      }
+
+      // Group hits by type, preserving timing from the beatbox
+      const byType = new Map<string, { time: number; velocity: number }[]>()
+      for (const hit of result.hits) {
+        if (!byType.has(hit.type)) byType.set(hit.type, [])
+        byType.get(hit.type)!.push({ time: hit.time, velocity: hit.velocity })
+      }
+
+      const ctx = new AudioContext()
+      const sr  = ctx.sampleRate
+      const summary: { type: string; count: number; laneId: string }[] = []
+
+      for (const [type, hits] of byType.entries()) {
+        // Use custom sample if uploaded, otherwise synthesize
+        let sampleBuf: AudioBuffer
+        if (beatKitCustom[type]) {
+          sampleBuf = beatKitCustom[type]
+        } else {
+          const data = synthDrum(type, sr)
+          sampleBuf = ctx.createBuffer(1, data.length, sr)
+          sampleBuf.getChannelData(0).set(data)
+        }
+
+        // Create a dedicated lane for this drum type
+        const laneId = addCustomLane()
+        setTypeOverrides(prev => ({
+          ...prev,
+          [laneId]: { label: DRUM_LABELS[type] ?? type, color: DRUM_COLORS[type] ?? '#6b7280' },
+        }))
+
+        // Place one clip per hit — clips are tiny (just the sample) positioned at hit time
+        const newClips = hits.map(hit =>
+          mkClip(crypto.randomUUID(), laneId, sampleBuf, hit.time, DRUM_LABELS[type] ?? type)
+        )
+        setAudioClips(prev => [...prev, ...newClips])
+        summary.push({ type, count: hits.length, laneId })
+      }
+
+      ctx.close()
+      setBeatTranscribeResult(summary)
+    } catch (e) {
+      showToast(`Transcription failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setBeatTranscribeLoading(false)
+  }
+
+  // Replace all clips on a lane with a new audio file (swap the drum sample)
+  async function swapLaneSample(laneId: string) {
+    const inp = document.createElement('input')
+    inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'
+    inp.onchange = async () => {
+      const f = inp.files?.[0]; if (!f) return
+      try {
+        const newBuf = await decodeAudio(f)
+        setAudioClips(prev => prev.map(c => c.laneType === laneId ? { ...c, buf: newBuf } : c))
+        showToast(`Swapped sample on ${DRUM_LABELS[laneId.split('_')[0]] ?? laneId} lane`)
+      } catch { showToast('Could not load audio file') }
+    }
+    inp.click()
   }
 
   function exportBeatResult() {
@@ -7510,6 +7623,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                       >
                         {beatPlayingSlot === 'result' ? '■ Stop' : '▶ Play result'}
                       </button>
+                      <button onClick={() => { setBeatResult(null); runBeatStudio() }}
+                        style={{ ...btnBase, background: 'rgba(234,179,8,0.08)', color: 'rgba(250,204,21,0.7)', border: '1px solid rgba(234,179,8,0.2)' }}>
+                        ↺ Retry
+                      </button>
                       <button onClick={addBeatResultToTimeline}
                         style={{ ...btnBase, background: 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)' }}>
                         + Add to timeline
@@ -7523,6 +7640,62 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   </div>
                 )}
               </div>
+
+              {/* ── Drum Transcription ── */}
+              {beatBox && (
+                <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatTranscribeResult ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Drum Transcription</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Detect beats in your beatbox → place real drum sounds on separate lanes you can swap</div>
+                  </div>
+
+                  {/* Drum kit configurator */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                    {DRUM_TYPES.map(type => (
+                      <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(0,0,0,0.2)', border: `1px solid ${beatKitCustom[type] ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 8, padding: '5px 10px' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#6b7280', flexShrink: 0, display: 'inline-block' }} />
+                        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)' }}>{DRUM_LABELS[type]}</span>
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{beatKitCustom[type] ? 'custom' : 'synth'}</span>
+                        <button onClick={() => previewDrumType(type)} title="Preview" style={{ ...btnBase, padding: '1px 5px', fontSize: 9, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>▶</button>
+                        <button onClick={() => uploadKitSample(type)} title="Upload custom" style={{ ...btnBase, padding: '1px 5px', fontSize: 9, background: 'none', color: 'rgba(250,204,21,0.6)', border: '1px solid rgba(234,179,8,0.2)' }}>↑</button>
+                        {beatKitCustom[type] && (
+                          <button onClick={() => setBeatKitCustom(prev => { const n = { ...prev }; delete n[type]; return n })} style={{ ...btnBase, padding: '1px 4px', fontSize: 9, background: 'none', color: 'var(--text-muted)', border: 'none' }}>✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={runBeatTranscribe} disabled={beatTranscribeLoading}
+                    style={{ ...btnBase, background: beatTranscribeLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', width: '100%', marginBottom: beatTranscribeResult ? 14 : 0 }}>
+                    {beatTranscribeLoading ? 'Detecting hits…' : '▣ Transcribe beatbox to drums'}
+                  </button>
+
+                  {/* Transcription result — each detected drum type with swap button */}
+                  {beatTranscribeResult && (
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(250,204,21,1)', marginBottom: 10 }}>
+                        Placed on timeline — {beatTranscribeResult.reduce((n, r) => n + r.count, 0)} hits across {beatTranscribeResult.length} lanes
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {beatTranscribeResult.map(({ type, count, laneId }) => (
+                          <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.15)', borderRadius: 7, padding: '7px 12px' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#6b7280', flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', minWidth: 70 }}>{DRUM_LABELS[type] ?? type}</span>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{count} hit{count !== 1 ? 's' : ''}</span>
+                            <button onClick={() => swapLaneSample(laneId)}
+                              style={{ ...btnBase, marginLeft: 'auto', padding: '3px 10px', fontSize: 9, background: 'rgba(234,179,8,0.08)', color: 'rgba(250,204,21,0.8)', border: '1px solid rgba(234,179,8,0.2)' }}>
+                              ↑ Swap sample
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8 }}>
+                        Each lane has individual clips at every hit — drag a new audio file onto any lane to replace its sound, or use ↑ Swap sample to bulk-replace all hits on a lane at once.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
             </div>
           </div>
