@@ -2116,10 +2116,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatVerifyPos,        setBeatVerifyPos]        = useState(0)   // 0–1 playhead fraction
   const [beatClusterK,         setBeatClusterK]         = useState(3)   // number of anonymous clusters
   const [beatClusterNames,     setBeatClusterNames]     = useState<Record<string, string>>({})  // letter → user name
-  const beatPreviewRef    = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
-  const beatVerifyCtxRef  = useRef<AudioContext | null>(null)
-  const beatVerifyGainRef = useRef<{ ref: GainNode | null; box: GainNode | null }>({ ref: null, box: null })
-  const beatVerifyRafRef  = useRef(0)
+  const beatPreviewRef      = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
+  const beatVerifyCtxRef   = useRef<AudioContext | null>(null)
+  const beatVerifyGainRef  = useRef<{ ref: GainNode | null; box: GainNode | null }>({ ref: null, box: null })
+  const beatVerifyRafRef   = useRef(0)
+  const clusterSampleCtxRef = useRef<AudioContext | null>(null)
 
   async function previewDrumType(type: string) {
     const ctx = new AudioContext()
@@ -2221,7 +2222,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
     const src = ctx.createBufferSource()
     src.buffer = out; src.connect(ctx.destination)
-    src.onended = () => { ctx.close(); beatPreviewRef.current = null; setBeatPreviewPlaying(false) }
+    const capturedPreviewCtx = ctx
+    src.onended = () => { if (beatPreviewRef.current?.ctx === capturedPreviewCtx) { ctx.close(); beatPreviewRef.current = null; setBeatPreviewPlaying(false) } }
     src.start(0)
     beatPreviewRef.current = { src, ctx }
     setBeatPreviewPlaying(true)
@@ -2248,7 +2250,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain); src.start()
     }
     const boxSrc = ctx.createBufferSource(); boxSrc.buffer = beatBox; boxSrc.connect(boxGain)
-    boxSrc.onended = () => stopVerifyPlayback()
+    // Capture ctx so this callback can't accidentally kill a later playback session.
+    // When ctx.close() is called (e.g. user presses ▶ Listen again), onended fires on
+    // the old boxSrc — without this guard it would call stopVerifyPlayback() and close
+    // the brand-new context that was just created.
+    const capturedCtx = ctx
+    boxSrc.onended = () => { if (beatVerifyCtxRef.current === capturedCtx) stopVerifyPlayback() }
     boxSrc.start()
 
     const wallStart = performance.now()
@@ -2294,9 +2301,14 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // Play a short excerpt from beatBox at the first hit in a cluster so the user can hear the sound
   function playClusterSample(letter: string) {
+    // Close any previously playing sample so contexts don't accumulate
+    try { clusterSampleCtxRef.current?.close() } catch { /* ok */ }
+    clusterSampleCtxRef.current = null
+
     const hit = beatPendingHits?.find(h => h.clusterId === letter)
     if (!hit || !beatBox) return
     const ctx = new AudioContext()
+    clusterSampleCtxRef.current = ctx
     const sr = beatBox.sampleRate
     const start = Math.floor(hit.time * sr)
     const end   = Math.min(beatBox.length, start + Math.floor(0.45 * sr))
@@ -2304,7 +2316,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const buf = ctx.createBuffer(beatBox.numberOfChannels, len, sr)
     for (let ch = 0; ch < beatBox.numberOfChannels; ch++) buf.getChannelData(ch).set(beatBox.getChannelData(ch).subarray(start, end))
     const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination)
-    src.onended = () => ctx.close(); src.start()
+    const capturedCtx = ctx
+    src.onended = () => {
+      if (clusterSampleCtxRef.current === capturedCtx) { ctx.close(); clusterSampleCtxRef.current = null }
+    }
+    src.start()
   }
 
   // Place the verified pending hits onto the timeline as individual clips per lane
