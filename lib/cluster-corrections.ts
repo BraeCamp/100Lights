@@ -3,7 +3,6 @@ import type { HitSpectral } from './beat-features'
 export interface ClusterCorrection {
   id:      string
   spectral: HitSpectral
-  label:   string
   savedAt: string
 }
 

@@ -320,18 +320,49 @@ export const CLUSTER_COLORS: Record<string, string> = {
   D: '#f97316', E: '#a855f7', F: '#06b6d4',
 }
 
-function hitToVec(s: HitSpectral): number[] {
+// Exported so callers can recompute vectors from saved HitSpectral objects
+// (e.g. turning stored correction fingerprints into seed vectors for clustering).
+export function hitToVec(s: HitSpectral): number[] {
+  // All dimensions are normalized to roughly 0–1 so k-means treats them equally.
   return [
-    s.sub           ?? 0,
-    s.lowMid        ?? 0,
-    s.mid           ?? 0,
-    s.hiMid         ?? 0,
-    s.hi            ?? 0,
-    (s.attackTime   ?? 0) * 8,           // scale 0–0.1 → 0–0.8
-    s.roughness     ?? 0,
-    s.harmonicRatio ?? 0,
-    s.flatness      ?? 0,
-    ((s.mfcc?.[1]   ?? 0) + 20) / 40,   // normalize mfcc[1] (~−20–+20) → 0–1
+    // ── 5-band energies (already 0–1) ──────────────────────────────────────────
+    s.sub, s.lowMid, s.mid, s.hiMid, s.hi,
+
+    // ── Spectral shape ──────────────────────────────────────────────────────────
+    Math.min(1, (s.centroid ?? 0) / 8000),          // spectral brightness center
+    Math.min(1, (s.spread   ?? 0) / 4000),          // tonal focus vs. noise
+    Math.min(1, (s.rolloff  ?? 0) / 10000),         // energy roll-off point
+    s.flatness ?? 0,                                 // tonal (0) vs. noisy (1)
+    s.flux     ?? 0,                                 // change vs. previous hit
+
+    // ── MFCCs 1–8 (timbral shape, gold standard for sound ID) ─────────────────
+    // Coefficients roughly range −30…+30; shift and scale to 0–1.
+    ...Array.from({ length: 8 }, (_, i) =>
+      Math.max(0, Math.min(1, ((s.mfcc?.[i + 1] ?? 0) + 30) / 60))
+    ),
+
+    // ── Temporal envelope ───────────────────────────────────────────────────────
+    Math.min(1, (s.attackTime       ?? 0) / 0.12),  // sharp (0) vs. soft (1) hit
+    Math.min(1, (s.decayTime        ?? 0) / 0.4),
+    s.sustainLevel     ?? 0,                         // ongoing body after attack
+    Math.min(1, (s.releaseTime      ?? 0) / 0.8),
+    Math.min(1, (s.zeroCrossingRate ?? 0) / 5000),  // noisiness proxy
+
+    // ── Pitch / harmonic structure ──────────────────────────────────────────────
+    Math.min(1, (s.f0  ?? 0) / 1000),               // fundamental frequency
+    s.pitchConfidence  ?? 0,                         // how tonal the sound is
+    s.harmonicRatio    ?? 0,                         // harmonic vs. noise energy
+
+    // ── Dynamics ────────────────────────────────────────────────────────────────
+    s.peakAmplitude    ?? 0,
+    s.rmsAmplitude     ?? 0,
+    Math.min(1, (s.dynamicRange ?? 0) / 40),        // transient sharpness in dB
+
+    // ── Psychoacoustic ──────────────────────────────────────────────────────────
+    s.brightness ?? 0,  // air / high-end energy
+    s.warmth     ?? 0,  // low-end body
+    s.presence   ?? 0,  // punchy 2–5 kHz midrange
+    s.roughness  ?? 0,  // buzz / wire noise
   ]
 }
 
@@ -339,7 +370,9 @@ function vecDist(a: number[], b: number[]): number {
   let s = 0; for (let i = 0; i < a.length; i++) s += (a[i] - b[i]) ** 2; return Math.sqrt(s)
 }
 
-export function clusterHits(hits: BeatHit[], k: number): Record<string, number> {
+// seedVecs: optional pre-computed feature vectors to use as initial centroids
+// (from saved user corrections). Any remaining slots are filled with k-means++.
+export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): Record<string, number> {
   const actualK = Math.max(1, Math.min(CLUSTER_LETTERS.length, k))
   const vecs  = hits.map(h => ({ id: h.id, v: h.spectral ? hitToVec(h.spectral) : null }))
   const valid = vecs.filter((x): x is { id: string; v: number[] } => x.v !== null)
@@ -348,9 +381,19 @@ export function clusterHits(hits: BeatHit[], k: number): Record<string, number> 
   if (valid.length === 0) { hits.forEach(h => { assign[h.id] = 0 }); return assign }
 
   const kk = Math.min(actualK, valid.length)
+  const dim = valid[0].v.length
 
-  // K-means++ initialisation
-  const centroids: number[][] = [valid[Math.floor(Math.random() * valid.length)].v]
+  // Seed centroids from user corrections first, then fill with k-means++
+  const centroids: number[][] = []
+  if (seedVecs?.length) {
+    for (const sv of seedVecs) {
+      if (centroids.length >= kk) break
+      if (sv.length === dim) centroids.push([...sv])
+    }
+  }
+  if (centroids.length === 0) {
+    centroids.push([...valid[Math.floor(Math.random() * valid.length)].v])
+  }
   while (centroids.length < kk) {
     const dists = valid.map(x => Math.min(...centroids.map(c => vecDist(x.v, c))) ** 2)
     const total = dists.reduce((a, b) => a + b, 0)
