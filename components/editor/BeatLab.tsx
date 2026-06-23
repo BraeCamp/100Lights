@@ -2243,6 +2243,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const beatPreviewRef      = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
   const beatVerifyCtxRef   = useRef<AudioContext | null>(null)
   const beatVerifyGainRef  = useRef<{ ref: GainNode | null; box: GainNode | null }>({ ref: null, box: null })
+  const beatVerifySrcRef   = useRef<AudioBufferSourceNode[]>([])
   const beatVerifyRafRef   = useRef(0)
   const clusterSampleCtxRef = useRef<AudioContext | null>(null)
 
@@ -2368,18 +2369,19 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     stopVerifyPlayback()
     if (!beatBox) return
 
-    // Determine which track starts first and compute each track's delay from t=0
-    // offset > 0: beatbox starts |offset| seconds after ref (ref starts first)
-    // offset < 0: ref starts |offset| seconds after beatbox (beatbox starts first)
+    // offset > 0: beatbox starts |offset| seconds after ref; offset < 0: ref starts later
     const refDelay = beatBoxOffset < 0 ? -beatBoxOffset : 0
     const boxDelay = beatBoxOffset > 0 ?  beatBoxOffset : 0
-    const totalDuration = Math.max(
-      refDelay + (beatRef?.duration ?? 0),
-      boxDelay + beatBox.duration,
-    )
+
+    // When beatBox IS the reference (separation flow), only one track exists
+    const sameBuffer = beatRef === beatBox
+    const totalDuration = sameBuffer
+      ? boxDelay + beatBox.duration
+      : Math.max(refDelay + (beatRef?.duration ?? 0), boxDelay + beatBox.duration)
 
     const ctx = new AudioContext()
     beatVerifyCtxRef.current = ctx
+    beatVerifySrcRef.current = []
     const now = ctx.currentTime
 
     const refGain = ctx.createGain()
@@ -2390,14 +2392,21 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     boxGain.connect(ctx.destination)
     beatVerifyGainRef.current = { ref: refGain, box: boxGain }
 
-    if (beatRef) {
+    // Only play beatRef separately when it's a distinct buffer from beatBox —
+    // if they're the same (Separate Sounds flow), playing both would double the audio.
+    if (beatRef && !sameBuffer) {
       const src = ctx.createBufferSource(); src.buffer = beatRef; src.connect(refGain)
       src.start(now + refDelay)
+      beatVerifySrcRef.current.push(src)
     }
-    const boxSrc = ctx.createBufferSource(); boxSrc.buffer = beatBox; boxSrc.connect(boxGain)
+
+    const boxSrc = ctx.createBufferSource()
+    boxSrc.buffer = beatBox
+    boxSrc.connect(sameBuffer ? refGain : boxGain)   // use ref gain node so mute/vol controls still work
     const capturedCtx = ctx
     boxSrc.onended = () => { if (beatVerifyCtxRef.current === capturedCtx) stopVerifyPlayback() }
     boxSrc.start(now + boxDelay)
+    beatVerifySrcRef.current.push(boxSrc)
 
     const wallStart = performance.now()
     setBeatVerifyPlaying(true)
@@ -2411,6 +2420,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   function stopVerifyPlayback() {
     cancelAnimationFrame(beatVerifyRafRef.current)
+    // Stop source nodes explicitly so the AudioContext releases hardware immediately
+    for (const src of beatVerifySrcRef.current) {
+      try { src.stop(); src.disconnect() } catch { /* already stopped */ }
+    }
+    beatVerifySrcRef.current = []
     try { beatVerifyCtxRef.current?.close() } catch { /* ok */ }
     beatVerifyCtxRef.current = null
     beatVerifyGainRef.current = { ref: null, box: null }
