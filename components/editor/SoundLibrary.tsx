@@ -11,6 +11,7 @@ import {
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
 import { SAMPLE_CATALOG, catalogEntryId } from '@/lib/sample-catalog'
+import { synthCatalogSample } from '@/lib/drum-synth'
 
 // ── Category color map ────────────────────────────────────────────────────────
 const CAT_COLORS: Record<string, string> = {
@@ -664,6 +665,35 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     setEntries(all.sort((a, b) => b.addedAt.localeCompare(a.addedAt)))
   }, [])
 
+  // Seed all 18 catalog samples into IndexedDB using synthesis (no external files needed)
+  useEffect(() => {
+    async function seed() {
+      const existing = await libraryGetAll()
+      const existingIds = new Set(existing.map(e => e.id))
+      const SR = 44100
+      let added = 0
+      for (const sample of SAMPLE_CATALOG) {
+        const id = catalogEntryId(sample.id)
+        if (existingIds.has(id)) continue
+        const pcm = synthCatalogSample(sample.id, SR)
+        const wav = encodeWav([pcm], SR)
+        await libraryAdd({
+          id,
+          name:      sample.name,
+          category:  sample.category as LibraryCategory,
+          audioBlob: new Blob([wav], { type: 'audio/wav' }),
+          duration:  pcm.length / SR,
+          addedAt:   new Date().toISOString(),
+          folder:    '100Lights',
+        })
+        added++
+      }
+      if (added > 0) await load()
+    }
+    seed().catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => { load() }, [load])
 
   // Focus new-folder input when it appears
@@ -677,25 +707,33 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     [entries],
   )
 
-  async function downloadSample(sampleId: string, url: string, name: string, category: LibraryCategory, duration: number) {
+  async function downloadSample(sampleId: string, url: string, name: string, category: LibraryCategory, _duration: number) {
     if (downloading.has(sampleId)) return
     setDownloading(prev => new Set(prev).add(sampleId))
     try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/wav' })
+      let blob: Blob
+      try {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        blob = new Blob([await res.arrayBuffer()], { type: 'audio/wav' })
+      } catch {
+        // Fall back to synthesis when the static file doesn't exist yet
+        const SR = 44100
+        const pcm = synthCatalogSample(sampleId, SR)
+        blob = new Blob([encodeWav([pcm], SR)], { type: 'audio/wav' })
+      }
       await libraryAdd({
         id:        catalogEntryId(sampleId),
         name,
         category,
         audioBlob: blob,
-        duration,
+        duration:  (await blob.arrayBuffer()).byteLength / (44100 * 2 * 2),
         addedAt:   new Date().toISOString(),
         folder:    '100Lights',
       })
       await load()
     } catch {
-      // silently ignore — user sees the button stay as ↓
+      // ignore
     } finally {
       setDownloading(prev => { const n = new Set(prev); n.delete(sampleId); return n })
     }
