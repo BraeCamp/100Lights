@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
   blobToUrl, getAudioDurationFromBlob,
@@ -35,18 +35,22 @@ function WaveBars({ spectral }: { spectral?: LibraryEntry['spectral'] }) {
 
 // ── Entry row ─────────────────────────────────────────────────────────────────
 function EntryRow({
-  entry, onDelete, onRename, onCategoryChange,
+  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange,
 }: {
   entry: LibraryEntry
+  folders: string[]
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => void
   onCategoryChange: (id: string, cat: LibraryCategory) => void
+  onFolderChange: (id: string, folder: string | undefined) => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft]     = useState(entry.name)
-  const [playing, setPlaying] = useState(false)
+  const [editing, setEditing]         = useState(false)
+  const [draft, setDraft]             = useState(entry.name)
+  const [playing, setPlaying]         = useState(false)
+  const [folderOpen, setFolderOpen]   = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const urlRef   = useRef<string | null>(null)
+  const folderRef = useRef<HTMLDivElement>(null)
 
   function togglePlay() {
     if (playing) { audioRef.current?.pause(); setPlaying(false); return }
@@ -64,14 +68,40 @@ function EntryRow({
     if (urlRef.current) URL.revokeObjectURL(urlRef.current)
   }, [])
 
+  // Close folder picker when clicking outside
+  useEffect(() => {
+    if (!folderOpen) return
+    function onClickOutside(e: MouseEvent) {
+      if (folderRef.current && !folderRef.current.contains(e.target as Node)) setFolderOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [folderOpen])
+
   function commitRename() {
     if (draft.trim() && draft !== entry.name) onRename(entry.id, draft.trim())
     setEditing(false)
   }
 
   const color = colorFor(entry.category)
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderLeft: `2px solid ${color}`, margin: '2px 0' }}>
+    <div
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.effectAllowed = 'copy'
+        e.dataTransfer.setData('application/x-library-entry-id', entry.id)
+        e.dataTransfer.setData('text/plain', entry.name)
+        // Ghost image: a small chip
+        const ghost = document.createElement('div')
+        ghost.textContent = `♪ ${entry.name}`
+        ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:#1e1e2e;color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+        document.body.appendChild(ghost)
+        e.dataTransfer.setDragImage(ghost, 0, 0)
+        setTimeout(() => document.body.removeChild(ghost), 0)
+      }}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderLeft: `2px solid ${color}`, margin: '2px 0', cursor: 'grab', userSelect: 'none' }}
+    >
       <button onClick={togglePlay} style={{ width: 20, height: 20, borderRadius: '50%', background: playing ? '#dc2626' : 'var(--bg-card)', border: `1px solid ${color}`, color, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {playing ? <Square size={7} fill="currentColor" /> : <Play size={7} fill="currentColor" style={{ marginLeft: 1 }} />}
       </button>
@@ -96,8 +126,119 @@ function EntryRow({
           {CATEGORY_LABELS[entry.category]} · {entry.duration.toFixed(1)}s
         </div>
       </div>
+
+      {/* Folder picker */}
+      <div ref={folderRef} style={{ position: 'relative', flexShrink: 0 }}>
+        <button
+          onClick={() => setFolderOpen(v => !v)}
+          title={entry.folder ? `Folder: ${entry.folder}` : 'Move to folder'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: entry.folder ? 'rgba(167,139,250,0.8)' : 'var(--text-muted)', padding: 0, opacity: entry.folder ? 1 : 0.45, display: 'flex' }}
+        >
+          <Folder size={10} />
+        </button>
+        {folderOpen && (
+          <div style={{
+            position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 7,
+            padding: '4px 0', minWidth: 130, boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+          }}>
+            <button
+              onClick={() => { onFolderChange(entry.id, undefined); setFolderOpen(false) }}
+              style={{ ...folderOptStyle, color: !entry.folder ? '#a78bfa' : 'var(--text-secondary)', fontWeight: !entry.folder ? 700 : 400 }}
+            >
+              No folder
+            </button>
+            {folders.map(f => (
+              <button
+                key={f}
+                onClick={() => { onFolderChange(entry.id, f); setFolderOpen(false) }}
+                style={{ ...folderOptStyle, color: entry.folder === f ? '#a78bfa' : 'var(--text-secondary)', fontWeight: entry.folder === f ? 700 : 400 }}
+              >
+                {f}
+              </button>
+            ))}
+            {folders.length === 0 && (
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', padding: '4px 10px' }}>No folders yet</div>
+            )}
+          </div>
+        )}
+      </div>
+
       <button onClick={() => onDelete(entry.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
         <Trash2 size={10} />
+      </button>
+    </div>
+  )
+}
+
+const folderOptStyle: React.CSSProperties = {
+  display: 'block', width: '100%', textAlign: 'left',
+  padding: '5px 10px', fontSize: 10, background: 'none', border: 'none', cursor: 'pointer',
+}
+
+// ── Folder header ─────────────────────────────────────────────────────────────
+function FolderHeader({
+  name, count, collapsed, onToggle, onRename, onDelete,
+  isDragOver, onDragOver, onDragLeave, onDrop,
+}: {
+  name: string; count: number; collapsed: boolean
+  onToggle: () => void
+  onRename: (newName: string) => void
+  onDelete: () => void
+  isDragOver: boolean
+  onDragOver: (e: React.DragEvent) => void
+  onDragLeave: () => void
+  onDrop: (e: React.DragEvent) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft]     = useState(name)
+
+  function commit() {
+    const trimmed = draft.trim()
+    if (trimmed && trimmed !== name) onRename(trimmed)
+    setEditing(false)
+  }
+
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+        borderTop: '1px solid var(--border)', borderBottom: collapsed ? '1px solid var(--border)' : 'none',
+        background: isDragOver ? 'rgba(139,92,246,0.1)' : 'var(--bg-surface)',
+        transition: 'background 0.1s', cursor: 'pointer',
+        borderLeft: `2px solid ${isDragOver ? '#7c3aed' : 'rgba(139,92,246,0.3)'}`,
+      }}
+    >
+      <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center' }}>
+        {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+      </button>
+      {collapsed ? <Folder size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} /> : <FolderOpen size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} />}
+      {editing ? (
+        <input
+          autoFocus value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(name); setEditing(false) } }}
+          onBlur={commit}
+          style={{ flex: 1, fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 3, padding: '1px 4px', color: 'var(--text-primary)' }}
+          onClick={e => e.stopPropagation()}
+        />
+      ) : (
+        <span
+          onClick={onToggle}
+          style={{ flex: 1, fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}
+        >
+          {name}
+        </span>
+      )}
+      <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{count}</span>
+      <button onClick={e => { e.stopPropagation(); setEditing(true); setDraft(name) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.6 }}>
+        <Pencil size={8} />
+      </button>
+      <button onClick={e => { e.stopPropagation(); onDelete() }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.6 }}>
+        <X size={9} />
       </button>
     </div>
   )
@@ -125,7 +266,6 @@ function WaveformTrimmer({
 
     ctx.clearRect(0, 0, W, H)
 
-    // Waveform bars
     const bars = W
     const spb  = Math.max(1, Math.floor(data.length / bars))
     for (let i = 0; i < bars; i++) {
@@ -138,17 +278,14 @@ function WaveformTrimmer({
       ctx.fillRect(x, (H - bh) / 2, 1, bh)
     }
 
-    // Dimmed overlay outside trim
     ctx.fillStyle = 'rgba(0,0,0,0.45)'
     ctx.fillRect(0, 0, trimStart * W, H)
     ctx.fillRect(trimEnd * W, 0, W - trimEnd * W, H)
 
-    // Trim handle lines
     const drawHandle = (x: number) => {
       ctx.strokeStyle = '#f59e0b'
       ctx.lineWidth = 2
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke()
-      // Triangle grip
       ctx.fillStyle = '#f59e0b'
       ctx.beginPath(); ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 8); ctx.closePath(); ctx.fill()
     }
@@ -163,9 +300,7 @@ function WaveformTrimmer({
 
   function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
     const r = posToRatio(e)
-    const distToStart = Math.abs(r - trimStart)
-    const distToEnd   = Math.abs(r - trimEnd)
-    draggingRef.current = distToStart < distToEnd ? 'start' : 'end'
+    draggingRef.current = Math.abs(r - trimStart) < Math.abs(r - trimEnd) ? 'start' : 'end'
   }
 
   function onMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -213,15 +348,11 @@ function applyEdits(
   for (let ch = 0; ch < src.numberOfChannels; ch++) {
     const src_ = src.getChannelData(ch)
     const dst  = out.getChannelData(ch)
-    // Copy trimmed region
     for (let i = 0; i < len; i++) dst[i] = (src_[startSamp + i] ?? 0) * gain
-    // Fade in
     const fi = Math.floor(fadeInFrac * len)
     for (let i = 0; i < fi; i++) dst[i] *= i / fi
-    // Fade out
     const fo = Math.floor(fadeOutFrac * len)
     for (let i = 0; i < fo; i++) dst[len - 1 - i] *= i / fo
-    // Reverse
     if (reversed) dst.reverse()
   }
   return out
@@ -233,7 +364,7 @@ export function AddToLibraryModal({
 }: {
   onClose:       () => void
   onAdded:       () => void
-  initialBuffer?: AudioBuffer   // pre-load with an existing clip
+  initialBuffer?: AudioBuffer
 }) {
   type Mode = 'choose' | 'record' | 'edit'
   const [mode, setMode]       = useState<Mode>(initialBuffer ? 'edit' : 'choose')
@@ -244,7 +375,6 @@ export function AddToLibraryModal({
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
 
-  // Editor state
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd,   setTrimEnd]   = useState(1)
   const [gain,      setGain]      = useState(1)
@@ -257,7 +387,6 @@ export function AddToLibraryModal({
   const previewRef  = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
   const [previewing, setPreviewing] = useState(false)
 
-  // Derive trimmed duration string for display
   const trimmedDur = srcBuf ? ((trimEnd - trimStart) * srcBuf.duration).toFixed(2) : '0.00'
 
   async function startRecord() {
@@ -287,7 +416,6 @@ export function AddToLibraryModal({
 
   async function loadFile(file: File) {
     const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-    // Chrome doesn't support AIFF via decodeAudioData — use the custom decoder
     if (ext === 'aif' || ext === 'aiff') {
       try {
         const { channels, sampleRate } = decodeAiff(await file.arrayBuffer())
@@ -351,7 +479,6 @@ export function AddToLibraryModal({
     setSaving(true)
     try {
       const edited = applyEdits(srcBuf, trimStart, trimEnd, gain, fadeIn, fadeOut, reversed)
-      // Encode to WAV
       const channels = Array.from({ length: edited.numberOfChannels }, (_, ch) => edited.getChannelData(ch))
       const wavBuf   = encodeWav(channels, edited.sampleRate)
       const blob     = new Blob([wavBuf], { type: 'audio/wav' })
@@ -390,13 +517,11 @@ export function AddToLibraryModal({
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 22, width: 'min(480px,94vw)', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '90vh', overflowY: 'auto' }}>
 
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Add to Library</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={15} /></button>
         </div>
 
-        {/* ── Choose ── */}
         {mode === 'choose' && (
           <>
             <div style={{ display: 'flex', gap: 10 }}>
@@ -414,7 +539,6 @@ export function AddToLibraryModal({
           </>
         )}
 
-        {/* ── Record ── */}
         {mode === 'record' && (
           <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(220,38,38,0.15)', border: '2px solid rgba(220,38,38,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -430,10 +554,8 @@ export function AddToLibraryModal({
           </div>
         )}
 
-        {/* ── Sound editor ── */}
         {mode === 'edit' && srcBuf && (
           <>
-            {/* Waveform trimmer */}
             <div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 5 }}>
                 Drag yellow handles to trim · {trimmedDur}s selected
@@ -446,7 +568,6 @@ export function AddToLibraryModal({
               />
             </div>
 
-            {/* Controls */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
               {row('Gain', (
                 <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
@@ -479,7 +600,6 @@ export function AddToLibraryModal({
               ))}
             </div>
 
-            {/* Metadata */}
             <input value={name} onChange={e => setName(e.target.value)}
               placeholder="Sound name (optional)"
               style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}
@@ -489,7 +609,6 @@ export function AddToLibraryModal({
               {LIBRARY_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
             </select>
 
-            {/* Action row */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={togglePreview} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 8, border: `1px solid ${previewing ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, background: previewing ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)', color: previewing ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}>
                 {previewing ? <><Square size={10} fill="currentColor" /> Stop</> : <><Play size={10} fill="currentColor" style={{ marginLeft: 1 }} /> Preview</>}
@@ -510,9 +629,30 @@ export function AddToLibraryModal({
 }
 
 // ── Main SoundLibrary panel ───────────────────────────────────────────────────
+const FOLDERS_KEY = 'sound-library-folders'
+
 export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
-  const [entries, setEntries] = useState<LibraryEntry[]>([])
-  const [showAdd, setShowAdd] = useState(false)
+  const [entries,          setEntries]          = useState<LibraryEntry[]>([])
+  const [folders,          setFolders]          = useState<string[]>([])
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
+  const [dragOverFolder,   setDragOverFolder]   = useState<string | null>(null)
+  const [showAdd,          setShowAdd]          = useState(false)
+  const [addingFolder,     setAddingFolder]     = useState(false)
+  const [newFolderDraft,   setNewFolderDraft]   = useState('')
+  const newFolderRef = useRef<HTMLInputElement>(null)
+
+  // Persist folders in localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(FOLDERS_KEY)
+      if (saved) setFolders(JSON.parse(saved))
+    } catch {}
+  }, [])
+
+  const saveFolders = useCallback((next: string[]) => {
+    setFolders(next)
+    try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(next)) } catch {}
+  }, [])
 
   const load = useCallback(async () => {
     const all = await libraryGetAll()
@@ -520,6 +660,11 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Focus new-folder input when it appears
+  useEffect(() => {
+    if (addingFolder) setTimeout(() => newFolderRef.current?.focus(), 30)
+  }, [addingFolder])
 
   async function handleDelete(id: string) {
     await libraryDelete(id)
@@ -536,16 +681,120 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     setEntries(prev => prev.map(e => e.id === id ? { ...e, category: cat } : e))
   }
 
+  async function handleFolderChange(id: string, folder: string | undefined) {
+    await libraryUpdate(id, { folder })
+    setEntries(prev => prev.map(e => e.id === id ? { ...e, folder } : e))
+  }
+
+  function createFolder() {
+    const name = newFolderDraft.trim()
+    if (!name || folders.includes(name)) { setAddingFolder(false); setNewFolderDraft(''); return }
+    saveFolders([...folders, name])
+    setAddingFolder(false)
+    setNewFolderDraft('')
+    setCollapsedFolders(prev => { const s = new Set(prev); s.delete(name); return s })
+  }
+
+  function renameFolder(oldName: string, newName: string) {
+    if (!newName || newName === oldName || folders.includes(newName)) return
+    saveFolders(folders.map(f => f === oldName ? newName : f))
+    // Update entries that were in the old folder
+    entries.filter(e => e.folder === oldName).forEach(e => handleFolderChange(e.id, newName))
+  }
+
+  function deleteFolder(name: string) {
+    saveFolders(folders.filter(f => f !== name))
+    // Remove folder from entries (move to root)
+    entries.filter(e => e.folder === name).forEach(e => handleFolderChange(e.id, undefined))
+  }
+
+  function toggleFolderCollapse(name: string) {
+    setCollapsedFolders(prev => {
+      const s = new Set(prev)
+      s.has(name) ? s.delete(name) : s.add(name)
+      return s
+    })
+  }
+
+  // Handle drag-and-drop of entries onto folder headers
+  function onFolderDragOver(e: React.DragEvent, folderName: string) {
+    if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverFolder(folderName)
+  }
+
+  function onFolderDrop(e: React.DragEvent, folderName: string) {
+    const id = e.dataTransfer.getData('application/x-library-entry-id')
+    setDragOverFolder(null)
+    if (!id) return
+    e.preventDefault()
+    handleFolderChange(id, folderName)
+  }
+
+  // Group entries
+  const { byFolder, unfiled } = useMemo(() => {
+    const map = new Map<string, LibraryEntry[]>()
+    const unfiled: LibraryEntry[] = []
+    for (const e of entries) {
+      if (e.folder && folders.includes(e.folder)) {
+        const arr = map.get(e.folder) ?? []
+        arr.push(e)
+        map.set(e.folder, arr)
+      } else {
+        unfiled.push(e)
+      }
+    }
+    return { byFolder: map, unfiled }
+  }, [entries, folders])
+
+  const entryRow = (entry: LibraryEntry) => (
+    <EntryRow
+      key={entry.id}
+      entry={entry}
+      folders={folders}
+      onDelete={handleDelete}
+      onRename={handleRename}
+      onCategoryChange={handleCategoryChange}
+      onFolderChange={handleFolderChange}
+    />
+  )
+
   const content = (
     <>
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{entries.length} sound{entries.length !== 1 ? 's' : ''}</span>
+      {/* Header toolbar */}
+      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} sound{entries.length !== 1 ? 's' : ''}</span>
+        <button
+          onClick={() => setAddingFolder(true)}
+          title="New folder"
+          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '3px 7px', borderRadius: 4, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}
+        >
+          <FolderPlus size={10} />
+        </button>
         <button onClick={() => setShowAdd(true)}
           style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
-          + Add to Library
+          + Add
         </button>
       </div>
 
+      {/* New folder input */}
+      {addingFolder && (
+        <div style={{ display: 'flex', gap: 5, padding: '5px 10px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
+          <input
+            ref={newFolderRef}
+            value={newFolderDraft}
+            onChange={e => setNewFolderDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') createFolder(); if (e.key === 'Escape') { setAddingFolder(false); setNewFolderDraft('') } }}
+            placeholder="Folder name…"
+            style={{ flex: 1, fontSize: 10, background: 'var(--bg-surface)', border: '1px solid var(--accent)', borderRadius: 4, padding: '3px 6px', color: 'var(--text-primary)' }}
+          />
+          <button onClick={createFolder} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Create</button>
+          <button onClick={() => { setAddingFolder(false); setNewFolderDraft('') }} style={{ fontSize: 10, padding: '3px 6px', borderRadius: 4, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
+
+      {/* Entry list */}
       <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
         {entries.length === 0 ? (
           <div style={{ padding: '20px 14px', textAlign: 'center' }}>
@@ -553,9 +802,49 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
               No sounds yet.<br />Record or import a sample to build your library.
             </p>
           </div>
-        ) : entries.map(entry => (
-          <EntryRow key={entry.id} entry={entry} onDelete={handleDelete} onRename={handleRename} onCategoryChange={handleCategoryChange} />
-        ))}
+        ) : (
+          <>
+            {/* Folder sections */}
+            {folders.map(folder => {
+              const folderEntries = byFolder.get(folder) ?? []
+              const collapsed = collapsedFolders.has(folder)
+              return (
+                <div key={folder}>
+                  <FolderHeader
+                    name={folder}
+                    count={folderEntries.length}
+                    collapsed={collapsed}
+                    onToggle={() => toggleFolderCollapse(folder)}
+                    onRename={newName => renameFolder(folder, newName)}
+                    onDelete={() => deleteFolder(folder)}
+                    isDragOver={dragOverFolder === folder}
+                    onDragOver={e => onFolderDragOver(e, folder)}
+                    onDragLeave={() => setDragOverFolder(null)}
+                    onDrop={e => onFolderDrop(e, folder)}
+                  />
+                  {!collapsed && folderEntries.map(entryRow)}
+                </div>
+              )
+            })}
+
+            {/* Unfiled entries */}
+            {unfiled.length > 0 && (
+              <>
+                {folders.length > 0 && (
+                  <div style={{ padding: '4px 10px', fontSize: 9, color: 'var(--text-muted)', borderTop: '1px solid var(--border)', letterSpacing: '0.06em' }}>
+                    UNFILED
+                  </div>
+                )}
+                {unfiled.map(entryRow)}
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Drag hint */}
+      <div style={{ padding: '4px 10px', fontSize: 8, color: 'var(--text-muted)', borderTop: '1px solid var(--border)', letterSpacing: '0.04em', flexShrink: 0 }}>
+        Drag sounds to tracks · drag to folder header to move
       </div>
 
       {showAdd && <AddToLibraryModal onClose={() => setShowAdd(false)} onAdded={load} />}

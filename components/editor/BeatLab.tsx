@@ -55,6 +55,7 @@ import Tooltip from './Tooltip'
 import type { MidiMapping, MidiMappingTarget } from '@/lib/midi-mapping'
 import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping'
 import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
+import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, CLUSTER_LETTERS, CLUSTER_COLORS } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -935,6 +936,7 @@ interface LaneProps {
   onMoveHit: (id: string, t: number, note: number) => void
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
+  onLibraryDrop?: (entryId: string, time: number) => void
   onToggleMute: () => void
   onLaneContextMenu: (e: React.MouseEvent) => void
   onHitRightClick: (e: React.MouseEvent, id: string) => void
@@ -988,11 +990,12 @@ interface LaneProps {
   onSidechainChange?: (effectId: string, val: string) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
-  const [dotMenuOpen, setDotMenuOpen] = useState(false)
+  const [dotMenuOpen,   setDotMenuOpen]   = useState(false)
+  const [libDragOver,   setLibDragOver]   = useState(false)
 
   function startPanDrag(e: React.MouseEvent) {
     e.stopPropagation(); e.preventDefault()
@@ -1185,14 +1188,31 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         </div>}
       </div>
 
-      {/* Hit area — left-click adds, right-click adds (snapped) */}
+      {/* Hit area — left-click adds, right-click adds (snapped), drop to place library clip */}
       <div
         onClick={miniMode ? undefined : handleLaneClick}
         onContextMenu={miniMode ? undefined : handleLaneRightClick}
+        onDragOver={e => {
+          if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
+          e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setLibDragOver(true)
+        }}
+        onDragLeave={() => setLibDragOver(false)}
+        onDrop={e => {
+          const entryId = e.dataTransfer.getData('application/x-library-entry-id')
+          setLibDragOver(false)
+          if (!entryId || !onLibraryDrop) return
+          e.preventDefault()
+          const rect = e.currentTarget.getBoundingClientRect()
+          const t    = Math.max(0, ((e.clientX - rect.left) / rect.width) * duration)
+          onLibraryDrop(entryId, t)
+        }}
         style={{
           flex: 1, position: 'relative', cursor: miniMode ? 'default' : muted ? 'default' : 'crosshair', height: miniMode ? 28 : LANE_HEIGHT,
-          background: 'var(--bg-card)',
+          background: libDragOver ? 'rgba(139,92,246,0.08)' : 'var(--bg-card)',
           backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent calc(12.5% - 1px), var(--border) calc(12.5% - 1px), var(--border) 12.5%)',
+          outline: libDragOver ? '2px solid rgba(139,92,246,0.5)' : 'none',
+          outlineOffset: -2,
+          transition: 'background 0.08s',
         }}
       >
         <NoteGrid />
@@ -2296,8 +2316,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     inp.type = 'file'; inp.accept = 'audio/*,.aif,.aiff'
     inp.onchange = async () => {
       const f = inp.files?.[0]; if (!f) return
-      try { decodeAudio(f).then(buf => { setBeatKitCustom(prev => ({ ...prev, [type]: buf })); showToast(`${DRUM_LABELS[type] ?? type} sample loaded`) }) }
-      catch { showToast('Could not load audio file') }
+      decodeAudio(f)
+        .then(buf => { setBeatKitCustom(prev => ({ ...prev, [type]: buf })); showToast(`${DRUM_LABELS[type] ?? type} sample loaded`) })
+        .catch(() => showToast('Could not load audio file'))
     }
     inp.click()
   }
@@ -2598,7 +2619,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         sampleBuf.getChannelData(0).set(d)
       }
       const laneId = addCustomLane()
-      setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: DRUM_COLORS[type] ?? '#6b7280' } }))
+      setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
       setAudioClips(prev => [...prev, ...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type))])
       placed.push({ type, count: typeHits.length, laneId })
     }
@@ -3058,6 +3079,21 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
     return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null, fadeIn: 0, fadeOut: 0, color: null, reversed: false, warpMarkers: [] }
   }
+
+  async function handleLibraryDropOnLane(laneType: string, entryId: string, time: number) {
+    const all   = await libraryGetAll()
+    const entry = all.find(e => e.id === entryId)
+    if (!entry) return
+    try {
+      const ctx = new AudioContext()
+      const buf = await ctx.decodeAudioData(await entry.audioBlob.arrayBuffer())
+      await ctx.close()
+      const clip = mkClip(crypto.randomUUID(), laneType, buf, time, entry.name)
+      setAudioClips(prev => [...prev, clip])
+      setDuration(d => Math.max(d, time + buf.duration + 0.5))
+    } catch { showToast('Could not decode library sound') }
+  }
+
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [compGroups, setCompGroups] = useState<CompGroup[]>([])
@@ -3583,7 +3619,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           sampleBuf.getChannelData(0).set(srcBuf.getChannelData(0).subarray(s, e))
         }
         const laneId = addCustomLane()
-        setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: DRUM_COLORS[type] ?? '#6b7280' } }))
+        setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
         newClips.push(...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type)))
       }
       setAudioClips(prev => [...prev, ...newClips])
@@ -3684,6 +3720,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [midiMappings,  setMidiMappings]  = useState<MidiMapping[]>([])
   const [midiLearning,  setMidiLearning]  = useState<MidiMappingTarget | null>(null)
   const [showMidiPanel, setShowMidiPanel] = useState(false)
+  const [showKeyboard,  setShowKeyboard]  = useState(false)
   const [lastMappedId,  setLastMappedId]  = useState<string | null>(null)
   const midiMappingsRef  = useRef<MidiMapping[]>([])
   const midiLearningRef  = useRef<MidiMappingTarget | null>(null)
@@ -4450,6 +4487,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   useEffect(() => { selectedClipIdRef.current = selectedClipId }, [selectedClipId])
   const audioClipsRef = useRef<AudioClip[]>([])
   useEffect(() => { audioClipsRef.current = audioClips }, [audioClips])
+  const isPlayingRef = useRef(false)
+  useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   const playheadKbRef = useRef(0)
   useEffect(() => { playheadKbRef.current = playhead }, [playhead])
   const togglePlayRef = useRef<() => void>(() => {})
@@ -4460,7 +4499,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const t = e.target as HTMLElement
       const inInput = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
       if (e.code === 'Space' && !inInput) {
+        // Only claim Space when BeatLab has content or is actively playing;
+        // otherwise AudioEditor's song transport handles it.
+        if (!isPlayingRef.current && hitsRef.current.length === 0 && audioClipsRef.current.length === 0) return
         e.preventDefault()
+        e.stopImmediatePropagation()
         togglePlayRef.current()
         return
       }
@@ -4495,8 +4538,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // I → inspector panel
       if (e.key === 'i' && !inInput && !e.metaKey && !e.ctrlKey) { setInspectorOpen(v => !v); return }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
   }, []) // stable — reads from refs
 
   // 88px = 64px lane label + 24px note axis
@@ -6684,6 +6727,22 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   MIDI{midiMappings.length > 0 && <span style={{ fontSize: 9 }}>{midiMappings.length}</span>}
                 </button>
               </Tooltip>
+              {/* Digital keyboard button */}
+              <Tooltip content="Digital MIDI keyboard — play notes with mouse, touch, or keyboard shortcuts" placement="bottom" disabled={showKeyboard}>
+                <button
+                  onClick={() => setShowKeyboard(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5,
+                    background: showKeyboard ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
+                    border: `1px solid ${showKeyboard ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`,
+                    color: showKeyboard ? 'rgba(167,139,250,1)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ♩ Keys
+                </button>
+              </Tooltip>
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <button onClick={() => setViewMode('arrangement')} title="Arrangement view" style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
@@ -7287,6 +7346,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           onMoveHit={moveHit}
                           onDeleteHit={deleteHit}
                           onAddHit={(t, note) => addHit(type as BeatType, t, note)}
+                          onLibraryDrop={(entryId, t) => handleLibraryDropOnLane(type, entryId, t)}
                           onToggleMute={() => toggleMute(type as BeatType)}
                           onLaneContextMenu={e => setLaneMenu({ type: type as BeatType, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 200) })}
                           onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
@@ -9878,6 +9938,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         activeLaneTypes={activeLaneTypes}
         laneLabels={Object.fromEntries(activeLaneTypes.map(t => [t, typeLabel(t, typeOverrides)]))}
         lastAddedId={lastMappedId}
+      />
+
+      {/* ── Digital MIDI Keyboard ─────────────────────────────────────────── */}
+      <MidiKeyboard
+        open={showKeyboard}
+        onClose={() => setShowKeyboard(false)}
+        bpm={bpm ?? 120}
       />
     </div>
   )

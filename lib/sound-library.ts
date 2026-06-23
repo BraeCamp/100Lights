@@ -20,6 +20,7 @@ export interface LibraryEntry {
   spectral?: HitSpectral   // perceptual fingerprint — set for drum/instrument entries
   duration:  number        // seconds
   addedAt:   string        // ISO timestamp
+  folder?:   string        // optional folder name
 }
 
 // ── IndexedDB setup ───────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ export async function libraryAdd(entry: LibraryEntry): Promise<void> {
   await tx(db, 'readwrite', s => s.put(entry))
 }
 
-export async function libraryUpdate(id: string, patch: Partial<Pick<LibraryEntry, 'name' | 'category'>>): Promise<void> {
+export async function libraryUpdate(id: string, patch: Partial<Pick<LibraryEntry, 'name' | 'category' | 'folder'>>): Promise<void> {
   const db = await openDB()
   const existing = await tx<LibraryEntry>(db, 'readonly', s => s.get(id))
   if (!existing) return
@@ -127,6 +128,8 @@ export const CATEGORY_LABELS: Record<LibraryCategory, string> = {
 
 export const LIBRARY_CATEGORIES: LibraryCategory[] = [
   'kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim',
-  'guitar-acoustic', 'guitar-electric', 'piano-grand', 'synth-lead', 'synth-bass',
-  'voice', 'custom',
+  'guitar-acoustic', 'guitar-electric', 'guitar-nylon',
+  'piano-grand', 'piano-electric', 'piano-rhodes',
+  'synth-lead', 'synth-pad', 'synth-bass', 'synth-arp',
+  'other', 'voice', 'custom',
 ]
