@@ -1819,10 +1819,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatAiExplanation, setBeatAiExplanation] = useState<string | null>(null)
   const [beatRefUrl,        setBeatRefUrl]        = useState('')
   const [beatRecording,   setBeatRecording]   = useState(false)
+  const [beatCountdown,   setBeatCountdown]   = useState<number | null>(null)   // 3 → 2 → 1 → null (recording)
+  const [beatMetronomeOn, setBeatMetronomeOn] = useState(true)
   const [beatPlayingSlot, setBeatPlayingSlot] = useState<'ref' | 'beatbox' | 'result' | null>(null)
   const [beatLooping,     setBeatLooping]     = useState(false)
   const [beatStep,        setBeatStep]        = useState<1|2|3>(1)
-  const beatRecordRef = useRef<MediaRecorder | null>(null)
+  const beatRecordRef    = useRef<MediaRecorder | null>(null)
+  const beatMetroRef     = useRef<AudioContext | null>(null)
   const beatPlayRef   = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
 
   // BPM estimation via onset-energy autocorrelation (runs client-side, no server needed)
@@ -1921,33 +1924,113 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setBeatProgress('')
   }
 
+  // Synthesize a single metronome click: accent=true → louder, higher pitch
+  function makeMetroClick(ctx: AudioContext, accent: boolean): AudioBuffer {
+    const sr  = ctx.sampleRate
+    const dur = accent ? 0.045 : 0.032
+    const n   = Math.floor(sr * dur)
+    const buf = ctx.createBuffer(1, n, sr)
+    const d   = buf.getChannelData(0)
+    const f0  = accent ? 1600 : 1000   // Hz
+    const f1  = accent ?  900 :  600
+    for (let i = 0; i < n; i++) {
+      const t   = i / sr
+      const env = Math.exp(-t / (accent ? 0.018 : 0.012))
+      d[i] = (Math.sin(2 * Math.PI * f0 * t) * 0.55 +
+              Math.sin(2 * Math.PI * f1 * t) * 0.25) * env
+    }
+    return buf
+  }
+
+  // Schedule metronome clicks into an already-running AudioContext starting at `fromWhen`
+  // Returns the AudioContext so the caller can close it later
+  function scheduleMetro(ctx: AudioContext, bpm: number, timeSig: [number,number], fromWhen: number, durationSec: number) {
+    const beatLen = 60 / bpm
+    const [num]   = timeSig
+    const accent  = makeMetroClick(ctx, true)
+    const normal  = makeMetroClick(ctx, false)
+    let beat = 0
+    for (let t = 0; t < durationSec; t += beatLen) {
+      const when = fromWhen + t
+      const isAccent = (beat % num) === 0
+      const src = ctx.createBufferSource()
+      src.buffer = isAccent ? accent : normal
+      const gain = ctx.createGain(); gain.gain.value = isAccent ? 0.7 : 0.45
+      src.connect(gain); gain.connect(ctx.destination)
+      src.start(when)
+      beat++
+    }
+  }
+
   async function startBeatRecord() {
-    beatStopPlay()  // stop looping reference when recording starts
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-      const chunks: BlobPart[] = []
-      const mr = new MediaRecorder(stream)
-      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-      mr.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop())
-        try {
-          const blob = new Blob(chunks, { type: mr.mimeType })
-          const decoded = await decodeAudio(blob)
-          setBeatBox(decoded)
-          setBeatBoxName('Beatbox recording')
-          setBeatStep(3)
-        } catch { showToast('Recording decode failed') }
-        setBeatRecording(false)
+    beatStopPlay()
+    const bpm     = activeBeatBpm()
+    const useMet  = beatMetronomeOn && bpm != null
+    const timeSig = beatTimeSig
+
+    // Pre-acquire microphone so there's no gap after countdown
+    let stream: MediaStream
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }) }
+    catch { showToast('Microphone access denied'); return }
+
+    if (useMet && bpm) {
+      // Play 3-2-1 countdown with metronome, then start recording on beat 1
+      const beatLen   = 60 / bpm
+      const countBeats = timeSig[0] * 3   // 3 full bars of countdown
+      const ctx       = new AudioContext()
+      beatMetroRef.current = ctx
+      scheduleMetro(ctx, bpm, timeSig, ctx.currentTime, (countBeats + 1) * beatLen)
+
+      // Visual countdown: update number each bar
+      for (let bar = 3; bar >= 1; bar--) {
+        setBeatCountdown(bar)
+        await new Promise<void>(res => setTimeout(res, beatLen * timeSig[0] * 1000))
+        if (!beatMetroRef.current) {
+          // User cancelled during countdown
+          stream.getTracks().forEach(t => t.stop())
+          ctx.close()
+          setBeatCountdown(null)
+          return
+        }
       }
-      beatRecordRef.current = mr
-      mr.start()
-      setBeatRecording(true)
-    } catch { showToast('Microphone access denied') }
+      setBeatCountdown(null)
+    }
+
+    // Now start recording
+    const chunks: BlobPart[] = []
+    const mr = new MediaRecorder(stream)
+    mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+    mr.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop())
+      beatMetroRef.current?.close()
+      beatMetroRef.current = null
+      try {
+        const blob    = new Blob(chunks, { type: mr.mimeType })
+        const decoded = await decodeAudio(blob)
+        setBeatBox(decoded)
+        setBeatBoxName('Beatbox recording')
+        setBeatStep(3)
+      } catch { showToast('Recording decode failed') }
+      setBeatRecording(false)
+    }
+    beatRecordRef.current = mr
+    mr.start()
+    setBeatRecording(true)
+
+    // Keep metronome click going during recording if enabled
+    if (useMet && bpm && beatMetroRef.current) {
+      const ctx = beatMetroRef.current
+      // Schedule clicks for up to 3 minutes of recording
+      scheduleMetro(ctx, bpm, timeSig, ctx.currentTime, 180)
+    }
   }
 
   function stopBeatRecord() {
     beatRecordRef.current?.stop()
     beatRecordRef.current = null
+    beatMetroRef.current?.close()
+    beatMetroRef.current = null
+    setBeatCountdown(null)
   }
 
   async function runBeatStudio(overrideStrength?: number, overrideGapFill?: number) {
@@ -7716,19 +7799,45 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               </div>
 
               {/* ── Step 2: Record beatbox ── */}
-              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatBox ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginBottom: 12, opacity: beatRef ? 1 : 0.4, pointerEvents: beatRef ? 'auto' : 'none' }}>
+              <div style={{ background: 'var(--bg-card)', border: `1px solid ${beatBox ? 'rgba(234,179,8,0.3)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginBottom: 12, opacity: beatRef ? 1 : 0.4, pointerEvents: beatRef ? 'auto' : 'none', position: 'relative' }}>
                 <div style={stepHeaderStyle(2)}>
                   <div style={stepNumStyle(2)}>{stepDone(2) ? '✓' : '2'}</div>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Record your beatbox</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>Listen to the beat above until you have it memorised, then record your attempt</div>
                   </div>
+                  {/* Metronome toggle */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Metronome</span>
+                    <button onClick={() => setBeatMetronomeOn(v => !v)}
+                      style={{ ...btnBase, padding: '4px 10px', fontSize: 10,
+                        background: beatMetronomeOn ? 'rgba(250,204,21,0.15)' : 'var(--bg-card)',
+                        color: beatMetronomeOn ? 'rgba(250,204,21,1)' : 'var(--text-muted)',
+                        border: `1px solid ${beatMetronomeOn ? 'rgba(234,179,8,0.4)' : 'var(--border)'}` }}>
+                      {beatMetronomeOn ? '♩ On' : '♩ Off'}
+                    </button>
+                  </div>
                 </div>
+
+                {/* BPM reminder + countdown info */}
+                {beatMetronomeOn && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 10, background: 'rgba(250,204,21,0.05)', border: '1px solid rgba(234,179,8,0.15)', borderRadius: 7, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>♩</span>
+                    {activeBeatBpm()
+                      ? <>Metronome at <strong style={{ color: 'rgba(250,204,21,0.9)' }}>{activeBeatBpm()} BPM · {beatTimeSig[0]}/{beatTimeSig[1]}</strong> — 3-bar countdown then record starts automatically</>
+                      : <>No BPM set — <strong style={{ color: 'rgba(250,204,21,0.9)' }}>set one in the grid setup below</strong> to enable the countdown</>
+                    }
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                   <button
                     onClick={() => beatRecording ? stopBeatRecord() : startBeatRecord()}
-                    style={{ ...btnBase, flex: 1, background: beatRecording ? 'rgba(239,68,68,0.18)' : 'rgba(234,179,8,0.12)', color: beatRecording ? '#f87171' : 'rgba(250,204,21,1)', border: `1px solid ${beatRecording ? 'rgba(239,68,68,0.4)' : 'rgba(234,179,8,0.3)'}` }}
+                    disabled={beatCountdown !== null}
+                    style={{ ...btnBase, flex: 1,
+                      background: beatRecording ? 'rgba(239,68,68,0.18)' : beatCountdown !== null ? 'rgba(234,179,8,0.06)' : 'rgba(234,179,8,0.12)',
+                      color: beatRecording ? '#f87171' : beatCountdown !== null ? 'rgba(250,204,21,0.5)' : 'rgba(250,204,21,1)',
+                      border: `1px solid ${beatRecording ? 'rgba(239,68,68,0.4)' : 'rgba(234,179,8,0.3)'}` }}
                   >
                     {beatRecording ? '■ Stop recording' : '⏺ Record beatbox'}
                   </button>
@@ -7740,9 +7849,25 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   </button>
                 </div>
 
+                {/* Countdown overlay */}
+                {beatCountdown !== null && (
+                  <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: 'rgba(0,0,0,0.82)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, zIndex: 10 }}>
+                    <div style={{ fontSize: 72, fontWeight: 900, color: 'rgba(250,204,21,1)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{beatCountdown}</div>
+                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Get ready… recording starts at 1</div>
+                    <button onClick={() => { stopBeatRecord(); setBeatCountdown(null) }}
+                      style={{ ...btnBase, marginTop: 8, padding: '6px 18px', background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', fontSize: 11 }}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
                 {beatRecording && (
-                  <div style={{ border: '1.5px dashed rgba(239,68,68,0.4)', borderRadius: 8, padding: '14px 12px', textAlign: 'center', background: 'rgba(239,68,68,0.04)', fontSize: 11, color: '#f87171', marginBottom: 8 }}>
-                    🔴 Recording… beatbox the rhythm, then tap Stop
+                  <div style={{ border: '1.5px dashed rgba(239,68,68,0.4)', borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(239,68,68,0.04)', marginBottom: 8 }}>
+                    <span style={{ fontSize: 16, animation: 'pulse 1s infinite' }}>🔴</span>
+                    <span style={{ fontSize: 11, color: '#f87171', flex: 1 }}>Recording… beatbox the rhythm, then tap Stop</span>
+                    {beatMetronomeOn && activeBeatBpm() && (
+                      <span style={{ fontSize: 10, color: 'rgba(250,204,21,0.6)' }}>♩ {activeBeatBpm()} BPM</span>
+                    )}
                   </div>
                 )}
 
