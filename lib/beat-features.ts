@@ -265,9 +265,12 @@ interface TemporalFeats {
   roughness: number
 }
 
-function temporalFeatures(raw: Float32Array, startSample: number, sr: number): TemporalFeats {
-  // Analyse up to 500 ms from onset
-  const winLen = Math.min(Math.floor(sr * 0.5), raw.length - startSample)
+function temporalFeatures(raw: Float32Array, startSample: number, sr: number, maxSamples?: number): TemporalFeats {
+  // Analyse up to the next onset (or 500 ms, whichever is shorter).
+  // Without this cap, a 500 ms window bleeds into the next hit and makes identical
+  // sounds look spectrally different based on what follows them — "bum pss" vs "pss bum".
+  const capSamples = maxSamples != null ? Math.min(maxSamples, Math.floor(sr * 0.5)) : Math.floor(sr * 0.5)
+  const winLen = Math.min(capSamples, raw.length - startSample)
   if (winLen <= 0) {
     return { attackTime: 0, decayTime: 0, sustainLevel: 0, releaseTime: 0,
              zeroCrossingRate: 0, peakAmplitude: 0, rmsAmplitude: 0,
@@ -444,17 +447,20 @@ export interface HitFeaturesResult {
 }
 
 export function computeHitFeatures(
-  raw:          Float32Array,
-  sampleIdx:    number,
-  sr:           number,
-  prevSpectrum: Float32Array | null = null,
+  raw:             Float32Array,
+  sampleIdx:       number,
+  sr:              number,
+  prevSpectrum:    Float32Array | null = null,
+  nextOnsetSample: number | null = null,  // distance cap: prevents feature bleed from adjacent hits
 ): HitFeaturesResult {
   // Begin the window 5 ms before onset to capture the leading transient edge
   const startSample = Math.max(0, sampleIdx - Math.floor(sr * 0.005))
+  // Cap temporal analysis at the next onset so features don't capture the following sound
+  const maxSamples = nextOnsetSample != null ? nextOnsetSample - startSample : undefined
 
   const spectrum = getSpectrum(raw, startSample)
   const sf = spectralFeatures(spectrum, sr)
-  const tf = temporalFeatures(raw, startSample, sr)
+  const tf = temporalFeatures(raw, startSample, sr, maxSamples)
   const pf = pitchFeatures(raw, startSample, sr, spectrum)
   const flux = spectralFlux(spectrum, prevSpectrum)
   const highSustained = isHighSustained(raw, sampleIdx, sr)

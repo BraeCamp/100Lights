@@ -525,8 +525,10 @@ export async function analyzeBeats(
     // computeHitFeatures returns all 30+ dimensions defined in lib/beat-features.ts.
     hits = []
     let prevSpectrum: Float32Array | null = null
-    for (const sampleIdx of filteredSamples) {
-      const { spectral, spectrum, highSustained } = computeHitFeatures(raw, sampleIdx, sr, prevSpectrum)
+    for (let si = 0; si < filteredSamples.length; si++) {
+      const sampleIdx      = filteredSamples[si]
+      const nextOnsetSample = filteredSamples[si + 1] ?? null
+      const { spectral, spectrum, highSustained } = computeHitFeatures(raw, sampleIdx, sr, prevSpectrum, nextOnsetSample)
       prevSpectrum = spectrum
 
       const subR    = spectral.sub
