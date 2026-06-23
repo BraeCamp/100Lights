@@ -2342,97 +2342,91 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     return Math.round(time / subLen) * subLen
   }
 
+  // Cluster labels the user can rename ("Sound A", "Sound B"…)
+  const [dtClusterLabels, setDtClusterLabels] = useState<Record<string, string>>({})
+
   async function runDrumDetect() {
     if (!beatBox || dtLoading) return
     const myGen = ++dtGenRef.current
     setDtLoading(true)
     setDtHits(null)
+    setDtClusterLabels({})
     try {
-      const DRUM_TYPES: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
-      const result = await analyzeBeats(beatBox, { allowedTypes: DRUM_TYPES, referenceSounds })
+      // Onset detection only — no type classification
+      const result = await analyzeBeats(beatBox)
       if (myGen !== dtGenRef.current) return
-      setDtHits(result.hits)
+
+      // Cluster by acoustic similarity into A/B/C… groups
+      const k = Math.max(1, Math.min(CLUSTER_LETTERS.length, Math.round(Math.sqrt(result.hits.length / 2))))
+      const assign = clusterHits(result.hits, k)
+      const taggedHits: BeatHit[] = result.hits.map(h => ({
+        ...h,
+        clusterId: CLUSTER_LETTERS[assign[h.id] ?? 0],
+      }))
+
+      // Default labels
+      const labels: Record<string, string> = {}
+      for (const letter of CLUSTER_LETTERS) {
+        if (taggedHits.some(h => h.clusterId === letter)) labels[letter] = `Sound ${letter}`
+      }
+
+      setDtHits(taggedHits)
+      setDtClusterLabels(labels)
       if (!dtBpm && !beatRefBpm && result.bpm) setDtBpm(result.bpm)
     } catch {
-      if (myGen === dtGenRef.current) showToast('Drum detection failed')
+      if (myGen === dtGenRef.current) showToast('Audio separation failed')
     } finally {
       if (myGen === dtGenRef.current) setDtLoading(false)
     }
   }
 
+  // Play a short preview of the beatbox audio starting at timeSec
+  function dtPlayPreview(timeSec: number, durationSec = 0.4) {
+    if (!beatBox) return
+    const ctx = new AudioContext()
+    const src = ctx.createBufferSource()
+    src.buffer = beatBox
+    src.connect(ctx.destination)
+    src.start(0, timeSec, durationSec)
+    src.onended = () => ctx.close()
+  }
+
   async function dtCommitToTimeline() {
-    let hits = dtHits
+    const hits = dtHits
     if (!hits || hits.length === 0 || !beatBox) return
     captureHistory()
 
     const raw = beatBox.getChannelData(0)
     const sr  = beatBox.sampleRate
 
-    // Peak amplitude in first 25ms after a hit time — used to pick winner when deduping
-    function peakAt(timeSec: number): number {
-      const start = Math.floor(timeSec * sr)
-      const end   = Math.min(raw.length, start + Math.floor(0.025 * sr))
-      let peak = 0
-      for (let i = start; i < end; i++) { const v = Math.abs(raw[i]); if (v > peak) peak = v }
-      return peak
+    // Group by cluster
+    const byCluster = new Map<string, BeatHit[]>()
+    for (const h of hits) {
+      const key = h.clusterId ?? 'A'
+      if (!byCluster.has(key)) byCluster.set(key, [])
+      byCluster.get(key)!.push(h)
     }
+    for (const arr of byCluster.values()) arr.sort((a, b) => a.time - b.time)
 
-    // ── Pass 1: Cross-type dedup ──────────────────────────────────────────────
-    // If two hits of DIFFERENT types land within 40ms of each other, they likely
-    // represent the same physical transient mislabeled twice. Keep only the louder.
-    const CROSS_WINDOW = 0.040
-    const sorted = [...hits].sort((a, b) => a.time - b.time)
-    const crossDeduped: BeatHit[] = []
-    for (const h of sorted) {
-      const prev = crossDeduped[crossDeduped.length - 1]
-      if (prev && h.time - prev.time < CROSS_WINDOW) {
-        if (peakAt(h.time) > peakAt(prev.time)) crossDeduped[crossDeduped.length - 1] = h
-        // else keep prev
-      } else {
-        crossDeduped.push(h)
-      }
-    }
-
-    // ── Pass 2: Per-type dedup ────────────────────────────────────────────────
-    // Within each type, enforce 60ms minimum gap. Keep the louder of any pair
-    // that's too close — this catches cases where the same hit is double-detected.
-    const MIN_TYPE_GAP = 0.060
-    const byType = new Map<string, BeatHit[]>()
-    for (const h of crossDeduped) {
-      if (!byType.has(h.type)) byType.set(h.type, [])
-      byType.get(h.type)!.push(h)
-    }
-    for (const arr of byType.values()) {
-      arr.sort((a, b) => a.time - b.time)
-      for (let i = arr.length - 1; i > 0; i--) {
-        if (arr[i].time - arr[i - 1].time < MIN_TYPE_GAP) {
-          if (peakAt(arr[i].time) > peakAt(arr[i - 1].time)) {
-            arr.splice(i - 1, 1)
-          } else {
-            arr.splice(i, 1)
-          }
-        }
-      }
-    }
-
-    // ── Build clips ───────────────────────────────────────────────────────────
-    const MAX_DUR     = 0.32   // hard cap per clip
-    const MIN_CLIP_DUR = 0.040  // clips shorter than 40ms are noise artifacts
+    const MAX_DUR     = 0.5    // hard cap per clip
+    const MIN_CLIP_DUR = 0.030  // skip sub-30ms artifacts
     const ctx = new AudioContext()
-
     let totalPlaced = 0
-    for (const [type, typeHits] of byType.entries()) {
-      if (typeHits.length === 0) continue
+
+    for (const [letter, clusterHitList] of byCluster.entries()) {
+      if (clusterHitList.length === 0) continue
       const laneId = addCustomLane()
-      const label  = DRUM_LABELS[type] ?? type
-      setTypeOverrides(prev => ({ ...prev, [laneId]: { label, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
+      const label  = dtClusterLabels[letter] ?? `Sound ${letter}`
+      const color  = CLUSTER_COLORS[letter] ?? '#6b7280'
+      setTypeOverrides(prev => ({ ...prev, [laneId]: { label, color } }))
+
       const newClips: AudioClip[] = []
-      for (let i = 0; i < typeHits.length; i++) {
-        const hit     = typeHits[i]
-        const nextHit = typeHits[i + 1]
+      for (let i = 0; i < clusterHitList.length; i++) {
+        const hit     = clusterHitList[i]
+        const nextHit = clusterHitList[i + 1]
         const gap = nextHit ? (nextHit.time - hit.time) * 0.95 : MAX_DUR
         const dur = Math.min(gap, MAX_DUR)
-        if (dur < MIN_CLIP_DUR) continue  // skip sub-40ms artifacts
+        if (dur < MIN_CLIP_DUR) continue
         const s   = Math.floor(hit.time * sr)
         const e   = Math.min(beatBox.length, s + Math.floor(dur * sr))
         const buf = ctx.createBuffer(1, Math.max(1, e - s), sr)
@@ -2445,7 +2439,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     ctx.close()
     setDtHits(null)
     setDtSelectedHitId(null)
-    showToast(`Added ${totalPlaced} hits across ${byType.size} lanes`)
+    setDtClusterLabels({})
+    showToast(`Added ${totalPlaced} clips across ${byCluster.size} lanes`)
   }
 
   useEffect(() => {
@@ -2465,18 +2460,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const h = Math.round(max * (H / 2))
       ctx.fillRect(x, (H / 2) - h, 1, h * 2)
     }
-    // hit dots
+    // hit dots colored by cluster
     const dur = beatBox.duration
     for (const hit of dtHits) {
       const x = Math.round((hit.time / dur) * W)
       const isSelected = hit.id === dtSelectedHitId
+      const color = CLUSTER_COLORS[hit.clusterId ?? 'A'] ?? '#888'
       if (isSelected) {
-        // Selection ring
         ctx.strokeStyle = 'rgba(255,255,255,0.9)'
         ctx.lineWidth = 2
         ctx.beginPath(); ctx.arc(x, H / 2, 8, 0, Math.PI * 2); ctx.stroke()
       }
-      ctx.fillStyle = DRUM_COLORS[hit.type] ?? '#888'
+      ctx.fillStyle = color
       ctx.beginPath(); ctx.arc(x, H / 2, isSelected ? 6 : 5, 0, Math.PI * 2); ctx.fill()
     }
   }, [dtHits, beatBox, dtSelectedHitId])
@@ -8737,125 +8732,120 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 )}
               </div>
 
-              {/* ── Drum Transcription ── */}
+              {/* ── Audio Separation ── */}
               {beatBox && (
                 <div style={{ background: 'var(--bg-card)', border: `1px solid ${dtHits ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginTop: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Drum Transcription</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Detect drum hits in your beatbox and place them on separate lanes</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Audio Separation</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Separates your recording into distinct sounds — each goes to its own lane</div>
                   </div>
 
                   <button
-                    data-hint="Detect Drum Hits||Runs beat detection on your beatbox recording. The AI listens for rhythmic transients and classifies each as kick, snare, hi-hat, clap, or tom. Results appear on the waveform below — click a dot to remove a false detection."
+                    data-hint="Separate Audio||Detects each distinct sound in your recording and groups similar-sounding ones together (Sound A, Sound B…). No labels are assigned — you name them. Click each group's play button to hear it, then place them all on the timeline."
                     onClick={runDrumDetect}
                     disabled={dtLoading}
                     style={{ ...btnBase, background: dtLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '7px 16px', fontSize: 12, fontWeight: 600, marginBottom: 12 }}
                   >
-                    {dtLoading ? '⟳ Detecting hits…' : '▣ Detect Drum Hits'}
+                    {dtLoading ? '⟳ Separating audio…' : '▣ Separate Audio'}
                   </button>
 
                   {dtHits && dtHits.length === 0 && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>No drum hits detected — try with a clearer beatbox recording.</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>No sounds detected — try with a clearer recording.</div>
                   )}
 
                   {dtHits && dtHits.length > 0 && (() => {
-                    const byType = new Map<string, BeatHit[]>()
+                    // Build cluster map
+                    const byCluster = new Map<string, BeatHit[]>()
                     for (const h of dtHits) {
-                      if (!byType.has(h.type)) byType.set(h.type, [])
-                      byType.get(h.type)!.push(h)
+                      const k = h.clusterId ?? 'A'
+                      if (!byCluster.has(k)) byCluster.set(k, [])
+                      byCluster.get(k)!.push(h)
                     }
+                    const selHit = dtHits.find(h => h.id === dtSelectedHitId) ?? null
+
                     return (
                       <>
                         <div style={{ fontSize: 11, color: 'rgba(250,204,21,0.9)', marginBottom: 10 }}>
-                          {dtHits.length} hits detected across {byType.size} sound type{byType.size !== 1 ? 's' : ''}
+                          {dtHits.length} sounds separated into {byCluster.size} group{byCluster.size !== 1 ? 's' : ''}
                         </div>
 
-                        {/* Waveform + hit dots */}
+                        {/* Waveform + dots colored by cluster */}
                         <canvas
                           ref={dtCanvasRef}
                           width={560} height={60}
-                          style={{ width: '100%', height: 60, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.25)', marginBottom: 8, cursor: 'pointer' }}
+                          style={{ width: '100%', height: 60, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.25)', marginBottom: 10, cursor: 'pointer' }}
                           onClick={e => {
                             if (!beatBox) return
                             const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
-                            const frac = (e.clientX - rect.left) / rect.width
-                            const time = frac * beatBox.duration
-                            // Find nearest hit within 3% of total duration
-                            const nearest = dtHits?.reduce<BeatHit | null>((best, h) => {
-                              const d = Math.abs(h.time - time)
-                              return (!best || d < Math.abs(best.time - time)) ? h : best
+                            const time = ((e.clientX - rect.left) / rect.width) * beatBox.duration
+                            const nearest = dtHits.reduce<BeatHit | null>((best, h) => {
+                              return (!best || Math.abs(h.time - time) < Math.abs(best.time - time)) ? h : best
                             }, null)
                             if (nearest && Math.abs(nearest.time - time) / beatBox.duration < 0.03) {
-                              setDtSelectedHitId(prev => prev === nearest.id ? null : nearest.id)
+                              const wasSelected = dtSelectedHitId === nearest.id
+                              setDtSelectedHitId(wasSelected ? null : nearest.id)
+                              if (!wasSelected) dtPlayPreview(nearest.time)
                             } else {
                               setDtSelectedHitId(null)
                             }
                           }}
-                          title="Click a dot to inspect or reclassify a hit"
+                          title="Click a dot to hear that sound"
                         />
 
-                        {/* Hit editor popup */}
-                        {(() => {
-                          const selHit = dtHits?.find(h => h.id === dtSelectedHitId) ?? null
-                          if (!selHit) return null
-                          return (
-                            <div style={{ background: 'rgba(17,17,27,0.97)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, padding: '10px 14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[selHit.type] ?? '#888', flexShrink: 0, display: 'inline-block' }} />
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>Detected as</span>
-                              <select
-                                value={selHit.type}
-                                onChange={e => {
-                                  const newType = e.target.value as BeatType
-                                  setDtHits(prev => prev ? prev.map(h => h.id === selHit.id ? { ...h, type: newType } : h) : null)
-                                }}
-                                style={{ fontSize: 11, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}
-                              >
-                                {(['kick','snare','hihat','open-hihat','clap','tom','crash','rim'] as BeatType[]).map(t => (
-                                  <option key={t} value={t}>{DRUM_LABELS[t] ?? t}</option>
-                                ))}
-                              </select>
-                              <button
-                                onClick={async () => {
-                                  if (selHit.spectral) {
-                                    await correctionsAdd({ id: crypto.randomUUID(), spectral: selHit.spectral, detectedAs: selHit.type, correctedTo: selHit.type, savedAt: new Date().toISOString() }).catch(() => {})
-                                  }
-                                  setDtSelectedHitId(null)
-                                  showToast('Saved — classifier will remember this')
-                                }}
-                                style={{ ...btnBase, fontSize: 10, padding: '3px 9px', background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.35)' }}
-                              >
-                                ✓ This is correct
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setDtHits(prev => prev ? prev.filter(h => h.id !== selHit.id) : null)
-                                  setDtSelectedHitId(null)
-                                }}
-                                style={{ ...btnBase, fontSize: 10, padding: '3px 9px', background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}
-                              >
-                                × Remove
-                              </button>
-                            </div>
-                          )
-                        })()}
+                        {/* Selected hit info */}
+                        {selHit && (
+                          <div style={{ background: 'rgba(17,17,27,0.97)', border: `1px solid ${CLUSTER_COLORS[selHit.clusterId ?? 'A'] ?? 'rgba(139,92,246,0.4)'}40`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: CLUSTER_COLORS[selHit.clusterId ?? 'A'] ?? '#888', flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ fontSize: 11, color: 'var(--text-primary)', flex: 1 }}>
+                              {dtClusterLabels[selHit.clusterId ?? 'A'] ?? `Sound ${selHit.clusterId}`} · {selHit.time.toFixed(2)}s
+                            </span>
+                            <button onClick={() => dtPlayPreview(selHit.time)} style={{ ...btnBase, fontSize: 10, padding: '2px 8px', background: 'rgba(250,204,21,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)' }}>
+                              ▶ Play
+                            </button>
+                            <button onClick={() => { setDtHits(prev => prev ? prev.filter(h => h.id !== selHit.id) : null); setDtSelectedHitId(null) }}
+                              style={{ ...btnBase, fontSize: 10, padding: '2px 8px', background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>
+                              × Remove
+                            </button>
+                          </div>
+                        )}
 
-                        {/* Hit type breakdown */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>
-                          {[...byType.entries()].map(([type, typeHits]) => (
-                            <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: DRUM_COLORS[type] ?? '#888', flexShrink: 0, display: 'inline-block' }} />
-                              <span style={{ fontSize: 11, color: 'var(--text-primary)', minWidth: 80 }}>{DRUM_LABELS[type] ?? type}</span>
-                              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{typeHits.length} hit{typeHits.length !== 1 ? 's' : ''}</span>
-                            </div>
-                          ))}
+                        {/* Cluster list — play + rename */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                          {[...byCluster.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([letter, clusterHits]) => {
+                            const color = CLUSTER_COLORS[letter] ?? '#888'
+                            const firstHit = clusterHits.sort((a, b) => a.time - b.time)[0]
+                            return (
+                              <div key={letter} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '6px 10px' }}>
+                                {/* Cluster color dot */}
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
+                                {/* Editable label */}
+                                <input
+                                  value={dtClusterLabels[letter] ?? `Sound ${letter}`}
+                                  onChange={e => setDtClusterLabels(prev => ({ ...prev, [letter]: e.target.value }))}
+                                  style={{ flex: 1, fontSize: 11, background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', minWidth: 0 }}
+                                  onClick={e => e.stopPropagation()}
+                                />
+                                {/* Count */}
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>×{clusterHits.length}</span>
+                                {/* Play first hit in cluster */}
+                                <button
+                                  onClick={() => firstHit && dtPlayPreview(firstHit.time)}
+                                  title="Preview a sound from this group"
+                                  style={{ ...btnBase, fontSize: 10, padding: '2px 7px', background: `${color}20`, color, border: `1px solid ${color}50`, flexShrink: 0 }}
+                                >
+                                  ▶
+                                </button>
+                              </div>
+                            )
+                          })}
                         </div>
 
                         <button
-                          data-hint="Place Hits on Timeline||Creates a clip for every detected hit, sliced from the exact moment in your beatbox recording. Each clip type gets its own lane (kick → kick lane, snare → snare lane, etc). Clips are trimmed so they never overlap."
+                          data-hint="Place on Timeline||Slices each detected sound from the recording and places it as an audio clip. Each sound group gets its own lane. Rename the groups first if you want meaningful track names."
                           onClick={dtCommitToTimeline}
                           style={{ ...btnBase, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.4)', padding: '8px 18px', fontSize: 12, fontWeight: 600 }}
                         >
-                          Place {dtHits.length} hits on timeline →
+                          Place {dtHits.length} clips on timeline →
                         </button>
                       </>
                     )
