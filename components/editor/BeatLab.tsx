@@ -1013,13 +1013,19 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
   onCorrect?: (spectral: HitSpectral) => Promise<void>
   onPlay?: (timeSec: number, durSec: number) => void
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const clipDur   = hit.duration ?? 0.30
+  const canvasRef    = useRef<HTMLCanvasElement | null>(null)
+  const clipDur      = hit.duration ?? 0.30
 
-  // Freeze the visible audio window on mount so dragging handles never changes
-  // how many samples-per-pixel the canvas shows. Without this, the window shrinks
-  // as the user drags (fewer samples per pixel → lower peaks → waveform shrinks).
+  // Reset the fixed window whenever the user selects a different dot.
+  // Without this, the ref stays set to the previous hit's values when the
+  // user switches dots without closing the editor (component stays mounted,
+  // only the hit prop changes, so useRef state persists).
+  const prevHitIdRef = useRef<string>(hit.id)
   const fixedWindowRef = useRef<{ start: number; dur: number } | null>(null)
+  if (prevHitIdRef.current !== hit.id) {
+    prevHitIdRef.current = hit.id
+    fixedWindowRef.current = null
+  }
   if (!fixedWindowRef.current) {
     const PAD   = Math.min(0.12, hit.time)
     const start = Math.max(0, hit.time - PAD)
@@ -1038,38 +1044,52 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
     const sr = beatBox.sampleRate
     const startSample = Math.floor(windowStart * sr)
     const step = Math.max(1, Math.floor((windowDur * sr) / W))
-    const cropL = Math.round((hit.time - windowStart) / windowDur * W)
-    const cropR = Math.round((hit.time - windowStart + clipDur) / windowDur * W)
+    const cropL = Math.max(0, Math.round((hit.time - windowStart) / windowDur * W))
+    const cropR = Math.min(W - 1, Math.round((hit.time - windowStart + clipDur) / windowDur * W))
 
     ctx.clearRect(0, 0, W, H)
 
-    // Waveform bars
+    // Pre-compute all bar heights in a single pass.
+    // Heights are derived from the FIXED window (step never changes while dragging).
+    // Store them so we can draw both passes (dim then bright) without recalculating.
+    const barH = new Uint8Array(W)
     for (let x = 0; x < W; x++) {
       let max = 0
       for (let i = 0; i < step; i++) {
         const idx = startSample + x * step + i
         if (idx < ch.length) { const v = Math.abs(ch[idx]); if (v > max) max = v }
       }
-      const barH = Math.max(1, Math.round(max * (H - 4)))
-      const inCrop = x >= cropL && x <= cropR
-      ctx.fillStyle = inCrop ? clusterColor + 'cc' : 'rgba(80,80,100,0.4)'
-      ctx.fillRect(x, Math.round((H - barH) / 2), 1, barH)
+      barH[x] = Math.max(1, Math.round(max * (H - 4)))
     }
 
-    // Dim outside crop
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'
-    if (cropL > 0) ctx.fillRect(0, 0, cropL, H)
-    if (cropR < W) ctx.fillRect(cropR, 0, W - cropR, H)
+    // Pass 1: draw ALL bars in a dim style so the full waveform is always visible.
+    // No dark overlay is applied — the overlay approach (used previously) was the
+    // root cause: drawing rgba(0,0,0,0.5) over the left region made the visible
+    // waveform appear to shrink as the user dragged the left handle right.
+    ctx.fillStyle = 'rgba(90,85,120,0.30)'
+    for (let x = 0; x < W; x++) {
+      const bh = barH[x]
+      ctx.fillRect(x, Math.round((H - bh) / 2), 1, bh)
+    }
+
+    // Pass 2: re-draw the in-crop region bars in cluster color at full brightness.
+    // Same heights as pass 1 — only the color changes. Waveform amplitude is
+    // identical everywhere; only in-crop bars are highlighted.
+    ctx.fillStyle = clusterColor + 'e0'
+    for (let x = cropL; x <= cropR; x++) {
+      const bh = barH[x]
+      ctx.fillRect(x, Math.round((H - bh) / 2), 1, bh)
+    }
 
     // Crop boundary lines
     ctx.fillStyle = 'rgba(255,255,255,0.9)'
     ctx.fillRect(cropL - 1, 0, 2, H)
-    ctx.fillRect(cropR - 1, 0, 2, H)
+    ctx.fillRect(cropR,     0, 2, H)
 
-    // Drag handles (left = pull-left tab, right = pull-right tab)
+    // Drag handles
     ctx.fillStyle = 'white'
-    ctx.fillRect(cropL - 6, Math.round(H / 2) - 12, 6, 24)
-    ctx.fillRect(cropR,     Math.round(H / 2) - 12, 6, 24)
+    ctx.fillRect(cropL - 7, Math.round(H / 2) - 14, 7, 28)
+    ctx.fillRect(cropR + 2, Math.round(H / 2) - 14, 7, 28)
   }, [hit.time, clipDur, beatBox, clusterColor, windowStart, windowDur])
 
   function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
