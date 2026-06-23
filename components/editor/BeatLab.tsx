@@ -68,13 +68,13 @@ import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
 import { SAMPLE_LIBRARY, getSampleBuffer } from '@/lib/sample-library'
-import { findBestMatch, saveProfile, incrementUsage, deleteProfile, profileLabel, getAllProfiles, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
-import { extractSubBuffer, extractSubCurve, spliceSegmentBack } from '@/lib/vowel-segmenter'
+import { findBestMatch, saveProfile, incrementUsage, profileLabel, type ProfileFeatures, type LearnedProfile } from '@/lib/learned-profiles'
+import { extractSubBuffer, spliceSegmentBack } from '@/lib/vowel-segmenter'
 import { separateHarmonicPercussive, mixBuffers } from '@/lib/hpss'
-import { smoothPitchCurve, smoothSpectralTransitions, applyReferenceEnvelope } from '@/lib/timbre-smooth'
+import { smoothPitchCurve } from '@/lib/timbre-smooth'
 import { parseAbletonProject, loadClipAudio, type AbletonProject, type AbletonTrack } from '@/lib/ableton-parser'
 import { encodeWav, decodeWav, decodeAiff } from '@/lib/wav-codec'
-import { synthDrum, DRUM_COLORS, DRUM_LABELS, DRUM_TYPES } from '@/lib/drum-synth'
+import { synthDrum, DRUM_COLORS, DRUM_LABELS } from '@/lib/drum-synth'
 import { createSidechainProcessor } from '@/lib/sidechain'
 import { saveClip, deleteClip, loadAllClips } from '@/lib/clip-store'
 import type { SceneClip, SessionLane } from './SessionView'
@@ -3030,41 +3030,23 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   // ── Lane drag-to-group ────────────────────────────────────────────────────
-  const [dragLane,     setDragLane]     = useState<string | null>(null)
-  const [dragOverLane, setDragOverLane] = useState<string | null>(null)
+  const [dragLane,         setDragLane]         = useState<string | null>(null)
+  const [dragOverLane,     setDragOverLane]     = useState<string | null>(null)
+  const [dragInsertBefore, setDragInsertBefore] = useState<string | null>(null) // lane id the dragged lane would be inserted before
+  const [laneOrder,        setLaneOrder]        = useState<string[] | null>(null)
 
-  function handleLaneDrop(droppedLane: string, targetLane: string) {
-    if (droppedLane === targetLane) return
-    const isTargetGroupBus = groupDefs.some(g => g.id === targetLane)
-    const targetGroupId    = isTargetGroupBus
-      ? targetLane
-      : groupDefs.find(g => g.childTypes.includes(targetLane))?.id
-
-    if (targetGroupId) {
-      // Drop onto a group or a lane already inside a group → add to that group
-      setGroupDefs(prev => prev.map(g => {
-        if (g.id === targetGroupId) return { ...g, childTypes: [...new Set([...g.childTypes, droppedLane])] }
-        return { ...g, childTypes: g.childTypes.filter(t => t !== droppedLane) }
-      }))
-    } else {
-      // Drop onto a plain lane → create a new group containing both
-      const id    = `grp_${Date.now()}`
-      const color = '#6b7280'
-      setGroupDefs(prev => [
-        ...prev.map(g => ({ ...g, childTypes: g.childTypes.filter(t => t !== droppedLane) })),
-        { id, label: 'Group', color, childTypes: [droppedLane, targetLane], collapsed: false },
-      ])
-      setTypeOverrides(prev => ({ ...prev, [id]: { label: 'Group', color } }))
-      // Insert the group bus just before the target in the lane list
-      setExtraLaneIds(prev => {
-        const without = prev.filter(x => x !== droppedLane && x !== id)
-        const idx     = without.indexOf(targetLane)
-        if (idx < 0) return [...without, id, droppedLane]
-        const result = [...without]
-        result.splice(idx, 0, id, droppedLane)
-        return result
-      })
-    }
+  function handleLaneDrop(droppedLane: string, insertBeforeLane: string | null) {
+    if (droppedLane === insertBeforeLane) return
+    setLaneOrder(prev => {
+      const current = prev ?? activeLaneTypes.map(t => t as string)
+      const without = current.filter(id => id !== droppedLane)
+      if (insertBeforeLane === null) return [...without, droppedLane]
+      const idx = without.indexOf(insertBeforeLane)
+      if (idx < 0) return [...without, droppedLane]
+      const next = [...without]
+      next.splice(idx, 0, droppedLane)
+      return next
+    })
   }
 
   // ── Arpeggiator state ─────────────────────────────────────────────────────
@@ -5846,6 +5828,30 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     })
   }, [hits, selectedTypes, extraLaneIds, audioClips])
 
+  // Keep laneOrder in sync as active lanes come and go
+  useEffect(() => {
+    setLaneOrder(prev => {
+      if (!prev) return null
+      const activeSet = new Set(activeLaneTypes.map(t => t as string))
+      // Keep only lanes that are still active, preserving user order
+      const pruned = prev.filter(id => activeSet.has(id))
+      // Append new lanes the user hasn't ordered yet
+      const inOrder = new Set(pruned)
+      const extras  = activeLaneTypes.filter(t => !inOrder.has(t as string)).map(t => t as string)
+      return pruned.length === prev.length && extras.length === 0 ? prev : [...pruned, ...extras]
+    })
+  }, [activeLaneTypes])
+
+  // Display order: user-controlled when laneOrder is set, otherwise computed
+  const displayedLaneTypes = useMemo<BeatType[]>(() => {
+    if (!laneOrder) return activeLaneTypes
+    const activeSet = new Set(activeLaneTypes.map(t => t as string))
+    const ordered   = laneOrder.filter(id => activeSet.has(id)) as BeatType[]
+    const inOrder   = new Set(ordered.map(t => t as string))
+    const remaining = activeLaneTypes.filter(t => !inOrder.has(t as string))
+    return [...ordered, ...remaining]
+  }, [laneOrder, activeLaneTypes])
+
   const audioClipsByLane = useMemo(() => {
     const map = new Map<string, AudioClip[]>()
     for (const clip of audioClips) {
@@ -6784,15 +6790,23 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               </Tooltip>
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
-                <button onClick={() => setViewMode('arrangement')} title="Arrangement view" style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
+                <Tooltip content="Arrangement view — timeline with audio clips and hits" placement="bottom" disabled={viewMode === 'arrangement'}>
+                  <button onClick={() => setViewMode('arrangement')} style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
+                </Tooltip>
                 <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
-                <button onClick={() => setViewMode('session')} title="Session view" style={{ padding: '3px 9px', background: viewMode === 'session' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'session' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>SES</button>
+                <Tooltip content="Session view — clip launcher for live performance" placement="bottom" disabled={viewMode === 'session'}>
+                  <button onClick={() => setViewMode('session')} style={{ padding: '3px 9px', background: viewMode === 'session' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'session' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>SES</button>
+                </Tooltip>
               </div>
               {/* Zoom controls */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
-                <button onClick={() => setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2)))} title="Zoom out" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>−</button>
+                <Tooltip content="Zoom out (scroll left to right shows more time)" placement="bottom">
+                  <button onClick={() => setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2)))} style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>−</button>
+                </Tooltip>
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 30, textAlign: 'center' }}>{zoomLevel === 1 ? '1×' : `${zoomLevel.toFixed(1)}×`}</span>
-                <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} title="Zoom in" style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
+                <Tooltip content="Zoom in (fits more detail into the visible window)" placement="bottom">
+                  <button onClick={() => setZoomLevel(z => Math.min(8, +(z * 1.5).toFixed(2)))} style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>+</button>
+                </Tooltip>
               </div>
               {/* Inspector toggle */}
               <Tooltip content="Inspector panel — lane details, pan, tools (I)" placement="bottom" disabled={inspectorOpen}>
@@ -7281,28 +7295,42 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                       const renderedSet = new Set<string>()
 
                       const renderLaneRow = (type: string, indented = false) => {
-                        const isOver = dragOverLane === type && dragLane !== type
-                        const isGroupBus = groupDefs.some(g => g.id === type)
+                        const isGroupBus   = groupDefs.some(g => g.id === type)
+                        const isDropTarget = dragInsertBefore === type && dragLane !== type
                         return (
                           <div
                             key={type}
                             draggable={!isGroupBus}
-                            onDragStart={e => { if (!isGroupBus) { e.dataTransfer.effectAllowed = 'move'; setDragLane(type) } }}
-                            onDragEnd={() => { setDragLane(null); setDragOverLane(null) }}
-                            onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverLane(type) }}
-                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverLane(null) }}
-                            onDrop={e => { e.preventDefault(); setDragOverLane(null); if (dragLane) handleLaneDrop(dragLane, type); setDragLane(null) }}
+                            onDragStart={e => { if (!isGroupBus) { e.dataTransfer.effectAllowed = 'move'; setDragLane(type); if (!laneOrder) setLaneOrder(activeLaneTypes.map(t => t as string)) } }}
+                            onDragEnd={() => { setDragLane(null); setDragInsertBefore(null) }}
+                            onDragOver={e => {
+                              if (!dragLane || dragLane === type) return
+                              e.preventDefault(); e.dataTransfer.dropEffect = 'move'
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              const mid  = rect.top + rect.height / 2
+                              setDragInsertBefore(e.clientY < mid ? type : null)
+                            }}
+                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragInsertBefore(null) }}
+                            onDrop={e => {
+                              e.preventDefault()
+                              const insertBefore = dragInsertBefore === type ? type : null
+                              setDragInsertBefore(null)
+                              if (dragLane) handleLaneDrop(dragLane, insertBefore)
+                              setDragLane(null)
+                            }}
                             style={{
-                              opacity: dragLane === type ? 0.35 : 1,
-                              borderLeft: isOver ? '3px solid var(--accent)' : indented ? '3px solid rgba(139,92,246,0.25)' : '3px solid transparent',
-                              background: isOver ? 'rgba(139,92,246,0.06)' : 'transparent',
-                              transition: 'border-color 0.1s, background 0.1s',
+                              opacity: dragLane === type ? 0.3 : 1,
+                              borderTop: isDropTarget ? '2px solid var(--accent)' : '2px solid transparent',
+                              borderLeft: indented ? '3px solid rgba(139,92,246,0.25)' : '3px solid transparent',
+                              transition: 'border-color 0.08s, opacity 0.08s',
                             }}
                           >
                           <div style={{ display: 'flex' }}>
+                            <Tooltip content="Drag to reorder track" placement="right" delay={600}>
                             <div style={{ width: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isGroupBus ? 'default' : 'grab', color: 'var(--text-muted)', fontSize: 10, opacity: 0.5, userSelect: 'none' }}>
                               {!isGroupBus && '⠿'}
                             </div>
+                          </Tooltip>
                         <Lane
                           type={type as BeatType}
                           hits={hitsByType.get(type as BeatType) ?? []}
@@ -7422,7 +7450,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         )
                       }
 
-                      return activeLaneTypes.flatMap(type => {
+                      return displayedLaneTypes.flatMap(type => {
                         if (renderedSet.has(type)) return []
                         renderedSet.add(type)
 
@@ -7440,29 +7468,47 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         const children = (group?.childTypes ?? []).filter(c => activeLaneTypes.includes(c as BeatType))
                         children.forEach(c => renderedSet.add(c))
 
-                        const isOver = dragOverLane === type && dragLane !== type
+                        const isGroupDropTarget = dragInsertBefore === type && dragLane !== type
                         return [
-                          // Folder header
+                          // Folder header (shows insert-before indicator for groups too)
                           <div
                             key={`hdr-${type}`}
-                            onDragOver={e => { e.preventDefault(); setDragOverLane(type) }}
-                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverLane(null) }}
-                            onDrop={e => { e.preventDefault(); setDragOverLane(null); if (dragLane) handleLaneDrop(dragLane, type); setDragLane(null) }}
-                            style={{ display: 'flex', alignItems: 'center', height: 26, background: isOver ? 'rgba(139,92,246,0.12)' : 'var(--bg-surface)', borderBottom: `1px solid ${isOver ? 'var(--accent)' : 'rgba(139,92,246,0.2)'}`, paddingLeft: HEADER_W, transition: 'background 0.1s, border-color 0.1s', cursor: 'default' }}>
+                            onDragOver={e => {
+                              if (!dragLane || dragLane === type) return
+                              e.preventDefault(); e.dataTransfer.dropEffect = 'move'
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setDragInsertBefore(e.clientY < rect.top + rect.height / 2 ? type : null)
+                            }}
+                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragInsertBefore(null) }}
+                            onDrop={e => {
+                              e.preventDefault()
+                              const insertBefore = dragInsertBefore === type ? type : null
+                              setDragInsertBefore(null)
+                              if (dragLane) handleLaneDrop(dragLane, insertBefore)
+                              setDragLane(null)
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', height: 26, background: 'var(--bg-surface)', borderTop: isGroupDropTarget ? '2px solid var(--accent)' : '2px solid transparent', borderBottom: '1px solid rgba(139,92,246,0.2)', paddingLeft: HEADER_W, transition: 'border-color 0.08s', cursor: 'default' }}>
                             <button onClick={() => toggleGroupCollapse(type)}
                               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '0 6px' }}>
                               {group?.collapsed ? '▶' : '▼'}
                             </button>
                             <div style={{ width: 7, height: 7, borderRadius: '50%', background: group?.color ?? '#6b7280', marginRight: 5, flexShrink: 0 }} />
-                            <span style={{ fontSize: 10, fontWeight: 700, color: isOver ? 'var(--accent-light)' : 'var(--text-secondary)', letterSpacing: '0.04em' }}>{group?.label ?? 'Group'}</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>{group?.label ?? 'Group'}</span>
                             <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 6 }}>{children.length} tracks</span>
-                            {isOver && <span style={{ fontSize: 9, color: 'var(--accent-light)', marginLeft: 8 }}>Drop to add</span>}
                           </div>,
                           // Children (only if not collapsed)
                           ...(group?.collapsed ? [] : children.map(c => renderLaneRow(c, true))),
                         ]
                       })
                     })()}
+                    {/* Drop-at-end zone */}
+                    {dragLane && (
+                      <div
+                        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragInsertBefore(null) }}
+                        onDrop={e => { e.preventDefault(); if (dragLane) handleLaneDrop(dragLane, null); setDragLane(null); setDragInsertBefore(null) }}
+                        style={{ height: 28, borderTop: dragInsertBefore === null ? '2px solid var(--accent)' : '2px solid transparent', transition: 'border-color 0.08s' }}
+                      />
+                    )}
                   </div>
                   )}
 
