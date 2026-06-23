@@ -2623,6 +2623,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // Phase 1: assign hits that are close to any saved correction.
       // hitSlot[id] = cluster-letter index (0 = A, 1 = B, …)
       const hitSlot: Record<string, number> = {}
+      const phase1MatchCounts: number[] = new Array(numCorrSlots).fill(0)
       if (numCorrSlots > 0) {
         for (const h of result.hits) {
           if (!h.spectral) continue
@@ -2631,7 +2632,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             const d = spectralDistance(h.spectral, dedupedCorrections[i].spectral)
             if (d < bestDist) { bestDist = d; bestSlot = i }
           }
-          if (bestSlot >= 0) hitSlot[h.id] = bestSlot
+          if (bestSlot >= 0) { hitSlot[h.id] = bestSlot; phase1MatchCounts[bestSlot]++ }
         }
       }
 
@@ -2699,6 +2700,26 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           }
         }
       } catch { /* non-fatal */ }
+
+      // ── Diagnostics ───────────────────────────────────────────────────────────
+      // Open DevTools → Console and run Separate Audio to see what the algorithm did.
+      console.group('[AudioSep] Separation run')
+      console.log('hits detected:', result.hits.length)
+      console.log('loop period:', loopPeriod ? `${loopPeriod.toFixed(3)}s` : 'none detected')
+      const tonalHits = result.hits.filter(h => (h.spectral?.pitchConfidence ?? 0) > 0.18)
+      console.log('tonal hits (pitchConf > 0.18):', tonalHits.length, '/', result.hits.length)
+      if (numCorrSlots > 0) {
+        console.log('corrections loaded:', savedCorrections.length, `→ ${numCorrSlots} unique sounds`)
+        phase1MatchCounts.forEach((n, i) => console.log(`  slot ${CLUSTER_LETTERS[i]}: ${n} hits matched`))
+        const unassigned = result.hits.filter(h => hitSlot[h.id] === undefined).length
+        console.log('unmatched → k-means:', unassigned)
+      } else {
+        console.log('corrections: 0 saved — click "This is distinct" in a dot to teach the algorithm')
+      }
+      const clusterSummary: Record<string, number> = {}
+      for (const h of taggedHits) clusterSummary[h.clusterId ?? 'A'] = (clusterSummary[h.clusterId ?? 'A'] ?? 0) + 1
+      console.log('cluster sizes:', Object.entries(clusterSummary).sort().map(([k,v]) => `${k}:${v}`).join(' '))
+      console.groupEnd()
 
       // Pre-compute natural clip duration for each hit (gap to next in same cluster)
       const byClusterForDur = new Map<string, BeatHit[]>()
@@ -9218,6 +9239,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                                   }
                                   setDtCorrectionCount(deduped.length)
                                 }).catch(() => {})
+                                // Tell the user they need to re-run for corrections to take effect.
+                                showToast('Correction saved — click Separate Audio again to apply it')
                               }}
                             />
                           </div>

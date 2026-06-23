@@ -272,7 +272,7 @@ export function spectralDistance(a: HitSpectral, b: HitSpectral): number {
     mfccSum += mfccW[i] * (((a.mfcc[i + 1] ?? 0) - (b.mfcc[i + 1] ?? 0)) / 10) ** 2
   }
 
-  const totalWeight = 11.0 + 7.3 + 4.1  // sum of all weights above
+  const totalWeight = 11.0 + 8.3 + 4.1  // sum of all weights above
   return Math.sqrt((bands + temporal + mfccSum) / totalWeight)
 }
 
@@ -378,23 +378,52 @@ function vecDist(a: number[], b: number[]): number {
 export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): Record<string, number> {
   const actualK = Math.max(1, Math.min(CLUSTER_LETTERS.length, k))
 
-  // Build extended feature vectors from spectral + loop phase + pitch delta.
+  // ── Pre-compute temporal gap context ──────────────────────────────────────
+  // For each hit, measure the gap to its immediate neighbors. Hits preceded or
+  // followed by a long silence are "temporally isolated" — this is a strong
+  // signal that they may be contextually distinct from dense groups.
+  // Normalized so 1 second = full weight; capped at 1.
+  const sortedByTime = [...hits].sort((a, b) => a.time - b.time)
+  const hitTimeIdx   = new Map(sortedByTime.map((h, i) => [h.id, i]))
+  function gapBeforeSec(h: BeatHit): number {
+    const i = hitTimeIdx.get(h.id) ?? 0
+    return i > 0 ? h.time - sortedByTime[i - 1].time : 5.0
+  }
+  function gapAfterSec(h: BeatHit): number {
+    const i = hitTimeIdx.get(h.id) ?? 0
+    return i < sortedByTime.length - 1 ? sortedByTime[i + 1].time - h.time : 5.0
+  }
+
+  // Build extended feature vectors from spectral + temporal context + loop phase + pitch.
   // Loop phase is encoded as sin/cos so phase 0.0 and 1.0 are adjacent (circular).
-  // Both loop phase dimensions are weighted 3× relative to a typical spectral
-  // feature — same position in the pattern is the strongest possible evidence
-  // that two hits are the same sound.
   const vecs = hits.map(h => {
     if (!h.spectral) return { id: h.id, v: null }
     const base = hitToVec(h.spectral)
+
+    // Temporal gap features (2.5× weight each):
+    // A hit after silence gets a very different value from a hit in a dense run.
+    // This causes isolated hits (sounds in rests) and dense hits (runs) to naturally
+    // pull toward different clusters without any user correction needed.
+    base.push(Math.min(1, gapBeforeSec(h) / 1.0) * 2.5)
+    base.push(Math.min(1, gapAfterSec(h)  / 1.0) * 2.5)
+
+    // Enhanced pitch: f0 weighted by confidence so tonal sounds cluster by note.
+    // pitchConfidence threshold lowered to 0.18 to capture semi-tonal beatbox.
+    // Weight of 3× makes note changes as important as a full spectral band shift.
+    const pitchConf = h.spectral.pitchConfidence ?? 0
+    const f0Norm    = Math.min(1, (h.spectral.f0 ?? 0) / 800)
+    base.push(f0Norm * Math.min(1, pitchConf * 5) * 3.0)
+
     // Loop phase (circular encoding, 3× weight)
     if (h.loopPhase !== undefined) {
       base.push(Math.sin(2 * Math.PI * h.loopPhase) * 3.0)
       base.push(Math.cos(2 * Math.PI * h.loopPhase) * 3.0)
     } else {
-      base.push(0, 0)  // no loop detected — neutral, doesn't pull toward any phase
+      base.push(0, 0)
     }
-    // Pitch delta (2× weight): tonal sounds at different pitches should be separate
+    // Pitch delta (2× weight): consecutive tonal sounds at different notes → separate
     base.push((h.pitchDelta ?? 0) * 2.0)
+
     return { id: h.id, v: base }
   })
 
@@ -489,7 +518,7 @@ export function detectLoopPeriod(hits: BeatHit[]): number | null {
     if (score > bestScore) { bestScore = score; bestP = p }
   }
 
-  if (bestScore < Math.max(2, iois.length * 0.35)) return null
+  if (bestScore < Math.max(2, iois.length * 0.25)) return null
 
   // Fine pass: 0.5 ms steps around the best candidate
   for (let p = Math.max(0.06, bestP - 0.012); p <= bestP + 0.012; p += 0.0005) {
@@ -517,8 +546,8 @@ export function annotatePitchDeltas(hits: BeatHit[]): void {
     const prev = hits[i - 1], curr = hits[i]
     const prevConf = prev.spectral?.pitchConfidence ?? 0
     const currConf = curr.spectral?.pitchConfidence ?? 0
-    const prevF0   = prevConf > 0.30 ? (prev.spectral?.f0 ?? 0) : 0
-    const currF0   = currConf > 0.30 ? (curr.spectral?.f0 ?? 0) : 0
+    const prevF0   = prevConf > 0.18 ? (prev.spectral?.f0 ?? 0) : 0
+    const currF0   = currConf > 0.18 ? (curr.spectral?.f0 ?? 0) : 0
     if (prevF0 > 20 && currF0 > 20) {
       const ratio = Math.max(prevF0, currF0) / Math.min(prevF0, currF0)
       curr.pitchDelta = Math.min(1.0, (ratio - 1.0) / 2.0)  // octave = 1.0
