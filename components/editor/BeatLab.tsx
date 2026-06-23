@@ -58,7 +58,7 @@ import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance } from '@/lib/beat-analyzer'
-import { clusterCorrectionGetAll, clusterCorrectionAdd } from '@/lib/cluster-corrections'
+import { clusterCorrectionGetAll, clusterCorrectionAdd, type ClusterCorrection } from '@/lib/cluster-corrections'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
@@ -2495,6 +2495,28 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   // Cluster labels the user can rename ("Sound A", "Sound B"…)
   const [dtClusterLabels, setDtClusterLabels] = useState<Record<string, string>>({})
+  // Which cluster letters are anchored by user corrections (shows ✓ in UI)
+  const [dtLearnedClusters, setDtLearnedClusters] = useState<Set<string>>(new Set())
+  const [dtCorrectionCount, setDtCorrectionCount] = useState<number>(0)
+
+  // Load correction count on mount so the badge shows before first Separate run
+  useEffect(() => {
+    clusterCorrectionGetAll()
+      .then(all => {
+        const DEDUP = 0.28
+        const deduped: typeof all = []
+        const sorted = [...all].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+        for (const c of sorted) {
+          if (!c.spectral) continue
+          if (!deduped.some(k => spectralDistance(k.spectral, c.spectral) < DEDUP)) {
+            deduped.push(c)
+            if (deduped.length >= CLUSTER_LETTERS.length - 1) break
+          }
+        }
+        setDtCorrectionCount(deduped.length)
+      })
+      .catch(() => {})
+  }, [])
 
   async function runDrumDetect() {
     if (!beatBox || dtLoading) return
@@ -2507,23 +2529,65 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const result = await analyzeBeats(beatBox)
       if (myGen !== dtGenRef.current) return
 
-      // Load saved correction fingerprints as k-means seed vectors.
-      // Each saved correction represents a confirmed distinct sound; seeding from
-      // them keeps the same sounds in separate clusters across re-runs.
-      let seedVecs: number[][] = []
-      try {
-        const corrections = await clusterCorrectionGetAll()
-        seedVecs = corrections.map(c => hitToVec(c.spectral))
-      } catch { /* non-fatal */ }
+      // ── Corrections: NN pre-assignment ────────────────────────────────────────
+      // Load saved distinct-sound fingerprints.
+      // Strategy: instead of seeding k-means (which drifts after iter 1 and may
+      // ignore corrections entirely), we LOCK each hit that is acoustically close
+      // to a saved correction to that correction's cluster slot BEFORE k-means runs.
+      // K-means only sees the leftovers. This guarantees saved corrections always
+      // produce a real effect.
+      const CORRECTION_MATCH_DIST = 0.48  // generous — prefer over-matching
+      const CORRECTION_DEDUP_DIST = 0.28  // below this = same sound, keep one
 
-      // k = at least as many clusters as saved corrections, at most CLUSTER_LETTERS.length
-      const autoK = Math.max(1, Math.round(Math.sqrt(result.hits.length / 2)))
-      const k = Math.max(autoK, seedVecs.length, 1)
-      const assign = clusterHits(result.hits, k, seedVecs.length ? seedVecs : undefined)
+      let savedCorrections: ClusterCorrection[] = []
+      try { savedCorrections = await clusterCorrectionGetAll() } catch { /* non-fatal */ }
+
+      // Deduplicate: merge saves that are acoustically the same sound.
+      // Keep the newest representative of each unique sound type.
+      const dedupedCorrections: typeof savedCorrections = []
+      // Sort newest first so the most recent save wins per sound type.
+      const sortedCorrections = [...savedCorrections].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+      for (const c of sortedCorrections) {
+        if (!c.spectral) continue
+        if (!dedupedCorrections.some(k => spectralDistance(k.spectral, c.spectral) < CORRECTION_DEDUP_DIST)) {
+          dedupedCorrections.push(c)
+          if (dedupedCorrections.length >= CLUSTER_LETTERS.length - 1) break
+        }
+      }
+      const numCorrSlots = dedupedCorrections.length
+      setDtCorrectionCount(numCorrSlots)
+
+      // Phase 1: assign hits that are close to any saved correction.
+      // hitSlot[id] = cluster-letter index (0 = A, 1 = B, …)
+      const hitSlot: Record<string, number> = {}
+      if (numCorrSlots > 0) {
+        for (const h of result.hits) {
+          if (!h.spectral) continue
+          let bestDist = CORRECTION_MATCH_DIST, bestSlot = -1
+          for (let i = 0; i < dedupedCorrections.length; i++) {
+            const d = spectralDistance(h.spectral, dedupedCorrections[i].spectral)
+            if (d < bestDist) { bestDist = d; bestSlot = i }
+          }
+          if (bestSlot >= 0) hitSlot[h.id] = bestSlot
+        }
+      }
+
+      // Phase 2: k-means on unmatched hits, occupying indices after correction slots.
+      const unmatched = result.hits.filter(h => hitSlot[h.id] === undefined)
+      const remainingSlots = CLUSTER_LETTERS.length - numCorrSlots
+      const autoK = Math.max(1, Math.min(remainingSlots,
+        Math.round(Math.sqrt(Math.max(1, unmatched.length) / 2))
+      ))
+      if (unmatched.length > 0) {
+        const kmeansAssign = clusterHits(unmatched, autoK)
+        for (const h of unmatched) {
+          hitSlot[h.id] = numCorrSlots + (kmeansAssign[h.id] ?? 0)
+        }
+      }
 
       const taggedHits: BeatHit[] = result.hits.map(h => ({
         ...h,
-        clusterId: CLUSTER_LETTERS[assign[h.id] ?? 0],
+        clusterId: CLUSTER_LETTERS[Math.min(hitSlot[h.id] ?? 0, CLUSTER_LETTERS.length - 1)],
       }))
 
       // Pre-compute natural clip duration for each hit (gap to next in same cluster)
@@ -2541,14 +2605,22 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         }
       }
 
-      // Anonymous default labels — the user can rename per cluster for their own reference
+      // Labels: anonymous by default. User can rename.
       const labels: Record<string, string> = {}
       for (const letter of CLUSTER_LETTERS) {
         if (taggedHits.some(h => h.clusterId === letter)) labels[letter] = `Sound ${letter}`
       }
 
+      // Track which letters came from corrections (for UI badge)
+      const learnedLetters = new Set<string>()
+      for (let i = 0; i < numCorrSlots; i++) {
+        const letter = CLUSTER_LETTERS[i]
+        if (taggedHits.some(h => h.clusterId === letter)) learnedLetters.add(letter)
+      }
+
       setDtHits(taggedHits)
       setDtClusterLabels(labels)
+      setDtLearnedClusters(learnedLetters)
       if (!dtBpm && !beatRefBpm && result.bpm) setDtBpm(result.bpm)
     } catch {
       if (myGen === dtGenRef.current) showToast('Audio separation failed')
@@ -8925,7 +8997,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 <div style={{ background: 'var(--bg-card)', border: `1px solid ${dtHits ? 'rgba(250,204,21,0.4)' : 'var(--border)'}`, borderRadius: 10, padding: 18, marginTop: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>▣ Audio Separation</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Separates your recording into distinct sounds — each goes to its own lane</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1 }}>Separates your recording into distinct sounds — each goes to its own lane</div>
+                    {dtCorrectionCount > 0 && (
+                      <div title={`${dtCorrectionCount} distinct sound${dtCorrectionCount !== 1 ? 's' : ''} learned — these anchor the first ${dtCorrectionCount} group${dtCorrectionCount !== 1 ? 's' : ''} on each run`} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)', flexShrink: 0, cursor: 'default' }}>
+                        ✓ {dtCorrectionCount} learned
+                      </div>
+                    )}
                   </div>
 
                   <button
@@ -8992,6 +9069,20 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                               onPlay={(t, d) => dtPlayPreview(t, d)}
                               onCorrect={async (spectral) => {
                                 await clusterCorrectionAdd({ id: crypto.randomUUID(), spectral, savedAt: new Date().toISOString() })
+                                // Refresh the deduped count so the header badge updates immediately
+                                clusterCorrectionGetAll().then(all => {
+                                  const DEDUP = 0.28
+                                  const deduped: typeof all = []
+                                  const sorted = [...all].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+                                  for (const c of sorted) {
+                                    if (!c.spectral) continue
+                                    if (!deduped.some(k => spectralDistance(k.spectral, c.spectral) < DEDUP)) {
+                                      deduped.push(c)
+                                      if (deduped.length >= CLUSTER_LETTERS.length - 1) break
+                                    }
+                                  }
+                                  setDtCorrectionCount(deduped.length)
+                                }).catch(() => {})
                               }}
                             />
                           </div>
@@ -9003,7 +9094,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             const color = CLUSTER_COLORS[letter] ?? '#888'
                             const firstHit = clusterHits.sort((a, b) => a.time - b.time)[0]
                             return (
-                              <div key={letter} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '6px 10px' }}>
+                              <div key={letter} style={{ display: 'flex', alignItems: 'center', gap: 8, background: dtLearnedClusters.has(letter) ? 'rgba(34,197,94,0.06)' : 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '6px 10px', border: dtLearnedClusters.has(letter) ? '1px solid rgba(74,222,128,0.2)' : '1px solid transparent' }}>
                                 {/* Cluster color dot */}
                                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
                                 {/* Editable label */}
@@ -9013,6 +9104,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                                   style={{ flex: 1, fontSize: 11, background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', minWidth: 0 }}
                                   onClick={e => e.stopPropagation()}
                                 />
+                                {/* Learned badge */}
+                                {dtLearnedClusters.has(letter) && (
+                                  <span title="Anchored by your corrections — this group is locked to a sound you marked as distinct" style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 8, background: 'rgba(34,197,94,0.18)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.35)', flexShrink: 0, letterSpacing: '0.04em' }}>
+                                    LEARNED
+                                  </span>
+                                )}
                                 {/* Count */}
                                 <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>×{clusterHits.length}</span>
                                 {/* Play first hit */}

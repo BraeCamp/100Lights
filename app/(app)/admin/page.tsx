@@ -1,6 +1,7 @@
 import { sql } from '@/lib/db'
 import AdminLogout from './AdminLogout'
 import CorrectionsPanel from './CorrectionsPanel'
+import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 
 export const dynamic = 'force-dynamic'
@@ -129,8 +130,15 @@ export default async function AdminPage() {
         <SoundLibraryPanel />
 
 
-        {/* Beat Lab corrections — client-side IndexedDB */}
-        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Beat Lab corrections</h2>
+        {/* Audio Separation — learned distinct sounds */}
+        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Audio Separation — learned sounds</h2>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+          Fingerprints saved when you click "✓ This is distinct" in the crop editor. Each unique fingerprint anchors a cluster on the next separation run.
+        </p>
+        <ClusterCorrectionsPanel />
+
+        {/* Beat Lab AI corrections — client-side IndexedDB */}
+        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Beat Lab AI corrections</h2>
         <CorrectionsPanel />
 
         {/* Quick links */}
