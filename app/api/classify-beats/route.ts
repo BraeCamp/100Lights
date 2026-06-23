@@ -150,6 +150,7 @@ Use only these labels: ${VALID_TYPES.join(', ')}, delete
 "delete" means the hit is noise or a false detection that should be removed.
 Example format: ["kick","hihat","delete","snare","hihat"]`
 
+  // Prefill with "[" to force Claude to emit a bare JSON array with no preamble
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -160,7 +161,10 @@ Example format: ["kick","hihat","delete","snare","hihat"]`
     body: JSON.stringify({
       model:      'claude-haiku-4-5-20251001',
       max_tokens: Math.max(512, hits.length * 12 + 128),
-      messages:   [{ role: 'user', content: prompt }],
+      messages: [
+        { role: 'user',      content: prompt },
+        { role: 'assistant', content: '[' },
+      ],
     }),
   })
 
@@ -171,19 +175,25 @@ Example format: ["kick","hihat","delete","snare","hihat"]`
   }
 
   const data = await res.json() as { content: Array<{ type: string; text: string }> }
-  const text = (data.content.find(b => b.type === 'text')?.text ?? '').trim()
+  // The prefilled "[" is not included in the completion text, so prepend it
+  const rawText = '[' + (data.content.find(b => b.type === 'text')?.text ?? '')
 
-  // Parse JSON array from response
+  // Parse JSON array — be lenient: pad short arrays with original type, truncate long ones
   const VALID_WITH_DELETE = [...VALID_TYPES, 'delete'] as const
   let raw: string[]
   try {
-    const match = text.match(/\[[\s\S]*\]/)
-    if (!match) throw new Error('no array')
-    raw = JSON.parse(match[0])
-    if (!Array.isArray(raw) || raw.length !== hits.length) throw new Error('length mismatch')
-    raw = raw.map((t, i) => (VALID_WITH_DELETE as readonly string[]).includes(t) ? t : hits[i].type)
-  } catch {
-    return Response.json({ error: 'Failed to parse AI response', raw: text }, { status: 500 })
+    const match = rawText.match(/\[[\s\S]*?\]/)
+    if (!match) throw new Error(`no array in: ${rawText.slice(0, 120)}`)
+    const parsed = JSON.parse(match[0])
+    if (!Array.isArray(parsed)) throw new Error('not an array')
+    raw = hits.map((h, i) => {
+      const val = parsed[i] as string | undefined
+      return (val != null && (VALID_WITH_DELETE as readonly string[]).includes(val)) ? val : h.type
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[classify-beats] parse error:', msg, '| raw:', rawText.slice(0, 200))
+    return Response.json({ error: `Failed to parse AI response: ${msg}` }, { status: 500 })
   }
 
   // Split into reclassifications vs. deletions
