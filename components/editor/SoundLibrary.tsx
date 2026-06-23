@@ -9,7 +9,7 @@ import {
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { computeHitFeatures } from '@/lib/beat-features'
-import { encodeWav } from '@/lib/wav-codec'
+import { encodeWav, decodeAiff } from '@/lib/wav-codec'
 
 // ── Category color map ────────────────────────────────────────────────────────
 const CAT_COLORS: Record<string, string> = {
@@ -286,8 +286,26 @@ export function AddToLibraryModal({
   }
 
   async function loadFile(file: File) {
-    if (!file.type.startsWith('audio/')) { setError('Audio files only'); return }
-    loadBlob(new Blob([await file.arrayBuffer()], { type: file.type }))
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+    // Chrome doesn't support AIFF via decodeAudioData — use the custom decoder
+    if (ext === 'aif' || ext === 'aiff') {
+      try {
+        const { channels, sampleRate } = decodeAiff(await file.arrayBuffer())
+        const ctx = new AudioContext()
+        const buf = ctx.createBuffer(channels.length, channels[0].length, sampleRate)
+        for (let ch = 0; ch < channels.length; ch++) buf.getChannelData(ch).set(channels[ch])
+        ctx.close()
+        setSrcBuf(buf)
+        setTrimStart(0); setTrimEnd(1)
+        setGain(1); setFadeIn(0); setFadeOut(0); setReversed(false)
+        setMode('edit')
+      } catch { setError('Could not decode AIFF file') }
+      return
+    }
+    if (!file.type.startsWith('audio/') && ext !== 'wav' && ext !== 'mp3' && ext !== 'ogg' && ext !== 'flac' && ext !== 'm4a') {
+      setError('Audio files only'); return
+    }
+    loadBlob(new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' }))
   }
 
   async function loadBlob(blob: Blob) {

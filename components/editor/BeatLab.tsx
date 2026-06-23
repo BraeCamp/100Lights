@@ -2213,6 +2213,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   function resetBeatTranscription() {
+    beatSepGenRef.current++    // invalidate any in-flight runSeparateFromRef / runBeatTranscribe
     // Stop any in-progress recording so its async onstop can't re-set beatBox after we clear it
     stopBeatRecord()
     beatStopPlay()
@@ -2254,6 +2255,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [beatPendingHits,      setBeatPendingHits]      = useState<BeatHit[] | null>(null)  // mutable working copy
   const [beatPlacedLanes,      setBeatPlacedLanes]      = useState<{ type: string; count: number; laneId: string }[] | null>(null)
   const [beatTranscribeLoading, setBeatTranscribeLoading] = useState(false)
+  const beatSepGenRef = useRef(0)  // incremented on reset to discard in-flight async results
   // Musical grid settings — govern how hits snap and how the grid is drawn
   const [beatGridBpm,          setBeatGridBpm]          = useState<number | null>(null)   // overrides beatRefBpm when set manually
   const [beatTimeSig,          setBeatTimeSig]          = useState<[number, number]>([4, 4])
@@ -2302,6 +2304,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function runBeatTranscribe() {
     if (!beatBox) return
+    // In the Separate Sounds flow, beatBox IS beatRef. Analyzing the same buffer as both
+    // reference template and target produces a circular comparison and returns no hits.
+    if (beatBox === beatRef) { return runSeparateFromRef() }
+    const myGen = ++beatSepGenRef.current
+    const capturedBox = beatBox
+    const capturedRef = beatRef
     stopVerifyPlayback()
     setBeatTranscribeLoading(true)
     setBeatPendingHits(null)
@@ -2310,43 +2318,38 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const allowedTypes: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
       let mergedRefs: ReferenceSound[] = [...referenceSounds]
 
-      if (beatRef) {
+      if (capturedRef) {
         showToast('Analyzing reference audio…')
-        const refAnalysis = await analyzeBeats(beatRef, {
+        const refAnalysis = await analyzeBeats(capturedRef, {
           allowedTypes,
           sensitivityMultiplier: 0.5,
           stemMode: true,
         })
+        if (myGen !== beatSepGenRef.current) return
         const referenceTemplates: ReferenceSound[] = refAnalysis.hits
           .filter(h => h.spectral != null)
           .map(h => ({ category: h.type, spectral: h.spectral! }))
-        // Reference templates go first so they dominate over generic stored corrections
         mergedRefs = [...referenceTemplates, ...referenceSounds]
       }
 
-      const result = await analyzeBeats(beatBox, {
+      const result = await analyzeBeats(capturedBox, {
         allowedTypes,
         referenceSounds: mergedRefs,
         sensitivityMultiplier: 0.65,
       })
+      if (myGen !== beatSepGenRef.current) return
       if (result.hits.length === 0) {
         showToast('No drum hits detected — try recording louder or closer to the mic')
       } else {
-        // Shift hit times by the alignment offset so they align with the reference timeline.
-        // beatBoxOffset > 0 means beatbox starts after ref, so hit times increase by that amount.
-        // beatBoxOffset < 0 means beatbox started before ref, so we remove the pre-roll.
         const shifted = beatBoxOffset !== 0
           ? result.hits
               .map(h => ({ ...h, time: Math.max(0, h.time + beatBoxOffset) }))
               .filter(h => h.time >= 0)
           : result.hits
-
-        // Auto-quantize to grid if BPM is known, otherwise keep raw times
         const bpm = beatGridBpm ?? beatRefBpm
         const snapped = bpm
           ? shifted.map(h => ({ ...h, time: Math.round(h.time / ((60/bpm)*(4/beatSubdiv))) * ((60/bpm)*(4/beatSubdiv)) }))
           : shifted
-        // Cluster by spectral similarity — no drum-type assumptions
         const assignments = clusterHits(snapped, beatClusterK)
         const clustered = snapped.map(h => ({ ...h, clusterId: CLUSTER_LETTERS[assignments[h.id] ?? 0] as string }))
         setBeatClusterNames({})
@@ -2354,9 +2357,11 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         setBeatPendingHits(clustered)
       }
     } catch (e) {
-      showToast(`Transcription failed: ${e instanceof Error ? e.message : String(e)}`)
+      if (myGen === beatSepGenRef.current) {
+        showToast(`Transcription failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
-    setBeatTranscribeLoading(false)
+    if (myGen === beatSepGenRef.current) setBeatTranscribeLoading(false)
   }
 
   // Mix and play all pending hits so the user can hear the transcription before committing
@@ -3592,26 +3597,31 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   // Beat Studio calibration flow: analyze beatRef and queue results for review
   async function runSeparateFromRef() {
     if (!beatRef) return
+    const myGen = ++beatSepGenRef.current
+    const capturedRef = beatRef          // capture before the await so state changes can't affect it
     setBeatTranscribeLoading(true)
     setBeatPendingHits(null)
     setBeatPlacedLanes(null)
+    setBeatBox(null)                     // immediately collapse Drum Transcription section
     try {
       const DRUM_ALLOWED: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
-      const result = await analyzeBeats(beatRef, { allowedTypes: DRUM_ALLOWED, sensitivityMultiplier: 0.55 })
+      const result = await analyzeBeats(capturedRef, { allowedTypes: DRUM_ALLOWED, sensitivityMultiplier: 0.55 })
+      if (myGen !== beatSepGenRef.current) return  // studio was reset while analyzing — discard
       if (result.hits.length === 0) {
         showToast('No drum sounds detected — try adjusting sensitivity or a different file')
       } else {
-        // Set beatBox to the reference so the hit-grid viewer has a waveform to draw
-        setBeatBox(beatRef)
+        setBeatBox(capturedRef)
         setBeatBoxName(beatRefName ?? 'Reference')
         setBeatDetectedHits(result.hits)
         setBeatPendingHits(result.hits)
         setBeatClusterNames({})
       }
     } catch (e) {
-      showToast(`Separation failed: ${e instanceof Error ? e.message : String(e)}`)
+      if (myGen === beatSepGenRef.current) {
+        showToast(`Separation failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
-    setBeatTranscribeLoading(false)
+    if (myGen === beatSepGenRef.current) setBeatTranscribeLoading(false)
   }
 
   // handleTapTempo was a legacy duplicate that only set bpm (not masterBpm).
