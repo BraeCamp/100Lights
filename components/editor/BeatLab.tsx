@@ -1000,6 +1000,125 @@ interface LaneProps {
   liveRecPeaks?: number[]
 }
 
+function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRemove, onClose }: {
+  hit: BeatHit
+  beatBox: AudioBuffer
+  clusterLabel: string
+  clusterColor: string
+  onUpdate: (id: string, time: number, dur: number) => void
+  onRemove: (id: string) => void
+  onClose: () => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const clipDur   = hit.duration ?? 0.30
+  const PAD       = Math.min(0.08, hit.time)
+  const windowStart = Math.max(0, hit.time - PAD)
+  const windowEnd   = Math.min(beatBox.duration, hit.time + clipDur + PAD)
+  const windowDur   = windowEnd - windowStart
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const W = canvas.width, H = canvas.height
+    const ch = beatBox.getChannelData(0)
+    const sr = beatBox.sampleRate
+    const startSample = Math.floor(windowStart * sr)
+    const step = Math.max(1, Math.floor((windowDur * sr) / W))
+    const cropL = Math.round((hit.time - windowStart) / windowDur * W)
+    const cropR = Math.round((hit.time - windowStart + clipDur) / windowDur * W)
+
+    ctx.clearRect(0, 0, W, H)
+
+    // Waveform bars
+    for (let x = 0; x < W; x++) {
+      let max = 0
+      for (let i = 0; i < step; i++) {
+        const idx = startSample + x * step + i
+        if (idx < ch.length) { const v = Math.abs(ch[idx]); if (v > max) max = v }
+      }
+      const barH = Math.max(1, Math.round(max * (H - 4)))
+      const inCrop = x >= cropL && x <= cropR
+      ctx.fillStyle = inCrop ? clusterColor + 'cc' : 'rgba(80,80,100,0.4)'
+      ctx.fillRect(x, Math.round((H - barH) / 2), 1, barH)
+    }
+
+    // Dim outside crop
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'
+    if (cropL > 0) ctx.fillRect(0, 0, cropL, H)
+    if (cropR < W) ctx.fillRect(cropR, 0, W - cropR, H)
+
+    // Crop boundary lines
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'
+    ctx.fillRect(cropL - 1, 0, 2, H)
+    ctx.fillRect(cropR - 1, 0, 2, H)
+
+    // Drag handles (left = pull-left tab, right = pull-right tab)
+    ctx.fillStyle = 'white'
+    ctx.fillRect(cropL - 6, Math.round(H / 2) - 12, 6, 24)
+    ctx.fillRect(cropR,     Math.round(H / 2) - 12, 6, 24)
+  }, [hit.time, clipDur, beatBox, clusterColor, windowStart, windowDur])
+
+  function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect   = canvas.getBoundingClientRect()
+    const scaleX = canvas.width / rect.width
+    const px     = (e.clientX - rect.left) * scaleX
+    const cropL  = (hit.time - windowStart) / windowDur * canvas.width
+    const cropR  = (hit.time - windowStart + clipDur) / windowDur * canvas.width
+    const nearL  = Math.abs(px - cropL) < 14
+    const nearR  = Math.abs(px - cropR) < 14
+    if (!nearL && !nearR) return
+    e.preventDefault()
+    const origTime = hit.time, origDur = clipDur, sx = e.clientX
+    const onMove = (me: MouseEvent) => {
+      const dSec = ((me.clientX - sx) * scaleX / canvas.width) * windowDur
+      if (nearL) {
+        const newTime = Math.max(0, Math.min(origTime + origDur - 0.02, origTime + dSec))
+        onUpdate(hit.id, newTime, Math.max(0.02, origDur - (newTime - origTime)))
+      } else {
+        onUpdate(hit.id, origTime, Math.max(0.02, Math.min(beatBox.duration - origTime, origDur + dSec)))
+      }
+    }
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  function play() {
+    const actx = new AudioContext()
+    const src  = actx.createBufferSource()
+    src.buffer = beatBox; src.connect(actx.destination)
+    src.start(0, hit.time, clipDur)
+    src.onended = () => actx.close()
+  }
+
+  const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '3px 9px', borderRadius: 5, fontSize: 10, fontWeight: 600, cursor: 'pointer' }
+
+  return (
+    <div style={{ background: 'rgba(10,10,20,0.95)', border: `1px solid ${clusterColor}55`, borderRadius: 8, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: clusterColor, display: 'inline-block', flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>
+          {clusterLabel} &middot; {hit.time.toFixed(2)}s &middot; {(clipDur * 1000).toFixed(0)}ms
+        </span>
+        <button onClick={play} style={{ ...btn, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.35)' }}>▶ Play</button>
+        <button onClick={() => onRemove(hit.id)} style={{ ...btn, background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>× Remove</button>
+        <button onClick={onClose} style={{ ...btn, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>Done ✓</button>
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={520} height={72}
+        style={{ width: '100%', height: 72, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.35)', cursor: 'ew-resize' }}
+        onMouseDown={onMouseDown}
+      />
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5 }}>Drag white handles to crop · click Done when correct</div>
+    </div>
+  )
+}
+
 function RecordingWave({ peaks }: { peaks: number[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   useEffect(() => {
@@ -2363,6 +2482,21 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         ...h,
         clusterId: CLUSTER_LETTERS[assign[h.id] ?? 0],
       }))
+
+      // Pre-compute natural clip duration for each hit (gap to next in same cluster)
+      const byClusterForDur = new Map<string, BeatHit[]>()
+      for (const h of taggedHits) {
+        const key = h.clusterId ?? 'A'
+        if (!byClusterForDur.has(key)) byClusterForDur.set(key, [])
+        byClusterForDur.get(key)!.push(h)
+      }
+      for (const arr of byClusterForDur.values()) {
+        arr.sort((a, b) => a.time - b.time)
+        for (let i = 0; i < arr.length; i++) {
+          const gap = arr[i + 1] ? (arr[i + 1].time - arr[i].time) * 0.95 : 0.45
+          arr[i].duration = Math.min(gap, 0.45)
+        }
+      }
 
       // Default labels
       const labels: Record<string, string> = {}
@@ -8782,30 +8916,26 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                               return (!best || Math.abs(h.time - time) < Math.abs(best.time - time)) ? h : best
                             }, null)
                             if (nearest && Math.abs(nearest.time - time) / beatBox.duration < 0.03) {
-                              const wasSelected = dtSelectedHitId === nearest.id
-                              setDtSelectedHitId(wasSelected ? null : nearest.id)
-                              if (!wasSelected) dtPlayPreview(nearest.time)
+                              setDtSelectedHitId(prev => prev === nearest.id ? null : nearest.id)
                             } else {
                               setDtSelectedHitId(null)
                             }
                           }}
-                          title="Click a dot to hear that sound"
+                          title="Click a dot to open its crop editor"
                         />
 
-                        {/* Selected hit info */}
+                        {/* Crop editor for selected hit */}
                         {selHit && (
-                          <div style={{ background: 'rgba(17,17,27,0.97)', border: `1px solid ${CLUSTER_COLORS[selHit.clusterId ?? 'A'] ?? 'rgba(139,92,246,0.4)'}40`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: CLUSTER_COLORS[selHit.clusterId ?? 'A'] ?? '#888', flexShrink: 0, display: 'inline-block' }} />
-                            <span style={{ fontSize: 11, color: 'var(--text-primary)', flex: 1 }}>
-                              {dtClusterLabels[selHit.clusterId ?? 'A'] ?? `Sound ${selHit.clusterId}`} · {selHit.time.toFixed(2)}s
-                            </span>
-                            <button onClick={() => dtPlayPreview(selHit.time)} style={{ ...btnBase, fontSize: 10, padding: '2px 8px', background: 'rgba(250,204,21,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)' }}>
-                              ▶ Play
-                            </button>
-                            <button onClick={() => { setDtHits(prev => prev ? prev.filter(h => h.id !== selHit.id) : null); setDtSelectedHitId(null) }}
-                              style={{ ...btnBase, fontSize: 10, padding: '2px 8px', background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>
-                              × Remove
-                            </button>
+                          <div style={{ marginBottom: 10 }}>
+                            <DtCropEditor
+                              hit={selHit}
+                              beatBox={beatBox}
+                              clusterLabel={dtClusterLabels[selHit.clusterId ?? 'A'] ?? `Sound ${selHit.clusterId}`}
+                              clusterColor={CLUSTER_COLORS[selHit.clusterId ?? 'A'] ?? '#888'}
+                              onUpdate={(id, time, dur) => setDtHits(prev => prev ? prev.map(h => h.id === id ? { ...h, time, duration: dur } : h) : null)}
+                              onRemove={id => { setDtHits(prev => prev ? prev.filter(h => h.id !== id) : null); setDtSelectedHitId(null) }}
+                              onClose={() => setDtSelectedHitId(null)}
+                            />
                           </div>
                         )}
 
@@ -8827,13 +8957,21 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                                 />
                                 {/* Count */}
                                 <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>×{clusterHits.length}</span>
-                                {/* Play first hit in cluster */}
+                                {/* Play first hit */}
                                 <button
                                   onClick={() => firstHit && dtPlayPreview(firstHit.time)}
                                   title="Preview a sound from this group"
-                                  style={{ ...btnBase, fontSize: 10, padding: '2px 7px', background: `${color}20`, color, border: `1px solid ${color}50`, flexShrink: 0 }}
+                                  style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer', background: `${color}20`, color, border: `1px solid ${color}50`, flexShrink: 0 }}
                                 >
                                   ▶
+                                </button>
+                                {/* Edit first hit in crop editor */}
+                                <button
+                                  onClick={() => firstHit && setDtSelectedHitId(prev => prev === firstHit.id ? null : firstHit.id)}
+                                  title="Crop this sound"
+                                  style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer', background: 'rgba(139,92,246,0.12)', color: 'rgba(167,139,250,1)', border: '1px solid rgba(139,92,246,0.3)', flexShrink: 0 }}
+                                >
+                                  ✂
                                 </button>
                               </div>
                             )
