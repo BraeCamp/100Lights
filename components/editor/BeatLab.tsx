@@ -60,7 +60,7 @@ import { analyzeBeats, classifyHitLocally, NN_MAX_DIST } from '@/lib/beat-analyz
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
-import { correctionsAdd, correctionsGetAll } from '@/lib/correction-store'
+import { correctionsAdd, correctionsGetAll, correctionsClear } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, synthesizeInstrument, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
@@ -2140,10 +2140,26 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setBeatPendingHits(null)
     setBeatPlacedLanes(null)
     try {
-      const { analyzeBeats } = await import('@/lib/beat-analyzer')
+      const allowedTypes: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
+      let mergedRefs: ReferenceSound[] = [...referenceSounds]
+
+      if (beatRef) {
+        showToast('Analyzing reference audio…')
+        const refAnalysis = await analyzeBeats(beatRef, {
+          allowedTypes,
+          sensitivityMultiplier: 0.5,
+          stemMode: true,
+        })
+        const referenceTemplates: ReferenceSound[] = refAnalysis.hits
+          .filter(h => h.spectral != null)
+          .map(h => ({ category: h.type, spectral: h.spectral! }))
+        // Reference templates go first so they dominate over generic stored corrections
+        mergedRefs = [...referenceTemplates, ...referenceSounds]
+      }
+
       const result = await analyzeBeats(beatBox, {
-        allowedTypes: ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
-        referenceSounds,
+        allowedTypes,
+        referenceSounds: mergedRefs,
         sensitivityMultiplier: 0.65,
       })
       if (result.hits.length === 0) {
@@ -8128,10 +8144,18 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     </div>
                   </div>
 
-                  <button onClick={runBeatTranscribe} disabled={beatTranscribeLoading}
-                    style={{ ...btnBase, background: beatTranscribeLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', width: '100%' }}>
-                    {beatTranscribeLoading ? 'Detecting hits…' : '▣ Detect drum hits'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={runBeatTranscribe} disabled={beatTranscribeLoading}
+                      style={{ ...btnBase, background: beatTranscribeLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', flex: 1 }}>
+                      {beatTranscribeLoading ? 'Detecting hits…' : '▣ Detect drum hits'}
+                    </button>
+                    <button
+                      onClick={() => { correctionsClear().catch(() => {}); setReferenceSounds([]); showToast('Learning data cleared') }}
+                      title="Clear all stored correction data and reference sounds"
+                      style={{ ...btnBase, background: 'rgba(239,68,68,0.08)', color: 'rgba(248,113,113,0.85)', border: '1px solid rgba(239,68,68,0.25)', padding: '6px 12px', flexShrink: 0, fontSize: 11 }}>
+                      ✕ Clear learning data
+                    </button>
+                  </div>
 
                   {/* ── Phase 2: Verify hits before committing ── */}
                   {beatPendingHits && (() => {
@@ -8147,7 +8171,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                     // Canvas hit grid — left-click: remove/add · right-click: reclassify type
                     const HitGrid = () => {
                       const gridRef = useRef<HTMLCanvasElement>(null)
-                      const canvasH = Math.max(68, types.length * ROW_H + 8)
+                      const REF_H = 40
+                      const dotOffset = beatRef ? REF_H + 4 : 0
+                      const canvasH = Math.max(68, types.length * ROW_H + 8 + dotOffset)
 
                       useEffect(() => {
                         const canvas = gridRef.current; if (!canvas) return
@@ -8156,20 +8182,41 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         c.clearRect(0, 0, W, H)
                         c.fillStyle = '#0d0d10'; c.fillRect(0, 0, W, H)
 
-                        // Beatbox waveform ghost
+                        // Reference audio waveform strip (purple, top of canvas)
+                        if (beatRef && beatBox) {
+                          const refWav = beatBox ? beatRef.getChannelData(0) : null
+                          if (refWav) {
+                            const timelineWidth = W - LABEL_W
+                            c.fillStyle = 'rgba(139,92,246,0.55)'
+                            for (let px = 0; px < timelineWidth; px++) {
+                              const idx = Math.floor((px / timelineWidth) * refWav.length)
+                              const p = Math.abs(refWav[idx] ?? 0)
+                              const bh = Math.max(1, p * REF_H * 0.9)
+                              c.fillRect(LABEL_W + px, (REF_H - bh) / 2, 1, bh)
+                            }
+                            c.fillStyle = 'rgba(139,92,246,0.7)'; c.font = 'bold 8px ui-monospace,monospace'; c.textBaseline = 'middle'
+                            c.fillText('Ref', 4, REF_H / 2)
+                          }
+                          // Separator line below ref strip
+                          c.strokeStyle = 'rgba(255,255,255,0.08)'; c.lineWidth = 1
+                          c.beginPath(); c.moveTo(0, REF_H + 2); c.lineTo(W, REF_H + 2); c.stroke()
+                        }
+
+                        // Beatbox waveform ghost (yellow, dot area only)
                         if (beatBox) {
                           const wav = beatBox.getChannelData(0)
                           const bars = Math.floor((W - LABEL_W) / 2)
                           const spb  = Math.floor(wav.length / bars)
+                          const dotH = H - dotOffset
                           c.fillStyle = 'rgba(250,204,21,0.08)'
                           for (let i = 0; i < bars; i++) {
                             let p = 0; for (let j = 0; j < spb; j++) p = Math.max(p, Math.abs(wav[i*spb+j]??0))
-                            const bh = Math.max(1, p * H * 0.45)
-                            c.fillRect(LABEL_W + i*2, (H-bh)/2, 1, bh)
+                            const bh = Math.max(1, p * dotH * 0.45)
+                            c.fillRect(LABEL_W + i*2, dotOffset + (dotH - bh) / 2, 1, bh)
                           }
                         }
 
-                        // Musical grid lines — measure > beat > subdivision
+                        // Musical grid lines — measure > beat > subdivision (dot area only)
                         const bpm = activeBeatBpm()
                         if (bpm) {
                           const [num, denom] = beatTimeSig
@@ -8181,28 +8228,28 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           c.strokeStyle = 'rgba(255,255,255,0.04)'; c.lineWidth = 0.5
                           for (let t = 0; t <= duration; t += subLen) {
                             const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                            c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
                           }
                           // Beat lines (medium)
                           c.strokeStyle = 'rgba(255,255,255,0.10)'; c.lineWidth = 1
                           for (let t = 0; t <= duration; t += beatLen) {
                             const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                            c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
                           }
                           // Measure (bar) lines — strong + numbered
                           c.lineWidth = 1.5
                           for (let t = 0, bar = 1; t <= duration; t += barLen, bar++) {
                             const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.strokeStyle = 'rgba(255,255,255,0.22)'; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                            c.strokeStyle = 'rgba(255,255,255,0.22)'; c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
                             c.fillStyle = 'rgba(255,255,255,0.25)'; c.font = '8px ui-monospace,monospace'; c.textBaseline = 'top'
-                            c.fillText(String(bar), x + 2, 2)
+                            c.fillText(String(bar), x + 2, dotOffset + 2)
                           }
                           // Pattern-length marker (shows what will be repeated)
                           const patEnd = beatPatternLen * barLen
                           if (patEnd < duration) {
                             const px = LABEL_W + (patEnd/duration)*(W-LABEL_W)
                             c.strokeStyle = 'rgba(250,204,21,0.35)'; c.lineWidth = 1.5; c.setLineDash([4,3])
-                            c.beginPath(); c.moveTo(px, 0); c.lineTo(px, H); c.stroke()
+                            c.beginPath(); c.moveTo(px, dotOffset); c.lineTo(px, H); c.stroke()
                             c.setLineDash([])
                           }
                         } else {
@@ -8210,12 +8257,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           c.strokeStyle = 'rgba(255,255,255,0.06)'; c.lineWidth = 1
                           for (let t = 0; t <= duration; t += 0.5) {
                             const x = LABEL_W + (t/duration)*(W-LABEL_W)
-                            c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+                            c.beginPath(); c.moveTo(x, dotOffset); c.lineTo(x, H); c.stroke()
                           }
                         }
 
                         types.forEach((type, ti) => {
-                          const ry = 4 + ti * ROW_H
+                          const ry = dotOffset + 4 + ti * ROW_H
                           if (ti % 2 === 0) { c.fillStyle = 'rgba(255,255,255,0.022)'; c.fillRect(0, ry, W, ROW_H) }
                           c.fillStyle = DRUM_COLORS[type] ?? '#888'
                           c.font = 'bold 10px ui-monospace,monospace'; c.textBaseline = 'middle'
@@ -8234,7 +8281,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             else { c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 0.5; c.stroke() }
                           }
                         })
-                      }, [pending, reclassifyTarget, beatGridBpm, beatRefBpm, beatTimeSig, beatSubdiv, beatPatternLen])
+                      }, [pending, reclassifyTarget, beatGridBpm, beatRefBpm, beatTimeSig, beatSubdiv, beatPatternLen, beatRef])
 
                       const hitAtPoint = (canvas: HTMLCanvasElement, ex: number, ey: number) => {
                         const rect = canvas.getBoundingClientRect()
@@ -8243,7 +8290,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         for (const hit of pending) {
                           const ti = types.indexOf(hit.type); if (ti < 0) continue
                           const x = LABEL_W + (hit.time/duration)*(canvas.width-LABEL_W)
-                          const y = 4 + ti*ROW_H + ROW_H/2
+                          const y = dotOffset + 4 + ti*ROW_H + ROW_H/2
                           if (Math.hypot(cx-x, cy-y) < 12) return { hit, cx, cy }
                         }
                         return null
@@ -8261,7 +8308,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         const rect = canvas.getBoundingClientRect()
                         const cx = (e.clientX - rect.left) * (canvas.width / rect.width)
                         const cy = (e.clientY - rect.top)  * (canvas.height / rect.height)
-                        const ti = Math.floor((cy - 4) / ROW_H)
+                        const ti = Math.floor((cy - dotOffset - 4) / ROW_H)
                         if (ti >= 0 && ti < types.length && cx >= LABEL_W) {
                           const rawTime = ((cx-LABEL_W)/(canvas.width-LABEL_W)) * duration
                           const bpm     = activeBeatBpm()
