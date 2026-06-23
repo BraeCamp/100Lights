@@ -8449,6 +8449,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         {beatPlayingSlot === 'ref' && !beatLooping ? '■' : '▶'}
                       </button>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{beatRef.duration.toFixed(1)}s</span>
+                      <button
+                        onClick={resetBeatTranscription}
+                        title="Clear reference audio and reset"
+                        style={{ ...btnBase, padding: '6px 10px', color: 'var(--text-muted)', border: '1px solid var(--border)', background: 'transparent' }}
+                      >
+                        ✕ Clear
+                      </button>
                       {beatStep === 1 && beatRef && (
                         <button onClick={() => setBeatStep(2)}
                           style={{ ...btnBase, marginLeft: 'auto', background: 'rgba(234,179,8,0.12)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '6px 14px' }}>
