@@ -448,6 +448,7 @@ export async function analyzeBeats(
         let bestDist = Infinity
         let bestType: BeatType | null = null
         for (const ref of references) {
+          if (!ref.spectral || !TYPE_FALLBACKS[ref.category]) continue
           const d = spectralDistance(spectral, ref.spectral)
           if (d < bestDist) { bestDist = d; bestType = ref.category }
         }
@@ -488,7 +489,8 @@ export async function analyzeBeats(
 
       let type: BeatType = natural
       if (allowed && !allowed.has(natural)) {
-        type = TYPE_FALLBACKS[natural].find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other'
+        const fallbacks = TYPE_FALLBACKS[natural] ?? TYPE_FALLBACKS['other']
+        type = (fallbacks.find(t => allowed.has(t)) ?? Array.from(allowed)[0] ?? 'other') as BeatType
       }
 
       hits.push({
