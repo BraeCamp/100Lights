@@ -2267,7 +2267,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         setBeatAiChecking(false)
         return
       }
-      const { corrections, deletions } = await res.json() as { corrections: Record<string, string>; deletions: string[] }
+      const { corrections, deletions, deletionsSuppressed } = await res.json() as { corrections: Record<string, string>; deletions: string[]; deletionsSuppressed?: boolean }
       const delSet = new Set(deletions)
       const totalChanges = Object.keys(corrections).length + deletions.length
       setBeatPendingHits(prev => prev
@@ -2276,7 +2276,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
           .map(h => corrections[h.id] ? { ...h, type: corrections[h.id] as BeatHit['type'] } : h)
         : null
       )
-      if (totalChanges === 0) {
+      if (deletionsSuppressed) {
+        showToast('AI wanted to remove most hits — kept them all, only applied reclassifications')
+      } else if (totalChanges === 0) {
         showToast('AI thinks the classifications look correct')
       } else {
         showToast(`AI updated ${totalChanges} hit${totalChanges !== 1 ? 's' : ''} — review and adjust as needed`)

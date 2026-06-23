@@ -143,9 +143,11 @@ beatbox norms. When current hits have similar band ratios, prefer the confirmed 
   const prompt = `You are an expert at classifying beatbox drum sounds from spectral data.
 
 A user beatboxed a drum pattern and the app detected ${hits.length} sound events.
-Classify each hit as one of: ${enabledTypes.join(', ')}
-Every hit must receive a label — do NOT delete any hits. The user has already reviewed
-and removed false positives; assume every hit in this list is a real drum sound.
+Classify each hit as one of: ${enabledTypes.join(', ')}, delete
+Use "delete" ONLY for clear false positives: breath noise, mic bumps, or sounds with no
+recognisable drum character (very low velocity AND no dominant spectral band). Be conservative
+— if the hit could plausibly be a drum sound, classify it rather than delete it.
+At least half of the hits must receive a drum label (not "delete").
 ${groundTruthSection}${pastCorrectionsSection}
 CRITICAL BEATBOX FACTS:
 - Human mouths CANNOT produce real sub-bass (<100 Hz). Sub values will always be low.
@@ -174,8 +176,8 @@ CLASSIFICATION RULES:
 - mfcc[1] strongly separates kick (negative) from hihat (positive)
 
 Respond with ONLY a valid JSON array of exactly ${hits.length} strings.
-Use only these labels: ${enabledTypes.join(', ')}
-Example: ["kick","hihat","snare","hihat","kick"]`
+Use only these labels: ${enabledTypes.join(', ')}, delete
+Example: ["kick","hihat","delete","snare","hihat"]`
 
   // Prefill with "[" to force Claude to emit a bare JSON array with no preamble
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -205,7 +207,7 @@ Example: ["kick","hihat","snare","hihat","kick"]`
   // The prefilled "[" is not included in the completion text, so prepend it
   const rawText = '[' + (data.content.find(b => b.type === 'text')?.text ?? '')
 
-  // Parse JSON array — lenient: unknown labels and "delete" fall back to the original type
+  // Parse JSON array — lenient: unknown labels fall back to the original type
   const VALID_SET = new Set<string>([...VALID_TYPES, 'delete'])
   let raw: string[]
   try {
@@ -215,9 +217,7 @@ Example: ["kick","hihat","snare","hihat","kick"]`
     if (!Array.isArray(parsed)) throw new Error('not an array')
     raw = hits.map((h, i) => {
       const val = parsed[i] as string | undefined
-      // "delete" is no longer offered in the prompt; treat it as the original type
-      if (val == null || val === 'delete' || !VALID_SET.has(val)) return h.type
-      return val
+      return (val != null && VALID_SET.has(val)) ? val : h.type
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -225,14 +225,22 @@ Example: ["kick","hihat","snare","hihat","kick"]`
     return Response.json({ error: `Failed to parse AI response: ${msg}` }, { status: 500 })
   }
 
-  // Only reclassifications — deletions are disabled; user removes false hits manually
+  // Safety net: if AI wants to delete more than half the hits, cancel all deletions
+  // and only apply reclassifications — the recording is never left empty.
+  const deleteCount = raw.filter(l => l === 'delete').length
+  if (deleteCount >= Math.ceil(hits.length / 2)) {
+    raw = raw.map((l, i) => l === 'delete' ? hits[i].type : l)
+  }
+
   const corrections: Record<string, BeatType> = {}
   const deletions: string[] = []
   hits.forEach((h, i) => {
-    if (raw[i] !== h.type) {
+    if (raw[i] === 'delete') {
+      deletions.push(h.id)
+    } else if (raw[i] !== h.type) {
       corrections[h.id] = raw[i] as BeatType
     }
   })
 
-  return Response.json({ corrections, deletions, totalHits: hits.length })
+  return Response.json({ corrections, deletions, totalHits: hits.length, deletionsSuppressed: deleteCount >= Math.ceil(hits.length / 2) })
 }
