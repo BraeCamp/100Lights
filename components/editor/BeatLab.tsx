@@ -942,8 +942,9 @@ interface LaneProps {
   onHitRightClick: (e: React.MouseEvent, id: string) => void
   onClipRightClick: (e: React.MouseEvent, clipId: string) => void
   onClipDelete: (clipId: string) => void
-  onClipSelect: (clipId: string) => void
-  selectedClipId: string | null
+  onClipSelect: (clipId: string, additive: boolean) => void
+  onMultiSelect: (clipIds: string[], additive: boolean) => void
+  selectedClipIds: Set<string>
   onClipUpdate: (clipId: string, update: Partial<Pick<AudioClipShape, 'startTime' | 'gain' | 'stretchDuration' | 'loopDuration' | 'gateThreshold' | 'fadeIn' | 'fadeOut' | 'color' | 'reversed' | 'warpMarkers' | 'gainEnvelope'>>) => void
   // Mixer
   pan: number; soloed: boolean; anySoloed: boolean
@@ -990,12 +991,14 @@ interface LaneProps {
   onSidechainChange?: (effectId: string, val: string) => void
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, selectedClipId, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, onMultiSelect, selectedClipIds, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
   const [dotMenuOpen,   setDotMenuOpen]   = useState(false)
   const [libDragOver,   setLibDragOver]   = useState(false)
+  const [rbBand,        setRbBand]        = useState<{ left: number; width: number } | null>(null)
+  const rbDraggedRef = useRef(false)
 
   function startPanDrag(e: React.MouseEvent) {
     e.stopPropagation(); e.preventDefault()
@@ -1190,7 +1193,40 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
 
       {/* Hit area — left-click adds, right-click adds (snapped), drop to place library clip */}
       <div
-        onClick={miniMode ? undefined : handleLaneClick}
+        onClick={miniMode ? undefined : (e => { if (rbDraggedRef.current) { rbDraggedRef.current = false; return } handleLaneClick(e) })}
+        onMouseDown={miniMode ? undefined : (e => {
+          if (e.button !== 0) return
+          const hitAreaEl = e.currentTarget as HTMLDivElement
+          const rect = hitAreaEl.getBoundingClientRect()
+          const startX = e.clientX - rect.left
+          let endX = startX
+          let moved = false
+          const onMove = (me: MouseEvent) => {
+            const dx = me.clientX - rect.left
+            if (!moved && Math.abs(dx - startX) > 4) moved = true
+            if (!moved) return
+            endX = dx
+            setRbBand({ left: Math.min(startX, endX), width: Math.abs(endX - startX) })
+          }
+          const onUp = (me: MouseEvent) => {
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+            setRbBand(null)
+            if (!moved) return
+            rbDraggedRef.current = true
+            const t1 = Math.min(startX, endX) / (duration > 0 ? pxWidth / duration : 1)
+            const t2 = Math.max(startX, endX) / (duration > 0 ? pxWidth / duration : 1)
+            const toSelect = clips
+              .filter(c => {
+                const clipEnd = c.startTime + (c.stretchDuration ?? c.buf.duration)
+                return c.startTime < t2 && clipEnd > t1
+              })
+              .map(c => c.id)
+            if (toSelect.length > 0) onMultiSelect(toSelect, me.ctrlKey || me.metaKey)
+          }
+          window.addEventListener('mousemove', onMove)
+          window.addEventListener('mouseup', onUp)
+        })}
         onContextMenu={miniMode ? undefined : handleLaneRightClick}
         onDragOver={e => {
           if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
@@ -1216,6 +1252,9 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         }}
       >
         <NoteGrid />
+        {rbBand && (
+          <div style={{ position: 'absolute', top: 0, bottom: 0, left: rbBand.left, width: rbBand.width, background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.5)', pointerEvents: 'none', zIndex: 20 }} />
+        )}
         {hits.map(hit => (
           <HitBlock
             key={hit.id}
@@ -1310,8 +1349,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                     if (Math.abs(me.clientX - sx) > 3 || Math.abs(me.clientY - sy) > 3) moved = true
                     mv(me)
                   }
-                  const up = () => {
-                    if (!moved && zone === 'move') onClipSelect(clip.id)
+                  const up = (me: MouseEvent) => {
+                    if (!moved && zone === 'move') onClipSelect(clip.id, me.ctrlKey || me.metaKey)
                     window.removeEventListener('mousemove', track); window.removeEventListener('mouseup', up)
                   }
                   window.addEventListener('mousemove', track); window.addEventListener('mouseup', up)
@@ -1391,8 +1430,8 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
                 position: 'absolute', left, width: Math.max(wid, 8),
                 top: 3, bottom: 3, borderRadius: 3, zIndex: 1,
                 background: isConverting ? 'rgba(139,92,246,0.08)' : clip.muted ? 'rgba(80,80,100,0.1)' : `${clipBaseColor}26`,
-                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : selectedClipId === clip.id ? 'rgba(250,250,100,0.85)' : clip.muted ? 'rgba(100,100,120,0.25)' : `${clipBaseColor}80`}`,
-                boxShadow: selectedClipId === clip.id ? '0 0 0 1px rgba(250,250,100,0.4)' : 'none',
+                border: `1px solid ${isConverting ? 'rgba(139,92,246,0.3)' : selectedClipIds.has(clip.id) ? 'rgba(250,250,100,0.85)' : clip.muted ? 'rgba(100,100,120,0.25)' : `${clipBaseColor}80`}`,
+                boxShadow: selectedClipIds.has(clip.id) ? '0 0 0 1px rgba(250,250,100,0.4)' : 'none',
                 overflow: 'hidden', cursor: isConverting ? 'wait' : 'grab',
               }}
             >
@@ -3101,7 +3140,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [compGroups, setCompGroups] = useState<CompGroup[]>([])
   const [openCompGroup, setOpenCompGroup] = useState<string | null>(null)
   const clipboardRef = useRef<AudioClip[]>([])
@@ -4489,8 +4528,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   useEffect(() => { durationRef.current = duration }, [duration])
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
-  const selectedClipIdRef = useRef<string | null>(null)
-  useEffect(() => { selectedClipIdRef.current = selectedClipId }, [selectedClipId])
+  const selectedClipIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => { selectedClipIdsRef.current = selectedClipIds }, [selectedClipIds])
   const audioClipsRef = useRef<AudioClip[]>([])
   useEffect(() => { audioClipsRef.current = audioClips }, [audioClips])
   const isPlayingRef = useRef(false)
@@ -4514,8 +4553,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         return
       }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && !inInput) {
-        const clip = audioClipsRef.current.find(c => c.id === selectedClipIdRef.current)
-        if (clip) clipboardRef.current = [clip]
+        const ids = selectedClipIdsRef.current
+        const copied = audioClipsRef.current.filter(c => ids.has(c.id))
+        if (copied.length) clipboardRef.current = copied
         return
       }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV' && !inInput) {
@@ -4527,9 +4567,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         setAudioClips(prev => [...prev, ...clips.map(c => ({ ...c, id: crypto.randomUUID(), startTime: Math.max(0, c.startTime + offset) }))])
         return
       }
-      if ((e.code === 'Delete' || e.code === 'Backspace') && !inInput && selectedClipIdRef.current) {
-        setAudioClips(prev => prev.filter(c => c.id !== selectedClipIdRef.current))
-        setSelectedClipId(null)
+      if ((e.code === 'Delete' || e.code === 'Backspace') && !inInput && selectedClipIdsRef.current.size > 0) {
+        const ids = selectedClipIdsRef.current
+        setAudioClips(prev => prev.filter(c => !ids.has(c.id)))
+        setSelectedClipIds(new Set())
         return
       }
       // T → tap tempo
@@ -7337,9 +7378,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           onAutomPointUpdate={(id, ptId, upd) => updateAutomPoint(id, ptId, upd)}
                           onAutomPointDelete={(id, ptId) => deleteAutomPoint(id, ptId)}
                           onClipRightClick={(e, clipId) => setClipMenu({ clipId, x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 160) })}
-                          onClipDelete={clipId => { setAudioClips(prev => prev.filter(c => c.id !== clipId)); if (selectedClipId === clipId) setSelectedClipId(null) }}
-                          onClipSelect={clipId => setSelectedClipId(prev => prev === clipId ? null : clipId)}
-                          selectedClipId={selectedClipId}
+                          onClipDelete={clipId => { setAudioClips(prev => prev.filter(c => c.id !== clipId)); setSelectedClipIds(prev => { const n = new Set(prev); n.delete(clipId); return n }) }}
+                          onClipSelect={(clipId, additive) => setSelectedClipIds(prev => {
+                            if (additive) { const n = new Set(prev); prev.has(clipId) ? n.delete(clipId) : n.add(clipId); return n }
+                            return prev.has(clipId) && prev.size === 1 ? new Set() : new Set([clipId])
+                          })}
+                          onMultiSelect={(clipIds, additive) => setSelectedClipIds(prev => {
+                            if (additive) { const n = new Set(prev); clipIds.forEach(id => n.add(id)); return n }
+                            return new Set(clipIds)
+                          })}
+                          selectedClipIds={selectedClipIds}
                           onClipUpdate={(clipId, update) => {
                             setAudioClips(prev => prev.map(c => {
                               if (c.id !== clipId) return c

@@ -10,6 +10,7 @@ import {
 } from '@/lib/sound-library'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
+import { SAMPLE_CATALOG, catalogEntryId } from '@/lib/sample-catalog'
 
 // ── Category color map ────────────────────────────────────────────────────────
 const CAT_COLORS: Record<string, string> = {
@@ -635,6 +636,10 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
+  const [catalogCollapsed, setCatalogCollapsed] = useState(false)
+  const [downloading,      setDownloading]      = useState<Set<string>>(new Set())
+  const [catalogPreviewing, setCatalogPreviewing] = useState<string | null>(null)
+  const catalogAudioRef = useRef<HTMLAudioElement | null>(null)
   const [dragOverFolder,   setDragOverFolder]   = useState<string | null>(null)
   const [showAdd,          setShowAdd]          = useState(false)
   const [addingFolder,     setAddingFolder]     = useState(false)
@@ -665,6 +670,51 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   useEffect(() => {
     if (addingFolder) setTimeout(() => newFolderRef.current?.focus(), 30)
   }, [addingFolder])
+
+  // IDs of already-downloaded catalog samples
+  const downloadedCatalogIds = useMemo(
+    () => new Set(entries.map(e => e.id).filter(id => id.startsWith('100l_'))),
+    [entries],
+  )
+
+  async function downloadSample(sampleId: string, url: string, name: string, category: LibraryCategory, duration: number) {
+    if (downloading.has(sampleId)) return
+    setDownloading(prev => new Set(prev).add(sampleId))
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/wav' })
+      await libraryAdd({
+        id:        catalogEntryId(sampleId),
+        name,
+        category,
+        audioBlob: blob,
+        duration,
+        addedAt:   new Date().toISOString(),
+        folder:    '100Lights',
+      })
+      await load()
+    } catch {
+      // silently ignore — user sees the button stay as ↓
+    } finally {
+      setDownloading(prev => { const n = new Set(prev); n.delete(sampleId); return n })
+    }
+  }
+
+  function previewCatalogSample(sampleId: string, url: string) {
+    if (catalogPreviewing === sampleId) {
+      catalogAudioRef.current?.pause()
+      catalogAudioRef.current = null
+      setCatalogPreviewing(null)
+      return
+    }
+    catalogAudioRef.current?.pause()
+    const audio = new Audio(url)
+    audio.onended = () => setCatalogPreviewing(null)
+    audio.play().catch(() => setCatalogPreviewing(null))
+    catalogAudioRef.current = audio
+    setCatalogPreviewing(sampleId)
+  }
 
   async function handleDelete(id: string) {
     await libraryDelete(id)
@@ -793,6 +843,59 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
           <button onClick={() => { setAddingFolder(false); setNewFolderDraft('') }} style={{ fontSize: 10, padding: '3px 6px', borderRadius: 4, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}>✕</button>
         </div>
       )}
+
+      {/* ── 100Lights built-in catalog ── */}
+      <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        {/* Catalog folder header */}
+        <button
+          onClick={() => setCatalogCollapsed(v => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: 5, width: '100%', padding: '5px 10px', background: 'rgba(139,92,246,0.06)', border: 'none', cursor: 'pointer', textAlign: 'left', borderBottom: catalogCollapsed ? 'none' : '1px solid rgba(139,92,246,0.15)' }}
+        >
+          {catalogCollapsed ? <ChevronRight size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} /> : <ChevronDown size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} />}
+          <FolderOpen size={10} style={{ color: 'rgba(167,139,250,0.8)', flexShrink: 0 }} />
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(167,139,250,0.9)', letterSpacing: '0.03em', flex: 1 }}>100Lights</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{SAMPLE_CATALOG.length} samples</span>
+        </button>
+
+        {!catalogCollapsed && (
+          <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+            {SAMPLE_CATALOG.map(sample => {
+              const isDownloaded = downloadedCatalogIds.has(catalogEntryId(sample.id))
+              const isPreviewing = catalogPreviewing === sample.id
+              const isDownloading = downloading.has(sample.id)
+              return (
+                <div
+                  key={sample.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: CAT_COLORS[sample.category] ?? '#94a3b8', flexShrink: 0, display: 'inline-block' }} />
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sample.name}</span>
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>{sample.duration.toFixed(1)}s</span>
+                  <button
+                    onClick={() => previewCatalogSample(sample.id, sample.url)}
+                    title={isPreviewing ? 'Stop preview' : 'Preview'}
+                    style={{ background: isPreviewing ? 'rgba(139,92,246,0.2)' : 'none', border: `1px solid ${isPreviewing ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, cursor: 'pointer', color: isPreviewing ? 'rgba(167,139,250,1)' : 'var(--text-muted)', padding: '2px 6px', borderRadius: 4, fontSize: 9, flexShrink: 0 }}
+                  >
+                    {isPreviewing ? '■' : '▶'}
+                  </button>
+                  {isDownloaded ? (
+                    <span style={{ fontSize: 9, color: 'rgba(134,239,172,0.8)', flexShrink: 0 }}>✓</span>
+                  ) : (
+                    <button
+                      onClick={() => downloadSample(sample.id, sample.url, sample.name, sample.category, sample.duration)}
+                      disabled={isDownloading}
+                      title="Download to your library"
+                      style={{ background: 'none', border: '1px solid rgba(139,92,246,0.3)', cursor: isDownloading ? 'default' : 'pointer', color: 'rgba(167,139,250,0.8)', padding: '2px 6px', borderRadius: 4, fontSize: 9, flexShrink: 0 }}
+                    >
+                      {isDownloading ? '…' : '↓'}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Entry list */}
       <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
