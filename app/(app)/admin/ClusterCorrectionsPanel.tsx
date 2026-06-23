@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { clusterCorrectionGetAll, clusterCorrectionClear, type ClusterCorrection } from '@/lib/cluster-corrections'
-import { spectralDistance } from '@/lib/beat-analyzer'
-import { CLUSTER_LETTERS } from '@/lib/beat-analyzer'
+import { clusterSplitGetAll, clusterSplitClear } from '@/lib/cluster-splits'
+import { spectralDistance, CLUSTER_LETTERS } from '@/lib/beat-analyzer'
 
 const DEDUP_DIST = 0.28
 
@@ -30,21 +30,27 @@ const KEY_FEATURES = [
 
 export default function ClusterCorrectionsPanel() {
   const [all, setAll]           = useState<ClusterCorrection[] | null>(null)
+  const [splitCount, setSplitCount] = useState<number>(0)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [clearing, setClearing] = useState(false)
 
   const load = useCallback(async () => {
-    try { setAll(await clusterCorrectionGetAll()) } catch { setAll([]) }
+    try {
+      const [corrections, splits] = await Promise.all([clusterCorrectionGetAll(), clusterSplitGetAll()])
+      setAll(corrections)
+      setSplitCount(splits.length)
+    } catch { setAll([]) }
   }, [])
 
   useEffect(() => { load() }, [load])
 
   async function handleClear() {
-    if (!confirm('Delete all learned distinct-sound fingerprints? The separation program will start fresh with no acoustic memory.')) return
+    if (!confirm('Delete ALL acoustic memory (distinct-sound fingerprints AND split pair rules)? The separation program will start fresh.')) return
     setClearing(true)
-    await clusterCorrectionClear().catch(() => {})
+    await Promise.all([clusterCorrectionClear(), clusterSplitClear()]).catch(() => {})
     setClearing(false)
     setAll([])
+    setSplitCount(0)
   }
 
   if (all === null) return <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '16px 0' }}>Loading…</p>
@@ -56,6 +62,7 @@ export default function ClusterCorrectionsPanel() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
           {all.length} save{all.length !== 1 ? 's' : ''} → {groups.length} unique sound{groups.length !== 1 ? 's' : ''} learned
+          {splitCount > 0 && <span style={{ marginLeft: 10, fontSize: 12, color: '#4ade80' }}>· {splitCount} split pair{splitCount !== 1 ? 's' : ''} (mistake memory)</span>}
           {all.length > 0 && (
             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
               (last: {new Date([...all].sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0].savedAt).toLocaleString()})

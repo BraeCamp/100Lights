@@ -59,6 +59,7 @@ import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
 import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance } from '@/lib/beat-analyzer'
 import { clusterCorrectionGetAll, clusterCorrectionAdd, type ClusterCorrection } from '@/lib/cluster-corrections'
+import { clusterSplitAdd, clusterSplitGetAll } from '@/lib/cluster-splits'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
@@ -2518,6 +2519,32 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       .catch(() => {})
   }, [])
 
+  // Average a set of spectral fingerprints into one centroid.
+  // Used to represent "what a sound was confused with" when saving split pairs.
+  function computeSpectralCentroid(spectrals: HitSpectral[]): HitSpectral {
+    const n = spectrals.length
+    const avg = (key: keyof HitSpectral) =>
+      spectrals.reduce((acc, s) => acc + ((s[key] as number) ?? 0), 0) / n
+    return {
+      sub: avg('sub'), lowMid: avg('lowMid'), mid: avg('mid'),
+      hiMid: avg('hiMid'), hi: avg('hi'),
+      centroid: avg('centroid'), spread: avg('spread'), rolloff: avg('rolloff'),
+      flatness: avg('flatness'), flux: avg('flux'),
+      mfcc: Array.from({ length: 13 }, (_, i) =>
+        spectrals.reduce((acc, s) => acc + (s.mfcc?.[i] ?? 0), 0) / n
+      ),
+      attackTime: avg('attackTime'), decayTime: avg('decayTime'),
+      sustainLevel: avg('sustainLevel'), releaseTime: avg('releaseTime'),
+      zeroCrossingRate: avg('zeroCrossingRate'),
+      f0: avg('f0'), pitchConfidence: avg('pitchConfidence'),
+      harmonicRatio: avg('harmonicRatio'),
+      peakAmplitude: avg('peakAmplitude'), rmsAmplitude: avg('rmsAmplitude'),
+      dynamicRange: avg('dynamicRange'),
+      brightness: avg('brightness'), warmth: avg('warmth'),
+      presence: avg('presence'), roughness: avg('roughness'),
+    }
+  }
+
   async function runDrumDetect() {
     if (!beatBox || dtLoading) return
     const myGen = ++dtGenRef.current
@@ -2585,10 +2612,57 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         }
       }
 
-      const taggedHits: BeatHit[] = result.hits.map(h => ({
+      let taggedHits: BeatHit[] = result.hits.map(h => ({
         ...h,
         clusterId: CLUSTER_LETTERS[Math.min(hitSlot[h.id] ?? 0, CLUSTER_LETTERS.length - 1)],
       }))
+
+      // ── Phase 3: Enforce split pairs ────────────────────────────────────────
+      // A split pair (distinctSpectral, confusedWithSpectral) says:
+      //   "these two sounds were in the same cluster — keep them apart forever."
+      // For each cluster, if it contains BOTH a distinct-type hit AND a
+      // confused-type hit from the same saved pair, force the distinct-type
+      // hits out into a new slot. This is the pairwise mistake memory:
+      // we look only at the two sounds involved in each past error.
+      const SPLIT_MATCH_DIST = 0.46
+      try {
+        const splits = await clusterSplitGetAll()
+        if (splits.length > 0) {
+          for (const split of splits) {
+            // Rebuild cluster map fresh for each split check (hits may have moved)
+            const clusterMap = new Map<string, BeatHit[]>()
+            for (const h of taggedHits) {
+              const k = h.clusterId ?? 'A'
+              if (!clusterMap.has(k)) clusterMap.set(k, [])
+              clusterMap.get(k)!.push(h)
+            }
+
+            for (const [letter, members] of clusterMap.entries()) {
+              // Hits in this cluster that look like the "should be distinct" sound
+              const distinctMatches = members.filter(h =>
+                h.spectral && spectralDistance(h.spectral, split.distinctSpectral) < SPLIT_MATCH_DIST
+              )
+              // Hits in this cluster that look like the "confused with" sound
+              const confusedMatches = members.filter(h =>
+                h.spectral && spectralDistance(h.spectral, split.confusedWithSpectral) < SPLIT_MATCH_DIST
+              )
+
+              if (distinctMatches.length === 0 || confusedMatches.length === 0) continue
+              // This cluster is repeating a known mistake — find a free slot
+              const usedLetters = new Set([...clusterMap.keys()])
+              const freeSlot = CLUSTER_LETTERS.find(l => !usedLetters.has(l))
+              if (!freeSlot) continue
+
+              // Pull distinctMatches out into the free slot
+              const distinctIds = new Set(distinctMatches.map(h => h.id))
+              taggedHits = taggedHits.map(h =>
+                distinctIds.has(h.id) ? { ...h, clusterId: freeSlot } : h
+              )
+              break // one enforcement per split per pass; next split iteration will re-evaluate
+            }
+          }
+        }
+      } catch { /* non-fatal */ }
 
       // Pre-compute natural clip duration for each hit (gap to next in same cluster)
       const byClusterForDur = new Map<string, BeatHit[]>()
@@ -9068,7 +9142,32 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                               onClose={() => setDtSelectedHitId(null)}
                               onPlay={(t, d) => dtPlayPreview(t, d)}
                               onCorrect={async (spectral) => {
-                                await clusterCorrectionAdd({ id: crypto.randomUUID(), spectral, savedAt: new Date().toISOString() })
+                                const now = new Date().toISOString()
+
+                                // 1. Save the distinct sound fingerprint (anchors a cluster on re-run)
+                                await clusterCorrectionAdd({ id: crypto.randomUUID(), spectral, savedAt: now })
+
+                                // 2. Save the split pair: this sound vs. what it was confused with.
+                                //    The centroid of the OTHER hits in the same cluster is what it
+                                //    was incorrectly merged with. We only relate these two sounds
+                                //    to each other — nothing else involved.
+                                if (selHit && dtHits) {
+                                  const clusterMates = dtHits.filter(
+                                    h => h.clusterId === selHit.clusterId && h.id !== selHit.id && h.spectral
+                                  )
+                                  if (clusterMates.length > 0) {
+                                    const confusedWith = computeSpectralCentroid(
+                                      clusterMates.map(h => h.spectral!)
+                                    )
+                                    clusterSplitAdd({
+                                      id:                   crypto.randomUUID(),
+                                      distinctSpectral:     spectral,
+                                      confusedWithSpectral: confusedWith,
+                                      savedAt:              now,
+                                    }).catch(() => {})
+                                  }
+                                }
+
                                 // Refresh the deduped count so the header badge updates immediately
                                 clusterCorrectionGetAll().then(all => {
                                   const DEDUP = 0.28
