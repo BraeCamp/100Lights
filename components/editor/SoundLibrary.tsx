@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
-  blobToUrl, getAudioDurationFromBlob,
+  getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
@@ -21,19 +21,6 @@ const CAT_COLORS: Record<string, string> = {
 }
 function colorFor(cat: string) { return CAT_COLORS[cat] ?? '#94a3b8' }
 
-// ── Mini waveform bars (static) ───────────────────────────────────────────────
-function WaveBars({ spectral }: { spectral?: LibraryEntry['spectral'] }) {
-  if (!spectral) return <div style={{ width: 32, height: 16, background: 'var(--border)', borderRadius: 2 }} />
-  const bars = [spectral.sub, spectral.lowMid, spectral.mid, spectral.hiMid, spectral.hi]
-  return (
-    <div style={{ display: 'flex', gap: 1, alignItems: 'flex-end', height: 16, width: 32 }}>
-      {bars.map((v, i) => (
-        <div key={i} style={{ flex: 1, background: 'var(--accent)', borderRadius: 1, height: `${Math.max(10, v * 100)}%`, opacity: 0.6 + v * 0.4 }} />
-      ))}
-    </div>
-  )
-}
-
 // ── Entry row ─────────────────────────────────────────────────────────────────
 function EntryRow({
   entry, folders, onDelete, onRename, onCategoryChange, onFolderChange,
@@ -49,25 +36,146 @@ function EntryRow({
   const [draft, setDraft]             = useState(entry.name)
   const [playing, setPlaying]         = useState(false)
   const [folderOpen, setFolderOpen]   = useState(false)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const urlRef   = useRef<string | null>(null)
   const folderRef = useRef<HTMLDivElement>(null)
 
-  function togglePlay() {
-    if (playing) { audioRef.current?.pause(); setPlaying(false); return }
-    if (!urlRef.current) urlRef.current = blobToUrl(entry.audioBlob)
-    const audio = audioRef.current ?? new Audio()
-    audioRef.current = audio
-    audio.src     = urlRef.current
-    audio.onended = () => setPlaying(false)
-    audio.play().catch(() => {})
-    setPlaying(true)
+  // Waveform / scrub refs
+  const waveRef      = useRef<HTMLCanvasElement | null>(null)
+  const pcmRef       = useRef<Float32Array | null>(null)
+  const ctxRef       = useRef<AudioContext | null>(null)
+  const srcRef       = useRef<AudioBufferSourceNode | null>(null)
+  const bufRef       = useRef<AudioBuffer | null>(null)
+  const playheadRef  = useRef<number>(0)
+  const rafRef       = useRef<number>(0)
+  const startWhenRef = useRef<number>(0)
+  const offsetRef    = useRef<number>(0)
+  const draggingRef  = useRef<boolean>(false)
+
+  async function ensurePcm() {
+    if (pcmRef.current) return
+    const ab  = await entry.audioBlob.arrayBuffer()
+    const ctx = new AudioContext()
+    const buf = await ctx.decodeAudioData(ab)
+    bufRef.current = buf
+    pcmRef.current = buf.getChannelData(0)
+    // keep ctx alive for playback
+    ctxRef.current = ctx
+    drawWave()
   }
 
+  function drawWave(playFrac?: number) {
+    const canvas = waveRef.current
+    const pcm    = pcmRef.current
+    if (!canvas || !pcm) return
+    const ctx = canvas.getContext('2d')!
+    const W = canvas.width, H = canvas.height
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = 'rgba(99,102,241,0.55)'
+    const step = Math.max(1, Math.floor(pcm.length / W))
+    for (let x = 0; x < W; x++) {
+      let max = 0
+      for (let i = 0; i < step; i++) { const v = Math.abs(pcm[x * step + i] ?? 0); if (v > max) max = v }
+      const h = Math.max(1, Math.round(max * H * 0.9))
+      ctx.fillRect(x, (H - h) / 2, 1, h)
+    }
+    if (playFrac != null && playFrac > 0) {
+      ctx.fillStyle = 'rgba(250,204,21,0.9)'
+      ctx.fillRect(Math.round(playFrac * W), 0, 1, H)
+    }
+  }
+
+  function startPlayheadAnim() {
+    cancelAnimationFrame(rafRef.current)
+    function tick() {
+      const ctx = ctxRef.current
+      if (!ctx || !bufRef.current) return
+      const elapsed = ctx.currentTime - startWhenRef.current
+      const frac = Math.min(1, (offsetRef.current + elapsed) / bufRef.current.duration)
+      playheadRef.current = frac
+      drawWave(frac)
+      if (frac < 1) rafRef.current = requestAnimationFrame(tick)
+      else { drawWave(0); setPlaying(false) }
+    }
+    rafRef.current = requestAnimationFrame(tick)
+  }
+
+  function playFrom(offsetSec: number) {
+    const ctx = ctxRef.current
+    const buf = bufRef.current
+    if (!ctx || !buf) return
+    try { srcRef.current?.stop() } catch { /* ok */ }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(ctx.destination)
+    src.onended = () => { setPlaying(false); cancelAnimationFrame(rafRef.current); drawWave(0) }
+    const clampedOffset = Math.max(0, Math.min(buf.duration - 0.01, offsetSec))
+    offsetRef.current    = clampedOffset
+    startWhenRef.current = ctx.currentTime
+    src.start(0, clampedOffset)
+    srcRef.current = src
+    setPlaying(true)
+    startPlayheadAnim()
+  }
+
+  function togglePlay() {
+    if (playing) {
+      try { srcRef.current?.stop() } catch { /* ok */ }
+      cancelAnimationFrame(rafRef.current)
+      setPlaying(false)
+      drawWave(0)
+      return
+    }
+    ensurePcm().then(() => playFrom(0))
+  }
+
+  function onCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    ensurePcm().then(() => {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const frac = (e.clientX - rect.left) / rect.width
+      playFrom((bufRef.current?.duration ?? 0) * frac)
+    })
+  }
+
+  function onCanvasMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    draggingRef.current = true
+    const rect = e.currentTarget.getBoundingClientRect()
+    const frac = (e.clientX - rect.left) / rect.width
+    ensurePcm().then(() => drawWave(frac))
+  }
+
+  // Cleanup on unmount
   useEffect(() => () => {
-    audioRef.current?.pause()
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+    cancelAnimationFrame(rafRef.current)
+    try { srcRef.current?.stop() } catch { /* ok */ }
+    ctxRef.current?.close().catch(() => {})
   }, [])
+
+  // Decode and draw waveform on mount / blob change
+  useEffect(() => {
+    void ensurePcm()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.audioBlob])
+
+  // Drag scrubbing via window listeners
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!draggingRef.current || !waveRef.current) return
+      const rect = waveRef.current.getBoundingClientRect()
+      const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      drawWave(frac)
+    }
+    function onUp(e: MouseEvent) {
+      if (!draggingRef.current) return
+      draggingRef.current = false
+      if (!waveRef.current) return
+      const rect = waveRef.current.getBoundingClientRect()
+      const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      ensurePcm().then(() => playFrom((bufRef.current?.duration ?? 0) * frac))
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // entry.audioBlob is stable
 
   // Close folder picker when clicking outside
   useEffect(() => {
@@ -103,11 +211,8 @@ function EntryRow({
       }}
       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderLeft: `2px solid ${color}`, margin: '2px 0', cursor: 'grab', userSelect: 'none' }}
     >
-      <button onClick={togglePlay} style={{ width: 20, height: 20, borderRadius: '50%', background: playing ? '#dc2626' : 'var(--bg-card)', border: `1px solid ${color}`, color, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        {playing ? <Square size={7} fill="currentColor" /> : <Play size={7} fill="currentColor" style={{ marginLeft: 1 }} />}
-      </button>
-      <WaveBars spectral={entry.spectral} />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* Name */}
+      <div style={{ minWidth: 0, maxWidth: 100, flexShrink: 0 }}>
         {editing ? (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
@@ -123,10 +228,22 @@ function EntryRow({
             <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.6 }}><Pencil size={8} /></button>
           </div>
         )}
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
-          {CATEGORY_LABELS[entry.category]} · {entry.duration.toFixed(1)}s
-        </div>
       </div>
+
+      {/* Waveform canvas — fills remaining space, click to seek, drag to scrub */}
+      <canvas
+        ref={waveRef}
+        width={280}
+        height={56}
+        style={{ flex: 1, minWidth: 60, height: 28, cursor: 'crosshair', borderRadius: 4, background: 'rgba(0,0,0,0.2)' }}
+        onClick={onCanvasClick}
+        onMouseDown={onCanvasMouseDown}
+      />
+
+      {/* Duration */}
+      <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>
+        {entry.duration.toFixed(1)}s
+      </span>
 
       {/* Folder picker */}
       <div ref={folderRef} style={{ position: 'relative', flexShrink: 0 }}>
@@ -164,6 +281,11 @@ function EntryRow({
           </div>
         )}
       </div>
+
+      {/* Play / stop button */}
+      <button onClick={togglePlay} style={{ width: 20, height: 20, borderRadius: '50%', background: playing ? '#dc2626' : 'var(--bg-card)', border: `1px solid ${color}`, color, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {playing ? <Square size={7} fill="currentColor" /> : <Play size={7} fill="currentColor" style={{ marginLeft: 1 }} />}
+      </button>
 
       <button onClick={() => onDelete(entry.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
         <Trash2 size={10} />

@@ -94,6 +94,7 @@ const FMSynthEditor           = lazy(() => import('./FMSynthEditor'))
 import type { CompGroup } from '@/lib/comping'
 import { renderComp } from '@/lib/comping'
 import { addTakeToGroup } from '@/lib/loop-recorder'
+import { TooltipModeProvider, TooltipModeToggle } from './TooltipMode'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -427,6 +428,7 @@ function HitBlock({ hit, duration, pxWidth, selected, muted, aiSuggestion, aiDel
     <div style={{ position: 'absolute', left, top, zIndex: selected ? 10 : 1 }}>
       <div
         onPointerDown={handlePointerDown}
+        onMouseDown={e => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => { e.stopPropagation(); onDelete() }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onRightClick(e, hit.id) }}
@@ -997,8 +999,6 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
 
   const [dotMenuOpen,   setDotMenuOpen]   = useState(false)
   const [libDragOver,   setLibDragOver]   = useState(false)
-  const [rbBand,        setRbBand]        = useState<{ left: number; width: number } | null>(null)
-  const rbDraggedRef = useRef(false)
 
   function startPanDrag(e: React.MouseEvent) {
     e.stopPropagation(); e.preventDefault()
@@ -1059,6 +1059,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           <div style={{ display: 'flex', gap: 2, padding: '0 3px 3px', justifyContent: 'center' }}>
             <Tooltip content={muted ? 'Unmute lane' : 'Mute lane (silences this track)'} placement="right">
               <button
+                data-hint="Mute (M)||Silences this track in the mix. The track still plays internally but its output is blocked. Useful for A/B comparing tracks or temporarily disabling a part."
                 onClick={e => { e.stopPropagation(); onToggleMute() }}
                 style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
                   background: muted ? 'rgba(239,68,68,0.18)' : 'var(--bg-card)',
@@ -1068,6 +1069,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
             </Tooltip>
             <Tooltip content={soloed ? 'Unsolo lane' : 'Solo lane (mutes all other tracks)'} placement="right">
               <button
+                data-hint="Solo (S)||Mutes every other track so you only hear this one. Great for checking a specific part without distractions. Click again or solo another track to remove solo."
                 onClick={e => { e.stopPropagation(); onSoloToggle() }}
                 style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
                   background: soloed ? 'rgba(251,191,36,0.18)' : 'var(--bg-card)',
@@ -1194,40 +1196,9 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
 
       {/* Hit area — left-click adds, right-click adds (snapped), drop to place library clip */}
       <div
-        onClick={miniMode ? undefined : (e => { if (rbDraggedRef.current) { rbDraggedRef.current = false; return } handleLaneClick(e) })}
-        onMouseDown={miniMode ? undefined : (e => {
-          if (e.button !== 0) return
-          const hitAreaEl = e.currentTarget as HTMLDivElement
-          const rect = hitAreaEl.getBoundingClientRect()
-          const startX = e.clientX - rect.left
-          let endX = startX
-          let moved = false
-          const onMove = (me: MouseEvent) => {
-            const dx = me.clientX - rect.left
-            if (!moved && Math.abs(dx - startX) > 4) moved = true
-            if (!moved) return
-            endX = dx
-            setRbBand({ left: Math.min(startX, endX), width: Math.abs(endX - startX) })
-          }
-          const onUp = (me: MouseEvent) => {
-            window.removeEventListener('mousemove', onMove)
-            window.removeEventListener('mouseup', onUp)
-            setRbBand(null)
-            if (!moved) return
-            rbDraggedRef.current = true
-            const t1 = Math.min(startX, endX) / (duration > 0 ? pxWidth / duration : 1)
-            const t2 = Math.max(startX, endX) / (duration > 0 ? pxWidth / duration : 1)
-            const toSelect = clips
-              .filter(c => {
-                const clipEnd = c.startTime + (c.stretchDuration ?? c.buf.duration)
-                return c.startTime < t2 && clipEnd > t1
-              })
-              .map(c => c.id)
-            if (toSelect.length > 0) onMultiSelect(toSelect, me.ctrlKey || me.metaKey)
-          }
-          window.addEventListener('mousemove', onMove)
-          window.addEventListener('mouseup', onUp)
-        })}
+        data-hit-area="1"
+        data-lane-type={type}
+        onClick={miniMode ? undefined : handleLaneClick}
         onContextMenu={miniMode ? undefined : handleLaneRightClick}
         onDragOver={e => {
           if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
@@ -1253,9 +1224,6 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         }}
       >
         <NoteGrid />
-        {rbBand && (
-          <div style={{ position: 'absolute', top: 0, bottom: 0, left: rbBand.left, width: rbBand.width, background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.5)', pointerEvents: 'none', zIndex: 20 }} />
-        )}
         {hits.map(hit => (
           <HitBlock
             key={hit.id}
@@ -1524,6 +1492,7 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           {/* Add FX button */}
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <button
+              data-hint="Add Effect||Insert a plugin into this lane's signal chain. Effects process left-to-right in the order they appear. Options: EQ3, Compressor, Bit Crusher, Reverb, Delay, Chorus, Phaser, Flanger, Auto Filter, Saturator, LFO, Beat Repeat."
               onClick={e => { e.stopPropagation(); onFxAddOpen() }}
               style={{ fontSize: 11, padding: '4px 10px', borderRadius: 5, border: '1px dashed rgba(139,92,246,0.35)', background: 'transparent', color: 'rgba(139,92,246,0.7)', cursor: 'pointer', whiteSpace: 'nowrap', margin: '0 4px' }}
             >+ Add FX</button>
@@ -3851,7 +3820,109 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [showFileMenu,   setShowFileMenu]   = useState(false)
   const [showEditMenu,   setShowEditMenu]   = useState(false)
   const [miniLanes,      setMiniLanes]      = useState<Set<string>>(new Set())
+  const [exportingStems,    setExportingStems]    = useState(false)
+  const [snapshotPanelOpen, setSnapshotPanelOpen] = useState(false)
+  const [snapshots,         setSnapshots]         = useState<import('@/lib/snapshot-store').SnapshotEntry[]>([])
+  const [snapshotName,      setSnapshotName]      = useState('')
+  const [savingSnapshot,    setSavingSnapshot]    = useState(false)
+  const [loadingSnapshots,  setLoadingSnapshots]  = useState(false)
   const [specLanes,      setSpecLanes]      = useState<Set<string>>(new Set())
+
+  // Cross-lane drag-select
+  interface SelBox { x1: number; y1: number; x2: number; y2: number }
+  const [globalSelBox, setGlobalSelBox] = useState<SelBox | null>(null)
+  const laneRowsRef = useRef<HTMLDivElement>(null)
+
+  function startGlobalDrag(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (!target.closest('[data-hit-area]')) return   // only on lane backgrounds
+
+    const container = laneRowsRef.current
+    if (!container) return
+
+    const cRect = container.getBoundingClientRect()
+    const snapScrollTop  = () => container.scrollTop
+
+    const toX = (clientX: number) => clientX - cRect.left
+    const toY = (clientY: number) => clientY - cRect.top + snapScrollTop()
+
+    const startX = toX(e.clientX)
+    const startY = toY(e.clientY)
+
+    e.preventDefault()
+
+    let box: SelBox = { x1: startX, y1: startY, x2: startX, y2: startY }
+    let dragged = false
+
+    const onMove = (me: MouseEvent) => {
+      const x2 = toX(me.clientX)
+      const y2 = toY(me.clientY)
+      if (!dragged && Math.hypot(x2 - startX, y2 - startY) < 5) return
+      dragged = true
+      box = { x1: startX, y1: startY, x2, y2 }
+      setGlobalSelBox({ ...box })
+    }
+
+    const onUp = (me: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup',  onUp)
+      setGlobalSelBox(null)
+
+      if (!dragged) {
+        if (!me.ctrlKey && !me.metaKey && !me.shiftKey) {
+          setSelectedClipIds(new Set())
+          setSelectedIds(new Set())
+        }
+        return
+      }
+
+      const pxPerSec = duration > 0 ? (timelinePx * zoomLevel) / duration : 1
+      const t1 = Math.max(0, (Math.min(box.x1, box.x2) - HEADER_W) / pxPerSec)
+      const t2 = Math.max(0, (Math.max(box.x1, box.x2) - HEADER_W) / pxPerSec)
+
+      // Which hit areas overlap the selection rectangle vertically?
+      const scrollTop = snapScrollTop()
+      const rectTop    = cRect.top + Math.min(box.y1, box.y2) - scrollTop
+      const rectBottom = cRect.top + Math.max(box.y1, box.y2) - scrollTop
+
+      const lanesInBox = new Set<string>()
+      document.querySelectorAll<HTMLElement>('[data-hit-area]').forEach(el => {
+        const r = el.getBoundingClientRect()
+        if (r.bottom > rectTop && r.top < rectBottom) {
+          const lt = el.dataset.laneType
+          if (lt) lanesInBox.add(lt)
+        }
+      })
+
+      const additive = me.ctrlKey || me.metaKey || me.shiftKey
+
+      const clipMatches = audioClips
+        .filter(c => {
+          const end = c.startTime + (c.stretchDuration ?? c.buf?.duration ?? 0)
+          return lanesInBox.has(c.laneType) && c.startTime < t2 && end > t1
+        })
+        .map(c => c.id)
+
+      const hitMatches = hits
+        .filter(h => lanesInBox.has(h.type) && h.time >= t1 && h.time <= t2)
+        .map(h => h.id)
+
+      setSelectedClipIds(prev => {
+        const next = additive ? new Set(prev) : new Set<string>()
+        clipMatches.forEach(id => next.add(id))
+        return next
+      })
+      setSelectedIds(prev => {
+        const next = additive ? new Set(prev) : new Set<string>()
+        hitMatches.forEach(id => next.add(id))
+        return next
+      })
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup',  onUp)
+  }
 
   function toggleMiniLane(type: string) {
     setMiniLanes(prev => { const s = new Set(prev); s.has(type) ? s.delete(type) : s.add(type); return s })
@@ -3906,6 +3977,71 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   // Unsaved (new) projects get a unique key per mount so they never inherit old autosave data.
   const localSessionId = useRef(`local-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   const autosaveKey = `beatlab-autosave-${projectId ?? localSessionId.current}`
+
+  // ── Named project snapshots ───────────────────────────────────────────────
+  async function loadSnapshots() {
+    setLoadingSnapshots(true)
+    const { snapshotGetAll } = await import('@/lib/snapshot-store')
+    const all = await snapshotGetAll().catch(() => [])
+    setSnapshots(all)
+    setLoadingSnapshots(false)
+  }
+
+  async function saveSnapshot(name: string) {
+    if (!name.trim()) return
+    setSavingSnapshot(true)
+    try {
+      const { snapshotSave } = await import('@/lib/snapshot-store')
+      const audioClipsMeta = audioClips.map(c => ({
+        id: c.id, laneType: c.laneType, startTime: c.startTime, muted: c.muted, name: c.name,
+        gain: c.gain, stretchDuration: c.stretchDuration, loopDuration: c.loopDuration,
+        gateThreshold: c.gateThreshold, fadeIn: c.fadeIn, fadeOut: c.fadeOut,
+        color: c.color, reversed: c.reversed, warpMarkers: c.warpMarkers, gainEnvelope: c.gainEnvelope,
+      }))
+      await snapshotSave({
+        id:        crypto.randomUUID(),
+        name:      name.trim(),
+        createdAt: new Date().toISOString(),
+        state: {
+          version: '1.0', hits, laneEffects, lanePans, laneReverb, laneDelay,
+          automLanes, typeOverrides, locators, bpm: bpm ?? masterBpm, masterVolume, quantizeSwing,
+          sessionClips, extraLaneIds, groupDefs, audioClipsMeta,
+        },
+      })
+      await loadSnapshots()
+      setSnapshotName('')
+      showToast(`Snapshot "${name.trim()}" saved`)
+    } finally {
+      setSavingSnapshot(false)
+    }
+  }
+
+  async function restoreSnapshot(entry: import('@/lib/snapshot-store').SnapshotEntry) {
+    if (!confirm(`Restore snapshot "${entry.name}"? Current unsaved changes will be lost.`)) return
+    captureHistory()
+    const s = entry.state
+    if (s.hits)          setHits(s.hits as typeof hits)
+    if (s.laneEffects)   setLaneEffects(s.laneEffects as typeof laneEffects)
+    if (s.lanePans)      setLanePans(s.lanePans as typeof lanePans)
+    if (s.laneReverb)    setLaneReverb(s.laneReverb as typeof laneReverb)
+    if (s.laneDelay)     setLaneDelay(s.laneDelay as typeof laneDelay)
+    if (s.automLanes)    setAutomLanes(s.automLanes as typeof automLanes)
+    if (s.typeOverrides) setTypeOverrides(s.typeOverrides as typeof typeOverrides)
+    if (s.locators)      setLocators(s.locators as typeof locators)
+    if (s.bpm != null)   { setBpm(s.bpm); setMasterBpm(s.bpm) }
+    if (s.masterVolume != null) setMasterVolume(s.masterVolume)
+    if (s.sessionClips)  setSessionClips(s.sessionClips as typeof sessionClips)
+    if (s.extraLaneIds)  setExtraLaneIds(s.extraLaneIds)
+    if (s.groupDefs)     setGroupDefs(s.groupDefs as typeof groupDefs)
+    showToast(`Restored "${entry.name}"`)
+    setSnapshotPanelOpen(false)
+  }
+
+  async function deleteSnapshot(id: string) {
+    const { snapshotDelete } = await import('@/lib/snapshot-store')
+    await snapshotDelete(id)
+    await loadSnapshots()
+  }
 
   // Restore audio clips from IndexedDB on mount
   useEffect(() => {
@@ -5598,36 +5734,65 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
 
   async function exportStems() {
-    if (!duration || duration <= 0) return
-    const sr = 44100
-    const allLaneTypes = Array.from(new Set(hits.map(h => h.type)))
-    for (const laneType of allLaneTypes) {
-      const laneHits = hits.filter(h => h.type === laneType)
-      if (!laneHits.length) continue
-      const offCtx = new OfflineAudioContext(2, Math.ceil(sr * (duration + 1)), sr)
-      const dest = offCtx.destination
-      for (const hit of laneHits) {
-        if (hit.time > duration) continue
-        try {
-          const { playDrumHit } = await import('@/lib/drum-samples')
-          const { playMelodicNote, MELODIC_TYPES } = await import('@/lib/instrument-synth')
-          if (MELODIC_TYPES.has(hit.type)) {
-            playMelodicNote(offCtx as unknown as AudioContext, hit.type, hit.note, hit.time, hit.velocity, dest)
-          } else {
-            playDrumHit(offCtx as unknown as AudioContext, 'synth', hit.type, hit.time, hit.velocity, hit.note, undefined, dest)
-          }
-        } catch { /* ignore per-hit errors */ }
-      }
-      try {
+    if (!duration || duration <= 0 || audioClips.length === 0) return
+    setExportingStems(true)
+    try {
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      const sr = 44100
+      const totalSamples = Math.ceil(sr * (duration + 1))
+
+      // Get unique lane types that have clips
+      const lanesWithClips = [...new Set(audioClips.filter(c => !c.muted).map(c => c.laneType))]
+
+      for (const laneType of lanesWithClips) {
+        const laneName = (typeOverrides[laneType]?.label ?? laneType).replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || laneType
+        const laneClips = audioClips.filter(c => c.laneType === laneType && !c.muted)
+        if (laneClips.length === 0) continue
+
+        const offCtx = new OfflineAudioContext(2, totalSamples, sr)
+
+        const stemGain = offCtx.createGain()
+        stemGain.gain.value = 1
+        stemGain.connect(offCtx.destination)
+
+        const panner = offCtx.createStereoPanner()
+        panner.pan.value = lanePans[laneType] ?? 0
+        const fxInput = offCtx.createGain()
+        fxInput.connect(panner)
+        panner.connect(stemGain)
+
+        // Schedule clips
+        for (const clip of laneClips) {
+          if (!clip.buf) continue
+          const src = offCtx.createBufferSource()
+          src.buffer = clip.buf
+          const clipGain = offCtx.createGain()
+          clipGain.gain.value = clip.gain ?? 1
+          src.connect(clipGain)
+          clipGain.connect(fxInput)
+          src.start(clip.startTime)
+        }
+
         const rendered = await offCtx.startRendering()
-        const wavBlob = audioBufferToWav(rendered)
-        const url = URL.createObjectURL(wavBlob)
-        const a = document.createElement('a')
-        a.href = url; a.download = `stem-${laneType}.wav`
-        document.body.appendChild(a); a.click()
-        document.body.removeChild(a)
-        setTimeout(() => URL.revokeObjectURL(url), 5000)
-      } catch { /* ignore render errors */ }
+        const channels: Float32Array[] = []
+        for (let ch = 0; ch < rendered.numberOfChannels; ch++) channels.push(rendered.getChannelData(ch))
+        const wav = encodeWav(channels, sr)
+        zip.file(`${laneName}.wav`, wav)
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url; a.download = 'stems.zip'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+      showToast(`Downloaded ${lanesWithClips.length} stems`)
+    } catch (err) {
+      showToast('Stem export failed')
+      console.error(err)
+    } finally {
+      setExportingStems(false)
     }
   }
 
@@ -5664,6 +5829,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
+    <TooltipModeProvider>
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', userSelect: 'none' }}>
 
       {/* ── Global error toast ────────────────────────────────────────────── */}
@@ -5896,7 +6062,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         {phase === 'editing' && (
           <>
             <Tooltip content={isPlaying ? 'Pause (Space)' : 'Play (Space)'} placement="bottom">
-              <button onClick={togglePlay} style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+              <button onClick={togglePlay} data-hint="Play / Pause||Starts or pauses playback from the current playhead position. Shortcut: Space bar. The playhead shows you exactly where you are in the timeline." style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
                 {isPlaying ? <Pause size={13} fill="#fff" /> : <Play size={13} fill="#fff" style={{ marginLeft: 1 }} />}
               </button>
             </Tooltip>
@@ -5923,7 +6089,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
             )}
 
             {/* BPM — always visible, click to edit, T to tap */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 6px' }}>
+            <div data-hint="Tempo (BPM)||The beats per minute of your project. Click the number to type a new value, or tap the T button repeatedly in rhythm to set tempo by feel. All hits snap to this grid." style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 6px' }}>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>BPM</span>
               {bpmEditing ? (
                 <input
@@ -5984,18 +6150,75 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               >A–B</button>
             </Tooltip>
 
-            {/* Multi-select badge */}
-            {selectedIds.size > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>
-                <span style={{ fontSize: 11, color: 'var(--accent-light)' }}>{selectedIds.size} selected</span>
-                <button onClick={() => { selectedIds.forEach(id => deleteHit(id)); setSelectedIds(new Set()) }}
-                  style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}>
-                  Delete all
-                </button>
-                <button onClick={() => setSelectedIds(new Set())}
-                  style={{ fontSize: 10, padding: '1px 4px', borderRadius: 3, background: 'none', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}>✕</button>
-              </div>
-            )}
+            {/* Selection toolbar — shows when clips or hits are selected */}
+            {(selectedIds.size > 0 || selectedClipIds.size > 0) && (() => {
+              const totalSel = selectedIds.size + selectedClipIds.size
+              const parts: string[] = []
+              if (selectedClipIds.size > 0) parts.push(`${selectedClipIds.size} clip${selectedClipIds.size !== 1 ? 's' : ''}`)
+              if (selectedIds.size > 0)     parts.push(`${selectedIds.size} hit${selectedIds.size !== 1 ? 's' : ''}`)
+
+              function deleteSelected() {
+                captureHistory()
+                selectedIds.forEach(id => deleteHit(id))
+                setSelectedIds(new Set())
+                const ids = selectedClipIds
+                setAudioClips(prev => prev.filter(c => !ids.has(c.id)))
+                ids.forEach(id => { deleteClip(id).catch(() => {}) })
+                setSelectedClipIds(new Set())
+              }
+
+              function repeatSelected() {
+                captureHistory()
+                // Find the rightmost end of all selected items, then place copies there
+                const selClips = audioClips.filter(c => selectedClipIds.has(c.id))
+                const selHits  = hits.filter(h => selectedIds.has(h.id))
+
+                if (selClips.length > 0) {
+                  const rightEdge = Math.max(...selClips.map(c => c.startTime + clipEffectiveDuration(c)))
+                  const leftEdge  = Math.min(...selClips.map(c => c.startTime))
+                  const offset    = rightEdge - leftEdge
+                  const newClips  = selClips.map(c => ({
+                    ...c,
+                    id: crypto.randomUUID(),
+                    startTime: c.startTime + offset,
+                  }))
+                  setAudioClips(prev => [...prev, ...newClips])
+                  setDuration(d => Math.max(d, rightEdge + offset + 0.5))
+                  setSelectedClipIds(new Set(newClips.map(c => c.id)))
+                }
+
+                if (selHits.length > 0) {
+                  const rightEdge = Math.max(...selHits.map(h => h.time))
+                  const leftEdge  = Math.min(...selHits.map(h => h.time))
+                  const offset    = rightEdge - leftEdge + (60 / (bpm ?? 120))
+                  const newHits   = selHits.map(h => ({ ...h, id: crypto.randomUUID(), time: h.time + offset }))
+                  setHits(prev => [...prev, ...newHits])
+                  setSelectedIds(new Set(newHits.map(h => h.id)))
+                }
+              }
+
+              return (
+                <div data-hint="Selection Toolbar||Controls for the currently selected clips and hits. Delete removes them permanently. Repeat duplicates them immediately after their current position. Deselect (✕) or click empty space to clear the selection." style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.4)', flexShrink: 0 }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'rgba(167,139,250,0.9)', whiteSpace: 'nowrap' }}>{parts.join(' + ')}</span>
+                  <div style={{ width: 1, height: 12, background: 'rgba(99,102,241,0.3)', margin: '0 2px' }} />
+                  <button
+                    onClick={repeatSelected}
+                    title="Duplicate selected items immediately after their current position"
+                    style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, background: 'rgba(99,102,241,0.15)', color: 'rgba(167,139,250,1)', border: '1px solid rgba(99,102,241,0.35)', cursor: 'pointer', letterSpacing: '0.03em' }}
+                  >⊕ Repeat</button>
+                  <button
+                    onClick={deleteSelected}
+                    title="Delete selected items (Backspace)"
+                    style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer' }}
+                  >✕ Delete</button>
+                  <button
+                    onClick={() => { setSelectedClipIds(new Set()); setSelectedIds(new Set()) }}
+                    title="Deselect all"
+                    style={{ fontSize: 12, padding: '0 3px', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(167,139,250,0.5)', lineHeight: 1 }}
+                  >×</button>
+                </div>
+              )
+            })()}
 
             {/* Selected hit */}
             {selectedHit && (
@@ -6077,7 +6300,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 {activeHitCount} active{mutedTypes.size > 0 && ` · ${hits.length - activeHitCount} muted`}
               </span>
               {/* Master volume */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 7px' }}>
+              <div data-hint="Master Volume||Controls the overall output level of the entire mix — this is the last gain stage before your speakers or headphones. 100% is unity gain (0 dB). Avoid going above 100% to prevent digital clipping." style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 7px' }}>
                 <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>VOL</span>
                 <input
                   type="range" min={0} max={2} step={0.01} value={masterVolume}
@@ -6096,7 +6319,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 Tap
               </button>
               {/* Quantize strip */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
+              <div data-hint="Quantize & Swing||Q snaps all hits to the nearest grid division so your rhythm is perfectly on the beat. Swing adds a shuffle feel by pushing the off-beats slightly later — 0 is straight, 1 is maximum swing (triplet feel)." style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden', padding: '2px 4px' }}>
                 <Tooltip content="Snap all hits to the nearest grid line (Q)" placement="bottom">
                   <button onClick={quantizeHits} style={{ padding: '2px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>Q</button>
                 </Tooltip>
@@ -6149,7 +6372,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* File menu */}
               <div style={{ position: 'relative' }}>
                 <Tooltip content="Save / load project, export stems and MIDI" placement="bottom" disabled={showFileMenu}>
-                  <button onClick={() => { setShowFileMenu(v => !v); setShowEditMenu(false) }}
+                  <button data-hint="File menu||Save and load project files, export to WAV or MIDI, and open Ableton projects. Your project is also auto-saved to browser storage every few seconds." onClick={() => { setShowFileMenu(v => !v); setShowEditMenu(false) }}
                     style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: showFileMenu ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${showFileMenu ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: showFileMenu ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}>
                     File ▾
                   </button>
@@ -6168,7 +6391,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         { label: 'Open Ableton Project…', action: () => { void openAbletonProject(); setShowFileMenu(false) } },
                         { label: '─', action: null },
                         { label: 'Export Master Mix (WAV)', action: () => { void exportMasterMix(); setShowFileMenu(false) } },
-                        { label: 'Export Stems (WAV)', action: () => { void exportStems(); setShowFileMenu(false) } },
+                        { label: exportingStems ? 'Downloading stems…' : 'Download Stems (ZIP)', action: () => { void exportStems(); setShowFileMenu(false) } },
                         { label: 'Export MIDI', action: () => { exportMidi(); setShowFileMenu(false) } },
                       ].map((item, i) => item.action === null
                         ? <div key={i} style={{ height: 1, background: 'var(--border)', margin: '3px 0' }} />
@@ -6182,9 +6405,25 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   </>
                 )}
               </div>
+              {/* Download Stems button */}
+              <button
+                data-hint="Export each track as its own WAV file, bundled into a ZIP — perfect for handing off to a mixing engineer or uploading stems to Splice or similar platforms."
+                onClick={() => { void exportStems() }}
+                disabled={exportingStems}
+                style={{
+                  fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5,
+                  background: exportingStems ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)',
+                  border: `1px solid ${exportingStems ? 'rgba(139,92,246,0.35)' : 'var(--border)'}`,
+                  color: exportingStems ? 'rgba(167,139,250,1)' : 'var(--text-muted)',
+                  cursor: exportingStems ? 'default' : 'pointer', opacity: exportingStems ? 0.7 : 1,
+                }}
+              >
+                {exportingStems ? '⏳ Stems…' : '⬇ Stems'}
+              </button>
               {/* MIDI Mapping button */}
               <Tooltip content="MIDI controller mapping — map knobs/faders to parameters" placement="bottom" disabled={showMidiPanel}>
                 <button
+                  data-hint="MIDI Mapping||Connect a MIDI controller (keyboard, pad, knob box) and map any hardware control to BPM, volume, effects, or lane parameters. Click a parameter then move a physical control to create a mapping."
                   onClick={() => setShowMidiPanel(v => !v)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 4,
@@ -6201,6 +6440,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* Digital keyboard button */}
               <Tooltip content="Digital MIDI keyboard — play notes with mouse, touch, or keyboard shortcuts" placement="bottom" disabled={showKeyboard}>
                 <button
+                  data-hint="Piano Keyboard||A virtual MIDI keyboard you can play with your mouse or touchscreen. Each lane can receive MIDI input — arm a lane and play to record notes in real time."
                   onClick={() => setShowKeyboard(v => !v)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 4,
@@ -6217,15 +6457,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* View toggle: Arrangement / Session */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <Tooltip content="Arrangement view — timeline with audio clips and hits" placement="bottom" disabled={viewMode === 'arrangement'}>
-                  <button onClick={() => setViewMode('arrangement')} style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
+                  <button data-hint="Arrangement View||The classic DAW timeline view. Audio clips and instrument hits are laid out left-to-right in time. Drag clips, resize them, and build song structure here." onClick={() => setViewMode('arrangement')} style={{ padding: '3px 9px', background: viewMode === 'arrangement' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'arrangement' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>ARR</button>
                 </Tooltip>
                 <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
                 <Tooltip content="Session view — clip launcher for live performance" placement="bottom" disabled={viewMode === 'session'}>
-                  <button onClick={() => setViewMode('session')} style={{ padding: '3px 9px', background: viewMode === 'session' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'session' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>SES</button>
+                  <button data-hint="Session View||A clip launcher grid inspired by Ableton Live. Each cell is a loop that you can trigger independently during live performance. Great for building songs on the fly." onClick={() => setViewMode('session')} style={{ padding: '3px 9px', background: viewMode === 'session' ? 'rgba(139,92,246,0.18)' : 'none', border: 'none', cursor: 'pointer', color: viewMode === 'session' ? 'rgba(167,139,250,1)' : 'var(--text-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>SES</button>
                 </Tooltip>
               </div>
               {/* Zoom controls */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
+              <div data-hint="Timeline Zoom||Zoom in or out on the timeline. At 1× you see the full song; zoom in to see individual beats more clearly. You can also scroll the timeline with the scrollbar at the bottom." style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                 <Tooltip content="Zoom out (scroll left to right shows more time)" placement="bottom">
                   <button onClick={() => setZoomLevel(z => Math.max(0.5, +(z / 1.5).toFixed(2)))} style={{ padding: '3px 7px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1 }}>−</button>
                 </Tooltip>
@@ -6237,6 +6477,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* Inspector toggle */}
               <Tooltip content="Inspector panel — lane details, pan, tools (I)" placement="bottom" disabled={inspectorOpen}>
                 <button
+                  data-hint="Inspector||Shows detailed controls for the selected lane: stereo pan, send amounts for reverb and delay, clip editing tools, and more. Shortcut: I key."
                   onClick={() => setInspectorOpen(v => !v)}
                   style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: inspectorOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${inspectorOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: inspectorOpen ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}
                 >
@@ -6244,9 +6485,22 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 </button>
               </Tooltip>
 
+              {/* Named snapshots */}
+              <button
+                data-hint="Project Snapshots||Save named checkpoints of your project — like Git commits for music. Name it something like 'before verse rewrite' and restore any version with one click. Snapshots are stored in your browser."
+                onClick={() => { setSnapshotPanelOpen(v => !v); if (!snapshotPanelOpen) loadSnapshots() }}
+                style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: snapshotPanelOpen ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', border: `1px solid ${snapshotPanelOpen ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`, color: snapshotPanelOpen ? 'rgba(167,139,250,1)' : 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                📸 Snapshots
+              </button>
+
+              {/* Help / tooltip mode toggle */}
+              <TooltipModeToggle />
+
               {/* Match Studio button */}
               <Tooltip content="Match Studio — sing to a track, AI matches your voice to it" placement="bottom" disabled={matchStudioOpen}>
                 <button
+                  data-hint="Match Studio||Record your voice singing a melody, then AI transforms it to match the pitch and timbre of a reference track — like Auto-Tune but trained on your own sound."
                   onClick={() => setMatchStudioOpen(v => !v)}
                   style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: matchStudioOpen ? 'rgba(236,72,153,0.15)' : 'var(--bg-card)', border: `1px solid ${matchStudioOpen ? 'rgba(236,72,153,0.4)' : 'var(--border)'}`, color: matchStudioOpen ? 'rgba(244,114,182,1)' : 'var(--text-muted)', cursor: 'pointer' }}
                 >
@@ -6257,6 +6511,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               {/* Beat Studio button */}
               <Tooltip content="Beat Studio — beatbox a track, AI reproduces it using only your beatbox" placement="bottom" disabled={beatStudioOpen}>
                 <button
+                  data-hint="Beat Studio||Beatbox into your microphone and the AI detects each drum hit — kick, snare, hi-hat, clap — and places them as separate clips on their own lanes. Works best in a quiet environment."
                   onClick={() => beatStudioOpen ? closeBeatStudio() : setBeatStudioOpen(true)}
                   style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: beatStudioOpen ? 'rgba(234,179,8,0.15)' : 'var(--bg-card)', border: `1px solid ${beatStudioOpen ? 'rgba(234,179,8,0.4)' : 'var(--border)'}`, color: beatStudioOpen ? 'rgba(250,204,21,1)' : 'var(--text-muted)', cursor: 'pointer' }}
                 >
@@ -6716,7 +6971,26 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                       </Suspense>
                     </div>
                   ) : (
-                  <div style={inPortal ? {} : { flex: 1, overflowY: 'auto' }}>
+                  <div
+                    ref={laneRowsRef}
+                    onMouseDown={startGlobalDrag}
+                    style={inPortal ? { position: 'relative' } : { flex: 1, overflowY: 'auto', position: 'relative' }}
+                  >
+                    {/* Cross-lane drag-select rectangle */}
+                    {globalSelBox && (
+                      <div style={{
+                        position: 'absolute',
+                        zIndex: 50,
+                        pointerEvents: 'none',
+                        left:   Math.min(globalSelBox.x1, globalSelBox.x2),
+                        top:    Math.min(globalSelBox.y1, globalSelBox.y2),
+                        width:  Math.abs(globalSelBox.x2 - globalSelBox.x1),
+                        height: Math.abs(globalSelBox.y2 - globalSelBox.y1),
+                        background: 'rgba(99,102,241,0.08)',
+                        border: '1px solid rgba(99,102,241,0.6)',
+                        borderRadius: 2,
+                      }} />
+                    )}
                     {(() => {
                       const renderedSet = new Set<string>()
 
@@ -8094,6 +8368,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                   <button
+                    data-hint="Record Beatbox||Start beatboxing into your mic. When you stop, the AI analyzes your audio and finds each drum hit — kick, snare, hi-hat, clap. If a metronome BPM is set, a 3-bar countdown plays first so you can get in rhythm."
                     onClick={() => beatRecording ? stopBeatRecord() : startBeatRecord()}
                     disabled={beatCountdown !== null}
                     style={{ ...btnBase, flex: 1,
@@ -8306,6 +8581,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                   </div>
 
                   <button
+                    data-hint="Detect Drum Hits||Runs beat detection on your beatbox recording. The AI listens for rhythmic transients and classifies each as kick, snare, hi-hat, clap, or tom. Results appear on the waveform below — click a dot to remove a false detection."
                     onClick={runDrumDetect}
                     disabled={dtLoading}
                     style={{ ...btnBase, background: dtLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '7px 16px', fontSize: 12, fontWeight: 600, marginBottom: 12 }}
@@ -8355,6 +8631,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                         </div>
 
                         <button
+                          data-hint="Place Hits on Timeline||Creates a clip for every detected hit, sliced from the exact moment in your beatbox recording. Each clip type gets its own lane (kick → kick lane, snare → snare lane, etc). Clips are trimmed so they never overlap."
                           onClick={dtCommitToTimeline}
                           style={{ ...btnBase, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.4)', padding: '8px 18px', fontSize: 12, fontWeight: 600 }}
                         >
@@ -9004,6 +9281,62 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         )
       })()}
 
+      {/* ── Snapshot Panel ───────────────────────────────────────────────── */}
+      {snapshotPanelOpen && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 499 }} onClick={() => setSnapshotPanelOpen(false)} />
+          <div style={{ position: 'fixed', top: 48, right: 12, zIndex: 500, width: 320, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>📸 Project Snapshots</span>
+              <button onClick={() => setSnapshotPanelOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: 0 }}>×</button>
+            </div>
+            <div style={{ padding: 12 }}>
+              <div data-hint="Save Snapshot||Give this checkpoint a descriptive name so you remember what state you're saving. You can restore it later even after making many changes." style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                <input
+                  type="text" placeholder="Name this snapshot…" value={snapshotName}
+                  onChange={e => setSnapshotName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && snapshotName.trim() && saveSnapshot(snapshotName)}
+                  style={{ flex: 1, fontSize: 11, padding: '5px 8px', borderRadius: 5, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
+                />
+                <button
+                  data-hint="Save Snapshot||Captures the full state of your project right now — all hits, clips, effects, BPM, groups — and stores it with the name you typed."
+                  onClick={() => saveSnapshot(snapshotName)}
+                  disabled={!snapshotName.trim() || savingSnapshot}
+                  style={{ fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 5, background: 'rgba(139,92,246,0.18)', border: '1px solid rgba(139,92,246,0.4)', color: 'rgba(167,139,250,1)', cursor: snapshotName.trim() ? 'pointer' : 'default', opacity: snapshotName.trim() ? 1 : 0.5 }}
+                >
+                  {savingSnapshot ? '…' : 'Save'}
+                </button>
+              </div>
+              <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {loadingSnapshots && <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: 8 }}>Loading…</div>}
+                {!loadingSnapshots && snapshots.length === 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '12px 4px' }}>No snapshots yet — save one above to create a restore point.</div>
+                )}
+                {snapshots.map(snap => (
+                  <div key={snap.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 8px', borderRadius: 7, background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{snap.name}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                        {new Date(snap.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                    <button
+                      data-hint="Restore Snapshot||Replaces the current project state with this snapshot. Your current changes will be lost — make a new snapshot first if you want to keep them."
+                      onClick={() => restoreSnapshot(snap)}
+                      style={{ fontSize: 9, fontWeight: 600, padding: '3px 7px', borderRadius: 4, background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)', color: 'rgba(167,139,250,0.9)', cursor: 'pointer', flexShrink: 0 }}
+                    >Restore</button>
+                    <button
+                      onClick={() => deleteSnapshot(snap.id)}
+                      style={{ fontSize: 9, padding: '3px 5px', borderRadius: 4, background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', cursor: 'pointer', flexShrink: 0 }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ── MIDI Mapping Panel ────────────────────────────────────────────── */}
       <MidiMappingPanel
         open={showMidiPanel}
@@ -9028,5 +9361,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         bpm={bpm ?? 120}
       />
     </div>
+    </TooltipModeProvider>
   )
 }
