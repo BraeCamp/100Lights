@@ -2,6 +2,7 @@ import { sql } from '@/lib/db'
 import AdminLogout from './AdminLogout'
 import CorrectionsPanel from './CorrectionsPanel'
 import SamplePackPanel from './SamplePackPanel'
+import SoundLibraryPanel from './SoundLibraryPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -121,11 +122,17 @@ export default async function AdminPage() {
           </table>
         </div>
 
-        {/* Sample pack — seed and manage per-type audio samples */}
+        {/* Sound Library — user's personal sample collection */}
+        <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Sound Library</h2>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+          Manage the sound library (stored in your browser&apos;s IndexedDB). Upload samples, rename entries, change categories and folders, or delete anything. These are the same samples that appear in the editor&apos;s Sound Library panel.
+        </p>
+        <SoundLibraryPanel />
+
+        {/* Sample pack — per-type kit samples used by BeatLab synth */}
         <h2 className="text-xs font-semibold uppercase tracking-wider mt-8 mb-3" style={{ color: 'var(--text-muted)' }}>Sample Pack</h2>
         <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-          Each type supports multiple variations — click ★ to set the active one. "Seed all from synth" adds a baseline for every type.
-          Upload real recordings as additional variations. BeatLab pitch-shifts the active sample to match each hit's MIDI note.
+          Upload audio files for each instrument type. BeatLab pitch-shifts the active sample to match each hit&apos;s MIDI note. Click ★ to set the active variation per type.
         </p>
         <SamplePackPanel />
 
