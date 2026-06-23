@@ -429,54 +429,74 @@ export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): 
 
   const valid = vecs.filter((x): x is { id: string; v: number[] } => x.v !== null)
 
-  const assign: Record<string, number> = {}
-  if (valid.length === 0) { hits.forEach(h => { assign[h.id] = 0 }); return assign }
+  const finalAssign: Record<string, number> = {}
+  if (valid.length === 0) { hits.forEach(h => { finalAssign[h.id] = 0 }); return finalAssign }
 
   const kk = Math.min(actualK, valid.length)
-  const dim = valid[0]?.v.length ?? 0
+  const dim = valid[0].v.length
 
-  // Seed centroids from user corrections first, then fill with k-means++
-  const centroids: number[][] = []
-  if (seedVecs?.length) {
-    for (const sv of seedVecs) {
-      if (centroids.length >= kk) break
-      if (sv.length === dim) centroids.push([...sv])
-    }
-  }
-  if (centroids.length === 0) {
-    centroids.push([...valid[Math.floor(Math.random() * valid.length)].v])
-  }
-  while (centroids.length < kk) {
-    const dists = valid.map(x => Math.min(...centroids.map(c => vecDist(x.v, c))) ** 2)
-    const total = dists.reduce((a, b) => a + b, 0)
-    let r = Math.random() * total
-    for (let i = 0; i < valid.length; i++) {
-      r -= dists[i]
-      if (r <= 0) { centroids.push([...valid[i].v]); break }
-    }
-    if (centroids.length < kk) centroids.push([...valid[valid.length - 1].v])
-  }
+  // Run k-means++ multiple times and pick the best result (lowest WCSS).
+  // Single runs frequently get trapped in local optima — for small datasets (boom+tss)
+  // a single unlucky initialization puts both centroids near the overall mean, collapsing
+  // two distinct sounds into one cluster. 8 attempts gives near-deterministic results.
+  const ATTEMPTS = valid.length <= 30 ? 8 : 3
+  let bestWCSS = Infinity
 
-  // Iterate until stable (max 60 rounds)
-  for (let iter = 0; iter < 60; iter++) {
-    let changed = false
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const centroids: number[][] = []
+    // First attempt uses seed vecs (from corrections) if provided; rest are random k-means++
+    if (attempt === 0 && seedVecs?.length) {
+      for (const sv of seedVecs) {
+        if (centroids.length >= kk) break
+        if (sv.length === dim) centroids.push([...sv])
+      }
+    }
+    if (centroids.length === 0) {
+      centroids.push([...valid[Math.floor(Math.random() * valid.length)].v])
+    }
+    while (centroids.length < kk) {
+      const dists = valid.map(x => Math.min(...centroids.map(c => vecDist(x.v, c))) ** 2)
+      const total = dists.reduce((a, b) => a + b, 0)
+      let r = Math.random() * total
+      for (let i = 0; i < valid.length; i++) {
+        r -= dists[i]
+        if (r <= 0) { centroids.push([...valid[i].v]); break }
+      }
+      if (centroids.length < kk) centroids.push([...valid[valid.length - 1].v])
+    }
+
+    const tryAssign: Record<string, number> = {}
+    for (let iter = 0; iter < 60; iter++) {
+      let changed = false
+      for (const x of valid) {
+        let best = 0, bd = Infinity
+        for (let c = 0; c < kk; c++) { const d = vecDist(x.v, centroids[c]); if (d < bd) { bd = d; best = c } }
+        if (tryAssign[x.id] !== best) { tryAssign[x.id] = best; changed = true }
+      }
+      if (!changed) break
+      for (let c = 0; c < kk; c++) {
+        const members = valid.filter(x => tryAssign[x.id] === c)
+        if (!members.length) continue
+        for (let d = 0; d < dim; d++) centroids[c][d] = members.reduce((s, x) => s + x.v[d], 0) / members.length
+      }
+    }
+
+    // WCSS (within-cluster sum of squares) — lower = tighter, better clusters
+    let wcss = 0
     for (const x of valid) {
-      let best = 0, bd = Infinity
-      for (let c = 0; c < centroids.length; c++) { const d = vecDist(x.v, centroids[c]); if (d < bd) { bd = d; best = c } }
-      if (assign[x.id] !== best) { assign[x.id] = best; changed = true }
+      const c = centroids[tryAssign[x.id] ?? 0]
+      wcss += vecDist(x.v, c) ** 2
     }
-    if (!changed) break
-    for (let c = 0; c < centroids.length; c++) {
-      const members = valid.filter(x => assign[x.id] === c)
-      if (!members.length) continue
-      for (let d = 0; d < centroids[0].length; d++) centroids[c][d] = members.reduce((s, x) => s + x.v[d], 0) / members.length
+    if (wcss < bestWCSS) {
+      bestWCSS = wcss
+      Object.assign(finalAssign, tryAssign)
     }
   }
 
-  // Hits with no spectral data → nearest centroid by velocity, or cluster 0
-  for (const x of vecs) if (x.v === null) assign[x.id] = 0
+  // Hits with no spectral data → cluster 0
+  for (const x of vecs) if (x.v === null) finalAssign[x.id] = 0
 
-  return assign
+  return finalAssign
 }
 
 // ── Loop period detection ─────────────────────────────────────────────────────

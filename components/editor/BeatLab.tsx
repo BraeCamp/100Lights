@@ -2599,24 +2599,34 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // to a saved correction to that correction's cluster slot BEFORE k-means runs.
       // K-means only sees the leftovers. This guarantees saved corrections always
       // produce a real effect.
-      const CORRECTION_MATCH_DIST = 0.48  // generous — prefer over-matching
+      const CORRECTION_MATCH_DIST = 0.35  // tight enough to avoid false matches (tss matching boom correction)
       const CORRECTION_DEDUP_DIST = 0.28  // below this = same sound, keep one
 
       let savedCorrections: ClusterCorrection[] = []
       try { savedCorrections = await clusterCorrectionGetAll() } catch { /* non-fatal */ }
 
-      // Deduplicate: merge saves that are acoustically the same sound.
-      // Keep the newest representative of each unique sound type.
-      const dedupedCorrections: typeof savedCorrections = []
-      // Sort newest first so the most recent save wins per sound type.
+      // Group saves by sound type (spectral cluster), then average each group's
+      // spectral features into a single centroid.
+      // Using an average instead of the newest save makes corrections robust across
+      // recording sessions: even if individual saves drift slightly (different mic
+      // distance, breath pressure), the centroid remains stable and matches future
+      // instances of that sound type.
       const sortedCorrections = [...savedCorrections].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+      const corrGroups: { members: ClusterCorrection[] }[] = []
       for (const c of sortedCorrections) {
         if (!c.spectral) continue
-        if (!dedupedCorrections.some(k => spectralDistance(k.spectral, c.spectral) < CORRECTION_DEDUP_DIST)) {
-          dedupedCorrections.push(c)
-          if (dedupedCorrections.length >= CLUSTER_LETTERS.length - 1) break
-        }
+        const existing = corrGroups.find(g =>
+          spectralDistance(g.members[0].spectral, c.spectral) < CORRECTION_DEDUP_DIST
+        )
+        if (existing) existing.members.push(c)
+        else corrGroups.push({ members: [c] })
+        if (corrGroups.length >= CLUSTER_LETTERS.length - 1) break
       }
+      // Build averaged-centroid corrections
+      const dedupedCorrections = corrGroups.map(g => ({
+        ...g.members[0],
+        spectral: computeSpectralCentroid(g.members.map(m => m.spectral)),
+      }))
       const numCorrSlots = dedupedCorrections.length
       setDtCorrectionCount(numCorrSlots)
 
@@ -2639,9 +2649,17 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // Phase 2: k-means on unmatched hits, occupying indices after correction slots.
       const unmatched = result.hits.filter(h => hitSlot[h.id] === undefined)
       const remainingSlots = CLUSTER_LETTERS.length - numCorrSlots
-      const autoK = Math.max(1, Math.min(remainingSlots,
-        Math.round(Math.sqrt(Math.max(1, unmatched.length) / 2))
-      ))
+      // Always use at least 2 clusters when there are ≥2 unmatched hits.
+      // The previous formula (round(sqrt(n/2))) gives k=1 for n≤6 — that puts
+      // boom and tss in the same cluster for any short recording. Forcing k≥2
+      // lets k-means find two distinct groups when the data supports it; if all
+      // hits truly sound the same, both centroids collapse to the same region and
+      // one cluster ends up empty, which is equivalent to k=1 in practice.
+      const autoK = unmatched.length < 2
+        ? 1
+        : Math.max(2, Math.min(remainingSlots,
+            Math.round(Math.sqrt(unmatched.length / 2))
+          ))
       if (unmatched.length > 0) {
         const kmeansAssign = clusterHits(unmatched, autoK)
         for (const h of unmatched) {
