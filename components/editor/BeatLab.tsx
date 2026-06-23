@@ -1001,7 +1001,7 @@ interface LaneProps {
   liveRecPeaks?: number[]
 }
 
-function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRemove, onClose, onCorrect }: {
+function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRemove, onClose, onCorrect, onPlay }: {
   hit: BeatHit
   beatBox: AudioBuffer
   clusterLabel: string
@@ -1010,6 +1010,7 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
   onRemove: (id: string) => void
   onClose: () => void
   onCorrect?: (spectral: HitSpectral, label: string) => Promise<void>
+  onPlay?: (timeSec: number, durSec: number) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const clipDur   = hit.duration ?? 0.30
@@ -1089,21 +1090,18 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
     window.addEventListener('mouseup', onUp)
   }
 
-  const [saved, setSaved] = useState(false)
+  const [saved, setSaved]                 = useState(false)
+  const [correctionLabel, setCorrectionLabel] = useState(clusterLabel)
 
-  function play() {
-    const actx = new AudioContext()
-    const src  = actx.createBufferSource()
-    src.buffer = beatBox; src.connect(actx.destination)
-    src.start(0, hit.time, clipDur)
-    src.onended = () => actx.close()
-  }
+  // Keep correction label in sync if the cluster label is renamed externally
+  useEffect(() => { setCorrectionLabel(clusterLabel) }, [clusterLabel])
 
   async function saveCorrection() {
     if (!hit.spectral || !onCorrect) return
-    await onCorrect(hit.spectral, clusterLabel)
+    const label = correctionLabel.trim() || clusterLabel
+    await onCorrect(hit.spectral, label)
     setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setTimeout(() => setSaved(false), 2500)
   }
 
   const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '3px 9px', borderRadius: 5, fontSize: 10, fontWeight: 600, cursor: 'pointer' }
@@ -1112,20 +1110,10 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
     <div style={{ background: 'rgba(10,10,20,0.95)', border: `1px solid ${clusterColor}55`, borderRadius: 8, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: clusterColor, display: 'inline-block', flexShrink: 0 }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>
-          {clusterLabel} &middot; {hit.time.toFixed(2)}s &middot; {(clipDur * 1000).toFixed(0)}ms
-        </span>
-        <button onClick={play} style={{ ...btn, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.35)' }}>▶ Play</button>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{hit.time.toFixed(2)}s · {(clipDur * 1000).toFixed(0)}ms</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => onPlay?.(hit.time, clipDur)} style={{ ...btn, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.35)' }}>▶ Play</button>
         <button onClick={() => onRemove(hit.id)} style={{ ...btn, background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>× Remove</button>
-        {hit.spectral && onCorrect && (
-          <button
-            onClick={saveCorrection}
-            title="Save this clip as a correction — next separation will auto-label matching sounds"
-            style={{ ...btn, background: saved ? 'rgba(34,197,94,0.2)' : 'rgba(34,197,94,0.1)', color: saved ? '#4ade80' : 'rgba(134,239,172,0.8)', border: `1px solid ${saved ? 'rgba(74,222,128,0.5)' : 'rgba(34,197,94,0.25)'}` }}
-          >
-            {saved ? '✓ Saved!' : '✓ Correct'}
-          </button>
-        )}
         <button onClick={onClose} style={{ ...btn, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>Done</button>
       </div>
       <canvas
@@ -1134,7 +1122,28 @@ function DtCropEditor({ hit, beatBox, clusterLabel, clusterColor, onUpdate, onRe
         style={{ width: '100%', height: 72, display: 'block', borderRadius: 6, background: 'rgba(0,0,0,0.35)', cursor: 'ew-resize' }}
         onMouseDown={onMouseDown}
       />
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5 }}>Drag white handles to crop · click Done when correct</div>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, marginBottom: hit.spectral && onCorrect ? 8 : 0 }}>
+        Drag white handles to crop
+      </div>
+
+      {hit.spectral && onCorrect && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>Name this sound:</span>
+          <input
+            value={correctionLabel}
+            onChange={e => setCorrectionLabel(e.target.value)}
+            placeholder="e.g. Kick, Snare, Hat…"
+            style={{ flex: 1, fontSize: 10, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, padding: '3px 7px', color: 'var(--text-primary)', minWidth: 0 }}
+          />
+          <button
+            onClick={saveCorrection}
+            title="Teach the program — next separation auto-labels matching sounds"
+            style={{ ...btn, flexShrink: 0, background: saved ? 'rgba(34,197,94,0.25)' : 'rgba(34,197,94,0.12)', color: saved ? '#4ade80' : 'rgba(134,239,172,0.85)', border: `1px solid ${saved ? 'rgba(74,222,128,0.55)' : 'rgba(34,197,94,0.28)'}` }}
+          >
+            {saved ? '✓ Saved!' : '✓ Correct'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -2468,6 +2477,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const beatSepGenRef = useRef(0)  // incremented on reset to discard in-flight async results
   const [beatTimeSig,           setBeatTimeSig]           = useState<[number, number]>([4, 4])
   // ── New drum transcription state ──────────────────────────────────────────
+  // One persistent AudioContext for all dt previews — avoids browser throttling
+  const dtPreviewCtxRef = useRef<AudioContext | null>(null)
+  const dtPreviewSrcRef = useRef<AudioBufferSourceNode | null>(null)
+
   const [dtHits,          setDtHits]          = useState<BeatHit[] | null>(null)
   const [dtLoading,       setDtLoading]       = useState(false)
   const [dtBpm,           setDtBpm]           = useState<number | null>(null)
@@ -2552,15 +2565,25 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  // Play a short preview of the beatbox audio starting at timeSec
+  // Play a short preview of the beatbox audio starting at timeSec.
+  // Reuses one persistent AudioContext to avoid browser volume throttling.
   function dtPlayPreview(timeSec: number, durationSec = 0.4) {
     if (!beatBox) return
-    const ctx = new AudioContext()
+    // Stop any currently playing preview
+    try { dtPreviewSrcRef.current?.stop() } catch { /* already ended */ }
+    // Create or resume the shared context
+    if (!dtPreviewCtxRef.current || dtPreviewCtxRef.current.state === 'closed') {
+      dtPreviewCtxRef.current = new AudioContext()
+    }
+    if (dtPreviewCtxRef.current.state === 'suspended') {
+      dtPreviewCtxRef.current.resume().catch(() => {})
+    }
+    const ctx = dtPreviewCtxRef.current
     const src = ctx.createBufferSource()
     src.buffer = beatBox
     src.connect(ctx.destination)
     src.start(0, timeSec, durationSec)
-    src.onended = () => ctx.close()
+    dtPreviewSrcRef.current = src
   }
 
   async function dtCommitToTimeline() {
@@ -8974,6 +8997,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                               onUpdate={(id, time, dur) => setDtHits(prev => prev ? prev.map(h => h.id === id ? { ...h, time, duration: dur } : h) : null)}
                               onRemove={id => { setDtHits(prev => prev ? prev.filter(h => h.id !== id) : null); setDtSelectedHitId(null) }}
                               onClose={() => setDtSelectedHitId(null)}
+                              onPlay={(t, d) => dtPlayPreview(t, d)}
                               onCorrect={async (spectral, label) => {
                                 await clusterCorrectionAdd({ id: crypto.randomUUID(), spectral, label, savedAt: new Date().toISOString() })
                               }}
