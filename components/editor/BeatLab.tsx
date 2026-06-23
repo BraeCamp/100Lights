@@ -56,7 +56,7 @@ import type { MidiMapping, MidiMappingTarget } from '@/lib/midi-mapping'
 import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping'
 import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
-import { analyzeBeats } from '@/lib/beat-analyzer'
+import { analyzeBeats, classifyHitLocally, NN_MAX_DIST } from '@/lib/beat-analyzer'
 import { playDrumHit } from '@/lib/drum-samples'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
@@ -2243,48 +2243,92 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  // Send current hits to Claude for reclassification; apply suggested corrections automatically
+  // Reclassify pending hits using two phases:
+  // 1. Local NN classifier against stored corrections (fast, deterministic, actually learns)
+  // 2. Claude API only for hits where the NN has no confident reference (novel sounds)
   async function beatAiCheck() {
     const hits = beatPendingHits
     if (!hits || hits.length === 0 || beatAiChecking) return
     setBeatAiChecking(true)
     try {
-      // Load stored corrections so Claude can learn from past user feedback
       const storedCorrections = await correctionsGetAll().catch(() => [] as Awaited<ReturnType<typeof correctionsGetAll>>)
-      const res = await fetch('/api/classify-beats', {
-        method:  'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          hits:              hits.map(h => ({ id: h.id, time: h.time, type: h.type, velocity: h.velocity, spectral: h.spectral ?? {} })),
-          enabledTypes:      ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'],
-          pastCorrections:   storedCorrections.slice(-120).map(c => ({ detectedAs: c.detectedAs, correctedTo: c.correctedTo, spectral: c.spectral })),
-        }),
-      })
-      if (!res.ok) {
-        let reason = `HTTP ${res.status}`
-        try { const j = await res.json() as { error?: string }; if (j.error) reason = j.error } catch { /* keep default */ }
-        showToast(`AI check failed: ${reason}`)
-        setBeatAiChecking(false)
-        return
+      const allowedTypes = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim'] as BeatType[]
+      const allowedSet   = new Set<BeatType>(allowedTypes)
+
+      // Build reference list from all stored corrections
+      const references: ReferenceSound[] = storedCorrections
+        .filter(c => c.spectral)
+        .map(c => ({ category: c.correctedTo, spectral: c.spectral }))
+
+      // Phase 1 — NN classification for hits that have spectral data
+      const nnCorrections: Record<string, BeatType> = {}
+      const uncertainHits: typeof hits = []
+
+      for (const h of hits) {
+        if (!h.spectral) { uncertainHits.push(h); continue }
+        const { type, confidence } = classifyHitLocally(h.spectral, references, allowedSet)
+        if (type && confidence > 0.15) {
+          if (type !== h.type) nnCorrections[h.id] = type
+        } else {
+          uncertainHits.push(h)
+        }
       }
-      const { corrections, deletions, deletionsSuppressed } = await res.json() as { corrections: Record<string, string>; deletions: string[]; deletionsSuppressed?: boolean }
-      const delSet = new Set(deletions)
-      const totalChanges = Object.keys(corrections).length + deletions.length
+
+      // Phase 2 — Claude only for hits the NN couldn't confidently resolve
+      const claudeCorrections: Record<string, string> = {}
+      const claudeDeletions:   string[]               = []
+      let   deletionsSuppressed                        = false
+
+      if (uncertainHits.length > 0) {
+        const pastCorrections = storedCorrections.slice(-120).map(c => ({ detectedAs: c.detectedAs, correctedTo: c.correctedTo, spectral: c.spectral }))
+        const res = await fetch('/api/classify-beats', {
+          method:  'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            hits:            uncertainHits.map(h => ({ id: h.id, time: h.time, type: h.type, velocity: h.velocity, spectral: h.spectral ?? {} })),
+            enabledTypes:    allowedTypes,
+            pastCorrections,
+          }),
+        })
+        if (!res.ok) {
+          let reason = `HTTP ${res.status}`
+          try { const j = await res.json() as { error?: string }; if (j.error) reason = j.error } catch { /* keep default */ }
+          showToast(`AI check failed: ${reason}`)
+          setBeatAiChecking(false)
+          return
+        }
+        const data = await res.json() as { corrections: Record<string, string>; deletions: string[]; deletionsSuppressed?: boolean }
+        Object.assign(claudeCorrections, data.corrections)
+        claudeDeletions.push(...data.deletions)
+        deletionsSuppressed = data.deletionsSuppressed ?? false
+      }
+
+      // Merge: NN corrections take priority over Claude (NN has ground truth from user)
+      const allCorrections = { ...claudeCorrections, ...nnCorrections }
+      const delSet = new Set(claudeDeletions)
+
+      const nnCount    = Object.keys(nnCorrections).length
+      const totalChanged = Object.keys(allCorrections).length + claudeDeletions.length
+
       setBeatPendingHits(prev => prev
         ? prev
           .filter(h => !delSet.has(h.id))
-          .map(h => corrections[h.id] ? { ...h, type: corrections[h.id] as BeatHit['type'] } : h)
+          .map(h => allCorrections[h.id] ? { ...h, type: allCorrections[h.id] as BeatHit['type'] } : h)
         : null
       )
+
       if (deletionsSuppressed) {
         showToast('AI wanted to remove most hits — kept them all, only applied reclassifications')
-      } else if (totalChanges === 0) {
-        showToast('AI thinks the classifications look correct')
+      } else if (totalChanged === 0 && uncertainHits.length === 0) {
+        showToast('All hits matched your correction history — looks correct')
+      } else if (totalChanged === 0) {
+        showToast('Looks correct')
       } else {
-        showToast(`AI updated ${totalChanges} hit${totalChanges !== 1 ? 's' : ''} — review and adjust as needed`)
+        const nnNote = nnCount > 0 ? ` (${nnCount} from your corrections, ${totalChanged - nnCount} from AI)` : ''
+        showToast(`Updated ${totalChanged} hit${totalChanged !== 1 ? 's' : ''}${nnNote}`)
       }
-    } catch {
-      showToast('AI check failed')
+    } catch (e) {
+      showToast(`AI check failed: ${e instanceof Error ? e.message : String(e)}`)
     }
     setBeatAiChecking(false)
   }

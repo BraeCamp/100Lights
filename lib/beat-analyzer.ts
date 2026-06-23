@@ -242,7 +242,7 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
 // Weighted L2 distance on normalized features. Used by the nearest-neighbor
 // classifier that runs before the hardcoded threshold rules.
 
-function spectralDistance(a: HitSpectral, b: HitSpectral): number {
+export function spectralDistance(a: HitSpectral, b: HitSpectral): number {
   // Band ratios already 0–1 — most discriminative features get highest weight
   const bands =
     2.0 * (a.sub    - b.sub)    ** 2 +
@@ -272,7 +272,35 @@ function spectralDistance(a: HitSpectral, b: HitSpectral): number {
   return Math.sqrt((bands + temporal + mfccSum) / totalWeight)
 }
 
-const NN_MAX_DIST = 0.38  // beyond this threshold, don't trust the nearest neighbour
+export const NN_MAX_DIST = 0.38  // beyond this threshold, don't trust the nearest neighbour
+
+// ── Standalone hit classifier ─────────────────────────────────────────────────
+// Classifies a single hit's spectral fingerprint against a set of reference sounds.
+// Returns { type, confidence } where confidence is 0–1 (1 = perfect match).
+// If no reference is within NN_MAX_DIST, type is null (caller should use Claude).
+export function classifyHitLocally(
+  spectral: HitSpectral,
+  references: ReferenceSound[],
+  allowed: Set<BeatType>,
+): { type: BeatType | null; confidence: number; dist: number } {
+  if (references.length === 0) return { type: null, confidence: 0, dist: Infinity }
+  let bestDist = Infinity
+  let bestType: BeatType | null = null
+  for (const ref of references) {
+    if (!ref.spectral || !TYPE_FALLBACKS[ref.category]) continue
+    const d = spectralDistance(spectral, ref.spectral)
+    if (d < bestDist) { bestDist = d; bestType = ref.category }
+  }
+  if (!bestType || bestDist >= NN_MAX_DIST) return { type: null, confidence: 0, dist: bestDist }
+  // If the best match isn't in the allowed set, fall back to the closest allowed type
+  if (!allowed.has(bestType)) {
+    const fallback = (TYPE_FALLBACKS[bestType] ?? TYPE_FALLBACKS['other']).find(t => allowed.has(t))
+    bestType = fallback ?? null
+    if (!bestType) return { type: null, confidence: 0, dist: bestDist }
+  }
+  const confidence = Math.max(0, 1 - bestDist / NN_MAX_DIST)
+  return { type: bestType, confidence, dist: bestDist }
+}
 
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
