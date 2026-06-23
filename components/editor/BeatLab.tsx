@@ -62,6 +62,7 @@ import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { aiClassifyHits } from '@/lib/ai-beat-classifier'
 import { correctionsAdd, correctionsGetAll, correctionsClear } from '@/lib/correction-store'
 import { libraryGetAll } from '@/lib/sound-library'
+import { AddToLibraryModal } from './SoundLibrary'
 import { sampleGetAll } from '@/lib/sample-pack'
 import { detectPitchCurve, detectPitchCurveAsync, transformVoiceToSynth, extractNoteEvents, DEFAULT_SYNTH_OPTIONS, type SynthOptions, midiToFreq, freqToMidi } from '@/lib/pitch-detector'
 import { matchBuffer, extractHarmonicProfile } from '@/lib/spectral-match'
@@ -2997,6 +2998,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const clipboardRef = useRef<AudioClip[]>([])
   const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number; convertOpen?: boolean } | null>(null)
   const [segmentPanel, setSegmentPanel] = useState<string | null>(null)  // clipId whose segments are shown
+  const [saveToLibBuf, setSaveToLibBuf] = useState<AudioBuffer | null>(null)  // open AddToLibraryModal pre-loaded
 
   // ── Wave Manager ──────────────────────────────────────────────────────────
   interface BandDef { id: string; label: string; lo: number; hi: number; color: string }
@@ -7609,6 +7611,15 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         </>
       )}
 
+      {/* ── Save to Library modal ────────────────────────────────────────── */}
+      {saveToLibBuf && (
+        <AddToLibraryModal
+          initialBuffer={saveToLibBuf}
+          onClose={() => setSaveToLibBuf(null)}
+          onAdded={() => setSaveToLibBuf(null)}
+        />
+      )}
+
       {/* ── Convert card modal ────────────────────────────────────────────── */}
       {convertCard && (() => {
         const clip = audioClips.find(c => c.id === convertCard.clipId)
@@ -7847,6 +7858,13 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                 style={{ ...btnStyle(), color: 'rgba(250,204,21,0.9)', fontWeight: 600 }}
               >
                 ▣ Separate Sounds
+              </button>
+
+              <button
+                onClick={() => { setSaveToLibBuf(clip.buf); setClipMenu(null) }}
+                style={{ ...btnStyle(), color: 'rgba(134,239,172,0.9)', fontWeight: 600 }}
+              >
+                + Save to Library
               </button>
 
               {clip.segments && clip.segments.length > 0 && (

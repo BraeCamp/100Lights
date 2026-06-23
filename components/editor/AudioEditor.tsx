@@ -384,16 +384,6 @@ export default function AudioEditor({
 
         {/* ── Sidebar: Sounds & Samples ───────────────────────── */}
         <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Sounds &amp; Samples</span>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer' }}
-              title="Import audio file into timeline"
-            >
-              <Upload size={10} /> Import
-            </button>
-          </div>
           <SoundLibrary embedded />
         </div>
 
