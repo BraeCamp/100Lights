@@ -1725,7 +1725,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
   async function startMatchRecord() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false })
       const chunks: BlobPart[] = []
       const mr = new MediaRecorder(stream)
       mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
@@ -1968,25 +1968,30 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const useMet  = beatMetronomeOn && bpm != null
     const timeSig = beatTimeSig
 
-    // Pre-acquire microphone so there's no gap after countdown
+    // Raw audio — no noise suppression or echo cancellation so beatbox sounds
+    // aren't filtered out before they reach the analyzer
+    const audioConstraints: MediaTrackConstraints = {
+      echoCancellation:  false,
+      noiseSuppression:  false,
+      autoGainControl:   false,
+    }
     let stream: MediaStream
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }) }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false }) }
     catch { showToast('Microphone access denied'); return }
 
     if (useMet && bpm) {
-      // Play 3-2-1 countdown with metronome, then start recording on beat 1
-      const beatLen   = 60 / bpm
+      const beatLen    = 60 / bpm
       const countBeats = timeSig[0] * 3   // 3 full bars of countdown
-      const ctx       = new AudioContext()
+      const ctx        = new AudioContext()
       beatMetroRef.current = ctx
-      scheduleMetro(ctx, bpm, timeSig, ctx.currentTime, (countBeats + 1) * beatLen)
+      // Schedule ONE continuous click track covering the full countdown + recording session.
+      // Two separate scheduleMetro calls would overlap and cause doubled/drifted clicks.
+      scheduleMetro(ctx, bpm, timeSig, ctx.currentTime, countBeats * beatLen + 180)
 
-      // Visual countdown: update number each bar
       for (let bar = 3; bar >= 1; bar--) {
         setBeatCountdown(bar)
         await new Promise<void>(res => setTimeout(res, beatLen * timeSig[0] * 1000))
         if (!beatMetroRef.current) {
-          // User cancelled during countdown
           stream.getTracks().forEach(t => t.stop())
           ctx.close()
           setBeatCountdown(null)
@@ -1996,7 +2001,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       setBeatCountdown(null)
     }
 
-    // Now start recording
     const chunks: BlobPart[] = []
     const mr = new MediaRecorder(stream)
     mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
@@ -2016,13 +2020,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     beatRecordRef.current = mr
     mr.start()
     setBeatRecording(true)
-
-    // Keep metronome click going during recording if enabled
-    if (useMet && bpm && beatMetroRef.current) {
-      const ctx = beatMetroRef.current
-      // Schedule clicks for up to 3 minutes of recording
-      scheduleMetro(ctx, bpm, timeSig, ctx.currentTime, 180)
-    }
   }
 
   function stopBeatRecord() {
@@ -3459,8 +3456,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const entries: { recorder: MediaRecorder; chunks: Blob[]; lanes: string[] }[] = []
 
       for (const [deviceId, lanes] of byDevice) {
-        const constraint: MediaTrackConstraints | boolean =
-          deviceId && deviceId !== 'default' ? { deviceId: { exact: deviceId } } : true
+        const constraint: MediaTrackConstraints =
+          deviceId && deviceId !== 'default'
+            ? { deviceId: { exact: deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            : { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: constraint, video: false })
         const entry = { recorder: null as unknown as MediaRecorder, chunks: [] as Blob[], lanes }
         const recorder = new MediaRecorder(stream, { mimeType })
@@ -4003,7 +4002,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   async function startRecording() {
     setError(null)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false })
       const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' })
       chunksRef.current = []
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
