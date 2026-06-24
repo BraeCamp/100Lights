@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Film, AudioLines, FileText, Newspaper, PanelsTopBottom, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
@@ -16,9 +17,14 @@ const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: stri
 }
 
 export default function NewProjectPage() {
-  const [phase, setPhase] = useState<'pick' | 'edit'>('pick')
+  const searchParams = useSearchParams()
+  const moduleParam = searchParams.get('modules')
+  const initModules: ModuleKey[] = moduleParam
+    ? (moduleParam.split(',').filter(k => MODULE_DEFS.some(m => m.key === k)) as ModuleKey[])
+    : []
+  const [phase, setPhase] = useState<'pick' | 'edit'>(initModules.length > 0 ? 'edit' : 'pick')
   const [projectName, setProjectName] = useState('')
-  const [selected, setSelected] = useState<ModuleKey[]>([])
+  const [selected, setSelected] = useState<ModuleKey[]>(initModules)
   const nameRef = useRef<HTMLInputElement>(null)
 
   function toggle(key: ModuleKey) {

@@ -10,6 +10,8 @@ const isPublicRoute = createRouteMatcher([
 ])
 
 export default clerkMiddleware(async (auth, request) => {
+  // DEV_OPEN=1 lets headless tools see the app without a session — never set in production
+  if (process.env.DEV_OPEN === '1') return
   if (!isPublicRoute(request)) {
     await auth.protect()
   }
