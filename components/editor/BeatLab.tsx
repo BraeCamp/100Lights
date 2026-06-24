@@ -1399,7 +1399,10 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           const hasLib     = e.dataTransfer.types.includes('application/x-library-entry-id')
           const hasCluster = e.dataTransfer.types.includes('application/x-dt-cluster')
           if (!hasLib && !hasCluster) return
-          e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setLibDragOver(true)
+          e.preventDefault()
+          e.stopPropagation()  // prevent AudioEditor overlay from showing over an existing lane
+          e.dataTransfer.dropEffect = 'copy'
+          setLibDragOver(true)
         }}
         onDragLeave={() => setLibDragOver(false)}
         onDrop={e => {
@@ -1407,12 +1410,14 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
           const clusterLetter = e.dataTransfer.getData('application/x-dt-cluster')
           if (clusterLetter && onDtClusterDrop) {
             e.preventDefault()
+            e.stopPropagation()
             onDtClusterDrop(clusterLetter)
             return
           }
           const entryId = e.dataTransfer.getData('application/x-library-entry-id')
           if (!entryId || !onLibraryDrop) return
           e.preventDefault()
+          e.stopPropagation()  // prevent AudioEditor from also firing pendingLibraryDrop → duplicate clip
           const rect = e.currentTarget.getBoundingClientRect()
           const t    = Math.max(0, ((e.clientX - rect.left) / rect.width) * duration)
           onLibraryDrop(entryId, t)
