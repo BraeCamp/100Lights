@@ -2579,8 +2579,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     }
   }
 
-  async function runDrumDetect() {
-    if (!beatBox || dtLoading) return
+  async function runDrumDetect(buf?: AudioBuffer) {
+    const box = buf ?? beatBox
+    if (!box || dtLoading) return
     const myGen = ++dtGenRef.current
     setDtLoading(true)
     setDtHits(null)
@@ -2588,7 +2589,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setDtRunStatus(null)
     try {
       // Onset detection only — no type classification
-      const result = await analyzeBeats(beatBox)
+      const result = await analyzeBeats(box)
       if (myGen !== dtGenRef.current) return
 
       // ── Pre-clustering enrichment ──────────────────────────────────────────────
@@ -3800,8 +3801,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setClipMenu(null)
     // Route through k-means clustering so the user gets "Sound A / Sound B" output
     // (same as the Separate Audio panel) instead of auto-labelled drum type lanes.
-    setBeatBox(clip.buf)
-    await runDrumDetect()
+    setBeatBox(clip.buf)          // update state so the panel knows which audio is loaded
+    await runDrumDetect(clip.buf) // pass directly — state setter is async, closure would use old value
   }
 
   // Beat Studio calibration flow: analyze beatRef and queue results for review
@@ -9270,7 +9271,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
                   <button
                     data-hint="Separate Audio||Detects each distinct sound in your recording and groups similar-sounding ones together (Sound A, Sound B…). No labels are assigned — you name them. Click each group's play button to hear it, then place them all on the timeline."
-                    onClick={runDrumDetect}
+                    onClick={() => runDrumDetect()}
                     disabled={dtLoading}
                     style={{ ...btnBase, background: dtLoading ? 'rgba(234,179,8,0.08)' : 'rgba(234,179,8,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.3)', padding: '7px 16px', fontSize: 12, fontWeight: 600, marginBottom: 12 }}
                   >
