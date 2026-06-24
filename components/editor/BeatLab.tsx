@@ -3762,48 +3762,10 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     const clip = audioClips.find(c => c.id === clipId)
     if (!clip) return
     setClipMenu(null)
-    showToast('Detecting sounds…')
-    captureHistory()
-    try {
-      const DRUM_ALLOWED: BeatType[] = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim']
-      const result = await analyzeBeats(clip.buf, { allowedTypes: DRUM_ALLOWED, referenceSounds })
-      if (result.hits.length === 0) {
-        showToast('No drum sounds detected in this clip')
-        return
-      }
-      const byType = new Map<string, BeatHit[]>()
-      for (const h of result.hits) {
-        if (!byType.has(h.type)) byType.set(h.type, [])
-        byType.get(h.type)!.push(h)
-      }
-      const ctx = new AudioContext()
-      const sr = ctx.sampleRate
-      const srcBuf = clip.buf
-      const newClips: AudioClip[] = []
-      for (const [type, typeHits] of byType.entries()) {
-        // Use a 400ms excerpt from the source at the first hit as the per-lane sample
-        let sampleBuf: AudioBuffer
-        if (beatKitCustom[type]) {
-          sampleBuf = beatKitCustom[type]
-        } else {
-          const firstHit = typeHits[0]
-          const srcSr = srcBuf.sampleRate
-          const s = Math.floor(firstHit.time * srcSr)
-          const e = Math.min(srcBuf.length, s + Math.floor(0.4 * srcSr))
-          const len = Math.max(1, e - s)
-          sampleBuf = ctx.createBuffer(1, len, srcSr)
-          sampleBuf.getChannelData(0).set(srcBuf.getChannelData(0).subarray(s, e))
-        }
-        const laneId = addCustomLane()
-        setTypeOverrides(prev => ({ ...prev, [laneId]: { label: DRUM_LABELS[type] ?? type, color: TYPE_COLORS[type as BeatType] ?? '#6b7280' } }))
-        newClips.push(...typeHits.map(h => mkClip(crypto.randomUUID(), laneId, sampleBuf, h.time, DRUM_LABELS[type] ?? type)))
-      }
-      setAudioClips(prev => [...prev, ...newClips])
-      ctx.close()
-      showToast(`Separated ${result.hits.length} hits → ${byType.size} track${byType.size !== 1 ? 's' : ''}`)
-    } catch (e) {
-      showToast(`Separation failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
+    // Route through k-means clustering so the user gets "Sound A / Sound B" output
+    // (same as the Separate Audio panel) instead of auto-labelled drum type lanes.
+    setBeatBox(clip.buf)
+    await runDrumDetect()
   }
 
   // Beat Studio calibration flow: analyze beatRef and queue results for review
@@ -7305,32 +7267,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
               )}
             </div>
 
-            {/* Sound type selector — hits mode only */}
-            {recMode === 'hits' && <div style={{ width: '100%', maxWidth: 420 }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, textAlign: 'center' }}>
-                Sounds to detect
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                {ALL_DRUM_TYPES.map(type => {
-                  const active = selectedTypes.has(type)
-                  const color = TYPE_COLORS[type]
-                  return (
-                    <button key={type} onClick={() => toggleSelectedType(type)} style={{
-                      padding: '8px 4px', borderRadius: 7,
-                      border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                      background: active ? `${color}18` : 'var(--bg-card)',
-                      cursor: 'pointer', color: active ? color : 'var(--text-muted)',
-                      fontSize: 11, fontWeight: active ? 700 : 400,
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
-                      transition: 'all 0.15s',
-                    }}>
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: active ? color : 'var(--border)' }} />
-                      {TYPE_LABELS[type]}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>}
 
             {hasSong && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
