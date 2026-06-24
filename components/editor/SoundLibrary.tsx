@@ -302,6 +302,7 @@ const folderOptStyle: React.CSSProperties = {
 function FolderHeader({
   name, count, collapsed, onToggle, onRename, onDelete,
   isDragOver, onDragOver, onDragLeave, onDrop,
+  onFolderDragStart, isDraggingThis, reorderIndicator,
 }: {
   name: string; count: number; collapsed: boolean
   onToggle: () => void
@@ -311,6 +312,9 @@ function FolderHeader({
   onDragOver: (e: React.DragEvent) => void
   onDragLeave: () => void
   onDrop: (e: React.DragEvent) => void
+  onFolderDragStart: () => void
+  isDraggingThis: boolean
+  reorderIndicator: 'before' | 'after' | null
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft]     = useState(name)
@@ -322,46 +326,69 @@ function FolderHeader({
   }
 
   return (
-    <div
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-        borderTop: '1px solid var(--border)', borderBottom: collapsed ? '1px solid var(--border)' : 'none',
-        background: isDragOver ? 'rgba(139,92,246,0.1)' : 'var(--bg-surface)',
-        transition: 'background 0.1s', cursor: 'pointer',
-        borderLeft: `2px solid ${isDragOver ? '#7c3aed' : 'rgba(139,92,246,0.3)'}`,
-      }}
-    >
-      <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center' }}>
-        {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
-      </button>
-      {collapsed ? <Folder size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} /> : <FolderOpen size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} />}
-      {editing ? (
-        <input
-          autoFocus value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(name); setEditing(false) } }}
-          onBlur={commit}
-          style={{ flex: 1, fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 3, padding: '1px 4px', color: 'var(--text-primary)' }}
-          onClick={e => e.stopPropagation()}
-        />
-      ) : (
-        <span
-          onClick={onToggle}
-          style={{ flex: 1, fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}
-        >
-          {name}
-        </span>
+    <div style={{ position: 'relative' }}>
+      {/* Reorder drop indicator line */}
+      {reorderIndicator === 'before' && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'var(--accent)', zIndex: 10, borderRadius: 1 }} />
       )}
-      <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{count}</span>
-      <button onClick={e => { e.stopPropagation(); setEditing(true); setDraft(name) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.6 }}>
-        <Pencil size={8} />
-      </button>
-      <button onClick={e => { e.stopPropagation(); onDelete() }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.6 }}>
-        <X size={9} />
-      </button>
+      <div
+        draggable
+        onDragStart={e => {
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('application/x-library-folder-name', name)
+          const ghost = document.createElement('div')
+          ghost.textContent = `📁 ${name}`
+          ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:#1e1e2e;color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+          document.body.appendChild(ghost)
+          e.dataTransfer.setDragImage(ghost, 0, 0)
+          setTimeout(() => document.body.removeChild(ghost), 0)
+          onFolderDragStart()
+        }}
+        onDragEnd={() => onFolderDragStart()}  // clears dragging state in parent via same callback (parent uses dragend listener)
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+          borderTop: '1px solid var(--border)', borderBottom: collapsed ? '1px solid var(--border)' : 'none',
+          background: isDragOver ? 'rgba(139,92,246,0.1)' : 'var(--bg-surface)',
+          transition: 'background 0.1s, opacity 0.1s', cursor: 'grab',
+          borderLeft: `2px solid ${isDragOver ? '#7c3aed' : 'rgba(139,92,246,0.3)'}`,
+          opacity: isDraggingThis ? 0.4 : 1,
+        }}
+      >
+        <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center' }}>
+          {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+        </button>
+        {collapsed ? <Folder size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} /> : <FolderOpen size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} />}
+        {editing ? (
+          <input
+            autoFocus value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(name); setEditing(false) } }}
+            onBlur={commit}
+            style={{ flex: 1, fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 3, padding: '1px 4px', color: 'var(--text-primary)' }}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            onClick={onToggle}
+            style={{ flex: 1, fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}
+          >
+            {name}
+          </span>
+        )}
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{count}</span>
+        <button onClick={e => { e.stopPropagation(); setEditing(true); setDraft(name) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.6 }}>
+          <Pencil size={8} />
+        </button>
+        <button onClick={e => { e.stopPropagation(); onDelete() }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.6 }}>
+          <X size={9} />
+        </button>
+      </div>
+      {reorderIndicator === 'after' && (
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'var(--accent)', zIndex: 10, borderRadius: 1 }} />
+      )}
     </div>
   )
 }
@@ -759,6 +786,10 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   const [downloading,      setDownloading]      = useState<Set<string>>(new Set())
   const [dragOverFolder,   setDragOverFolder]   = useState<string | null>(null)
+  const [draggingFolder,   setDraggingFolder]   = useState<string | null>(null)
+  const [folderDropTarget, setFolderDropTarget] = useState<string | null>(null)   // folder reorder target
+  const [dragOverUnfiled,  setDragOverUnfiled]  = useState(false)
+  const [anyEntryDragging, setAnyEntryDragging] = useState(false)
   const [showAdd,          setShowAdd]          = useState(false)
   const [searchQuery,      setSearchQuery]      = useState('')
   const [addingFolder,     setAddingFolder]     = useState(false)
@@ -784,6 +815,26 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Track whether any library entry is currently being dragged (to show unfiled drop zone)
+  useEffect(() => {
+    function onStart(e: DragEvent) {
+      if (e.dataTransfer?.types.includes('application/x-library-entry-id')) setAnyEntryDragging(true)
+    }
+    function onEnd() {
+      setAnyEntryDragging(false)
+      setDragOverUnfiled(false)
+      setDraggingFolder(null)
+      setFolderDropTarget(null)
+      setDragOverFolder(null)
+    }
+    document.addEventListener('dragstart', onStart)
+    document.addEventListener('dragend',   onEnd)
+    return () => {
+      document.removeEventListener('dragstart', onStart)
+      document.removeEventListener('dragend',   onEnd)
+    }
+  }, [])
 
   // Focus new-folder input when it appears
   useEffect(() => {
@@ -841,20 +892,73 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     })
   }
 
-  // Handle drag-and-drop of entries onto folder headers
+  // ── Drag-and-drop: entries into folders, folders to reorder ─────────────────
+
   function onFolderDragOver(e: React.DragEvent, folderName: string) {
-    if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
+    const isEntry  = e.dataTransfer.types.includes('application/x-library-entry-id')
+    const isFolder = e.dataTransfer.types.includes('application/x-library-folder-name')
+    if (!isEntry && !isFolder) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
-    setDragOverFolder(folderName)
+    if (isEntry) {
+      setDragOverFolder(folderName)
+      setFolderDropTarget(null)
+    } else {
+      setFolderDropTarget(folderName)
+      setDragOverFolder(null)
+    }
   }
 
   function onFolderDrop(e: React.DragEvent, folderName: string) {
-    const id = e.dataTransfer.getData('application/x-library-entry-id')
+    const entryId      = e.dataTransfer.getData('application/x-library-entry-id')
+    const draggedFolder = e.dataTransfer.getData('application/x-library-folder-name')
     setDragOverFolder(null)
+    setFolderDropTarget(null)
+    if (entryId) {
+      e.preventDefault()
+      handleFolderChange(entryId, folderName)
+    } else if (draggedFolder && draggedFolder !== folderName) {
+      e.preventDefault()
+      // Reorder: move draggedFolder to the position before folderName
+      const next = folders.filter(f => f !== draggedFolder)
+      const idx  = next.indexOf(folderName)
+      next.splice(idx, 0, draggedFolder)
+      saveFolders(next)
+      setDraggingFolder(null)
+    }
+  }
+
+  // Unfiled drop zone — drops an entry out of any folder
+  function onUnfiledDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverUnfiled(true)
+  }
+
+  function onUnfiledDrop(e: React.DragEvent) {
+    const id = e.dataTransfer.getData('application/x-library-entry-id')
+    setDragOverUnfiled(false)
     if (!id) return
     e.preventDefault()
-    handleFolderChange(id, folderName)
+    handleFolderChange(id, undefined)
+  }
+
+  // Drop at the very end of the folder list (reorder folder to last position)
+  function onFolderListEndDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes('application/x-library-folder-name')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setFolderDropTarget('__end__')
+  }
+
+  function onFolderListEndDrop(e: React.DragEvent) {
+    const draggedFolder = e.dataTransfer.getData('application/x-library-folder-name')
+    setFolderDropTarget(null)
+    if (!draggedFolder) return
+    e.preventDefault()
+    saveFolders([...folders.filter(f => f !== draggedFolder), draggedFolder])
+    setDraggingFolder(null)
   }
 
   // Group entries (filtered by search query)
@@ -999,9 +1103,12 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
             })}
 
             {/* User folder sections */}
-            {folders.map(folder => {
+            {folders.map((folder, idx) => {
               const folderEntries = byFolder.get(folder) ?? []
-              const collapsed = collapsedFolders.has(folder)
+              const collapsed     = collapsedFolders.has(folder)
+              const reorderBefore = folderDropTarget === folder && draggingFolder !== folder
+              // show 'after' indicator on the last folder when drop target is '__end__'
+              const reorderAfter  = folderDropTarget === '__end__' && idx === folders.length - 1
               return (
                 <div key={folder}>
                   <FolderHeader
@@ -1013,20 +1120,45 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
                     onDelete={() => deleteFolder(folder)}
                     isDragOver={dragOverFolder === folder}
                     onDragOver={e => onFolderDragOver(e, folder)}
-                    onDragLeave={() => setDragOverFolder(null)}
+                    onDragLeave={() => { setDragOverFolder(null); setFolderDropTarget(null) }}
                     onDrop={e => onFolderDrop(e, folder)}
+                    onFolderDragStart={() => setDraggingFolder(folder)}
+                    isDraggingThis={draggingFolder === folder}
+                    reorderIndicator={reorderBefore ? 'before' : reorderAfter ? 'after' : null}
                   />
                   {!collapsed && folderEntries.map(entryRow)}
                 </div>
               )
             })}
 
-            {/* Unfiled entries */}
-            {unfiled.length > 0 && (
+            {/* End-of-list folder drop zone (drag folder to last position) */}
+            {folders.length > 0 && (
+              <div
+                onDragOver={onFolderListEndDragOver}
+                onDragLeave={() => setFolderDropTarget(null)}
+                onDrop={onFolderListEndDrop}
+                style={{ height: 8, borderTop: folderDropTarget === '__end__' ? '2px solid var(--accent)' : '1px solid transparent', transition: 'border-color 0.1s' }}
+              />
+            )}
+
+            {/* Unfiled entries — always a drop zone when any entry is dragging */}
+            {(unfiled.length > 0 || (anyEntryDragging && (folders.length > 0 || byParent.size > 0))) && (
               <>
-                {folders.length > 0 && (
-                  <div style={{ padding: '4px 10px', fontSize: 9, color: 'var(--text-muted)', borderTop: '1px solid var(--border)', letterSpacing: '0.06em' }}>
-                    UNFILED
+                {(folders.length > 0 || byParent.size > 0) && (
+                  <div
+                    onDragOver={onUnfiledDragOver}
+                    onDragLeave={() => setDragOverUnfiled(false)}
+                    onDrop={onUnfiledDrop}
+                    style={{
+                      padding: '5px 10px', fontSize: 9, letterSpacing: '0.06em',
+                      borderTop: '1px solid var(--border)',
+                      borderLeft: `2px solid ${dragOverUnfiled ? 'rgba(139,92,246,0.7)' : 'transparent'}`,
+                      background: dragOverUnfiled ? 'rgba(139,92,246,0.08)' : 'transparent',
+                      color: dragOverUnfiled ? '#a78bfa' : 'var(--text-muted)',
+                      transition: 'all 0.1s',
+                    }}
+                  >
+                    UNFILED{dragOverUnfiled ? ' — drop here to remove from folder' : ''}
                   </div>
                 )}
                 {unfiled.map(entryRow)}
@@ -1038,7 +1170,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
 
       {/* Drag hint */}
       <div style={{ padding: '4px 10px', fontSize: 8, color: 'var(--text-muted)', borderTop: '1px solid var(--border)', letterSpacing: '0.04em', flexShrink: 0 }}>
-        Drag sounds to tracks · drag to folder header to move
+        Drag sounds → folder to move · drag to UNFILED to remove · drag folder header to reorder
       </div>
 
       {showAdd && <AddToLibraryModal onClose={() => setShowAdd(false)} onAdded={load} />}
