@@ -74,11 +74,13 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [octave,     setOctave]     = useState(4)
   const [pressing,   setPressing]   = useState<Set<number>>(new Set())
   const [remapId,    setRemapId]    = useState<string | null>(null)
+  const [active,     setActive]     = useState(false)   // true = keyboard captured
   const [pos, setPos] = useState(() => ({
     x: typeof window !== 'undefined' ? Math.max(0, window.innerWidth  / 2 - 250) : 200,
     y: typeof window !== 'undefined' ? Math.max(0, window.innerHeight - 400)      : 200,
   }))
 
+  const containerRef  = useRef<HTMLDivElement>(null)
   const noteStarts    = useRef<Map<number, { beat: number; clipId: string }>>(new Map())
   const activeClipId  = useRef<string | null>(null)
   const dragging      = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
@@ -147,9 +149,38 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     }
   }, [project, engine, dispatch])
 
-  // ── Keyboard handler ─────────────────────────────────────────────────────────
+  // ── Click-outside → deactivate ───────────────────────────────────────────────
 
   useEffect(() => {
+    if (!active) return
+    function onDocDown(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setActive(false)
+    }
+    document.addEventListener('mousedown', onDocDown)
+    return () => document.removeEventListener('mousedown', onDocDown)
+  }, [active])
+
+  // ── Capture-phase swallower — blocks ALL DAW shortcuts while active ───────────
+
+  useEffect(() => {
+    if (!active) return
+    function swallow(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setActive(false); return }
+      e.stopPropagation()   // prevent shortcuts (record, play, etc.) from firing
+    }
+    document.addEventListener('keydown', swallow, true)  // capture phase runs first
+    document.addEventListener('keyup',   swallow, true)
+    return () => {
+      document.removeEventListener('keydown', swallow, true)
+      document.removeEventListener('keyup',   swallow, true)
+    }
+  }, [active])
+
+  // ── Keyboard handler (bubble phase — only runs when active) ──────────────────
+
+  useEffect(() => {
+    if (!active) return
+
     function onDown(e: KeyboardEvent) {
       if (e.repeat) return
       const k = e.key.toLowerCase()
@@ -157,7 +188,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       // Remap mode: assign key to pad
       if (remapId !== null) {
         if (k === 'escape') { setRemapId(null); return }
-        e.preventDefault(); e.stopPropagation()
+        e.preventDefault()
         setPads(prev => prev.map(p => {
           if (p.key === k) return { ...p, key: '' }  // clear old binding
           if (p.id === remapId) return { ...p, key: k }
@@ -170,7 +201,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       const keyMap = tab === 'pads' ? padKeyMap : pianoKeyMap
       const pitch  = keyMap[k] ?? keyMap[e.key]
       if (pitch === undefined) return
-      e.preventDefault(); e.stopPropagation()
+      e.preventDefault()
       startNote(pitch)
     }
 
@@ -188,7 +219,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       document.removeEventListener('keydown', onDown)
       document.removeEventListener('keyup',   onUp)
     }
-  }, [tab, padKeyMap, pianoKeyMap, remapId, startNote, endNote])
+  }, [active, tab, padKeyMap, pianoKeyMap, remapId, startNote, endNote])
 
   // ── Drag header ───────────────────────────────────────────────────────────────
 
@@ -210,20 +241,35 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return createPortal(
-    <div style={{
-      position: 'fixed', left: pos.x, top: pos.y, width: 500,
-      background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10,
-      boxShadow: '0 12px 40px rgba(0,0,0,0.75)', zIndex: 2000, userSelect: 'none',
-    }}>
+    <div
+      ref={containerRef}
+      onMouseDown={() => setActive(true)}
+      style={{
+        position: 'fixed', left: pos.x, top: pos.y, width: 500,
+        background: C.bg,
+        border: active ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
+        borderRadius: 10,
+        boxShadow: active
+          ? `0 12px 40px rgba(0,0,0,0.75), 0 0 0 2px rgba(61,143,239,0.35)`
+          : '0 12px 40px rgba(0,0,0,0.75)',
+        zIndex: 2000, userSelect: 'none',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+      }}>
 
       {/* Header */}
       <div onMouseDown={onHeaderMouseDown} style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-        background: C.bgCard, borderRadius: '10px 10px 0 0',
-        borderBottom: `1px solid ${C.border}`, cursor: 'grab',
+        background: active ? 'rgba(61,143,239,0.18)' : C.bgCard,
+        borderRadius: '10px 10px 0 0',
+        borderBottom: `1px solid ${active ? 'rgba(61,143,239,0.4)' : C.border}`,
+        cursor: 'grab', transition: 'background 0.15s',
       }}>
         <span style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>⌨ Pad Input</span>
         {track && <span style={{ fontSize: 11, color: C.muted, borderLeft: `2px solid ${track.color ?? C.accent}`, paddingLeft: 6 }}>{track.name}</span>}
+        {active
+          ? <span style={{ fontSize: 10, fontWeight: 800, color: C.accent, background: 'rgba(61,143,239,0.15)', border: `1px solid rgba(61,143,239,0.4)`, borderRadius: 3, padding: '1px 6px', letterSpacing: '0.06em' }}>ACTIVE</span>
+          : <span style={{ fontSize: 10, color: C.muted }}>click to activate</span>
+        }
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 800, letterSpacing: '0.05em' }}>● REC</span>}
           <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>
@@ -383,9 +429,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       )}
 
       {/* Footer */}
-      <div style={{ padding: '6px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 10, color: '#444' }}>Arm track (●) + press transport record to capture</span>
-        {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 700 }}>Recording…</span>}
+      <div style={{ padding: '6px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {active
+          ? <span style={{ fontSize: 10, color: C.muted }}>Esc or click outside to release keyboard · Arm track + record to capture</span>
+          : <span style={{ fontSize: 10, color: '#444' }}>Click overlay to activate keyboard input</span>
+        }
+        {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Recording…</span>}
       </div>
     </div>,
     document.body
