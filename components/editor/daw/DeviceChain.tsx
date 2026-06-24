@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
@@ -338,16 +339,29 @@ function makeDefaultParams(type: EffectType) {
 function AddDeviceButton({ trackId }: { trackId: string }) {
   const { dispatch } = useDaw()
   const [open, setOpen] = useState(false)
-  const wrapRef = useRef<HTMLDivElement>(null)
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 })
+  const btnRef  = useRef<HTMLButtonElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     function onMouseDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+      if (dropRef.current?.contains(e.target as Node)) return
+      if (btnRef.current?.contains(e.target as Node)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onMouseDown)
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [open])
+
+  function handleOpen(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      setDropPos({ top: r.top, left: r.left })
+    }
+    setOpen(o => !o)
+  }
 
   function add(type: EffectType) {
     const effect: TrackEffect = {
@@ -360,10 +374,13 @@ function AddDeviceButton({ trackId }: { trackId: string }) {
   }
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', alignSelf: 'flex-start', flexShrink: 0 }}>
+    <>
       <button
-        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        ref={btnRef}
+        onClick={handleOpen}
+        title="Add device"
         style={{
+          alignSelf: 'flex-start', flexShrink: 0,
           background: 'var(--bg-card)', border: '1px dashed var(--border)',
           color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer',
           borderRadius: 4, padding: '6px 10px', whiteSpace: 'nowrap',
@@ -373,12 +390,15 @@ function AddDeviceButton({ trackId }: { trackId: string }) {
       >
         + Add Device
       </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 200,
+      {open && createPortal(
+        <div ref={dropRef} style={{
+          position: 'fixed',
+          bottom: `calc(100vh - ${dropPos.top}px + 4px)`,
+          left: dropPos.left,
+          zIndex: 1000,
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 4, overflow: 'hidden', minWidth: 130,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.55)',
+          boxShadow: '0 -4px 16px rgba(0,0,0,0.55)',
         }}>
           {ADD_OPTIONS.map(opt => (
             <button
@@ -396,9 +416,10 @@ function AddDeviceButton({ trackId }: { trackId: string }) {
               {opt.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 

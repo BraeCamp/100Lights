@@ -135,7 +135,7 @@ test.describe('Arrangement View', () => {
 
   test('snap mode buttons work', async ({ page }) => {
     await openEditor(page)
-    for (const snap of ['Off', 'Beat', 'Half', 'Bar']) {
+    for (const snap of ['Off', '1/16', '1/8', 'Beat', 'Bar']) {
       await page.getByRole('button', { name: snap }).first().click()
     }
     await expect(page.locator('[data-editor="true"]')).toBeVisible()
@@ -179,7 +179,7 @@ test.describe('Device Chain (effects panel)', () => {
     if (await devicesTab.isVisible()) {
       await devicesTab.click()
       // Add device button
-      const addDeviceBtn = page.getByTitle('Add device').or(page.getByText('+ Device')).first()
+      const addDeviceBtn = page.getByTitle('Add device').first()
       if (await addDeviceBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
         await addDeviceBtn.click()
         await page.screenshot({ path: 'tests/e2e/screenshots/10-add-device-dropdown.png' })

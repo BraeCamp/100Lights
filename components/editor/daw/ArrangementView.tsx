@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { decodeAiff } from '@/lib/wav-codec'
@@ -14,58 +15,122 @@ import dynamic from 'next/dynamic'
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
 
 const HDR_W      = 200
-const RULER_H    = 28
+const SEC_H      = 24
+const BAR_H      = 20
+const RULER_H    = SEC_H + BAR_H   // 44px total
 const MIN_BEAT_W = 10
 const MAX_BEAT_W = 200
 const AUTO_H     = 60
 
-type SnapMode = 'off' | 'beat' | 'half' | 'bar'
+type SnapMode = 'off' | '1/16' | '1/8' | 'beat' | 'bar'
 
-function snapBeat(beat: number, mode: SnapMode): number {
-  if (mode === 'off')  return beat
-  if (mode === 'bar')  return Math.round(beat / 4) * 4
-  if (mode === 'beat') return Math.round(beat)
-  return Math.round(beat * 2) / 2
+function snapBeat(beat: number, mode: SnapMode, beatsPerBar = 4): number {
+  if (mode === 'off')   return beat
+  if (mode === 'bar')   return Math.round(beat / beatsPerBar) * beatsPerBar
+  if (mode === 'beat')  return Math.round(beat)
+  if (mode === '1/8')   return Math.round(beat * 2) / 2
+  if (mode === '1/16')  return Math.round(beat * 4) / 4
+  return beat
 }
 
 // ── Ruler ─────────────────────────────────────────────────────────────────────
 
-function Ruler({ beatW, scrollLeft, onSeek }: {
-  beatW: number; scrollLeft: number; onSeek: (beat: number) => void
+function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig }: {
+  beatW: number; scrollLeft: number
+  onSeek: (beat: number) => void
+  onEditTimeSig: (e: React.MouseEvent) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const { project } = useDaw()
+  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled } = project
+  const pxPerSec = beatW * tempo / 60
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const dpr = window.devicePixelRatio || 1
     const W   = canvas.offsetWidth
-    const H   = RULER_H
     canvas.width  = W * dpr
-    canvas.height = H * dpr
+    canvas.height = RULER_H * dpr
     const ctx = canvas.getContext('2d')!
     ctx.scale(dpr, dpr)
-    ctx.fillStyle = '#1a1a1a'
-    ctx.fillRect(0, 0, W, H)
 
-    const firstBeat = Math.floor(scrollLeft / beatW)
-    const lastBeat  = Math.ceil((scrollLeft + W) / beatW)
-    for (let b = firstBeat; b <= lastBeat; b++) {
-      const x = b * beatW - scrollLeft
-      const isBar = b % 4 === 0
-      ctx.fillStyle = isBar ? '#555' : '#333'
-      ctx.fillRect(x, H - (isBar ? 14 : 6), 1, isBar ? 14 : 6)
-      if (isBar && beatW >= 20) {
-        ctx.fillStyle = '#666'
-        ctx.font = '9px monospace'
-        ctx.fillText(String(Math.floor(b / 4) + 1), x + 2, H - 16)
+    // Background
+    ctx.fillStyle = '#161616'
+    ctx.fillRect(0, 0, W, RULER_H)
+    ctx.fillStyle = '#252525'
+    ctx.fillRect(0, SEC_H, W, 1)
+
+    // ── Seconds ruler ──────────────────────────────────────────────────────────
+    const INTERVALS = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60]
+    const secInterval  = INTERVALS.find(iv => iv * pxPerSec >= 70) ?? 60
+    const halfInterval = secInterval / 2
+    const startTime    = scrollLeft / pxPerSec
+    const endTime      = startTime + W / pxPerSec
+
+    // minor ticks (half-interval, odd multiples)
+    const firstHalfIdx = Math.floor(startTime / halfInterval)
+    for (let i = firstHalfIdx; i * halfInterval <= endTime + halfInterval; i++) {
+      if (i % 2 === 0) continue  // even = major, drawn below
+      const x = Math.round(i * halfInterval * pxPerSec - scrollLeft)
+      if (x < 0 || x > W) continue
+      ctx.fillStyle = '#2d2d2d'
+      ctx.fillRect(x, SEC_H - 5, 1, 5)
+    }
+
+    // major ticks + labels
+    const firstMajorIdx = Math.floor(startTime / secInterval)
+    for (let i = firstMajorIdx; i * secInterval <= endTime + secInterval; i++) {
+      const t = i * secInterval
+      const x = Math.round(t * pxPerSec - scrollLeft)
+      if (x < -30 || x > W + 30) continue
+      ctx.fillStyle = '#3d3d3d'
+      ctx.fillRect(x, 2, 1, SEC_H - 3)
+      const mins = Math.floor(t / 60)
+      const secs = Math.floor(t % 60)
+      ctx.fillStyle = '#ccc'
+      ctx.font = '9px monospace'
+      ctx.fillText(`${mins}:${String(secs).padStart(2, '0')}`, x + 3, 11)
+    }
+
+    // ── Bar ruler ──────────────────────────────────────────────────────────────
+    const pxPerBar    = beatW * sigNum
+    if (pxPerBar >= 6) {
+      const firstBar   = Math.floor(scrollLeft / pxPerBar)
+      const labelEvery = Math.max(1, Math.ceil(36 / pxPerBar))
+      for (let bar = firstBar; bar * pxPerBar <= scrollLeft + W + pxPerBar; bar++) {
+        const x = Math.round(bar * pxPerBar - scrollLeft)
+        if (x >= -1 && x <= W + 1) {
+          ctx.fillStyle = '#3a3a3a'
+          ctx.fillRect(x, SEC_H + 1, 1, BAR_H - 1)
+        }
+        // beat sub-ticks
+        if (pxPerBar >= 24) {
+          for (let b = 1; b < sigNum; b++) {
+            const bx = Math.round(x + b * beatW)
+            if (bx < 0 || bx > W) continue
+            ctx.fillStyle = '#252525'
+            ctx.fillRect(bx, SEC_H + BAR_H - 6, 1, 6)
+          }
+        }
+        if (bar % labelEvery === 0 && x > -2 && x < W) {
+          ctx.fillStyle = '#999'
+          ctx.font = '9px monospace'
+          ctx.fillText(String(bar + 1), x + 3, SEC_H + BAR_H - 4)
+        }
       }
     }
+
+    // time-sig hint (far right)
+    ctx.fillStyle = '#555'
+    ctx.font = '8px monospace'
+    ctx.textAlign = 'right'
+    ctx.fillText(`${sigNum}/${sigDen} ✎`, W - 4, SEC_H + BAR_H - 4)
+    ctx.textAlign = 'left'
   })
 
-  const loopL = project.loopStart * beatW - scrollLeft
-  const loopR = project.loopEnd   * beatW - scrollLeft
+  const loopL = loopStart * beatW - scrollLeft
+  const loopR = loopEnd   * beatW - scrollLeft
 
   return (
     <div style={{ position: 'relative', height: RULER_H, overflow: 'hidden', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -73,12 +138,17 @@ function Ruler({ beatW, scrollLeft, onSeek }: {
         ref={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: RULER_H, cursor: 'pointer' }}
         onClick={e => {
-          const rect = e.currentTarget.getBoundingClientRect()
-          onSeek(Math.max(0, (e.clientX - rect.left + scrollLeft) / beatW))
+          const rect  = e.currentTarget.getBoundingClientRect()
+          const localY = e.clientY - rect.top
+          if (localY >= SEC_H) {
+            onEditTimeSig(e)
+          } else {
+            onSeek(Math.max(0, (e.clientX - rect.left + scrollLeft) / beatW))
+          }
         }}
       />
-      {project.loopEnabled && (
-        <div style={{ position: 'absolute', top: 0, left: loopL, width: loopR - loopL, height: '100%', background: 'rgba(61,143,239,0.15)', pointerEvents: 'none', borderLeft: '1px solid rgba(61,143,239,0.5)', borderRight: '1px solid rgba(61,143,239,0.5)' }} />
+      {loopEnabled && (
+        <div style={{ position: 'absolute', top: 0, left: loopL, width: loopR - loopL, height: SEC_H, background: 'rgba(61,143,239,0.15)', pointerEvents: 'none', borderLeft: '1px solid rgba(61,143,239,0.5)', borderRight: '1px solid rgba(61,143,239,0.5)' }} />
       )}
     </div>
   )
@@ -89,8 +159,8 @@ function Ruler({ beatW, scrollLeft, onSeek }: {
 function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMove, onResize, onDelete }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean
   onSelect(): void; onDoubleClick(): void
-  onMove(startBeat: number, trackId: string): void
-  onResize(durationBeats: number): void; onDelete(): void
+  onMove(startBeat: number, trackId: string, altKey: boolean): void
+  onResize(durationBeats: number, altKey: boolean): void; onDelete(): void
 }) {
   const dragRef   = useRef<{ startX: number; startBeat: number } | null>(null)
   const resizeRef = useRef<{ startX: number; startDur: number } | null>(null)
@@ -106,7 +176,7 @@ function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMov
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     function mm(ev: MouseEvent) {
       if (!dragRef.current) return
-      onMove(Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW), track.id)
+      onMove(Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW), track.id, ev.altKey)
     }
     function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
@@ -117,7 +187,7 @@ function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMov
     resizeRef.current = { startX: e.clientX, startDur: clip.durationBeats }
     function mm(ev: MouseEvent) {
       if (!resizeRef.current) return
-      onResize(Math.max(0.25, resizeRef.current.startDur + (ev.clientX - resizeRef.current.startX) / beatW))
+      onResize(Math.max(0.25, resizeRef.current.startDur + (ev.clientX - resizeRef.current.startX) / beatW), ev.altKey)
     }
     function mu() { resizeRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
@@ -171,11 +241,12 @@ function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMov
 
 function AddAutoButton({ track }: { track: DawTrack }) {
   const { project, dispatch } = useDaw()
-  const [open, setOpen] = useState(false)
-  const btnRef = useRef<HTMLButtonElement>(null)
+  const [open, setOpen]       = useState(false)
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 })
+  const btnRef  = useRef<HTMLButtonElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
 
   const existing = new Set(project.automationLanes.filter(l => l.trackId === track.id).map(l => l.parameter))
-
   const opts: { label: string; parameter: string; min: number; max: number; def: number }[] = [
     { label: 'Volume', parameter: 'volume', min: 0, max: 1, def: track.volume },
     { label: 'Pan',    parameter: 'pan',    min: -1, max: 1, def: track.pan },
@@ -185,24 +256,39 @@ function AddAutoButton({ track }: { track: DawTrack }) {
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {
-      if (btnRef.current && !btnRef.current.contains(e.target as Node)) setOpen(false)
+      if (dropRef.current?.contains(e.target as Node)) return
+      if (btnRef.current?.contains(e.target as Node)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
+  function handleToggle() {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      setDropPos({ top: r.bottom + 4, left: r.left })
+    }
+    setOpen(o => !o)
+  }
+
   if (opts.length === 0) return null
 
   return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
+    <>
       <button
         ref={btnRef}
-        onClick={() => setOpen(o => !o)}
+        onClick={handleToggle}
         style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '1px 4px', fontSize: 9, background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-muted)', cursor: 'pointer' }}
         title="Add automation lane"
       ><Plus size={8} /> A</button>
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 300, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 130, boxShadow: '0 4px 16px rgba(0,0,0,0.6)' }}>
+      {open && createPortal(
+        <div ref={dropRef} style={{
+          position: 'fixed', top: dropPos.top, left: dropPos.left,
+          zIndex: 1000, background: '#2a2a2a', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '4px 0', minWidth: 130,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+        }}>
           {opts.map(o => (
             <button key={o.parameter} onClick={() => {
               dispatch({ type: 'ADD_AUTOMATION_LANE', lane: { id: crypto.randomUUID(), trackId: track.id, parameter: o.parameter, label: o.label, min: o.min, max: o.max, defaultValue: o.def, points: [], expanded: true } })
@@ -213,9 +299,10 @@ function AddAutoButton({ track }: { track: DawTrack }) {
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >{o.label}</button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 
@@ -260,7 +347,7 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
       const entry   = entries.find(en => en.id === libId)
       if (!entry) return
       const url  = URL.createObjectURL(entry.audioBlob)
-      const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap), 8, { audioUrl: url })
+      const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: url })
       dispatch({ type: 'ADD_CLIP', clip })
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
@@ -298,7 +385,7 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
           blobUrl = URL.createObjectURL(file)
         }
 
-        const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap), 8, { audioUrl: blobUrl })
+        const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: blobUrl })
         dispatch({ type: 'ADD_CLIP', clip })
         const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
         const peaks = extractPeaks(buf)
@@ -307,7 +394,7 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
       }
       input.click()
     } else {
-      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap), 4)
+      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4)
       dispatch({ type: 'ADD_CLIP', clip })
       setEditTarget({ type: 'midi-clip', clipId: clip.id })
     }
@@ -371,8 +458,12 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
                 selected={selectedClipId === clip.id}
                 onSelect={() => setSelectedClipId(clip.id)}
                 onDoubleClick={() => setEditTarget({ type: clip.kind === 'midi' ? 'midi-clip' : 'audio-clip', clipId: clip.id })}
-                onMove={(sb, tid) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, snap), trackId: tid })}
-                onResize={db => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: db } })}
+                onMove={(sb, tid, alt) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })}
+                onResize={(db, alt) => {
+                  const endBeat    = clip.startBeat + db
+                  const snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
+                  dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: Math.max(0.25, snappedEnd - clip.startBeat) } })
+                }}
                 onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
               />
             ))}
@@ -413,8 +504,11 @@ export default function ArrangementView() {
   const { project, dispatch, engine, setPosition } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
-  const [snap, setSnap]             = useState<SnapMode>('beat')
-  const outerRef   = useRef<HTMLDivElement>(null)
+  const [snap, setSnap]             = useState<SnapMode>('1/16')
+  const [tsPopover, setTsPopover]   = useState<{ x: number; y: number } | null>(null)
+  const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
+  const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
+  const outerRef      = useRef<HTMLDivElement>(null)
   const laneRef    = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   const rafRef      = useRef<number | undefined>(undefined)
@@ -436,6 +530,23 @@ export default function ArrangementView() {
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current) }
   }, [engine, beatW, scrollLeft])
 
+  // Close time-sig popover on outside click
+  const tsPopoverRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!tsPopover) return
+    function onDown(e: MouseEvent) {
+      if (tsPopoverRef.current && !tsPopoverRef.current.contains(e.target as Node)) setTsPopover(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [tsPopover])
+
+  function handleEditTimeSig(e: React.MouseEvent) {
+    setTsDraftNum(project.timeSignatureNum)
+    setTsDraftDen(project.timeSignatureDen)
+    setTsPopover({ x: e.clientX, y: e.clientY })
+  }
+
   function handleWheel(e: React.WheelEvent) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
@@ -452,7 +563,7 @@ export default function ArrangementView() {
   }
 
   return (
-    <div ref={outerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden' }}>
+    <div ref={outerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative' }}>
 
       {/* Toolbar */}
       <div style={{ height: 30, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -461,19 +572,20 @@ export default function ArrangementView() {
         <button onClick={fitToWindow} style={toolBtn} title="Fit to window"><Maximize2 size={13} /></button>
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>SNAP</span>
-        {(['off', 'beat', 'half', 'bar'] as SnapMode[]).map(m => (
+        {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
           <button key={m} onClick={() => setSnap(m)}
             style={{ ...toolBtn, background: snap === m ? 'var(--bg-card)' : 'transparent', color: snap === m ? 'var(--text-primary)' : 'var(--text-muted)', border: snap === m ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
-            {m.charAt(0).toUpperCase() + m.slice(1)}
+            {m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m}
           </button>
         ))}
+        <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 2 }} title="Hold ⌥ Option while dragging to bypass snap">⌥=free</span>
       </div>
 
       {/* Ruler row (ruler area only — headers handled inside TrackRow) */}
       <div style={{ display: 'flex', flexShrink: 0 }} onWheel={handleWheel}>
         <div style={{ width: HDR_W, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <Ruler beatW={beatW} scrollLeft={scrollLeft} onSeek={b => { engine.seek(b); setPosition(b) }} />
+          <Ruler beatW={beatW} scrollLeft={scrollLeft} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} />
         </div>
       </div>
 
@@ -512,6 +624,42 @@ export default function ArrangementView() {
         ref={playheadRef}
         style={{ position: 'absolute', top: 30 + RULER_H, bottom: 0, width: 1, background: '#ef4444', pointerEvents: 'none', zIndex: 10 }}
       />
+
+      {/* Time signature popover */}
+      {tsPopover && createPortal(
+        <div ref={tsPopoverRef} style={{
+          position: 'fixed', top: tsPopover.y - 110, left: tsPopover.x,
+          background: '#1e1e1e', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '10px 12px', zIndex: 1000,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.7)', display: 'flex',
+          flexDirection: 'column', gap: 8, minWidth: 140,
+        }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.06em' }}>TIME SIGNATURE</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="number" min={1} max={16} value={tsDraftNum}
+              onChange={e => setTsDraftNum(Math.max(1, parseInt(e.target.value) || 4))}
+              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); setTsPopover(null) } }}
+              style={{ width: 40, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
+            />
+            <span style={{ color: 'var(--text-muted)', fontSize: 16 }}>/</span>
+            <select value={tsDraftDen} onChange={e => setTsDraftDen(parseInt(e.target.value))}
+              style={{ width: 48, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 4px', outline: 'none', cursor: 'pointer' }}>
+              {[2, 4, 8, 16].map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); setTsPopover(null) }}
+              style={{ flex: 1, background: 'var(--accent)', border: 'none', color: '#fff', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 600 }}>
+              Apply
+            </button>
+            <button onClick={() => setTsPopover(null)}
+              style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer' }}>
+              Cancel
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
