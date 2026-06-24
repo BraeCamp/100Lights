@@ -2581,8 +2581,24 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       //    its position (0–1) within that period. Hits at the same loop position
       //    across repetitions are almost certainly the same sound. This is by far
       //    the strongest clustering signal for patterned recordings.
-      const loopPeriod = detectLoopPeriod(result.hits)
+      //
+      //    Period-doubling check: detectLoopPeriod often returns the shortest IOI
+      //    that fits all intervals (e.g. 0.25s for a kick+snare pattern). At that
+      //    period every hit lands on an integer multiple → all get phase 0.0 → the
+      //    loop phase feature adds identical values to all vectors and contributes
+      //    zero discrimination. Detect this by checking phase variance; if it's
+      //    nearly zero, double the period and check again (up to 3 doublings).
+      let loopPeriod = detectLoopPeriod(result.hits)
       if (loopPeriod !== null) {
+        for (let doublings = 0; doublings < 3; doublings++) {
+          const phases = result.hits.map(h => (h.time % loopPeriod!) / loopPeriod!)
+          // Circular variance: 1 − |mean of unit vectors|. Near 0 = all phases identical.
+          const sx = phases.reduce((s, p) => s + Math.sin(2 * Math.PI * p), 0) / phases.length
+          const sy = phases.reduce((s, p) => s + Math.cos(2 * Math.PI * p), 0) / phases.length
+          const circVar = 1 - Math.sqrt(sx * sx + sy * sy)
+          if (circVar < 0.05) loopPeriod! *= 2  // all same phase → try a longer period
+          else break
+        }
         for (const h of result.hits) {
           h.loopPhase = (h.time % loopPeriod) / loopPeriod
         }
@@ -2655,10 +2671,14 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // lets k-means find two distinct groups when the data supports it; if all
       // hits truly sound the same, both centroids collapse to the same region and
       // one cluster ends up empty, which is equivalent to k=1 in practice.
+      // Divisor 4 (was 2): sqrt(n/4) is more conservative and correct for
+      // typical recordings — 16 hits of 2 types gives k=2, not k=3.
+      // Old formula (n/2) overestimated k for medium-length recordings,
+      // splitting one drum type into two sub-clusters.
       const autoK = unmatched.length < 2
         ? 1
         : Math.max(2, Math.min(remainingSlots,
-            Math.round(Math.sqrt(unmatched.length / 2))
+            Math.round(Math.sqrt(unmatched.length / 4))
           ))
       if (unmatched.length > 0) {
         const kmeansAssign = clusterHits(unmatched, autoK)
