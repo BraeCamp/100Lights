@@ -69,7 +69,7 @@ function VerticalFader({ value, onChange, onCommit }: {
 // ── Channel strip ──────────────────────────────────────────────────────────
 
 function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolean }) {
-  const { project, dispatch, engine } = useDaw()
+  const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
   const [eqLo, setEqLo]   = useState(0)
   const [eqMid, setEqMid] = useState(0)
   const [eqHi, setEqHi]   = useState(0)
@@ -81,24 +81,29 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
   const muted   = track?.mute ?? false
   const soloed  = track?.solo ?? false
   const armed   = track?.armed ?? false
-  const anySolo = project.tracks.some(t => t.solo)
-  const dimmed  = !isMaster && anySolo && !soloed
-  const color   = track?.color ?? '#3d8fef'
+  const anySolo    = project.tracks.some(t => t.solo)
+  const dimmed     = !isMaster && anySolo && !soloed
+  const isSelected = !isMaster && track?.id === selectedTrackId
+  const color      = track?.color ?? '#3d8fef'
   const typeLabel = track
     ? (track.type === 'audio' ? 'A' : track.type === 'midi' ? 'M' : 'D')
     : ''
   const panLabel = pan === 0 ? 'C' : pan < 0 ? `L${Math.round(-pan * 100)}` : `R${Math.round(pan * 100)}`
 
   return (
-    <div style={{
-      width: isMaster ? 80 : 72, flexShrink: 0,
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      gap: 4, padding: '8px 4px 6px',
-      background: isMaster ? '#202020' : '#2a2a2a',
-      borderRight: '1px solid #383838',
-      opacity: dimmed ? 0.4 : 1, transition: 'opacity 0.15s',
-      position: 'relative',
-    }}>
+    <div
+      onClick={() => { if (!isMaster && track) setSelectedTrackId(track.id) }}
+      style={{
+        width: isMaster ? 80 : 72, flexShrink: 0,
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        gap: 4, padding: '8px 4px 6px',
+        background: isSelected ? 'rgba(61,143,239,0.12)' : isMaster ? '#202020' : '#2a2a2a',
+        borderRight: '1px solid #383838',
+        outline: isSelected ? '1px solid rgba(61,143,239,0.5)' : 'none',
+        outlineOffset: '-1px',
+        opacity: dimmed ? 0.4 : 1, transition: 'background 0.1s, opacity 0.15s',
+        position: 'relative', cursor: isMaster ? 'default' : 'pointer',
+      }}>
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: color, borderRadius: '2px 2px 0 0' }} />
 
       {/* Name */}

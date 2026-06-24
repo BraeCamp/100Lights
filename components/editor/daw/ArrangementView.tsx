@@ -326,7 +326,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
 function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId } = useDaw()
   const clips = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const dragHRef = useRef<{ startY: number; startH: number } | null>(null)
@@ -400,14 +400,16 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
     }
   }
 
+  const isSelected = selectedTrackId === track.id
+
   return (
-    <div>
+    <div style={{ boxShadow: isSelected ? `inset 2px 0 0 var(--accent)` : 'none' }}>
       {/* Main track row */}
       <div style={{ display: 'flex', height: track.height, flexShrink: 0 }}>
         {/* Header — click to select track (opens Devices/Instrument panel) */}
         <div
           onClick={e => { if (!(e.target as HTMLElement).closest('button,input,select')) setSelectedTrackId(track.id) }}
-          style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer' }}
+          style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: isSelected ? 'rgba(61,143,239,0.10)' : 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s' }}
         >
           {editing ? (
             <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
@@ -442,7 +444,7 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
         <div
           data-testid="track-lane"
           data-track-type={track.type}
-          style={{ flex: 1, height: track.height, position: 'relative', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden' }}
+          style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgba(61,143,239,0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
           onDoubleClick={handleDoubleClick}
           onDragOver={e => e.preventDefault()}
           onDrop={handleDrop}
