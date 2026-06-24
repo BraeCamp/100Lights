@@ -124,11 +124,13 @@ function playPolyVoice(
 
   osc.connect(filter)
   filter.connect(env)
-  env.connect(dest)
 
-  // LFO
-  let lfo: OscillatorNode | null = null
-  let lfoGain: GainNode | null = null
+  // LFO — set up before final routing so amp target can intercept the signal path
+  let lfo: OscillatorNode | null      = null
+  let lfoGain: GainNode | null        = null
+  let dc: ConstantSourceNode | null   = null
+  let tremoloGain: GainNode | null    = null
+
   if (params.lfoEnabled) {
     lfo     = ctx.createOscillator()
     lfoGain = ctx.createGain()
@@ -137,19 +139,33 @@ function playPolyVoice(
     lfo.connect(lfoGain)
 
     if (params.lfoTarget === 'pitch') {
-      lfoGain.gain.value = params.lfoDepth * 100  // cents
+      lfoGain.gain.value = params.lfoDepth * 200  // ±200 cents at full depth (1.67 semitones)
       lfoGain.connect(osc.detune)
     } else if (params.lfoTarget === 'filter') {
       lfoGain.gain.value = params.lfoDepth * params.filterCutoff * 0.8
       lfoGain.connect(filter.frequency)
     } else {
-      lfoGain.gain.value = params.lfoDepth * 0.5
-      lfoGain.connect(env.gain)
+      // Amplitude tremolo: route through a tremoloGain driven by (DC=1 + LFO*depth)
+      // so gain is always in [1 - depth*0.7, 1 + depth*0.7] — never goes negative
+      tremoloGain = ctx.createGain()
+      tremoloGain.gain.value = 0  // fully overridden by dc + lfo connections below
+      dc = ctx.createConstantSource()
+      dc.offset.value    = 1.0
+      lfoGain.gain.value = params.lfoDepth * 0.7
+      dc.connect(tremoloGain.gain)
+      lfoGain.connect(tremoloGain.gain)
+      env.connect(tremoloGain)
+      dc.start(when)
+      dc.stop(endAt + 0.01)
     }
 
     lfo.start(when)
     lfo.stop(endAt + 0.01)
   }
+
+  // Final output routing: either straight env→dest, or env→tremoloGain→dest
+  const outputNode: AudioNode = tremoloGain ?? env
+  outputNode.connect(dest)
 
   osc.start(when)
   osc.stop(endAt + 0.01)
@@ -157,6 +173,7 @@ function playPolyVoice(
   osc.onended = () => {
     osc.disconnect(); filter.disconnect(); env.disconnect()
     lfo?.disconnect(); lfoGain?.disconnect()
+    dc?.disconnect(); tremoloGain?.disconnect()
   }
 }
 
