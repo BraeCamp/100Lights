@@ -639,84 +639,80 @@ export async function analyzeBeats(
   // shifts abruptly, even when overall volume stays constant (boom→tss, vowel
   // transitions, pitch jumps). Energy-only onset detection misses these.
   //
-  // The threshold and gate are BOTH proportional to this recording's own signal:
-  //   Gate   = 20% of peak energy across all frames → ignores background noise
-  //            and quiet breath without assuming any absolute level, so it works
-  //            the same for a soft singer as for a loud beatboxer.
-  //   Thresh = 85th percentile of tilt-change values observed in loud frames
-  //            → calibrates to the user's actual vocal variety; only the top
-  //            15% of tonal shifts register as boundaries, so gradual drift
-  //            inside one sustained sound is filtered out while hard transitions
-  //            (which are always in the top percentile) always fire.
-  //   Signal = (delta / thresh) * energy → novelty strength is proportional to
-  //            how far the change exceeds the threshold; a 2× tonal shift
-  //            produces a 2× stronger onset signal, maintaining relative rank
-  //            for the peak-picker in Step 3.
-  {
-    // 1. Loud gate: 20% of peak RMS energy across the recording
-    let peakEnergy = 0
-    for (let i = 0; i < nFrames; i++) {
-      if (energy[i] > peakEnergy) peakEnergy = energy[i]
-    }
-    const loudGate = peakEnergy * 0.20
+  // tiltRatio is hoisted to outer scope so Step 3b (tail suppression) can also
+  // use it as a spectral override: if the tone changed dramatically between two
+  // candidate onsets, they are different sounds even if energy didn't fully decay.
+  //
+  // Gate   = 20% of peak energy → relative, works for any voice volume.
+  // Thresh = 85th percentile of loud-frame tilt deltas → self-calibrates to
+  //          this recording's tonal variety; only top 15% of shifts register.
+  // Signal = (delta / thresh) * energy → strength proportional to how far the
+  //          change exceeds the threshold.
 
-    // 2. High-frequency energy per frame via 1-tap finite-difference high-pass
-    const hiFrameE = new Float32Array(nFrames)
-    for (let i = 0; i < nFrames; i++) {
-      const base = i * hopSize
-      let hiE = 0
-      let prevS = raw[Math.max(0, base - 1)]
-      for (let j = 0; j < frameSize; j++) {
-        const s = raw[base + j] ?? 0
-        const hf = (s - prevS) * 0.5  // 1-tap high-pass via finite difference
-        hiE += hf * hf
-        prevS = s
-      }
-      hiFrameE[i] = Math.sqrt(hiE / frameSize)
-    }
+  // Loud gate: 20% of peak RMS energy across the recording
+  let _noveltyPeakEnergy = 0
+  for (let i = 0; i < nFrames; i++) {
+    if (energy[i] > _noveltyPeakEnergy) _noveltyPeakEnergy = energy[i]
+  }
+  const noveltyLoudGate = _noveltyPeakEnergy * 0.20
 
-    // 3. Spectral tilt ratio: hi-freq share of total energy per frame
-    const tiltRatio = new Float32Array(nFrames)
-    for (let i = 0; i < nFrames; i++) {
-      const totE = energy[i] + hiFrameE[i]
-      tiltRatio[i] = totE > 0 ? hiFrameE[i] / totE : 0
+  // High-frequency energy per frame via 1-tap finite-difference high-pass
+  const hiFrameE = new Float32Array(nFrames)
+  for (let i = 0; i < nFrames; i++) {
+    const base = i * hopSize
+    let hiE = 0
+    let prevS = raw[Math.max(0, base - 1)]
+    for (let j = 0; j < frameSize; j++) {
+      const s = raw[base + j] ?? 0
+      const hf = (s - prevS) * 0.5  // 1-tap high-pass via finite difference
+      hiE += hf * hf
+      prevS = s
     }
+    hiFrameE[i] = Math.sqrt(hiE / frameSize)
+  }
 
-    // 4. Collect tilt-change magnitudes from loud frames to compute the
-    //    adaptive threshold as the 85th percentile of this recording's own
-    //    tonal variability — no hardcoded constants needed.
-    const loudDeltas: number[] = []
-    for (let i = 1; i < nFrames; i++) {
-      if (energy[i] >= loudGate) {
-        loudDeltas.push(Math.abs(tiltRatio[i] - tiltRatio[i - 1]))
-      }
+  // Spectral tilt ratio: hi-freq share of total energy per frame
+  // Hoisted so Step 3b can also read it for the spectral-change override.
+  const tiltRatio = new Float32Array(nFrames)
+  for (let i = 0; i < nFrames; i++) {
+    const totE = energy[i] + hiFrameE[i]
+    tiltRatio[i] = totE > 0 ? hiFrameE[i] / totE : 0
+  }
+
+  // Adaptive threshold = 85th percentile of tilt deltas in loud frames
+  const _loudDeltas: number[] = []
+  for (let i = 1; i < nFrames; i++) {
+    if (energy[i] >= noveltyLoudGate) {
+      _loudDeltas.push(Math.abs(tiltRatio[i] - tiltRatio[i - 1]))
     }
+  }
+  let noveltyAdaptThresh = 0.15  // fallback for recordings with very few loud frames
+  if (_loudDeltas.length >= 5) {
+    const sorted = [..._loudDeltas].sort((a, b) => a - b)
+    const p85 = sorted[Math.floor(sorted.length * 0.85)] ?? 0.15
+    noveltyAdaptThresh = Math.max(0.04, p85)
+  }
 
-    let adaptiveThresh = 0.15  // safe fallback for recordings with very few loud frames
-    if (loudDeltas.length >= 5) {
-      const sorted = [...loudDeltas].sort((a, b) => a - b)
-      const p85 = sorted[Math.floor(sorted.length * 0.85)] ?? 0.15
-      adaptiveThresh = Math.max(0.04, p85)  // floor prevents threshold from collapsing near zero
-    }
-
-    // 5. Inject novelty peaks: strength is proportional to how much the
-    //    tilt change exceeds the adaptive threshold, scaled by frame energy
-    //    so louder tonal shifts weigh more than quieter ones of equal ratio.
-    for (let i = 2; i < nFrames; i++) {
-      if (energy[i] < loudGate) continue
-      const delta = Math.abs(tiltRatio[i] - tiltRatio[i - 1])
-      if (delta > adaptiveThresh) {
-        const novelty = (delta / adaptiveThresh) * energy[i] * 3.0
-        onset[i] = Math.max(onset[i], novelty)
-      }
+  // Inject novelty peaks into onset array (Step 3 peak-picker handles both)
+  for (let i = 2; i < nFrames; i++) {
+    if (energy[i] < noveltyLoudGate) continue
+    const delta = Math.abs(tiltRatio[i] - tiltRatio[i - 1])
+    if (delta > noveltyAdaptThresh) {
+      onset[i] = Math.max(onset[i], (delta / noveltyAdaptThresh) * energy[i] * 3.0)
     }
   }
 
   // ── Step 3: Peak picking with adaptive threshold ──────────────────────────
   // Threshold = 80th-percentile of local onset window * 1.5 + noise floor.
   // dynamicFloor replaces the old hardcoded 0.003 minimum.
+  //
+  // minGapFrames reduced from 90ms to 40ms: fast beatbox patterns (boom+tss)
+  // can be as close as 40-60ms apart; 90ms was silently dropping the second sound
+  // before it ever reached type classification or clustering. Per-type dedup in
+  // Step 7 enforces sound-class-specific minimum gaps, so the global gate here
+  // only needs to prevent double-triggering of a single transient (< 20ms).
   const smoothHalf = Math.max(1, Math.floor((0.35 * sr) / hopSize))
-  const minGapFrames = Math.max(2, Math.floor((0.09 * sr) / hopSize))
+  const minGapFrames = Math.max(2, Math.floor((0.04 * sr) / hopSize))  // was 0.09 (87ms)
   const pickedSamples: number[] = []
 
   for (let i = 2; i < nFrames - 1; i++) {
@@ -760,8 +756,17 @@ export async function analyzeBeats(
     for (let f = prevFrame + 1; f < currFrame; f++) {
       if (energy[f] < decayThreshold) { decayed = true; break }
     }
+    // Spectral-tilt override: if the tonal character shifted substantially between
+    // the two candidates, they are different sounds regardless of whether energy
+    // decayed. A boom→tss transition moves tiltRatio by 0.5+ even when the boom
+    // tail is still audible. Threshold: 2× the recording's own adaptive threshold
+    // so gradual vowel drift doesn't trigger this but hard tonal cuts always do.
+    if (!decayed) {
+      const tiltShift = Math.abs(tiltRatio[currFrame] - tiltRatio[prevFrame])
+      if (tiltShift > noveltyAdaptThresh * 2) decayed = true
+    }
     if (decayed) filteredSamples.push(currSample)
-    // else: energy never dipped — second pick is the same sound's tail, drop it
+    // else: energy never dipped AND tone didn't change → same sound's tail, drop it
   }
 
   if (filteredSamples.length === 0) {

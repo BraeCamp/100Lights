@@ -2726,6 +2726,12 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       console.log('loop period:', loopPeriod ? `${loopPeriod.toFixed(3)}s` : 'none detected')
       const tonalHits = result.hits.filter(h => (h.spectral?.pitchConfidence ?? 0) > 0.18)
       console.log('tonal hits (pitchConf > 0.18):', tonalHits.length, '/', result.hits.length)
+
+      // Per-hit type distribution — shows whether boom→'kick' and tss→'hihat'
+      const typeCount: Record<string, number> = {}
+      for (const h of result.hits) typeCount[h.type] = (typeCount[h.type] ?? 0) + 1
+      console.log('types:', Object.entries(typeCount).sort().map(([t,n]) => `${t}:${n}`).join(' '))
+
       if (numCorrSlots > 0) {
         console.log('corrections loaded:', savedCorrections.length, `→ ${numCorrSlots} unique sounds`)
         phase1MatchCounts.forEach((n, i) => console.log(`  slot ${CLUSTER_LETTERS[i]}: ${n} hits matched`))
@@ -2737,6 +2743,34 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       const clusterSummary: Record<string, number> = {}
       for (const h of taggedHits) clusterSummary[h.clusterId ?? 'A'] = (clusterSummary[h.clusterId ?? 'A'] ?? 0) + 1
       console.log('cluster sizes:', Object.entries(clusterSummary).sort().map(([k,v]) => `${k}:${v}`).join(' '))
+
+      // Per-cluster spectral fingerprint — shows what the algorithm actually measured
+      // for each group. If boom+tss are in the same cluster, check if sub/hi differ.
+      const byClusterDebug = new Map<string, BeatHit[]>()
+      for (const h of taggedHits) {
+        const key = h.clusterId ?? 'A'
+        if (!byClusterDebug.has(key)) byClusterDebug.set(key, [])
+        byClusterDebug.get(key)!.push(h)
+      }
+      for (const [letter, clHits] of [...byClusterDebug.entries()].sort()) {
+        const sample = clHits[0]?.spectral
+        if (!sample) continue
+        console.log(
+          `  cluster ${letter} (${clHits.length} hits): ` +
+          `sub=${sample.sub.toFixed(2)} lo=${sample.lowMid.toFixed(2)} ` +
+          `mid=${sample.mid.toFixed(2)} hiMid=${sample.hiMid.toFixed(2)} hi=${sample.hi.toFixed(2)} ` +
+          `centroid=${(sample.centroid ?? 0).toFixed(0)}Hz`
+        )
+      }
+
+      // Inter-hit timing — if boom+tss are close, check if the 40ms minGap is still a problem
+      if (result.hits.length >= 2) {
+        const sorted = [...result.hits].sort((a, b) => a.time - b.time)
+        const gaps = sorted.slice(1).map((h, i) => h.time - sorted[i].time)
+        const minGap = Math.min(...gaps)
+        const maxGap = Math.max(...gaps)
+        console.log(`inter-hit gaps: min=${(minGap * 1000).toFixed(0)}ms max=${(maxGap * 1000).toFixed(0)}ms`)
+      }
       console.groupEnd()
 
       // Pre-compute natural clip duration for each hit (gap to next in same cluster)
