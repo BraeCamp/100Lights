@@ -18,6 +18,7 @@ interface Pad {
   key: string              // keyboard shortcut (lowercase), '' = unassigned
   customSoundId?: string   // Library entry ID — replaces synthesis when set
   customSoundName?: string // Display name for the assigned sound
+  samplePitch?: number     // Manual semitone offset for custom sample playback (default 0)
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -67,12 +68,13 @@ const C = {
 
 // ── Pad context-menu popover ───────────────────────────────────────────────────
 
-function PadPopover({ pad, anchor, onRemap, onAssignSound, onClearSound, onClose }: {
+function PadPopover({ pad, anchor, onRemap, onAssignSound, onClearSound, onPitchChange, onClose }: {
   pad: Pad
   anchor: { x: number; y: number }
   onRemap: () => void
   onAssignSound: (entry: LibraryEntry) => void
   onClearSound: () => void
+  onPitchChange: (semitones: number) => void
   onClose: () => void
 }) {
   const [entries,     setEntries]     = useState<LibraryEntry[]>([])
@@ -146,6 +148,21 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onClearSound, onClose
         <div style={{ fontSize: 11, color: pad.customSoundId ? C.accent : C.muted, marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {pad.customSoundId ? `✓ ${pad.customSoundName ?? 'Custom sound'}` : 'Instrument default'}
         </div>
+
+        {/* Sample pitch control — only shown when a sound is assigned */}
+        {pad.customSoundId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 10, color: C.muted, flexShrink: 0 }}>Pitch</span>
+            <button onClick={() => onPitchChange((pad.samplePitch ?? 0) - 1)} style={{ width: 22, height: 22, borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>−</button>
+            <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace', minWidth: 36, textAlign: 'center', color: (pad.samplePitch ?? 0) !== 0 ? C.accent : C.muted }}>
+              {(pad.samplePitch ?? 0) > 0 ? `+${pad.samplePitch}` : (pad.samplePitch ?? 0) === 0 ? '0' : String(pad.samplePitch)} st
+            </span>
+            <button onClick={() => onPitchChange((pad.samplePitch ?? 0) + 1)} style={{ width: 22, height: 22, borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>+</button>
+            {(pad.samplePitch ?? 0) !== 0 && (
+              <button onClick={() => onPitchChange(0)} style={{ fontSize: 9, padding: '2px 5px', borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}>Reset</button>
+            )}
+          </div>
+        )}
 
         {/* Library toggle */}
         <button
@@ -276,7 +293,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       if (buf) {
         const src = engine.ctx.createBufferSource()
         src.buffer = buf
-        src.playbackRate.value = Math.pow(2, (pitch - 60) / 12)
+        src.playbackRate.value = Math.pow(2, (pad.samplePitch ?? 0) / 12)
         src.connect(engine.masterGain)
         src.start(engine.ctx.currentTime)
       }
@@ -456,7 +473,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               {pads.map(pad => {
                 const isActive    = pressing.has(pad.pitch)
                 const isRemapping = remapId === pad.id
-                const label       = isDrum ? pad.drumLabel : pitchToName(pad.pitch)
+                const label       = pad.drumLabel
                 const hasCustom   = !!pad.customSoundId
                 return (
                   <button
@@ -505,7 +522,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               <button
                 onClick={() => {
                   const lastPitch = pads.length > 0 ? pads[pads.length - 1].pitch + 1 : 60
-                  setPads(prev => [...prev, { id: crypto.randomUUID(), pitch: lastPitch, drumLabel: pitchToName(lastPitch), key: '' }])
+                  setPads(prev => [...prev, { id: crypto.randomUUID(), pitch: lastPitch, drumLabel: `Pad ${prev.length + 1}`, key: '' }])
                 }}
                 style={{ fontSize: 11, padding: '4px 12px', borderRadius: 4, border: `1px dashed ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}
               >+ Add Pad</button>
@@ -595,10 +612,16 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           onAssignSound={entry => setPads(prev => prev.map(p =>
             p.id === contextMenu.pad.id ? { ...p, customSoundId: entry.id, customSoundName: entry.name } : p
           ))}
-          onClearSound={() => {
+          onClearSound={() => setPads(prev => prev.map(p =>
+            p.id === contextMenu.pad.id ? { ...p, customSoundId: undefined, customSoundName: undefined, samplePitch: 0 } : p
+          ))}
+          onPitchChange={st => {
+            const clamped = Math.max(-24, Math.min(24, st))
             setPads(prev => prev.map(p =>
-              p.id === contextMenu.pad.id ? { ...p, customSoundId: undefined, customSoundName: undefined } : p
+              p.id === contextMenu.pad.id ? { ...p, samplePitch: clamped } : p
             ))
+            // Update the live contextMenu pad so the popover re-renders with the new value
+            setContextMenu(prev => prev ? { ...prev, pad: { ...prev.pad, samplePitch: clamped } } : null)
           }}
           onClose={() => setContextMenu(null)}
         />
