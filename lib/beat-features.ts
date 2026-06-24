@@ -453,15 +453,32 @@ export function computeHitFeatures(
   prevSpectrum:    Float32Array | null = null,
   nextOnsetSample: number | null = null,  // distance cap: prevents feature bleed from adjacent hits
 ): HitFeaturesResult {
-  // Begin the window 5 ms before onset to capture the leading transient edge
-  const startSample = Math.max(0, sampleIdx - Math.floor(sr * 0.005))
-  // Cap temporal analysis at the next onset so features don't capture the following sound
-  const maxSamples = nextOnsetSample != null ? nextOnsetSample - startSample : undefined
+  // Find the loudest sample within 20ms of the rough onset so we can CENTER the
+  // FFT window there. A 2048-sample (~46ms) Hann window placed at the onset gives
+  // the attack only ~10% Hann weight (left edge). For a 10ms sound like "tss" that
+  // means 90% of the FFT energy is silence — making its centroid appear near 1kHz
+  // instead of 8kHz, indistinguishable from a "boom". Centering on the amplitude
+  // peak gives it full Hann weight (1.0 at center), so the spectrum reflects
+  // the actual sound content regardless of how short the sound is.
+  const lookAheadSmp = Math.floor(sr * 0.020)
+  const lookBackSmp  = Math.floor(sr * 0.005)
+  let peakSmp = sampleIdx, peakAmp = 0
+  for (let s = Math.max(0, sampleIdx - lookBackSmp);
+       s < Math.min(raw.length - 1, sampleIdx + lookAheadSmp); s++) {
+    const abs = Math.abs(raw[s])
+    if (abs > peakAmp) { peakAmp = abs; peakSmp = s }
+  }
+  // Center FFT on the amplitude peak (peak sits at center of Hann window = maximum weight)
+  const specStart = Math.max(0, peakSmp - Math.floor(FFT_N / 2))
 
-  const spectrum = getSpectrum(raw, startSample)
+  // Temporal features (ADSR) still reference the original onset for correct timing
+  const tempStart  = Math.max(0, sampleIdx - lookBackSmp)
+  const maxSamples = nextOnsetSample != null ? nextOnsetSample - tempStart : undefined
+
+  const spectrum = getSpectrum(raw, specStart)
   const sf = spectralFeatures(spectrum, sr)
-  const tf = temporalFeatures(raw, startSample, sr, maxSamples)
-  const pf = pitchFeatures(raw, startSample, sr, spectrum)
+  const tf = temporalFeatures(raw, tempStart, sr, maxSamples)
+  const pf = pitchFeatures(raw, specStart, sr, spectrum)
   const flux = spectralFlux(spectrum, prevSpectrum)
   const highSustained = isHighSustained(raw, sampleIdx, sr)
 
