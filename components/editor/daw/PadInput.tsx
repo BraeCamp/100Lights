@@ -18,16 +18,20 @@ interface Pad {
   key: string
   customSoundId?: string
   customSoundName?: string
-  samplePitch?: number    // semitone offset (default 0)
-  sampleVolume?: number   // gain multiplier 0–2 (default 1)
-  sampleSustain?: number  // release fade seconds after key-up (default 0)
-  sampleLoop?: boolean    // loop while key held
-  sampleReverse?: boolean // play buffer reversed
+  samplePitch?: number         // semitone offset (default 0)
+  sampleVolume?: number        // gain 0–2 (default 1)
+  sampleSustain?: number       // release seconds after key-up (default 0)
+  sampleLoop?: boolean         // loop while key held
+  sampleReverse?: boolean      // play reversed
+  sampleVibratoDepth?: number  // 0–1, LFO depth on playbackRate (default 0 = off)
+  sampleVibratoRate?: number   // LFO frequency in Hz (default 5)
 }
 
 interface ActiveSource {
   src: AudioBufferSourceNode
   gain: GainNode
+  lfo?: OscillatorNode
+  lfoGain?: GainNode
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -72,40 +76,79 @@ const C = {
   accent: '#3d8fef',
   red:    '#ef4444',
   green:  '#22c55e',
+  yellow: '#eab308',
   text:   '#e8e8e8',
   muted:  '#7c7c7c',
 } as const
 
-// ── Audio helpers ─────────────────────────────────────────────────────────────
+// ── Audio: pitch shift WITHOUT speed change ───────────────────────────────────
+// Uses OfflineAudioContext to render at the new rate (changes both pitch+speed),
+// then linearly resamples back to original duration (restores speed).
+
+async function pitchShiftBuffer(
+  ctx: AudioContext,
+  buffer: AudioBuffer,
+  semitones: number,
+): Promise<AudioBuffer> {
+  if (semitones === 0) return buffer
+  const rate      = Math.pow(2, semitones / 12)
+  const srcLen    = buffer.length
+  const sr        = buffer.sampleRate
+  const pitchedLen = Math.max(1, Math.round(srcLen / rate))
+
+  // Step 1: render at rate (changes duration)
+  const offCtx = new OfflineAudioContext(buffer.numberOfChannels, pitchedLen, sr)
+  const offSrc = offCtx.createBufferSource()
+  offSrc.buffer = buffer
+  offSrc.playbackRate.value = rate
+  offSrc.connect(offCtx.destination)
+  offSrc.start(0)
+  const pitched = await offCtx.startRendering()
+
+  // Step 2: linear-interpolation resample back to original length
+  const final = ctx.createBuffer(buffer.numberOfChannels, srcLen, sr)
+  const sl = pitched.length
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const s = pitched.getChannelData(c)
+    const d = final.getChannelData(c)
+    for (let i = 0; i < srcLen; i++) {
+      const pos = (i / srcLen) * sl
+      const idx = Math.floor(pos)
+      const frac = pos - idx
+      d[i] = idx + 1 < sl ? s[idx] * (1 - frac) + s[idx + 1] * frac
+           : idx < sl      ? s[idx] : 0
+    }
+  }
+  return final
+}
 
 function reverseBuffer(ctx: AudioContext, buf: AudioBuffer): AudioBuffer {
   const rev = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate)
-  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
-    const src = buf.getChannelData(ch)
-    const dst = rev.getChannelData(ch)
-    for (let i = 0; i < src.length; i++) dst[i] = src[src.length - 1 - i]
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const s = buf.getChannelData(c), d = rev.getChannelData(c)
+    for (let i = 0; i < s.length; i++) d[i] = s[s.length - 1 - i]
   }
   return rev
 }
 
-// ── Slider for popover ────────────────────────────────────────────────────────
+// ── Slider component ──────────────────────────────────────────────────────────
 
-function PopSlider({ label, value, min, max, step, format, onChange }: {
+function PopSlider({ label, value, min, max, step, format, onChange, accent }: {
   label: string; value: number; min: number; max: number; step: number
-  format: (v: number) => string; onChange: (v: number) => void
+  format: (v: number) => string; onChange: (v: number) => void; accent?: string
 }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
         <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
-        <span style={{ fontSize: 10, color: C.text, fontFamily: 'monospace' }}>{format(value)}</span>
+        <span style={{ fontSize: 10, color: accent || C.text, fontFamily: 'monospace' }}>{format(value)}</span>
       </div>
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
         onMouseDown={e => e.stopPropagation()}
         onClick={e => e.stopPropagation()}
-        style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
+        style={{ width: '100%', accentColor: accent || C.accent, cursor: 'pointer', display: 'block' }}
       />
     </div>
   )
@@ -131,6 +174,7 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
     libraryGetAll().then(e => { setEntries(e); setLoading(false) })
   }, [])
 
+  // Click-outside closes the popover (but NOT the overlay — uses data-pad-overlay check in parent)
   useEffect(() => {
     function onDocDown(e: MouseEvent) {
       if (!ref.current?.contains(e.target as Node)) onClose()
@@ -139,27 +183,29 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
     return () => document.removeEventListener('mousedown', onDocDown)
   }, [onClose])
 
-  const filtered = entries.filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered  = entries.filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
   const hasCustom = !!pad.customSoundId
   const left = Math.min(anchor.x, (typeof window !== 'undefined' ? window.innerWidth  : 800) - 270)
-  const top  = Math.min(anchor.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 520)
+  const top  = Math.min(anchor.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 560)
 
-  const toggleStyle = (on: boolean) => ({
+  const toggleStyle = (on: boolean, col = C.accent) => ({
     fontSize: 11, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontWeight: on ? 700 : 400,
-    border: `1px solid ${on ? C.accent : C.border}`,
-    background: on ? `${C.accent}22` : 'transparent',
-    color: on ? C.accent : C.muted,
+    border: `1px solid ${on ? col : C.border}`,
+    background: on ? `${col}22` : 'transparent',
+    color: on ? col : C.muted,
   } as const)
 
   return createPortal(
+    // data-pad-overlay prevents the main container's click-outside handler from deactivating
     <div
       ref={ref}
+      data-pad-overlay="true"
       onMouseDown={e => e.stopPropagation()}
       style={{
         position: 'fixed', left, top, width: 260, zIndex: 3000,
         background: C.bgCard, border: `1px solid ${C.accent}`,
         borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
-        maxHeight: '85vh', overflowY: 'auto',
+        maxHeight: '88vh', overflowY: 'auto',
       }}
     >
       {/* Header */}
@@ -168,7 +214,7 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
         <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
       </div>
 
-      {/* Key */}
+      {/* KEY */}
       <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
         <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Key</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
@@ -178,21 +224,20 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
             background: C.bgDark, border: `1px solid ${C.border}`, borderRadius: 4,
             color: pad.key ? C.text : C.muted,
           }}>{pad.key ? pad.key.toUpperCase() : '–'}</span>
-          <button onClick={() => { onRemap(); onClose() }} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer' }}>
-            {pad.key ? 'Remap Key' : 'Assign Key'}
-          </button>
+          <button
+            onClick={() => { onRemap(); onClose() }}
+            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer' }}
+          >{pad.key ? 'Remap Key' : 'Assign Key'}</button>
         </div>
       </div>
 
-      {/* Sound */}
-      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
+      {/* SOUND */}
+      <div style={{ padding: '10px 12px', borderBottom: hasCustom ? `1px solid ${C.border}` : 'none' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sound</span>
           {hasCustom && (
-            <button
-              onClick={() => onPadChange({ customSoundId: undefined, customSoundName: undefined, samplePitch: 0 })}
-              style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}
-            >Clear</button>
+            <button onClick={() => onPadChange({ customSoundId: undefined, customSoundName: undefined, samplePitch: 0 })}
+              style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}>Clear</button>
           )}
         </div>
         <div style={{ fontSize: 11, color: hasCustom ? C.accent : C.muted, marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -202,6 +247,7 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
           onClick={() => setShowLibrary(v => !v)}
           style={{ width: '100%', fontSize: 11, padding: '5px 0', borderRadius: 4, border: `1px solid ${C.accent}`, background: showLibrary ? `${C.accent}22` : 'transparent', color: C.accent, cursor: 'pointer', fontWeight: 600 }}
         >{showLibrary ? 'Hide Library ▴' : 'Pick from Library ▾'}</button>
+
         {showLibrary && (
           <div style={{ marginTop: 8 }}>
             <input
@@ -214,10 +260,10 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
               <div style={{ fontSize: 11, color: C.muted, padding: '8px 4px' }}>Loading…</div>
             ) : filtered.length === 0 ? (
               <div style={{ fontSize: 11, color: C.muted, padding: '8px 4px' }}>
-                {entries.length === 0 ? 'No sounds in library — add some via the Sound Library panel' : 'No matches'}
+                {entries.length === 0 ? 'No sounds in library — import one first' : 'No matches'}
               </div>
             ) : (
-              <div style={{ maxHeight: 140, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <div style={{ maxHeight: 130, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {filtered.map(entry => (
                   <button
                     key={entry.id}
@@ -237,7 +283,7 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
         )}
       </div>
 
-      {/* Live performance controls — only visible when a custom sound is assigned */}
+      {/* PERFORMANCE — shown when a custom sound is assigned */}
       {hasCustom && (
         <div style={{ padding: '10px 12px' }}>
           <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 10 }}>Performance</span>
@@ -247,13 +293,16 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
               <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Pitch</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <button onClick={() => onPadChange({ samplePitch: Math.max(-24, (pad.samplePitch ?? 0) - 1) })} style={{ width: 18, height: 18, borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>−</button>
+                <button onClick={() => onPadChange({ samplePitch: Math.max(-24, (pad.samplePitch ?? 0) - 1) })}
+                  style={{ width: 18, height: 18, borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>−</button>
                 <span style={{ fontSize: 10, fontFamily: 'monospace', minWidth: 38, textAlign: 'center', color: (pad.samplePitch ?? 0) !== 0 ? C.accent : C.muted }}>
                   {(pad.samplePitch ?? 0) > 0 ? `+${pad.samplePitch}st` : `${pad.samplePitch ?? 0}st`}
                 </span>
-                <button onClick={() => onPadChange({ samplePitch: Math.min(24, (pad.samplePitch ?? 0) + 1) })} style={{ width: 18, height: 18, borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>+</button>
+                <button onClick={() => onPadChange({ samplePitch: Math.min(24, (pad.samplePitch ?? 0) + 1) })}
+                  style={{ width: 18, height: 18, borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>+</button>
                 {(pad.samplePitch ?? 0) !== 0 && (
-                  <button onClick={() => onPadChange({ samplePitch: 0 })} style={{ fontSize: 9, padding: '1px 4px', borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}>0</button>
+                  <button onClick={() => onPadChange({ samplePitch: 0 })}
+                    style={{ fontSize: 9, padding: '1px 4px', borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}>0</button>
                 )}
               </div>
             </div>
@@ -263,6 +312,9 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
               onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
               style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
             />
+            <div style={{ fontSize: 9, color: '#444', marginTop: 2 }}>
+              Pitch shift preserves playback speed
+            </div>
           </div>
 
           {/* Volume */}
@@ -279,18 +331,36 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
             label="Sustain"
             value={pad.sampleSustain ?? 0}
             min={0} max={4} step={0.05}
-            format={v => v === 0 ? 'Off (chop)' : `${v.toFixed(2)}s release`}
+            format={v => v === 0 ? 'Off (chop)' : `${v.toFixed(2)}s`}
             onChange={v => onPadChange({ sampleSustain: v })}
           />
 
-          {/* Loop + Reverse toggles */}
-          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-            <button onClick={() => onPadChange({ sampleLoop: !pad.sampleLoop })} style={toggleStyle(!!pad.sampleLoop)}>
-              ↻ Loop
-            </button>
-            <button onClick={() => onPadChange({ sampleReverse: !pad.sampleReverse })} style={toggleStyle(!!pad.sampleReverse)}>
-              ◁ Reverse
-            </button>
+          {/* Vibrato depth */}
+          <PopSlider
+            label="Vibrato"
+            value={pad.sampleVibratoDepth ?? 0}
+            min={0} max={1} step={0.01}
+            format={v => v === 0 ? 'Off' : `${Math.round(v * 100)}%`}
+            onChange={v => onPadChange({ sampleVibratoDepth: v })}
+            accent={C.yellow}
+          />
+
+          {/* Vibrato rate — only when depth > 0 */}
+          {(pad.sampleVibratoDepth ?? 0) > 0 && (
+            <PopSlider
+              label="Vibrato Rate"
+              value={pad.sampleVibratoRate ?? 5}
+              min={0.5} max={12} step={0.5}
+              format={v => `${v.toFixed(1)} Hz`}
+              onChange={v => onPadChange({ sampleVibratoRate: v })}
+              accent={C.yellow}
+            />
+          )}
+
+          {/* Playback toggles */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+            <button onClick={() => onPadChange({ sampleLoop: !pad.sampleLoop })} style={toggleStyle(!!pad.sampleLoop)}>↻ Loop</button>
+            <button onClick={() => onPadChange({ sampleReverse: !pad.sampleReverse })} style={toggleStyle(!!pad.sampleReverse)}>◁ Reverse</button>
           </div>
         </div>
       )}
@@ -304,31 +374,39 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
   const { project, dispatch, engine } = useDaw()
 
-  const [tab,         setTab]         = useState<'pads' | 'keyboard'>('pads')
-  const [pads,        setPads]        = useState<Pad[]>(DEFAULT_PADS)
-  const [octave,      setOctave]      = useState(4)
-  const [pressing,    setPressing]    = useState<Set<number>>(new Set())
-  const [remapId,     setRemapId]     = useState<string | null>(null)
-  const [active,      setActive]      = useState(false)
-  const [contextMenu, setContextMenu] = useState<{ pad: Pad; x: number; y: number } | null>(null)
+  const [tab,          setTab]          = useState<'pads' | 'keyboard'>('pads')
+  const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
+  const [octave,       setOctave]       = useState(4)
+  const [pressing,     setPressing]     = useState<Set<number>>(new Set())
+  const [remapId,      setRemapId]      = useState<string | null>(null)
+  const [active,       setActive]       = useState(false)
+  const [contextMenu,  setContextMenu]  = useState<{ pad: Pad; x: number; y: number } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [winSize,      setWinSize]     = useState<{ w: number; h: number | null }>({ w: 520, h: null })
+  const [winSize,      setWinSize]      = useState<{ w: number; h: number | null }>({ w: 520, h: null })
   const [pos, setPos] = useState(() => ({
     x: typeof window !== 'undefined' ? Math.max(0, window.innerWidth  / 2 - 260) : 200,
     y: typeof window !== 'undefined' ? Math.max(0, window.innerHeight - 420)      : 200,
   }))
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const noteStarts   = useRef<Map<number, { beat: number; clipId: string }>>(new Map())
-  const activeClipId = useRef<string | null>(null)
+  const containerRef  = useRef<HTMLDivElement>(null)
+  const noteStarts    = useRef<Map<number, { beat: number; clipId: string }>>(new Map())
+  const activeClipId  = useRef<string | null>(null)
   const soundBuffers  = useRef<Map<string, AudioBuffer>>(new Map())
   const reversedBufs  = useRef<Map<string, AudioBuffer>>(new Map())
+  const pitchedBufs   = useRef<Map<string, AudioBuffer>>(new Map())  // key: soundId:semitones
   const activeSources = useRef<Map<number, ActiveSource>>(new Map())
   const dragging      = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
   const resizing      = useRef<{ dir: string; sx: number; sy: number; ow: number; oh: number } | null>(null)
-  // Keep a live ref to pads so the capture handler reads fresh data without being in its dep array
-  const padsRef = useRef(pads)
-  useEffect(() => { padsRef.current = pads }, [pads])
+
+  // Live refs so capture handler always reads fresh values without re-registering
+  const padsRef       = useRef(pads)
+  const tabRef        = useRef(tab)
+  const remapIdRef    = useRef(remapId)
+  const padKeyMapRef  = useRef<Record<string, number>>({})
+  const pianoKeyMapRef = useRef<Record<string, number>>({})
+  useEffect(() => { padsRef.current    = pads    }, [pads])
+  useEffect(() => { tabRef.current     = tab     }, [tab])
+  useEffect(() => { remapIdRef.current = remapId }, [remapId])
 
   const track      = project.tracks.find(t => t.id === trackId)
   const instrument = track?.instrument
@@ -340,8 +418,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     for (const p of pads) if (p.key) m[p.key] = p.pitch
     return m
   }, [pads])
-  const padKeyMapRef   = useRef(padKeyMap)
-  const pianoKeyMapRef = useRef(pianoKeyMap)
   useEffect(() => { padKeyMapRef.current   = padKeyMap   }, [padKeyMap])
   useEffect(() => { pianoKeyMapRef.current = pianoKeyMap }, [pianoKeyMap])
 
@@ -372,37 +448,51 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     if (pad?.customSoundId) {
       await engine.ctx.resume()
 
-      let buf = soundBuffers.current.get(pad.customSoundId)
-      if (!buf) {
+      // Fetch + decode raw buffer
+      let rawBuf = soundBuffers.current.get(pad.customSoundId)
+      if (!rawBuf) {
         try {
           const all   = await libraryGetAll()
           const entry = all.find(e => e.id === pad.customSoundId)
           if (entry) {
             const ab = await entry.audioBlob.arrayBuffer()
-            buf = await engine.ctx.decodeAudioData(ab)
-            soundBuffers.current.set(pad.customSoundId, buf)
+            rawBuf = await engine.ctx.decodeAudioData(ab)
+            soundBuffers.current.set(pad.customSoundId, rawBuf)
           }
-        } catch { /* fall through to synthesis */ }
+        } catch { /* fall through */ }
       }
 
-      if (buf) {
+      if (rawBuf) {
         // Stop any existing source for this pitch
         const existing = activeSources.current.get(pitch)
         if (existing) {
           try { existing.src.stop() } catch { /* already stopped */ }
+          existing.lfo?.stop(); existing.lfo?.disconnect()
+          existing.lfoGain?.disconnect()
           existing.gain.disconnect()
           activeSources.current.delete(pitch)
         }
 
-        // Build reversed buffer if needed
-        let playBuf = buf
+        // Choose: reverse, then pitch-shift
+        let playBuf = rawBuf
+
         if (pad.sampleReverse) {
-          let rev = reversedBufs.current.get(pad.customSoundId)
-          if (!rev) {
-            rev = reverseBuffer(engine.ctx, buf)
-            reversedBufs.current.set(pad.customSoundId, rev)
-          }
+          const rKey = pad.customSoundId
+          let rev = reversedBufs.current.get(rKey)
+          if (!rev) { rev = reverseBuffer(engine.ctx, rawBuf); reversedBufs.current.set(rKey, rev) }
           playBuf = rev
+        }
+
+        // Pitch shift (preserves duration, uses offline rendering + resample)
+        const semitones = pad.samplePitch ?? 0
+        if (semitones !== 0) {
+          const pKey = `${pad.customSoundId}${pad.sampleReverse ? 'r' : ''}:${semitones}`
+          let shifted = pitchedBufs.current.get(pKey)
+          if (!shifted) {
+            shifted = await pitchShiftBuffer(engine.ctx, playBuf, semitones)
+            pitchedBufs.current.set(pKey, shifted)
+          }
+          playBuf = shifted
         }
 
         const gainNode = engine.ctx.createGain()
@@ -411,12 +501,26 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
         const src = engine.ctx.createBufferSource()
         src.buffer = playBuf
-        src.playbackRate.value = Math.pow(2, (pad.samplePitch ?? 0) / 12)
+        src.playbackRate.value = 1.0  // pitch is already baked in
         src.loop = !!pad.sampleLoop
         src.connect(gainNode)
-        src.start(engine.ctx.currentTime)
 
-        activeSources.current.set(pitch, { src, gain: gainNode })
+        // Vibrato LFO on playbackRate
+        let lfo: OscillatorNode | undefined
+        let lfoGain: GainNode | undefined
+        const vDepth = pad.sampleVibratoDepth ?? 0
+        if (vDepth > 0) {
+          lfo     = engine.ctx.createOscillator()
+          lfoGain = engine.ctx.createGain()
+          lfo.frequency.value  = pad.sampleVibratoRate ?? 5
+          lfoGain.gain.value   = vDepth * 0.06  // ±6% rate ≈ ±100 cents at full depth
+          lfo.connect(lfoGain)
+          lfoGain.connect(src.playbackRate)
+          lfo.start(engine.ctx.currentTime)
+        }
+
+        src.start(engine.ctx.currentTime)
+        activeSources.current.set(pitch, { src, gain: gainNode, lfo, lfoGain })
       }
     } else if (instrument) {
       await engine.ctx.resume()
@@ -431,26 +535,30 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   }, [instrument, engine, getOrCreateClip])
 
   const endNote = useCallback((pitch: number) => {
-    // Stop custom sample source
     const active = activeSources.current.get(pitch)
     if (active) {
       const pad     = padsRef.current.find(p => p.pitch === pitch)
       const sustain = pad?.sampleSustain ?? 0
+
+      // Stop vibrato immediately
+      try { active.lfo?.stop() } catch { /* */ }
+      active.lfo?.disconnect()
+      active.lfoGain?.disconnect()
+
       if (sustain > 0) {
         const now = engine.ctx.currentTime
         active.gain.gain.setValueAtTime(active.gain.gain.value, now)
         active.gain.gain.linearRampToValueAtTime(0, now + sustain)
-        active.src.loop = false  // let it play out, don't loop forever during release
-        try { active.src.stop(now + sustain + 0.01) } catch { /* already stopped */ }
+        active.src.loop = false
+        try { active.src.stop(now + sustain + 0.01) } catch { /* */ }
       } else {
-        try { active.src.stop() } catch { /* already stopped */ }
+        try { active.src.stop() } catch { /* */ }
         active.gain.disconnect()
       }
       activeSources.current.delete(pitch)
     }
 
     setPressing(prev => { const n = new Set(prev); n.delete(pitch); return n })
-
     const started = noteStarts.current.get(pitch)
     if (!started) return
     noteStarts.current.delete(pitch)
@@ -467,32 +575,31 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   }, [project, engine, dispatch])
 
   // ── Click-outside deactivation ────────────────────────────────────────────────
+  // Excludes clicks inside the pad popover (data-pad-overlay) so that clicking
+  // "Remap Key" in the popover doesn't deactivate the overlay.
 
   useEffect(() => {
     if (!active) return
     function onDocDown(e: MouseEvent) {
-      if (!containerRef.current?.contains(e.target as Node)) setActive(false)
+      const t = e.target as Element
+      if (containerRef.current?.contains(t)) return
+      if (t.closest?.('[data-pad-overlay]')) return  // popover — don't deactivate
+      setActive(false)
     }
     document.addEventListener('mousedown', onDocDown)
     return () => document.removeEventListener('mousedown', onDocDown)
   }, [active])
 
-  // ── Keyboard — single CAPTURE-phase handler (fixes conflict with bubble handler)
-  // Bug: a separate capture swallower calling stopPropagation() prevents the
-  // bubble-phase handler on document from ever firing (event never reaches target,
-  // so bubble phase never starts). Solution: one capture handler does everything.
-
-  const tabRef    = useRef(tab)
-  const remapIdRef = useRef(remapId)
-  useEffect(() => { tabRef.current    = tab    }, [tab])
-  useEffect(() => { remapIdRef.current = remapId }, [remapId])
+  // ── Keyboard — single CAPTURE-phase handler ───────────────────────────────────
+  // A separate capture swallower + bubble handler won't work: stopPropagation()
+  // during capture at document prevents the bubble phase from starting.
+  // Solution: one capture handler that does everything.
 
   useEffect(() => {
     if (!active) return
 
     function onCapture(e: KeyboardEvent) {
-      // Always block DAW shortcuts while overlay is active
-      if (e.key !== 'Escape') e.stopPropagation()
+      if (e.key !== 'Escape') e.stopPropagation()  // block DAW shortcuts
 
       if (e.type === 'keydown') {
         if (e.repeat) return
@@ -500,12 +607,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
         if (e.key === 'Escape') { setActive(false); return }
 
-        // Remap mode: next key becomes the new shortcut
         if (remapIdRef.current !== null) {
           e.preventDefault()
           const rid = remapIdRef.current
           setPads(prev => prev.map(p => {
-            if (p.key === k) return { ...p, key: '' }   // clear old binding on another pad
+            if (p.key === k) return { ...p, key: '' }
             if (p.id === rid) return { ...p, key: k }
             return p
           }))
@@ -536,13 +642,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       document.removeEventListener('keyup',   onCapture, true)
     }
   }, [active, startNote, endNote])
-  // Note: tab, padKeyMap, pianoKeyMap, remapId are intentionally read via refs
-  // so the listener doesn't need to re-register when they change.
 
   // ── Header drag ───────────────────────────────────────────────────────────────
 
   const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
     if (isFullscreen) return
+    setActive(true)  // clicking header also activates
     dragging.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y }
     function mm(ev: MouseEvent) {
       if (!dragging.current) return
@@ -555,7 +660,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     e.preventDefault()
   }, [pos, isFullscreen])
 
-  // ── Edge/corner resize ────────────────────────────────────────────────────────
+  // ── Resize handles ────────────────────────────────────────────────────────────
 
   const onResizeDown = useCallback((dir: string) => (e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation()
@@ -571,15 +676,20 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     document.addEventListener('mouseup', mu)
   }, [winSize])
 
-  // ── Context-menu pad change helper ────────────────────────────────────────────
+  // ── Context-menu pad change ───────────────────────────────────────────────────
 
   const onPadChange = useCallback((patch: Partial<Pad>) => {
     if (!contextMenu) return
     const id = contextMenu.pad.id
-    // Invalidate cached reversed buffer if sound or reverse toggle changed
-    if (patch.customSoundId !== undefined || patch.sampleReverse !== undefined) {
-      const padToUpdate = padsRef.current.find(p => p.id === id)
-      if (padToUpdate?.customSoundId) reversedBufs.current.delete(padToUpdate.customSoundId)
+    if (patch.customSoundId !== undefined || patch.sampleReverse !== undefined || patch.samplePitch !== undefined) {
+      const p = padsRef.current.find(q => q.id === id)
+      if (p?.customSoundId) {
+        reversedBufs.current.delete(p.customSoundId)
+        // Clear all pitched cache entries for this sound
+        for (const k of [...pitchedBufs.current.keys()]) {
+          if (k.startsWith(p.customSoundId)) pitchedBufs.current.delete(k)
+        }
+      }
     }
     setPads(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))
     setContextMenu(prev => prev ? { ...prev, pad: { ...prev.pad, ...patch } } : null)
@@ -587,20 +697,13 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   const isRecActive = engine.isRecording && engine.isPlaying
 
-  // ── Container style (supports fullscreen + manual resize) ─────────────────────
-
   const containerStyle: React.CSSProperties = isFullscreen ? {
     position: 'fixed', left: 0, top: 0, width: '100vw', height: '100vh',
-    borderRadius: 0,
-    background: C.bg,
-    border: `1px solid ${C.accent}`,
-    boxShadow: 'none',
-    zIndex: 2000, userSelect: 'none',
+    borderRadius: 0, background: C.bg, border: `1px solid ${C.accent}`,
+    boxShadow: 'none', zIndex: 2000, userSelect: 'none',
     display: 'flex', flexDirection: 'column',
-    transition: 'none',
   } : {
-    position: 'fixed', left: pos.x, top: pos.y,
-    width: winSize.w,
+    position: 'fixed', left: pos.x, top: pos.y, width: winSize.w,
     height: winSize.h ?? undefined,
     background: C.bg,
     border: active ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
@@ -616,11 +719,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   return createPortal(
     <>
-      <div
-        ref={containerRef}
-        onMouseDown={() => setActive(true)}
-        style={containerStyle}
-      >
+      <div ref={containerRef} style={containerStyle}>
+
         {/* Header */}
         <div onMouseDown={onHeaderMouseDown} style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexShrink: 0,
@@ -637,12 +737,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           }
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
             {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 800, letterSpacing: '0.05em' }}>● REC</span>}
-            {/* Fullscreen toggle */}
-            <button
-              onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
+            <button onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
               title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 6px', borderRadius: 3 }}
-            >{isFullscreen ? '⊡' : '⊞'}</button>
+              style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 6px', borderRadius: 3 }}>
+              {isFullscreen ? '⊡' : '⊞'}
+            </button>
             {!isFullscreen && <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>}
             <button onClick={e => { e.stopPropagation(); onClose() }}
               style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
@@ -665,7 +764,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         {/* Scrollable body */}
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
 
-          {/* Pads tab */}
           {tab === 'pads' && (
             <div style={{ padding: 12 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
@@ -676,7 +774,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                   return (
                     <button
                       key={pad.id}
-                      onMouseDown={e => { e.stopPropagation(); if (e.button === 0) startNote(pad.pitch) }}
+                      onMouseDown={e => {
+                        e.stopPropagation()
+                        setActive(true)  // ← FIX: activate even though stopPropagation prevents container handler
+                        if (e.button === 0) startNote(pad.pitch)
+                      }}
                       onMouseUp={e => { e.stopPropagation(); if (e.button === 0) endNote(pad.pitch) }}
                       onMouseLeave={() => endNote(pad.pitch)}
                       onContextMenu={e => {
@@ -694,17 +796,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                         transition: 'background 50ms, border-color 50ms',
                       }}
                     >
-                      {hasCustom && !isAct && (
-                        <span style={{ position: 'absolute', top: 5, right: 6, width: 6, height: 6, borderRadius: '50%', background: C.accent }} title={pad.customSoundName} />
-                      )}
-                      {/* Loop indicator */}
-                      {pad.sampleLoop && (
-                        <span style={{ position: 'absolute', top: 5, left: 6, fontSize: 9, color: C.green }}>↻</span>
-                      )}
-                      {/* Reverse indicator */}
-                      {pad.sampleReverse && (
-                        <span style={{ position: 'absolute', top: 5, left: pad.sampleLoop ? 18 : 6, fontSize: 9, color: C.accent }}>◁</span>
-                      )}
+                      {hasCustom && !isAct && <span style={{ position: 'absolute', top: 5, right: 6, width: 6, height: 6, borderRadius: '50%', background: C.accent }} />}
+                      {pad.sampleLoop    && <span style={{ position: 'absolute', top: 5, left: 6, fontSize: 9, color: C.green }}>↻</span>}
+                      {pad.sampleReverse && <span style={{ position: 'absolute', top: 5, left: pad.sampleLoop ? 18 : 6, fontSize: 9, color: C.accent }}>◁</span>}
+                      {(pad.sampleVibratoDepth ?? 0) > 0 && <span style={{ position: 'absolute', bottom: 5, right: 6, fontSize: 9, color: C.yellow }}>~</span>}
                       <span style={{ fontSize: 12, fontWeight: 600 }}>
                         {isRemapping ? '…press key' : pad.drumLabel}
                       </span>
@@ -732,40 +827,42 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                   style={{ fontSize: 11, padding: '4px 12px', borderRadius: 4, border: `1px dashed ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}
                 >+ Add Pad</button>
                 {pads.length > 4 && (
-                  <button
-                    onClick={() => setPads(prev => prev.slice(0, -1))}
-                    style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}
-                  >− Remove Last</button>
+                  <button onClick={() => setPads(prev => prev.slice(0, -1))}
+                    style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}>
+                    − Remove Last
+                  </button>
                 )}
                 <span style={{ fontSize: 10, color: '#444', marginLeft: 'auto' }}>Right-click a pad to edit</span>
               </div>
             </div>
           )}
 
-          {/* Keyboard tab */}
           {tab === 'keyboard' && (
             <div style={{ padding: '12px 12px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                 <button onClick={() => setOctave(o => Math.max(0, o - 1))}
                   style={{ padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer', fontSize: 13 }}>◀</button>
-                <span style={{ fontSize: 12, color: C.muted, minWidth: 60, textAlign: 'center' }}>Oct {octave} (C{octave})</span>
+                <span style={{ fontSize: 12, color: C.muted, minWidth: 60, textAlign: 'center' }}>Oct {octave}</span>
                 <button onClick={() => setOctave(o => Math.min(8, o + 1))}
                   style={{ padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer', fontSize: 13 }}>▶</button>
-                <span style={{ fontSize: 10, color: '#444', marginLeft: 8 }}>Z–M = lower oct · Q–U = upper oct</span>
+                <span style={{ fontSize: 10, color: '#444', marginLeft: 8 }}>Z–M lower · Q–U upper</span>
               </div>
 
               {[octave, octave + 1].map(oct => {
                 const base = (oct + 1) * 12
                 const WW = 30, WH = 90, BW = 18, BH = 56
-                const octW = WW * 7
                 return (
-                  <div key={oct} style={{ display: 'inline-block', position: 'relative', width: octW, height: WH, marginRight: 2 }}>
+                  <div key={oct} style={{ display: 'inline-block', position: 'relative', width: WW * 7, height: WH, marginRight: 2 }}>
                     {WHITE_ST.map((st, i) => {
                       const pitch = base + st
                       const act = pressing.has(pitch)
                       return (
                         <div key={st}
-                          onMouseDown={e => { e.stopPropagation(); startNote(pitch) }}
+                          onMouseDown={e => {
+                            e.stopPropagation()
+                            setActive(true)  // ← same fix as pads
+                            startNote(pitch)
+                          }}
                           onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
                           onMouseLeave={() => endNote(pitch)}
                           style={{ position: 'absolute', left: i * WW, top: 0, width: WW - 1, height: WH, background: act ? C.accent : '#d8d8d8', borderRadius: '0 0 4px 4px', border: '1px solid #555', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4 }}>
@@ -778,7 +875,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       const act = pressing.has(pitch)
                       return (
                         <div key={st}
-                          onMouseDown={e => { e.stopPropagation(); e.preventDefault(); startNote(pitch) }}
+                          onMouseDown={e => {
+                            e.stopPropagation(); e.preventDefault()
+                            setActive(true)  // ← same fix
+                            startNote(pitch)
+                          }}
                           onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
                           onMouseLeave={() => endNote(pitch)}
                           style={{ position: 'absolute', left: bpos * WW + (WW - BW) / 2, top: 0, width: BW, height: BH, zIndex: 1, background: act ? C.accent : '#222', borderRadius: '0 0 3px 3px', border: '1px solid #111', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box' }} />
@@ -797,22 +898,21 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               </div>
             </div>
           )}
-
-        </div>{/* end scrollable body */}
+        </div>
 
         {/* Footer */}
         <div style={{ padding: '6px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           {active
             ? <span style={{ fontSize: 10, color: C.muted }}>Esc or click outside to release · Arm track + record to capture</span>
-            : <span style={{ fontSize: 10, color: '#444' }}>Click overlay to activate keyboard input</span>
+            : <span style={{ fontSize: 10, color: '#444' }}>Click a pad or the header to activate keyboard input</span>
           }
           {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Recording…</span>}
         </div>
 
-        {/* Resize handles — right, bottom, corner */}
+        {/* Resize handles */}
         {!isFullscreen && <>
-          <div onMouseDown={onResizeDown('e')} style={{ position: 'absolute', right: 0, top: 12, bottom: 12, width: 6, cursor: 'ew-resize' }} />
-          <div onMouseDown={onResizeDown('s')} style={{ position: 'absolute', bottom: 0, left: 12, right: 12, height: 6, cursor: 'ns-resize' }} />
+          <div onMouseDown={onResizeDown('e')}  style={{ position: 'absolute', right: 0, top: 12, bottom: 12, width: 6, cursor: 'ew-resize' }} />
+          <div onMouseDown={onResizeDown('s')}  style={{ position: 'absolute', bottom: 0, left: 12, right: 12, height: 6, cursor: 'ns-resize' }} />
           <div onMouseDown={onResizeDown('se')} style={{ position: 'absolute', right: 0, bottom: 0, width: 14, height: 14, cursor: 'nwse-resize' }} />
         </>}
       </div>
@@ -822,7 +922,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         <PadPopover
           pad={contextMenu.pad}
           anchor={{ x: contextMenu.x, y: contextMenu.y }}
-          onRemap={() => setRemapId(contextMenu.pad.id)}
+          onRemap={() => {
+            setRemapId(contextMenu.pad.id)
+            setActive(true)  // ← FIX: re-activate so the capture handler runs for remap
+          }}
           onAssignSound={entry => onPadChange({ customSoundId: entry.id, customSoundName: entry.name })}
           onPadChange={onPadChange}
           onClose={() => setContextMenu(null)}
