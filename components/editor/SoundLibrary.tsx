@@ -858,21 +858,27 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   }
 
   // Group entries (filtered by search query)
-  const { byFolder, unfiled } = useMemo(() => {
+  const { byFolder, unfiled, byParent } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    const map = new Map<string, LibraryEntry[]>()
+    const filtered = q ? entries.filter(en => en.name.toLowerCase().includes(q)) : entries
+    // byParent: parentFolder → (subFolder → entries[])
+    const byParent = new Map<string, Map<string, LibraryEntry[]>>()
+    const byFolder = new Map<string, LibraryEntry[]>()
     const unfiled: LibraryEntry[] = []
-    for (const e of (q ? entries.filter(en => en.name.toLowerCase().includes(q)) : entries)) {
-      if (e.folder && folders.includes(e.folder)) {
-        const arr = map.get(e.folder) ?? []
-        arr.push(e)
-        map.set(e.folder, arr)
+    for (const e of filtered) {
+      if (e.parentFolder) {
+        const subMap = byParent.get(e.parentFolder) ?? new Map<string, LibraryEntry[]>()
+        const sub    = e.folder ?? ''
+        subMap.set(sub, [...(subMap.get(sub) ?? []), e])
+        byParent.set(e.parentFolder, subMap)
+      } else if (e.folder && folders.includes(e.folder)) {
+        byFolder.set(e.folder, [...(byFolder.get(e.folder) ?? []), e])
       } else {
         unfiled.push(e)
       }
     }
-    return { byFolder: map, unfiled }
-  }, [entries, folders])
+    return { byFolder, unfiled, byParent }
+  }, [entries, folders, searchQuery])
 
   const entryRow = (entry: LibraryEntry) => (
     <EntryRow
@@ -942,7 +948,57 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
           </div>
         ) : (
           <>
-            {/* Folder sections */}
+            {/* 100lights Audio default sample groups — shown before user folders */}
+            {[...byParent.entries()].map(([parentName, subFolders]) => {
+              const parentKey = `parent:${parentName}`
+              const parentCollapsed = collapsedFolders.has(parentKey)
+              const totalCount = [...subFolders.values()].reduce((n, arr) => n + arr.length, 0)
+              return (
+                <div key={parentName} style={{ borderBottom: '1px solid var(--border)' }}>
+                  {/* Parent header */}
+                  <div
+                    onClick={() => toggleFolderCollapse(parentKey)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px',
+                      background: 'rgba(61,143,239,0.06)', cursor: 'pointer',
+                      borderLeft: '2px solid rgba(61,143,239,0.5)',
+                    }}
+                  >
+                    {parentCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+                    <FolderOpen size={10} style={{ color: 'rgba(61,143,239,0.7)', flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgba(61,143,239,0.9)', letterSpacing: '0.04em' }}>{parentName}</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{totalCount}</span>
+                  </div>
+
+                  {/* Sub-folders */}
+                  {!parentCollapsed && [...subFolders.entries()].map(([subName, subEntries]) => {
+                    const subKey = `${parentKey}/${subName}`
+                    const subCollapsed = collapsedFolders.has(subKey)
+                    return (
+                      <div key={subName} style={{ paddingLeft: 10 }}>
+                        <div
+                          onClick={() => toggleFolderCollapse(subKey)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+                            borderTop: '1px solid var(--border)', cursor: 'pointer',
+                            background: 'var(--bg-surface)',
+                            borderLeft: '2px solid rgba(139,92,246,0.3)',
+                          }}
+                        >
+                          {subCollapsed ? <ChevronRight size={9} /> : <ChevronDown size={9} />}
+                          <Folder size={9} style={{ color: 'rgba(167,139,250,0.6)', flexShrink: 0 }} />
+                          <span style={{ flex: 1, fontSize: 9, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}>{subName}</span>
+                          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{subEntries.length}</span>
+                        </div>
+                        {!subCollapsed && subEntries.map(entryRow)}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+
+            {/* User folder sections */}
             {folders.map(folder => {
               const folderEntries = byFolder.get(folder) ?? []
               const collapsed = collapsedFolders.has(folder)

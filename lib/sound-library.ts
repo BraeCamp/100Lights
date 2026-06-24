@@ -13,14 +13,15 @@ import type { BeatType, HitSpectral } from './beat-analyzer'
 export type LibraryCategory = BeatType | 'voice' | 'custom'
 
 export interface LibraryEntry {
-  id:        string
-  name:      string
-  category:  LibraryCategory
-  audioBlob: Blob
-  spectral?: HitSpectral   // perceptual fingerprint — set for drum/instrument entries
-  duration:  number        // seconds
-  addedAt:   string        // ISO timestamp
-  folder?:   string        // optional folder name
+  id:           string
+  name:         string
+  category:     LibraryCategory
+  audioBlob:    Blob
+  spectral?:    HitSpectral   // perceptual fingerprint — set for drum/instrument entries
+  duration:     number        // seconds
+  addedAt:      string        // ISO timestamp
+  folder?:      string        // sub-folder name
+  parentFolder?: string       // parent group (e.g. "100lights Audio") — read-only, set at creation
 }
 
 // ── IndexedDB setup ───────────────────────────────────────────────────────────

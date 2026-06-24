@@ -25,6 +25,8 @@ interface Pad {
   sampleReverse?: boolean      // play reversed
   sampleVibratoDepth?: number  // 0–1, LFO depth on playbackRate (default 0 = off)
   sampleVibratoRate?: number   // LFO frequency in Hz (default 5)
+  sampleTrimStart?: number     // 0–1 fraction of buffer (default 0)
+  sampleTrimEnd?: number       // 0–1 fraction of buffer (default 1)
 }
 
 interface ActiveSource {
@@ -37,14 +39,14 @@ interface ActiveSource {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const DEFAULT_PADS: Pad[] = [
-  { id: 'p1', pitch: 36, drumLabel: 'Kick',     key: 'a' },
-  { id: 'p2', pitch: 38, drumLabel: 'Snare',    key: 's' },
-  { id: 'p3', pitch: 42, drumLabel: 'Hi-Hat',   key: 'd' },
-  { id: 'p4', pitch: 46, drumLabel: 'Open Hat', key: 'f' },
-  { id: 'p5', pitch: 39, drumLabel: 'Clap',     key: 'z' },
-  { id: 'p6', pitch: 51, drumLabel: 'Rim',      key: 'x' },
-  { id: 'p7', pitch: 49, drumLabel: 'Crash',    key: 'c' },
-  { id: 'p8', pitch: 45, drumLabel: 'Tom',      key: 'v' },
+  { id: 'p1', pitch: 36, drumLabel: 'Pad 1', key: 'a' },
+  { id: 'p2', pitch: 38, drumLabel: 'Pad 2', key: 's' },
+  { id: 'p3', pitch: 42, drumLabel: 'Pad 3', key: 'd' },
+  { id: 'p4', pitch: 46, drumLabel: 'Pad 4', key: 'f' },
+  { id: 'p5', pitch: 39, drumLabel: 'Pad 5', key: 'z' },
+  { id: 'p6', pitch: 51, drumLabel: 'Pad 6', key: 'x' },
+  { id: 'p7', pitch: 49, drumLabel: 'Pad 7', key: 'c' },
+  { id: 'p8', pitch: 45, drumLabel: 'Pad 8', key: 'v' },
 ]
 
 function buildPianoKeyMap(baseOctave: number): Record<string, number> {
@@ -154,6 +156,99 @@ function PopSlider({ label, value, min, max, step, format, onChange, accent }: {
   )
 }
 
+// ── Waveform crop widget (inline in popover) ──────────────────────────────────
+
+function PadWaveformCrop({ blob, trimStart, trimEnd, onTrimChange }: {
+  blob: Blob
+  trimStart: number
+  trimEnd: number
+  onTrimChange: (start: number, end: number) => void
+}) {
+  const canvasRef  = useRef<HTMLCanvasElement>(null)
+  const bufRef     = useRef<AudioBuffer | null>(null)
+  const dragging   = useRef<'start' | 'end' | null>(null)
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    let closed = false
+    const ctx = new AudioContext()
+    blob.arrayBuffer()
+      .then(ab => ctx.decodeAudioData(ab))
+      .then(buf => { if (!closed) { bufRef.current = buf; setReady(true) } })
+      .catch(() => {})
+      .finally(() => { ctx.close().catch(() => {}) })
+    return () => { closed = true }
+  }, [blob])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const buf    = bufRef.current
+    if (!canvas || !buf || !ready) return
+    const ctx = canvas.getContext('2d')!
+    const W = canvas.width, H = canvas.height
+    const data = buf.getChannelData(0)
+    ctx.clearRect(0, 0, W, H)
+    const spb = Math.max(1, Math.floor(data.length / W))
+    for (let x = 0; x < W; x++) {
+      let peak = 0
+      for (let j = 0; j < spb; j++) peak = Math.max(peak, Math.abs(data[x * spb + j] ?? 0))
+      const bh = Math.max(1, peak * (H - 4) * 0.9)
+      ctx.fillStyle = x >= trimStart * W && x <= trimEnd * W ? '#3d8fef' : 'rgba(61,143,239,0.18)'
+      ctx.fillRect(x, (H - bh) / 2, 1, bh)
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.48)'
+    ctx.fillRect(0, 0, trimStart * W, H)
+    ctx.fillRect(trimEnd * W, 0, W - trimEnd * W, H)
+    const drawHandle = (x: number) => {
+      ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke()
+      ctx.fillStyle = '#f59e0b'
+      ctx.beginPath(); ctx.moveTo(x - 4, 0); ctx.lineTo(x + 4, 0); ctx.lineTo(x, 8); ctx.closePath(); ctx.fill()
+    }
+    drawHandle(trimStart * W); drawHandle(trimEnd * W)
+  }, [ready, trimStart, trimEnd])
+
+  function ratio(e: React.MouseEvent<HTMLCanvasElement>) {
+    const r = canvasRef.current!.getBoundingClientRect()
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))
+  }
+
+  const dur = bufRef.current?.duration ?? 0
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {!ready ? (
+        <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#444', background: '#0a0a0f', borderRadius: 4 }}>Loading…</div>
+      ) : (
+        <canvas
+          ref={canvasRef} width={220} height={44}
+          style={{ width: '100%', height: 44, display: 'block', borderRadius: 4, cursor: 'ew-resize', background: '#0a0a0f' }}
+          onMouseDown={e => {
+            e.stopPropagation()
+            const r = ratio(e)
+            dragging.current = Math.abs(r - trimStart) < Math.abs(r - trimEnd) ? 'start' : 'end'
+          }}
+          onMouseMove={e => {
+            if (!dragging.current) return
+            const r = ratio(e)
+            if (dragging.current === 'start') onTrimChange(Math.min(r, trimEnd - 0.02), trimEnd)
+            else                              onTrimChange(trimStart, Math.max(r, trimStart + 0.02))
+          }}
+          onMouseUp={() => { dragging.current = null }}
+          onMouseLeave={() => { dragging.current = null }}
+        />
+      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: '#555', fontFamily: 'monospace' }}>
+        <span>{(trimStart * dur).toFixed(2)}s</span>
+        <span style={{ color: '#3d3d3d' }}>drag handles · reset: </span>
+        <button onClick={() => onTrimChange(0, 1)} style={{ fontSize: 9, background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: 0, fontFamily: 'monospace' }}>
+          {(trimEnd * dur).toFixed(2)}s ↺
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Pad right-click popover ───────────────────────────────────────────────────
 
 function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose }: {
@@ -168,10 +263,19 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
   const [loading,     setLoading]     = useState(true)
   const [showLibrary, setShowLibrary] = useState(false)
   const [search,      setSearch]      = useState('')
+  const [cropBlob,    setCropBlob]    = useState<Blob | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    libraryGetAll().then(e => { setEntries(e); setLoading(false) })
+    libraryGetAll().then(e => {
+      setEntries(e)
+      setLoading(false)
+      if (pad.customSoundId) {
+        const entry = e.find(x => x.id === pad.customSoundId)
+        if (entry) setCropBlob(entry.audioBlob)
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Click-outside closes the popover (but NOT the overlay — uses data-pad-overlay check in parent)
@@ -267,7 +371,7 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
                 {filtered.map(entry => (
                   <button
                     key={entry.id}
-                    onClick={() => { onAssignSound(entry); onClose() }}
+                    onClick={() => { setCropBlob(entry.audioBlob); onAssignSound(entry); onClose() }}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '5px 6px', borderRadius: 3, border: 'none', background: entry.id === pad.customSoundId ? `${C.accent}22` : 'transparent', color: entry.id === pad.customSoundId ? C.accent : C.text, cursor: 'pointer', fontSize: 11 }}
                     onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)' }}
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = entry.id === pad.customSoundId ? `${C.accent}22` : 'transparent' }}
@@ -287,6 +391,27 @@ function PadPopover({ pad, anchor, onRemap, onAssignSound, onPadChange, onClose 
       {hasCustom && (
         <div style={{ padding: '10px 12px' }}>
           <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 10 }}>Performance</span>
+
+          {/* Crop / Trim */}
+          {cropBlob && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Crop</span>
+                {((pad.sampleTrimStart ?? 0) > 0 || (pad.sampleTrimEnd ?? 1) < 1) && (
+                  <button onClick={() => onPadChange({ sampleTrimStart: 0, sampleTrimEnd: 1 })}
+                    style={{ fontSize: 9, padding: '1px 5px', borderRadius: 2, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}>
+                    Reset
+                  </button>
+                )}
+              </div>
+              <PadWaveformCrop
+                blob={cropBlob}
+                trimStart={pad.sampleTrimStart ?? 0}
+                trimEnd={pad.sampleTrimEnd ?? 1}
+                onTrimChange={(s, e) => onPadChange({ sampleTrimStart: s, sampleTrimEnd: e })}
+              />
+            </div>
+          )}
 
           {/* Pitch */}
           <div style={{ marginBottom: 10 }}>
@@ -378,8 +503,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
   const [octave,       setOctave]       = useState(4)
   const [pressing,     setPressing]     = useState<Set<number>>(new Set())
-  const [remapId,      setRemapId]      = useState<string | null>(null)
-  const [active,       setActive]       = useState(false)
+  const [remapId,        setRemapId]        = useState<string | null>(null)
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null)
+  const [labelDraft,     setLabelDraft]     = useState('')
+  const [active,         setActive]         = useState(false)
   const [contextMenu,  setContextMenu]  = useState<{ pad: Pad; x: number; y: number } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [winSize,      setWinSize]      = useState<{ w: number; h: number | null }>({ w: 520, h: null })
@@ -499,10 +626,18 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         gainNode.gain.value = pad.sampleVolume ?? 1
         gainNode.connect(engine.masterGain)
 
+        // Trim (crop) — applied via AudioBufferSourceNode offset/duration params
+        const tStart = (pad.sampleTrimStart ?? 0) * playBuf.duration
+        const tDur   = Math.max(0.001, ((pad.sampleTrimEnd ?? 1) - (pad.sampleTrimStart ?? 0)) * playBuf.duration)
+
         const src = engine.ctx.createBufferSource()
         src.buffer = playBuf
         src.playbackRate.value = 1.0  // pitch is already baked in
         src.loop = !!pad.sampleLoop
+        if (pad.sampleLoop) {
+          src.loopStart = tStart
+          src.loopEnd   = tStart + tDur
+        }
         src.connect(gainNode)
 
         // Vibrato LFO on playbackRate
@@ -519,7 +654,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           lfo.start(engine.ctx.currentTime)
         }
 
-        src.start(engine.ctx.currentTime)
+        src.start(engine.ctx.currentTime, tStart, pad.sampleLoop ? undefined : tDur)
         activeSources.current.set(pitch, { src, gain: gainNode, lfo, lfoGain })
       }
     } else if (instrument) {
@@ -800,9 +935,37 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       {pad.sampleLoop    && <span style={{ position: 'absolute', top: 5, left: 6, fontSize: 9, color: C.green }}>↻</span>}
                       {pad.sampleReverse && <span style={{ position: 'absolute', top: 5, left: pad.sampleLoop ? 18 : 6, fontSize: 9, color: C.accent }}>◁</span>}
                       {(pad.sampleVibratoDepth ?? 0) > 0 && <span style={{ position: 'absolute', bottom: 5, right: 6, fontSize: 9, color: C.yellow }}>~</span>}
-                      <span style={{ fontSize: 12, fontWeight: 600 }}>
-                        {isRemapping ? '…press key' : pad.drumLabel}
-                      </span>
+                      {editingLabelId === pad.id ? (
+                        <input
+                          autoFocus
+                          value={labelDraft}
+                          onChange={e => setLabelDraft(e.target.value)}
+                          onKeyDown={e => {
+                            e.stopPropagation()
+                            if (e.key === 'Enter' || e.key === 'Escape') {
+                              if (e.key === 'Enter' && labelDraft.trim()) {
+                                setPads(prev => prev.map(p => p.id === pad.id ? { ...p, drumLabel: labelDraft.trim() } : p))
+                              }
+                              setEditingLabelId(null)
+                            }
+                          }}
+                          onBlur={() => {
+                            if (labelDraft.trim()) setPads(prev => prev.map(p => p.id === pad.id ? { ...p, drumLabel: labelDraft.trim() } : p))
+                            setEditingLabelId(null)
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          onMouseDown={e => e.stopPropagation()}
+                          style={{ width: '90%', fontSize: 11, fontWeight: 600, textAlign: 'center', background: 'transparent', border: `1px solid ${C.accent}`, borderRadius: 3, color: C.text, padding: '1px 3px', outline: 'none' }}
+                        />
+                      ) : (
+                        <span
+                          style={{ fontSize: 12, fontWeight: 600 }}
+                          onDoubleClick={e => { e.stopPropagation(); setLabelDraft(pad.drumLabel); setEditingLabelId(pad.id) }}
+                          title="Double-click to rename"
+                        >
+                          {isRemapping ? '…press key' : pad.drumLabel}
+                        </span>
+                      )}
                       {hasCustom && !isRemapping && (
                         <span style={{ fontSize: 9, color: C.accent, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
                           {pad.customSoundName}

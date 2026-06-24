@@ -11,6 +11,7 @@ import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
 import Transport from './daw/Transport'
 import SoundLibraryPanel from './SoundLibrary'
+import { seedDefaultSamples } from '@/lib/default-samples'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
 
@@ -95,6 +96,9 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Undo history ────────────────────────────────────────────────────────────
   const historyRef = useRef<DawProject[]>([])
   const projectRef = useRef(project)
+  // Seed default samples once per browser (no-op if already done)
+  useEffect(() => { seedDefaultSamples().catch(() => {}) }, [])
+
   useEffect(() => { projectRef.current = project }, [project])
 
   const dispatch = useCallback((action: DawAction) => {
