@@ -3,9 +3,9 @@
 import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
-import { DawContext, reducer, makeAudioClip } from '@/lib/daw-state'
+import { DawContext, reducer, makeAudioClip, migrateProject } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
@@ -38,6 +38,8 @@ const SessionView = dynamic(() => import('./daw/SessionView'), { ssr: false })
 const ArrangementView = dynamic(() => import('./daw/ArrangementView'), { ssr: false })
 const Mixer = dynamic(() => import('./daw/Mixer'), { ssr: false })
 const PianoRoll = dynamic(() => import('./daw/PianoRoll'), { ssr: false })
+const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
+const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
 
 // ── Initial project builder ───────────────────────────────────────────────────
 
@@ -54,6 +56,8 @@ function buildInitialProject(tracks: AudioTrack[]): DawProject {
     solo: false,
     armed: false,
     height: DEFAULT_TRACK_HEIGHT,
+    effects: [],
+    instrument: defaultTrackInstrument('audio'),
   }))
   const beatsPerSecond = base.tempo / 60
   const arrangementClips = tracks.map(t =>
@@ -161,6 +165,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   const onSaveRef = useRef(onSave)
@@ -353,14 +358,41 @@ export default function AudioEditor(props: AudioEditorProps) {
 
             {/* Piano roll panel — shown when a clip is open for editing */}
             {editTarget !== null && (
-              <div style={{
-                height: 220,
-                flexShrink: 0,
-                borderTop: '1px solid var(--border)',
-                background: 'var(--bg-surface)',
-                overflow: 'hidden',
-              }}>
+              <div style={{ height: 220, flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
                 <PianoRoll />
+              </div>
+            )}
+
+            {/* Device chain / instrument panel — shown when a track is selected */}
+            {selectedTrackId !== null && (
+              <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-base)' }}>
+                {/* Tab bar */}
+                <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 1, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+                  {(['devices', 'instrument'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setBottomTab(tab)}
+                      style={{ background: bottomTab === tab ? 'var(--bg-card)' : 'transparent', border: bottomTab === tab ? '1px solid var(--border)' : '1px solid transparent', borderRadius: 4, color: bottomTab === tab ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 10px', textTransform: 'capitalize' }}
+                    >
+                      {tab === 'devices' ? 'Devices' : 'Instrument'}
+                    </button>
+                  ))}
+                  {/* Track name label */}
+                  {(() => {
+                    const t = project.tracks.find(tr => tr.id === selectedTrackId)
+                    return t ? <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, borderLeft: `2px solid ${t.color}`, paddingLeft: 6 }}>{t.name}</span> : null
+                  })()}
+                  <button
+                    onClick={() => setSelectedTrackId(null)}
+                    style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
+                    title="Close panel"
+                  >×</button>
+                </div>
+                {/* Panel content */}
+                <div style={{ maxHeight: 180, overflowY: 'auto', overflowX: 'auto' }}>
+                  {bottomTab === 'devices' && <DeviceChain trackId={selectedTrackId} />}
+                  {bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
+                </div>
               </div>
             )}
           </div>

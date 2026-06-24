@@ -1,11 +1,15 @@
 'use client'
 
-import { createContext, useContext, useReducer, useRef, useEffect, useCallback, type Dispatch } from 'react'
+import { createContext, useContext, type Dispatch } from 'react'
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget, TrackType,
+  TrackEffect, AutomationLane, AutomationPoint,
 } from './daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, isAudioClip } from './daw-types'
+import {
+  defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT,
+  defaultTrackInstrument,
+} from './daw-types'
 import { DawEngine } from './daw-engine'
 
 // ── Action types ────────────────────────────────────────────────────────
@@ -38,6 +42,21 @@ export type DawAction =
   | { type: 'ADD_MIDI_NOTE'; clipId: string; note: MidiNote }
   | { type: 'REMOVE_MIDI_NOTE'; clipId: string; noteId: string }
   | { type: 'UPDATE_MIDI_NOTE'; clipId: string; noteId: string; patch: Partial<MidiNote> }
+  // Effects chain
+  | { type: 'ADD_EFFECT'; trackId: string; effect: TrackEffect }
+  | { type: 'REMOVE_EFFECT'; trackId: string; effectId: string }
+  | { type: 'UPDATE_EFFECT'; trackId: string; effectId: string; patch: Partial<TrackEffect> }
+  | { type: 'REORDER_EFFECTS'; trackId: string; ids: string[] }
+  // Instruments
+  | { type: 'SET_INSTRUMENT'; trackId: string; instrument: DawTrack['instrument'] }
+  // Automation
+  | { type: 'ADD_AUTOMATION_LANE'; lane: AutomationLane }
+  | { type: 'REMOVE_AUTOMATION_LANE'; laneId: string }
+  | { type: 'UPDATE_AUTOMATION_LANE'; laneId: string; patch: Partial<AutomationLane> }
+  | { type: 'ADD_AUTOMATION_POINT'; laneId: string; point: AutomationPoint }
+  | { type: 'REMOVE_AUTOMATION_POINT'; laneId: string; pointId: string }
+  | { type: 'UPDATE_AUTOMATION_POINT'; laneId: string; pointId: string; patch: Partial<AutomationPoint> }
+  | { type: 'CLEAR_AUTOMATION_LANE'; laneId: string }
   // Full replace (load from saved)
   | { type: 'LOAD_PROJECT'; project: DawProject }
 
@@ -61,6 +80,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         solo: false,
         armed: false,
         height: DEFAULT_TRACK_HEIGHT,
+        effects: [],
+        instrument: defaultTrackInstrument(action.trackType),
       }
       const grid = { ...project.sessionGrid, [track.id]: Array(project.scenes.length).fill(null) }
       return { ...project, tracks: [...project.tracks, track], sessionGrid: grid }
@@ -71,7 +92,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const clips  = project.arrangementClips.filter(c => c.trackId !== action.trackId)
       const grid   = { ...project.sessionGrid }
       delete grid[action.trackId]
-      return { ...project, tracks, arrangementClips: clips, sessionGrid: grid }
+      const automationLanes = project.automationLanes.filter(l => l.trackId !== action.trackId)
+      return { ...project, tracks, arrangementClips: clips, sessionGrid: grid, automationLanes }
     }
 
     case 'UPDATE_TRACK': {
@@ -178,6 +200,97 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         return { ...c, notes: c.notes.map(n => n.id === action.noteId ? { ...n, ...action.patch } : n) } as MidiClip
       })
       return { ...project, arrangementClips: clips }
+    }
+
+    case 'ADD_EFFECT': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId ? { ...t, effects: [...t.effects, action.effect] } : t
+      )
+      return { ...project, tracks }
+    }
+
+    case 'REMOVE_EFFECT': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId
+          ? { ...t, effects: t.effects.filter(e => e.id !== action.effectId) }
+          : t
+      )
+      return { ...project, tracks }
+    }
+
+    case 'UPDATE_EFFECT': {
+      const tracks = project.tracks.map(t => {
+        if (t.id !== action.trackId) return t
+        const effects = t.effects.map(e =>
+          e.id === action.effectId ? { ...e, ...action.patch } : e
+        )
+        return { ...t, effects }
+      })
+      return { ...project, tracks }
+    }
+
+    case 'REORDER_EFFECTS': {
+      const tracks = project.tracks.map(t => {
+        if (t.id !== action.trackId) return t
+        const map = new Map(t.effects.map(e => [e.id, e]))
+        const effects = action.ids.map(id => map.get(id)!).filter(Boolean)
+        return { ...t, effects }
+      })
+      return { ...project, tracks }
+    }
+
+    case 'SET_INSTRUMENT': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId ? { ...t, instrument: action.instrument } : t
+      )
+      return { ...project, tracks }
+    }
+
+    case 'ADD_AUTOMATION_LANE': {
+      const exists = project.automationLanes.some(l => l.id === action.lane.id)
+      if (exists) return project
+      return { ...project, automationLanes: [...project.automationLanes, action.lane] }
+    }
+
+    case 'REMOVE_AUTOMATION_LANE':
+      return { ...project, automationLanes: project.automationLanes.filter(l => l.id !== action.laneId) }
+
+    case 'UPDATE_AUTOMATION_LANE': {
+      const automationLanes = project.automationLanes.map(l =>
+        l.id === action.laneId ? { ...l, ...action.patch } : l
+      )
+      return { ...project, automationLanes }
+    }
+
+    case 'ADD_AUTOMATION_POINT': {
+      const automationLanes = project.automationLanes.map(l => {
+        if (l.id !== action.laneId) return l
+        return { ...l, points: [...l.points, action.point] }
+      })
+      return { ...project, automationLanes }
+    }
+
+    case 'REMOVE_AUTOMATION_POINT': {
+      const automationLanes = project.automationLanes.map(l => {
+        if (l.id !== action.laneId) return l
+        return { ...l, points: l.points.filter(p => p.id !== action.pointId) }
+      })
+      return { ...project, automationLanes }
+    }
+
+    case 'UPDATE_AUTOMATION_POINT': {
+      const automationLanes = project.automationLanes.map(l => {
+        if (l.id !== action.laneId) return l
+        return { ...l, points: l.points.map(p => p.id === action.pointId ? { ...p, ...action.patch } : p) }
+      })
+      return { ...project, automationLanes }
+    }
+
+    case 'CLEAR_AUTOMATION_LANE': {
+      const automationLanes = project.automationLanes.map(l =>
+        l.id === action.laneId ? { ...l, points: [] } : l
+      )
+      return { ...project, automationLanes }
     }
 
     case 'LOAD_PROJECT':
@@ -302,5 +415,22 @@ export function makeMidiClip(
     notes: [],
     isDrumClip: false,
     ...opts,
+  }
+}
+
+// Ensure projects loaded from disk have all required fields
+export function migrateProject(raw: Partial<DawProject>): DawProject {
+  const base = defaultProject()
+  const tracks = (raw.tracks ?? []).map(t => ({
+    ...t,
+    effects:    t.effects    ?? [],
+    instrument: t.instrument ?? defaultTrackInstrument(t.type),
+    height:     t.height     ?? DEFAULT_TRACK_HEIGHT,
+  }))
+  return {
+    ...base,
+    ...raw,
+    tracks,
+    automationLanes: raw.automationLanes ?? [],
   }
 }

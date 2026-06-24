@@ -2,6 +2,131 @@
 
 export type TrackType = 'audio' | 'midi' | 'drum'
 
+// ── Effects ───────────────────────────────────────────────────────────────────
+
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter'
+
+export interface Eq3Params {
+  enabled: boolean
+  lowGain: number    // dB -12..+12
+  midGain: number
+  highGain: number
+  lowFreq: number    // Hz (default 200)
+  midFreq: number    // Hz (default 1000)
+  highFreq: number   // Hz (default 8000)
+}
+
+export interface CompressorParams {
+  enabled: boolean
+  threshold: number  // dB -60..0
+  ratio: number      // 1..20
+  attack: number     // s 0..1
+  release: number    // s 0..1
+  knee: number       // dB 0..40
+  makeupGain: number // dB 0..24
+}
+
+export interface ReverbParams {
+  enabled: boolean
+  wet: number        // 0..1
+  decay: number      // s 0.1..10
+  preDelay: number   // s 0..0.5
+}
+
+export interface DelayParams {
+  enabled: boolean
+  wet: number        // 0..1
+  time: number       // s 0..2
+  feedback: number   // 0..0.95
+  syncToTempo: boolean
+  syncBeats: number  // beats when syncToTempo
+}
+
+export interface FilterParams {
+  enabled: boolean
+  type: 'lowpass' | 'highpass' | 'bandpass' | 'notch'
+  frequency: number  // Hz 20..20000
+  q: number          // 0.1..20
+}
+
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams
+
+export interface TrackEffect {
+  id: string
+  type: EffectType
+  params: TrackEffectParams
+}
+
+export function defaultEq3(): Eq3Params {
+  return { enabled: true, lowGain: 0, midGain: 0, highGain: 0, lowFreq: 200, midFreq: 1000, highFreq: 8000 }
+}
+export function defaultCompressor(): CompressorParams {
+  return { enabled: true, threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 6, makeupGain: 0 }
+}
+export function defaultReverb(): ReverbParams {
+  return { enabled: true, wet: 0.25, decay: 2, preDelay: 0.02 }
+}
+export function defaultDelay(): DelayParams {
+  return { enabled: true, wet: 0.25, time: 0.375, feedback: 0.4, syncToTempo: true, syncBeats: 0.5 }
+}
+export function defaultFilter(): FilterParams {
+  return { enabled: true, type: 'lowpass', frequency: 8000, q: 1 }
+}
+
+// ── Instruments ───────────────────────────────────────────────────────────────
+
+export type InstrumentType = 'none' | 'drum' | 'fm' | 'sampler'
+
+export interface DrumInstrumentParams { pack: 'synth' | '808' }
+
+export interface FmInstrumentParams {
+  waveform: OscillatorType
+  attack: number    // s
+  decay: number     // s
+  sustain: number   // 0..1
+  release: number   // s
+  detune: number    // cents
+  modRatio: number  // FM modulator freq = carrier * modRatio
+  modDepth: number  // FM mod index
+}
+
+export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | Record<string, never>
+
+export interface TrackInstrument {
+  type: InstrumentType
+  params: InstrumentParams
+}
+
+export function defaultDrumInstrument(): TrackInstrument {
+  return { type: 'drum', params: { pack: 'synth' } }
+}
+
+export function defaultFmInstrument(): TrackInstrument {
+  return { type: 'fm', params: { waveform: 'sine', attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.3, detune: 0, modRatio: 2, modDepth: 1 } }
+}
+
+// ── Automation ────────────────────────────────────────────────────────────────
+
+export interface AutomationPoint {
+  id: string
+  beat: number    // absolute beat position in arrangement
+  value: number   // normalized 0..1
+}
+
+export interface AutomationLane {
+  id: string
+  trackId: string
+  parameter: string   // 'volume' | 'pan' | 'fx:{effectId}:{paramKey}'
+  label: string
+  min: number
+  max: number
+  defaultValue: number
+  points: AutomationPoint[]
+  expanded: boolean
+}
+
+// ── Track ─────────────────────────────────────────────────────────────────────
+
 export interface DawTrack {
   id: string
   name: string
@@ -13,36 +138,37 @@ export interface DawTrack {
   solo: boolean
   armed: boolean
   height: number      // arrangement lane height in px
+  effects: TrackEffect[]
+  instrument: TrackInstrument
 }
+
+// ── Clips ─────────────────────────────────────────────────────────────────────
 
 export interface AudioClip {
   kind: 'audio'
   id: string
   trackId: string
   name: string
-  // Arrangement position (beats)
   startBeat: number
   durationBeats: number
-  // Audio source
   r2Key?: string
-  audioUrl?: string       // blob URL or signed URL, resolved at runtime
-  waveformPeaks?: number[] // normalized 0–1 amplitude samples for display
-  // Playback properties
-  gain: number            // 0–2 (1 = unity)
+  audioUrl?: string
+  waveformPeaks?: number[]
+  gain: number
   loopEnabled: boolean
   reverse: boolean
-  fadeIn: number          // beats
-  fadeOut: number         // beats
-  trimStart: number       // seconds offset from audio start
-  trimEnd: number         // seconds from audio end (0 = use full audio)
+  fadeIn: number
+  fadeOut: number
+  trimStart: number
+  trimEnd: number
 }
 
 export interface MidiNote {
   id: string
-  pitch: number           // MIDI 0–127
-  startBeat: number       // relative to clip startBeat
+  pitch: number
+  startBeat: number    // relative to clip startBeat
   durationBeats: number
-  velocity: number        // 0–127
+  velocity: number     // 0–127
 }
 
 export interface MidiClip {
@@ -61,14 +187,17 @@ export type DawClip = AudioClip | MidiClip
 export function isAudioClip(c: DawClip): c is AudioClip { return c.kind === 'audio' }
 export function isMidiClip(c: DawClip): c is MidiClip   { return c.kind === 'midi'  }
 
+// ── Scene ─────────────────────────────────────────────────────────────────────
+
 export interface Scene {
   id: string
   name: string
-  tempo?: number   // optional per-scene tempo override
+  tempo?: number
 }
 
-// Session view grid: trackId → array indexed by scene
 export type SessionGrid = Record<string, (DawClip | null)[]>
+
+// ── Project ───────────────────────────────────────────────────────────────────
 
 export interface DawProject {
   id: string
@@ -80,11 +209,14 @@ export interface DawProject {
   arrangementClips: DawClip[]
   scenes: Scene[]
   sessionGrid: SessionGrid
-  loopStart: number        // beats
-  loopEnd: number          // beats
+  loopStart: number
+  loopEnd: number
   loopEnabled: boolean
-  masterVolume: number     // 0–1
+  masterVolume: number
+  automationLanes: AutomationLane[]
 }
+
+// ── UI state ──────────────────────────────────────────────────────────────────
 
 export type DawView = 'session' | 'arrangement' | 'mixer'
 
@@ -93,15 +225,9 @@ export type EditTarget =
   | { type: 'audio-clip'; clipId: string }
   | null
 
-export type SessionLaunchState = 'idle' | 'queued' | 'playing' | 'recording'
+export type LaunchQuantization = 'none' | 'beat' | 'bar' | '2bar' | '4bar'
 
-// Per-slot state for the session grid launch engine
-export interface SlotState {
-  trackId: string
-  sceneIndex: number
-  launchState: SessionLaunchState
-  playheadFrac?: number  // 0–1 for playback progress ring
-}
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 export const TRACK_COLORS = [
   '#3b82f6', '#22c55e', '#f97316', '#a855f7',
@@ -110,6 +236,12 @@ export const TRACK_COLORS = [
 ]
 
 export const DEFAULT_TRACK_HEIGHT = 64
+
+export function defaultTrackInstrument(type: TrackType): TrackInstrument {
+  if (type === 'drum') return defaultDrumInstrument()
+  if (type === 'midi') return defaultFmInstrument()
+  return { type: 'none', params: {} }
+}
 
 export function defaultProject(): DawProject {
   return {
@@ -120,20 +252,12 @@ export function defaultProject(): DawProject {
     timeSignatureDen: 4,
     tracks: [],
     arrangementClips: [],
-    scenes: [
-      { id: crypto.randomUUID(), name: 'Scene 1' },
-      { id: crypto.randomUUID(), name: 'Scene 2' },
-      { id: crypto.randomUUID(), name: 'Scene 3' },
-      { id: crypto.randomUUID(), name: 'Scene 4' },
-      { id: crypto.randomUUID(), name: 'Scene 5' },
-      { id: crypto.randomUUID(), name: 'Scene 6' },
-      { id: crypto.randomUUID(), name: 'Scene 7' },
-      { id: crypto.randomUUID(), name: 'Scene 8' },
-    ],
+    scenes: Array.from({ length: 8 }, (_, i) => ({ id: crypto.randomUUID(), name: `Scene ${i + 1}` })),
     sessionGrid: {},
     loopStart: 0,
     loopEnd: 16,
     loopEnabled: true,
     masterVolume: 0.85,
+    automationLanes: [],
   }
 }
