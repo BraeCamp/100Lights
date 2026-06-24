@@ -1062,3 +1062,123 @@ export async function analyzeBeats(
   return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
 }
 
+// ── Amplitude-threshold segmentation ─────────────────────────────────────────
+//
+// Detects note boundaries by watching the RMS envelope:
+//   - When envelope crosses ABOVE (onsetPct × peak)  → start of a note
+//   - When envelope crosses BELOW (offsetPct × peak) → end of a note
+//
+// Each segment is then analyzed for spectral features so notes can be
+// compared and grouped by tonal similarity (same timbre = same cluster).
+export function segmentByAmplitude(
+  audioBuffer: AudioBuffer,
+  onsetPct  = 0.15,  // 15% of peak RMS triggers a note start
+  offsetPct = 0.10,  // 10% of peak RMS triggers a note end
+): BeatAnalysis {
+  const sr  = audioBuffer.sampleRate
+  const raw = audioBuffer.getChannelData(0)
+  const n   = raw.length
+
+  // ── 1. RMS envelope (5 ms hop, 10 ms window) ──────────────────────────────
+  const HOP      = Math.max(1, Math.round(0.005 * sr))
+  const WIN_HALF = HOP
+  const nFrames  = Math.floor(n / HOP)
+  const rmsEnv   = new Float32Array(nFrames)
+
+  for (let f = 0; f < nFrames; f++) {
+    const lo = Math.max(0, f * HOP - WIN_HALF)
+    const hi = Math.min(n, f * HOP + WIN_HALF)
+    let sum = 0
+    for (let s = lo; s < hi; s++) sum += raw[s] ** 2
+    rmsEnv[f] = Math.sqrt(sum / (hi - lo))
+  }
+
+  // ── 2. Peak and thresholds ────────────────────────────────────────────────
+  let peakRms = 0
+  for (let f = 0; f < nFrames; f++) if (rmsEnv[f] > peakRms) peakRms = rmsEnv[f]
+  if (peakRms < 1e-7) return { hits: [], bpm: null, duration: audioBuffer.duration }
+
+  const onsetThresh  = peakRms * onsetPct
+  const offsetThresh = peakRms * offsetPct
+
+  // ── 3. Threshold-crossing segmentation ────────────────────────────────────
+  // 20 ms minimum note length prevents noise blips from becoming hits.
+  // 10 ms minimum silence before a new note can start prevents double-triggers
+  // on the same transient.
+  const minNoteFr    = Math.ceil(0.020 * sr / HOP)
+  const minSilenceFr = Math.ceil(0.010 * sr / HOP)
+
+  const segments: Array<{ start: number; end: number }> = []
+  let inNote       = false
+  let onsetFrame   = 0
+  let silenceCount = 0
+
+  for (let f = 0; f < nFrames; f++) {
+    if (!inNote) {
+      if (rmsEnv[f] >= onsetThresh) {
+        onsetFrame   = f
+        inNote       = true
+        silenceCount = 0
+      }
+    } else {
+      if (rmsEnv[f] < offsetThresh) {
+        silenceCount++
+        if (silenceCount >= minSilenceFr) {
+          const endFrame = f - silenceCount + 1
+          if (endFrame - onsetFrame >= minNoteFr) {
+            segments.push({ start: onsetFrame * HOP, end: endFrame * HOP })
+          }
+          inNote       = false
+          silenceCount = 0
+        }
+      } else {
+        silenceCount = 0
+      }
+    }
+  }
+  // Note still active at buffer end
+  if (inNote && nFrames - onsetFrame >= minNoteFr) {
+    segments.push({ start: onsetFrame * HOP, end: n })
+  }
+
+  if (segments.length === 0) {
+    return { hits: [], bpm: null, duration: audioBuffer.duration }
+  }
+
+  // ── 4. Spectral feature extraction per segment ────────────────────────────
+  const hits: BeatHit[] = []
+  let prevSpectrum: Float32Array | null = null
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg       = segments[i]
+    const nextStart = segments[i + 1]?.start ?? null
+    const { spectral, spectrum } = computeHitFeatures(raw, seg.start, sr, prevSpectrum, nextStart)
+    prevSpectrum = spectrum
+
+    hits.push({
+      id:       crypto.randomUUID(),
+      time:     seg.start / sr,
+      duration: (seg.end - seg.start) / sr,
+      type:     'kick',
+      velocity: Math.min(0.92, Math.max(0.18, spectral.peakAmplitude * 0.9)),
+      note:     DEFAULT_NOTES.kick,
+      spectral,
+    })
+  }
+
+  // ── 5. BPM from median inter-onset interval ────────────────────────────────
+  let bpm: number | null = null
+  if (hits.length >= 2) {
+    const iois = hits.slice(1).map((h, i) => h.time - hits[i].time).sort((a, b) => a - b)
+    const med  = iois[Math.floor(iois.length / 2)]
+    if (med > 0) {
+      let candidate = 60 / med
+      while (candidate < 60)  candidate *= 2
+      while (candidate > 220) candidate /= 2
+      bpm = Math.round(candidate)
+    }
+  }
+
+  return { hits, bpm, duration: audioBuffer.duration }
+}
+

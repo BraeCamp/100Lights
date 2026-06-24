@@ -57,7 +57,7 @@ import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping
 import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
-import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, spectralToClusterVec, checkSplitViolations, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance, annotatePitchDeltas } from '@/lib/beat-analyzer'
+import { analyzeBeats, segmentByAmplitude, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, spectralToClusterVec, checkSplitViolations, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance, annotatePitchDeltas } from '@/lib/beat-analyzer'
 import { clusterCorrectionGetAll, clusterCorrectionAdd, type ClusterCorrection } from '@/lib/cluster-corrections'
 import { clusterSplitAdd, clusterSplitGetAll } from '@/lib/cluster-splits'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -2162,8 +2162,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setDtClusterLabels({})
     setDtRunStatus(null)
     try {
-      // Onset detection only — no type classification
-      const result = await analyzeBeats(box)
+      // Amplitude-threshold segmentation: note starts at 15% of peak, ends at 10%
+      const result = segmentByAmplitude(box)
       if (myGen !== dtGenRef.current) return
 
       // ── Pre-clustering enrichment ──────────────────────────────────────────────
