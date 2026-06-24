@@ -94,8 +94,8 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
       width: isMaster ? 80 : 72, flexShrink: 0,
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       gap: 4, padding: '8px 4px 6px',
-      background: isMaster ? '#1a1a1a' : 'var(--bg-card)',
-      borderRight: '1px solid var(--border)',
+      background: isMaster ? '#202020' : '#2a2a2a',
+      borderRight: '1px solid #383838',
       opacity: dimmed ? 0.4 : 1, transition: 'opacity 0.15s',
       position: 'relative',
     }}>
@@ -188,8 +188,8 @@ export default function Mixer() {
   const { project, dispatch } = useDaw()
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: 'var(--bg-surface)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', overflowX: 'auto', overflowY: 'hidden', flex: 1 }}>
+    <div data-testid="mixer" style={{ display: 'flex', flex: 1, minHeight: 0, background: 'var(--bg-base)', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', overflowX: 'auto', overflowY: 'hidden', flex: 1, alignItems: 'stretch' }}>
         {project.tracks.map(track => (
           <ChannelStrip key={track.id} track={track} />
         ))}
@@ -205,7 +205,7 @@ export default function Mixer() {
           ))}
         </div>
       </div>
-      <div style={{ flexShrink: 0, borderLeft: '2px solid var(--border)' }}>
+      <div style={{ flexShrink: 0, borderLeft: '2px solid #444' }}>
         <ChannelStrip isMaster />
       </div>
     </div>

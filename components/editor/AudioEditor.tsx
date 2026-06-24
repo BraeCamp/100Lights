@@ -167,6 +167,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
 
+  useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
+
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   const onSaveRef = useRef(onSave)
   useEffect(() => { onSaveRef.current = onSave }, [onSave])

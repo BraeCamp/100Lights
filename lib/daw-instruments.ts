@@ -1,6 +1,6 @@
 'use client'
 
-import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams } from './daw-types'
+import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams } from './daw-types'
 import { playDrumHit } from './drum-samples'
 import type { BeatType } from './beat-analyzer'
 
@@ -85,6 +85,81 @@ function playFmVoice(
   }
 }
 
+// ── Poly synth voice (subtractive + LFO) ─────────────────────────────────────
+
+function playPolyVoice(
+  ctx: AudioContext,
+  dest: AudioNode,
+  params: PolyInstrumentParams,
+  pitch: number,
+  velocity: number,
+  when: number,
+  duration: number,
+) {
+  const freq = pitchToHz(pitch)
+  const vel  = velocity / 127
+
+  const osc    = ctx.createOscillator()
+  const filter = ctx.createBiquadFilter()
+  const env    = ctx.createGain()
+
+  osc.type            = params.waveform
+  osc.frequency.value = freq
+  osc.detune.value    = params.detune
+
+  filter.type            = params.filterType
+  filter.frequency.value = params.filterCutoff
+  filter.Q.value         = params.filterResonance
+
+  const attackEnd  = when + params.attack
+  const decayEnd   = attackEnd + params.decay
+  const releaseAt  = when + Math.max(params.attack + params.decay, duration - params.release)
+  const endAt      = releaseAt + params.release
+
+  env.gain.setValueAtTime(0, when)
+  env.gain.linearRampToValueAtTime(vel, attackEnd)
+  env.gain.linearRampToValueAtTime(vel * params.sustain, decayEnd)
+  env.gain.setValueAtTime(vel * params.sustain, releaseAt)
+  env.gain.linearRampToValueAtTime(0, endAt)
+
+  osc.connect(filter)
+  filter.connect(env)
+  env.connect(dest)
+
+  // LFO
+  let lfo: OscillatorNode | null = null
+  let lfoGain: GainNode | null = null
+  if (params.lfoEnabled) {
+    lfo     = ctx.createOscillator()
+    lfoGain = ctx.createGain()
+    lfo.type            = params.lfoWaveform
+    lfo.frequency.value = params.lfoRate
+    lfo.connect(lfoGain)
+
+    if (params.lfoTarget === 'pitch') {
+      lfoGain.gain.value = params.lfoDepth * 100  // cents
+      lfoGain.connect(osc.detune)
+    } else if (params.lfoTarget === 'filter') {
+      lfoGain.gain.value = params.lfoDepth * params.filterCutoff * 0.8
+      lfoGain.connect(filter.frequency)
+    } else {
+      lfoGain.gain.value = params.lfoDepth * 0.5
+      lfoGain.connect(env.gain)
+    }
+
+    lfo.start(when)
+    lfo.stop(endAt + 0.01)
+  }
+
+  osc.start(when)
+  osc.stop(endAt + 0.01)
+
+  osc.onended = () => {
+    osc.disconnect(); filter.disconnect(); env.disconnect()
+    lfo?.disconnect(); lfoGain?.disconnect()
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function playInstrumentNote(
@@ -107,6 +182,11 @@ export function playInstrumentNote(
 
   if (instrument.type === 'fm') {
     playFmVoice(ctx, dest, instrument.params as FmInstrumentParams, pitch, velocity, when, duration)
+    return
+  }
+
+  if (instrument.type === 'poly') {
+    playPolyVoice(ctx, dest, instrument.params as PolyInstrumentParams, pitch, velocity, when, duration)
     return
   }
 }

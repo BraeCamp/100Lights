@@ -430,6 +430,11 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
               onClick={e => e.stopPropagation()}
               className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0 }} />
             <AddAutoButton track={track} />
+            <button
+              title="Open device panel"
+              onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
+              style={{ fontSize: 9, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
+            >⚙</button>
           </div>
         </div>
 

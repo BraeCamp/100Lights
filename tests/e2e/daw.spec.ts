@@ -46,8 +46,10 @@ test.describe('DAW shell', () => {
 
     for (const view of ['Session', 'Arrangement', 'Mixer']) {
       await page.getByRole('button', { name: view }).click()
+      if (view === 'Mixer') {
+        await page.waitForSelector('[data-testid="mixer"]', { timeout: 8000 })
+      }
       await page.screenshot({ path: `tests/e2e/screenshots/02-view-${view.toLowerCase()}.png` })
-      // Each tab should be visually active (no crash)
       await expect(page.locator('[data-editor="true"]')).toBeVisible()
     }
   })
@@ -149,6 +151,7 @@ test.describe('Mixer View', () => {
     await page.getByRole('button', { name: '+A' }).first().click()
     await page.getByRole('button', { name: '+M' }).first().click()
     await page.getByRole('button', { name: 'Mixer' }).click()
+    await page.waitForSelector('[data-testid="mixer"]', { timeout: 8000 })
     await page.screenshot({ path: 'tests/e2e/screenshots/08-mixer.png' })
     await expect(page.locator('[data-editor="true"]')).toBeVisible()
   })

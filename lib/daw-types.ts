@@ -75,7 +75,7 @@ export function defaultFilter(): FilterParams {
 
 // ── Instruments ───────────────────────────────────────────────────────────────
 
-export type InstrumentType = 'none' | 'drum' | 'fm' | 'sampler'
+export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler'
 
 export interface DrumInstrumentParams { pack: 'synth' | '808' }
 
@@ -90,7 +90,24 @@ export interface FmInstrumentParams {
   modDepth: number  // FM mod index
 }
 
-export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | Record<string, never>
+export interface PolyInstrumentParams {
+  waveform: OscillatorType
+  attack: number
+  decay: number
+  sustain: number
+  release: number
+  detune: number
+  filterType: BiquadFilterType
+  filterCutoff: number    // Hz 20–20000
+  filterResonance: number // Q 0.1–20
+  lfoEnabled: boolean
+  lfoRate: number         // Hz 0.1–20
+  lfoDepth: number        // 0–1
+  lfoTarget: 'pitch' | 'filter' | 'amp'
+  lfoWaveform: OscillatorType
+}
+
+export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | PolyInstrumentParams | Record<string, never>
 
 export interface TrackInstrument {
   type: InstrumentType
@@ -103,6 +120,18 @@ export function defaultDrumInstrument(): TrackInstrument {
 
 export function defaultFmInstrument(): TrackInstrument {
   return { type: 'fm', params: { waveform: 'sine', attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.3, detune: 0, modRatio: 2, modDepth: 1 } }
+}
+
+export function defaultPolyInstrument(): TrackInstrument {
+  return {
+    type: 'poly',
+    params: {
+      waveform: 'sawtooth', attack: 0.005, decay: 0.15, sustain: 0.6, release: 0.4,
+      detune: 0,
+      filterType: 'lowpass', filterCutoff: 2400, filterResonance: 1.2,
+      lfoEnabled: false, lfoRate: 4, lfoDepth: 0.3, lfoTarget: 'filter', lfoWaveform: 'sine',
+    } as PolyInstrumentParams,
+  }
 }
 
 // ── Automation ────────────────────────────────────────────────────────────────
