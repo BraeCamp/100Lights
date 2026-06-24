@@ -2518,6 +2518,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [dtSelectedHitId, setDtSelectedHitId] = useState<string | null>(null)
   const [dtRefining,      setDtRefining]      = useState(false)
   const [dtRefineIter,    setDtRefineIter]    = useState(0)
+  const [dtRunStatus,     setDtRunStatus]     = useState<string | null>(null)
   const dtGenRef    = useRef(0)
   const dtCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -2584,6 +2585,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     setDtLoading(true)
     setDtHits(null)
     setDtClusterLabels({})
+    setDtRunStatus(null)
     try {
       // Onset detection only — no type classification
       const result = await analyzeBeats(beatBox)
@@ -2679,52 +2681,85 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
         clusterId: CLUSTER_LETTERS[Math.min(hitSlot[h.id] ?? 0, CLUSTER_LETTERS.length - 1)],
       }))
 
-      // ── Phase 3: Enforce split pairs ────────────────────────────────────────
-      // A split pair (distinctSpectral, confusedWithSpectral) says:
-      //   "these two sounds were in the same cluster — keep them apart forever."
-      // For each cluster, if it contains BOTH a distinct-type hit AND a
-      // confused-type hit from the same saved pair, force the distinct-type
-      // hits out into a new slot. This is the pairwise mistake memory:
-      // we look only at the two sounds involved in each past error.
+      // ── Phase 3: Load split pairs once — used for enforcement AND auto-refine ──
       const SPLIT_MATCH_DIST = 0.46
-      try {
-        const splits = await clusterSplitGetAll()
-        if (splits.length > 0) {
-          for (const split of splits) {
-            // Rebuild cluster map fresh for each split check (hits may have moved)
-            const clusterMap = new Map<string, BeatHit[]>()
-            for (const h of taggedHits) {
-              const k = h.clusterId ?? 'A'
-              if (!clusterMap.has(k)) clusterMap.set(k, [])
-              clusterMap.get(k)!.push(h)
-            }
+      let splits: import('@/lib/cluster-splits').ClusterSplit[] = []
+      try { splits = await clusterSplitGetAll() } catch { /* non-fatal */ }
 
-            for (const [letter, members] of clusterMap.entries()) {
-              // Hits in this cluster that look like the "should be distinct" sound
-              const distinctMatches = members.filter(h =>
-                h.spectral && spectralDistance(h.spectral, split.distinctSpectral) < SPLIT_MATCH_DIST
-              )
-              // Hits in this cluster that look like the "confused with" sound
-              const confusedMatches = members.filter(h =>
-                h.spectral && spectralDistance(h.spectral, split.confusedWithSpectral) < SPLIT_MATCH_DIST
-              )
-
-              if (distinctMatches.length === 0 || confusedMatches.length === 0) continue
-              // This cluster is repeating a known mistake — find a free slot
-              const usedLetters = new Set([...clusterMap.keys()])
-              const freeSlot = CLUSTER_LETTERS.find(l => !usedLetters.has(l))
-              if (!freeSlot) continue
-
-              // Pull distinctMatches out into the free slot
-              const distinctIds = new Set(distinctMatches.map(h => h.id))
-              taggedHits = taggedHits.map(h =>
-                distinctIds.has(h.id) ? { ...h, clusterId: freeSlot } : h
-              )
-              break // one enforcement per split per pass; next split iteration will re-evaluate
-            }
+      // Enforce each split pair: if a cluster contains BOTH the distinct-type hit
+      // AND the confused-with hit, pull the distinct hits into a new free slot.
+      if (splits.length > 0) {
+        for (const split of splits) {
+          const clusterMap = new Map<string, BeatHit[]>()
+          for (const h of taggedHits) {
+            const k = h.clusterId ?? 'A'
+            if (!clusterMap.has(k)) clusterMap.set(k, [])
+            clusterMap.get(k)!.push(h)
+          }
+          for (const [, members] of clusterMap.entries()) {
+            const distinctMatches = members.filter(h =>
+              h.spectral && spectralDistance(h.spectral, split.distinctSpectral) < SPLIT_MATCH_DIST
+            )
+            const confusedMatches = members.filter(h =>
+              h.spectral && spectralDistance(h.spectral, split.confusedWithSpectral) < SPLIT_MATCH_DIST
+            )
+            if (distinctMatches.length === 0 || confusedMatches.length === 0) continue
+            const usedLetters = new Set(taggedHits.map(h => h.clusterId ?? 'A'))
+            const freeSlot = CLUSTER_LETTERS.find(l => !usedLetters.has(l))
+            if (!freeSlot) continue
+            const distinctIds = new Set(distinctMatches.map(h => h.id))
+            taggedHits = taggedHits.map(h => distinctIds.has(h.id) ? { ...h, clusterId: freeSlot } : h)
+            break
           }
         }
-      } catch { /* non-fatal */ }
+      }
+
+      // ── Phase 4: Auto-refine until corrections satisfied (up to 10 passes) ───
+      // Uses split pairs as hard constraints. If violations remain after Phase 3,
+      // iteratively bump k and seed k-means with correction spectral vectors until
+      // no cluster contains both sides of a known split pair — or 10 tries are up.
+      let autoRefineIters = 0
+      if (splits.length > 0) {
+        const splitConstraints = splits.map(s => ({
+          distinctSpectral:   s.distinctSpectral,
+          confusedWithSpectral: s.confusedWithSpectral,
+        }))
+        let assignCheck = Object.fromEntries(
+          taggedHits.map(h => [h.id, CLUSTER_LETTERS.indexOf((h.clusterId ?? 'A') as typeof CLUSTER_LETTERS[number])])
+        )
+        if (checkSplitViolations(assignCheck, taggedHits, splitConstraints)) {
+          let refineHits = taggedHits
+          let refineK = Math.max(new Set(taggedHits.map(h => h.clusterId ?? 'A')).size, splits.length + 1)
+          for (let pass = 0; pass < 10; pass++) {
+            const seedVecs = splits.flatMap(p => [
+              spectralToClusterVec(p.distinctSpectral),
+              spectralToClusterVec(p.confusedWithSpectral),
+            ])
+            refineK = Math.min(CLUSTER_LETTERS.length, refineK + 1)
+            const newAssign = clusterHits(refineHits, refineK, seedVecs)
+            const newHits = refineHits.map(h => ({
+              ...h,
+              clusterId: CLUSTER_LETTERS[newAssign[h.id] ?? 0] ?? 'A',
+            }))
+            const newCheck = Object.fromEntries(newHits.map(h => [h.id, CLUSTER_LETTERS.indexOf(h.clusterId ?? 'A')]))
+            autoRefineIters++
+            if (!checkSplitViolations(newCheck, newHits, splitConstraints)) {
+              taggedHits = newHits
+              break
+            }
+            refineHits = newHits
+            taggedHits = newHits
+          }
+        }
+      }
+
+      // ── Build visible status line ─────────────────────────────────────────────
+      {
+        const corrMsg   = numCorrSlots > 0 ? ` · ${numCorrSlots} correction${numCorrSlots !== 1 ? 's' : ''} applied` : ' · no corrections saved'
+        const refineMsg = autoRefineIters > 0 ? ` · ${autoRefineIters} auto-refine pass${autoRefineIters !== 1 ? 'es' : ''}` : ''
+        const violMsg   = splits.length > 0 && autoRefineIters === 10 ? ' ⚠ violations remain' : ''
+        setDtRunStatus(`${result.hits.length} hits detected${corrMsg}${refineMsg}${violMsg}`)
+      }
 
       // ── Diagnostics ───────────────────────────────────────────────────────────
       // Open DevTools → Console and run Separate Audio to see what the algorithm did.
@@ -2746,6 +2781,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       } else {
         console.log('corrections: 0 saved — click "This is distinct" in a dot to teach the algorithm')
       }
+      if (splits.length > 0) console.log(`split pairs: ${splits.length} · auto-refine passes: ${autoRefineIters}${autoRefineIters === 10 ? ' (violations remain)' : ' (resolved)'}`)
       const clusterSummary: Record<string, number> = {}
       for (const h of taggedHits) clusterSummary[h.clusterId ?? 'A'] = (clusterSummary[h.clusterId ?? 'A'] ?? 0) + 1
       console.log('cluster sizes:', Object.entries(clusterSummary).sort().map(([k,v]) => `${k}:${v}`).join(' '))
@@ -9257,9 +9293,14 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
 
                     return (
                       <>
-                        <div style={{ fontSize: 11, color: 'rgba(250,204,21,0.9)', marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, color: 'rgba(250,204,21,0.9)', marginBottom: 4 }}>
                           {dtHits.length} sounds separated into {byCluster.size} group{byCluster.size !== 1 ? 's' : ''}
                         </div>
+                        {dtRunStatus && (
+                          <div style={{ fontSize: 10, color: dtRunStatus.includes('⚠') ? 'rgba(251,191,36,0.85)' : 'var(--text-muted)', marginBottom: 10, fontFamily: 'monospace' }}>
+                            {dtRunStatus}
+                          </div>
+                        )}
 
                         {/* Waveform + dots colored by cluster */}
                         <canvas
