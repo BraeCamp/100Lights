@@ -121,6 +121,9 @@ export default function AudioEditor({
   // Stem URL to feed directly into BeatLab for analysis (bypasses mic)
   const [analyzeStemUrl, setAnalyzeStemUrl] = useState<string | null>(null)
   const [analyzeStemLabel, setAnalyzeStemLabel] = useState<string>('')
+  // Library drag-and-drop onto the track area (catches drops that miss BeatLab lanes)
+  const [trackAreaLibDragOver, setTrackAreaLibDragOver] = useState(false)
+  const [pendingLibraryDrop, setPendingLibraryDrop]     = useState<string | null>(null)
 
   // Stem separation state per track id
   const [stemJobs, setStemJobs] = useState<Record<string, { predId: string; status: 'running' | 'done' | 'error' }>>({})
@@ -391,7 +394,25 @@ export default function AudioEditor({
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
           {/* Track timeline — audio waveforms + beat track rows — fills all remaining space */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderBottom: '1px solid var(--border)' }}>
+          <div
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderBottom: '1px solid var(--border)', position: 'relative' }}
+            onDragOver={e => {
+              if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'copy'
+              setTrackAreaLibDragOver(true)
+            }}
+            onDragLeave={e => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setTrackAreaLibDragOver(false)
+            }}
+            onDrop={e => {
+              setTrackAreaLibDragOver(false)
+              const entryId = e.dataTransfer.getData('application/x-library-entry-id')
+              if (!entryId) return
+              e.preventDefault()
+              setPendingLibraryDrop(entryId)
+            }}
+          >
 
 
               {/* Audio tracks */}
@@ -478,6 +499,15 @@ export default function AudioEditor({
 
               {/* BeatLab lane editor lives here when in editing phase — rendered via portal from BeatLab */}
               <div ref={el => setBeatLabLanesEl(el)} />
+
+              {/* Drop overlay shown when dragging a Sound Library entry over the track area */}
+              {trackAreaLibDragOver && (
+                <div style={{ position: 'absolute', inset: 0, background: 'rgba(139,92,246,0.08)', border: '2px dashed rgba(139,92,246,0.5)', borderRadius: 4, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(167,139,250,1)', background: 'var(--bg-card)', padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(139,92,246,0.4)' }}>
+                    Drop to add as new track
+                  </span>
+                </div>
+              )}
           </div>
 
           {/* BeatLab toolbar panel — always compact; lanes portal into the timeline above */}
@@ -497,6 +527,8 @@ export default function AudioEditor({
               stemLabel={analyzeStemLabel}
               onStemAnalyzed={() => setAnalyzeStemUrl(null)}
               onPhaseChange={p => setBeatLabPhase(p as 'idle' | 'recording' | 'analyzing' | 'editing')}
+              pendingLibraryDrop={pendingLibraryDrop}
+              onLibraryDropHandled={() => setPendingLibraryDrop(null)}
               onRequestSongPlay={() => {
                 if (audioRef.current && selectedTrack) {
                   audioRef.current.play().catch(() => {})

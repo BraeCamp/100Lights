@@ -1789,6 +1789,8 @@ interface BeatLabProps {
   analyzeStemUrl?: string | null   // when set, fetch + analyze this audio URL directly (bypasses mic)
   stemLabel?: string               // display name for the stem being analyzed e.g. "drums stem"
   onStemAnalyzed?: () => void      // called after stem analysis completes (or fails)
+  pendingLibraryDrop?: string | null   // entry ID dropped on the track area from outside BeatLab
+  onLibraryDropHandled?: () => void    // called after BeatLab processes pendingLibraryDrop
 }
 
 function WaveViz({ buf, color = '#a855f7', width = 480, height = 52 }: { buf: AudioBuffer | null; color?: string; width?: number; height?: number }) {
@@ -1880,7 +1882,7 @@ function AlignCanvas({ refBuf, boxBuf, offset }: { refBuf: AudioBuffer; boxBuf: 
     style={{ width: '100%', height: 80, display: 'block', borderRadius: 6, border: '1px solid rgba(255,255,255,0.07)' }} />
 }
 
-export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed }: BeatLabProps) {
+export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPlay, onRequestSongStop, requestedFamily, onHitsChange, onAddTrack, requestRecord, onPhaseChange, lanesContainer, analyzeStemUrl, stemLabel, onStemAnalyzed, pendingLibraryDrop, onLibraryDropHandled }: BeatLabProps) {
   const [phase, setPhase] = useState<Phase>('editing')
   const [analysis, setAnalysis] = useState<BeatAnalysis | null>(null)
   const [hits, setHits] = useState<BeatHit[]>([])
@@ -3255,6 +3257,17 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       setDuration(d => Math.max(d, time + buf.duration + 0.5))
     } catch { showToast('Could not decode library sound') }
   }
+
+  // Handles drops that landed on the AudioEditor track area (not a specific BeatLab lane).
+  // Creates a new custom lane and places the sample there at time 0.
+  useEffect(() => {
+    if (!pendingLibraryDrop) return
+    const entryId = pendingLibraryDrop
+    onLibraryDropHandled?.()
+    const laneId = addCustomLane()
+    handleLibraryDropOnLane(laneId, entryId, 0)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLibraryDrop])
 
   const [audioClips, setAudioClips] = useState<AudioClip[]>([])
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
