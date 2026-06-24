@@ -57,7 +57,7 @@ import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping
 import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
-import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance, detectLoopPeriod, annotatePitchDeltas } from '@/lib/beat-analyzer'
+import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance, annotatePitchDeltas } from '@/lib/beat-analyzer'
 import { clusterCorrectionGetAll, clusterCorrectionAdd, type ClusterCorrection } from '@/lib/cluster-corrections'
 import { clusterSplitAdd, clusterSplitGetAll } from '@/lib/cluster-splits'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -2577,35 +2577,9 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       if (myGen !== dtGenRef.current) return
 
       // ── Pre-clustering enrichment ──────────────────────────────────────────────
-      // 1. Loop phase: detect the repeating beat period, then tag each hit with
-      //    its position (0–1) within that period. Hits at the same loop position
-      //    across repetitions are almost certainly the same sound. This is by far
-      //    the strongest clustering signal for patterned recordings.
-      //
-      //    Period-doubling check: detectLoopPeriod often returns the shortest IOI
-      //    that fits all intervals (e.g. 0.25s for a kick+snare pattern). At that
-      //    period every hit lands on an integer multiple → all get phase 0.0 → the
-      //    loop phase feature adds identical values to all vectors and contributes
-      //    zero discrimination. Detect this by checking phase variance; if it's
-      //    nearly zero, double the period and check again (up to 3 doublings).
-      let loopPeriod = detectLoopPeriod(result.hits)
-      if (loopPeriod !== null) {
-        for (let doublings = 0; doublings < 3; doublings++) {
-          const phases = result.hits.map(h => (h.time % loopPeriod!) / loopPeriod!)
-          // Circular variance: 1 − |mean of unit vectors|. Near 0 = all phases identical.
-          const sx = phases.reduce((s, p) => s + Math.sin(2 * Math.PI * p), 0) / phases.length
-          const sy = phases.reduce((s, p) => s + Math.cos(2 * Math.PI * p), 0) / phases.length
-          const circVar = 1 - Math.sqrt(sx * sx + sy * sy)
-          if (circVar < 0.05) loopPeriod! *= 2  // all same phase → try a longer period
-          else break
-        }
-        for (const h of result.hits) {
-          h.loopPhase = (h.time % loopPeriod) / loopPeriod
-        }
-      }
-      // 2. Pitch delta: for consecutive tonal hits (clear f0), record how much
-      //    the pitch changed. Tonal sounds with different notes must be in
-      //    different clusters.
+      // Pitch delta: for consecutive tonal hits (clear f0), record how much
+      // the pitch changed. Tonal sounds with different notes must be in
+      // different clusters.
       annotatePitchDeltas(result.hits)
 
       // ── Corrections: NN pre-assignment ────────────────────────────────────────
@@ -2743,7 +2717,6 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
       // Open DevTools → Console and run Separate Audio to see what the algorithm did.
       console.group('[AudioSep] Separation run')
       console.log('hits detected:', result.hits.length)
-      console.log('loop period:', loopPeriod ? `${loopPeriod.toFixed(3)}s` : 'none detected')
       const tonalHits = result.hits.filter(h => (h.spectral?.pitchConfidence ?? 0) > 0.18)
       console.log('tonal hits (pitchConf > 0.18):', tonalHits.length, '/', result.hits.length)
 

@@ -414,13 +414,6 @@ export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): 
     const f0Norm    = Math.min(1, (h.spectral.f0 ?? 0) / 800)
     base.push(f0Norm * Math.min(1, pitchConf * 5) * 3.0)
 
-    // Loop phase (circular encoding, 3× weight)
-    if (h.loopPhase !== undefined) {
-      base.push(Math.sin(2 * Math.PI * h.loopPhase) * 3.0)
-      base.push(Math.cos(2 * Math.PI * h.loopPhase) * 3.0)
-    } else {
-      base.push(0, 0)
-    }
     // Pitch delta (2× weight): consecutive tonal sounds at different notes → separate
     base.push((h.pitchDelta ?? 0) * 2.0)
 
