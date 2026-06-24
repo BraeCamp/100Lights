@@ -760,6 +760,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   const [downloading,      setDownloading]      = useState<Set<string>>(new Set())
   const [dragOverFolder,   setDragOverFolder]   = useState<string | null>(null)
   const [showAdd,          setShowAdd]          = useState(false)
+  const [searchQuery,      setSearchQuery]      = useState('')
   const [addingFolder,     setAddingFolder]     = useState(false)
   const [newFolderDraft,   setNewFolderDraft]   = useState('')
   const newFolderRef = useRef<HTMLInputElement>(null)
@@ -856,11 +857,12 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     handleFolderChange(id, folderName)
   }
 
-  // Group entries
+  // Group entries (filtered by search query)
   const { byFolder, unfiled } = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
     const map = new Map<string, LibraryEntry[]>()
     const unfiled: LibraryEntry[] = []
-    for (const e of entries) {
+    for (const e of (q ? entries.filter(en => en.name.toLowerCase().includes(q)) : entries)) {
       if (e.folder && folders.includes(e.folder)) {
         const arr = map.get(e.folder) ?? []
         arr.push(e)
@@ -900,6 +902,17 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
           style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
           + Add
         </button>
+      </div>
+
+      {/* Search */}
+      <div style={{ padding: '4px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <input
+          type="search"
+          placeholder="Search sounds…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          style={{ width: '100%', fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 7px', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+        />
       </div>
 
       {/* New folder input */}

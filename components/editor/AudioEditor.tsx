@@ -86,7 +86,8 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   const [project, rawDispatch] = useReducer(reducer, initialProject)
   const engineRef = useRef<DawEngine | null>(null)
-  if (engineRef.current === null) {
+  // Create engine on first render; re-create if StrictMode disposed it
+  if (engineRef.current === null || engineRef.current.isClosed) {
     engineRef.current = new DawEngine()
   }
 
@@ -104,8 +105,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   // ── Engine lifecycle ────────────────────────────────────────────────────────
   useEffect(() => {
-    const engine = engineRef.current!
-    engine.updateProject(project)
+    engineRef.current?.updateProject(project)
   }, [project])
 
   useEffect(() => {

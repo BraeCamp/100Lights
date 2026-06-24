@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { ZoomIn, ZoomOut, Maximize2, Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
+import { decodeAiff } from '@/lib/wav-codec'
+import { encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, DawClip, AudioClip, AutomationLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
@@ -237,7 +239,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
 function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId } = useDaw()
   const clips = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const dragHRef = useRef<{ startY: number; startH: number } | null>(null)
@@ -276,10 +278,28 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
       const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*'
       input.onchange = async () => {
         const file = input.files?.[0]; if (!file) return
-        const url  = URL.createObjectURL(file)
-        const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap), 8, { audioUrl: url })
+        const ext  = file.name.split('.').pop()?.toLowerCase() ?? ''
+        let ab = await file.arrayBuffer()
+        let blobUrl: string
+
+        // Chrome's decodeAudioData does not support AIFF — convert to WAV first
+        if (ext === 'aif' || ext === 'aiff') {
+          try {
+            const { channels, sampleRate } = decodeAiff(ab)
+            const wavBuf = encodeWav(channels, sampleRate)
+            const wavBlob = new Blob([wavBuf], { type: 'audio/wav' })
+            ab = wavBuf
+            blobUrl = URL.createObjectURL(wavBlob)
+          } catch {
+            console.error('Could not decode AIFF file:', file.name)
+            return
+          }
+        } else {
+          blobUrl = URL.createObjectURL(file)
+        }
+
+        const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap), 8, { audioUrl: blobUrl })
         dispatch({ type: 'ADD_CLIP', clip })
-        const ab = await file.arrayBuffer()
         const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
         const peaks = extractPeaks(buf)
         const updated: AudioClip = { ...clip, waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration) }
@@ -297,8 +317,11 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
     <div>
       {/* Main track row */}
       <div style={{ display: 'flex', height: track.height, flexShrink: 0 }}>
-        {/* Header */}
-        <div style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden' }}>
+        {/* Header — click to select track (opens Devices/Instrument panel) */}
+        <div
+          onClick={e => { if (!(e.target as HTMLElement).closest('button,input,select')) setSelectedTrackId(track.id) }}
+          style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer' }}
+        >
           {editing ? (
             <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
               onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) }}
@@ -325,6 +348,8 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
 
         {/* Lane */}
         <div
+          data-testid="track-lane"
+          data-track-type={track.type}
           style={{ flex: 1, height: track.height, position: 'relative', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden' }}
           onDoubleClick={handleDoubleClick}
           onDragOver={e => e.preventDefault()}

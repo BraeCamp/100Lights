@@ -119,6 +119,7 @@ export class DawEngine extends EventTarget {
   // ── Track routing ──────────────────────────────────────────────────────────
 
   ensureTrack(id: string, effects?: DawTrack['effects']) {
+    if (this.ctx.state === 'closed') return
     if (!this.trackNodes.has(id)) {
       const effectsInput  = this.ctx.createGain()
       const effectsOutput = this.ctx.createGain()
@@ -277,7 +278,10 @@ export class DawEngine extends EventTarget {
     this.dispatchEvent(new CustomEvent('seek', { detail: { beat } }))
   }
 
+  get isClosed(): boolean { return this.ctx.state === 'closed' }
+
   updateProject(project: DawProject) {
+    if (this.ctx.state === 'closed') return
     this.tempo       = project.tempo
     this.loopEnabled = project.loopEnabled
     this.loopStart   = project.loopStart

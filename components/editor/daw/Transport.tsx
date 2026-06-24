@@ -97,7 +97,7 @@ export default function Transport() {
   const active: React.CSSProperties = {
     ...base,
     background: 'var(--accent)',
-    borderColor: 'var(--accent)',
+    border: '1px solid var(--accent)',
     color: '#fff',
   }
 
@@ -164,7 +164,7 @@ export default function Transport() {
         style={{
           ...base,
           color: recording ? '#ff3b3b' : 'var(--text-secondary)',
-          borderColor: recording ? '#ff3b3b' : 'var(--border)',
+          border: recording ? '1px solid #ff3b3b' : '1px solid var(--border)',
           background: recording ? 'rgba(255,59,59,0.14)' : '#1e1e1e',
         }}
         onClick={handleRecord}
