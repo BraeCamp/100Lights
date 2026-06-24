@@ -634,20 +634,32 @@ export async function analyzeBeats(
     onset[i] = Math.max(0, energy[i] - energy[i - 2])
   }
 
-  // ── Step 2b: Spectral novelty (adaptive tonal boundary detection) ─────────
-  // Detects TONAL CHANGES: moments where the high-vs-low frequency balance
-  // shifts abruptly, even when overall volume stays constant (boom→tss, vowel
-  // transitions, pitch jumps). Energy-only onset detection misses these.
+  // ── Step 2b: Spectral novelty — two complementary detectors ─────────────────
   //
-  // tiltRatio is hoisted to outer scope so Step 3b (tail suppression) can also
-  // use it as a spectral override: if the tone changed dramatically between two
-  // candidate onsets, they are different sounds even if energy didn't fully decay.
+  // Energy-only onset detection misses sounds that change TONE without changing
+  // VOLUME. Two different human sounds need two different detectors:
   //
-  // Gate   = 20% of peak energy → relative, works for any voice volume.
-  // Thresh = 85th percentile of loud-frame tilt deltas → self-calibrates to
-  //          this recording's tonal variety; only top 15% of shifts register.
-  // Signal = (delta / thresh) * energy → strength proportional to how far the
-  //          change exceeds the threshold.
+  //  Signal 1 — Spectral tilt (tiltRatio):
+  //    Ratio of high-freq to total energy per frame. Captures shifts between
+  //    bass-heavy and treble-heavy sounds (boom→tss, voiced→fricative).
+  //    Uses a 1-tap finite-difference high-pass filter (O(N), no FFT needed).
+  //
+  //  Signal 2 — Zero-crossing rate (zcr):
+  //    How fast the waveform changes sign per frame. Tracks the DOMINANT
+  //    OSCILLATION FREQUENCY, not just the hi-vs-lo split. Critical for vowel
+  //    transitions like "ooooo→eeeee" that stay mid-frequency but shift formants:
+  //      "oooo" F2 ≈ 800 Hz → ZCR ≈ 0.036 crossings/sample
+  //      "eeee" F2 ≈ 2500 Hz → ZCR ≈ 0.113 crossings/sample
+  //    The jump (3×) is far larger than any within-vowel drift and fires
+  //    immediately at the transition. No FFT needed — just sign comparisons.
+  //
+  // Both are hoisted to outer scope so Step 3b (tail suppression) can use them
+  // as overrides: a different sound is kept even if energy didn't fully decay.
+  //
+  // Gate   = 20% of peak energy → relative to this recording, ignores mic noise.
+  // Thresh = 85th percentile of loud-frame deltas → self-calibrates to the
+  //          user's own tonal variety; gradual drift stays below, hard cuts fire.
+  // Signal = (delta / thresh) * energy → proportional to how far above threshold.
 
   // Loud gate: 20% of peak RMS energy across the recording
   let _noveltyPeakEnergy = 0
@@ -656,7 +668,7 @@ export async function analyzeBeats(
   }
   const noveltyLoudGate = _noveltyPeakEnergy * 0.20
 
-  // High-frequency energy per frame via 1-tap finite-difference high-pass
+  // ── Signal 1: Spectral tilt (hi-freq / total energy ratio per frame) ────────
   const hiFrameE = new Float32Array(nFrames)
   for (let i = 0; i < nFrames; i++) {
     const base = i * hopSize
@@ -671,35 +683,52 @@ export async function analyzeBeats(
     hiFrameE[i] = Math.sqrt(hiE / frameSize)
   }
 
-  // Spectral tilt ratio: hi-freq share of total energy per frame
-  // Hoisted so Step 3b can also read it for the spectral-change override.
   const tiltRatio = new Float32Array(nFrames)
   for (let i = 0; i < nFrames; i++) {
     const totE = energy[i] + hiFrameE[i]
     tiltRatio[i] = totE > 0 ? hiFrameE[i] / totE : 0
   }
 
-  // Adaptive threshold = 85th percentile of tilt deltas in loud frames
-  const _loudDeltas: number[] = []
+  const _tiltDeltas: number[] = []
   for (let i = 1; i < nFrames; i++) {
-    if (energy[i] >= noveltyLoudGate) {
-      _loudDeltas.push(Math.abs(tiltRatio[i] - tiltRatio[i - 1]))
-    }
+    if (energy[i] >= noveltyLoudGate) _tiltDeltas.push(Math.abs(tiltRatio[i] - tiltRatio[i - 1]))
   }
-  let noveltyAdaptThresh = 0.15  // fallback for recordings with very few loud frames
-  if (_loudDeltas.length >= 5) {
-    const sorted = [..._loudDeltas].sort((a, b) => a - b)
-    const p85 = sorted[Math.floor(sorted.length * 0.85)] ?? 0.15
-    noveltyAdaptThresh = Math.max(0.04, p85)
+  let noveltyAdaptThresh = 0.15
+  if (_tiltDeltas.length >= 5) {
+    const sorted = [..._tiltDeltas].sort((a, b) => a - b)
+    noveltyAdaptThresh = Math.max(0.04, sorted[Math.floor(sorted.length * 0.85)] ?? 0.15)
   }
 
-  // Inject novelty peaks into onset array (Step 3 peak-picker handles both)
+  // ── Signal 2: Zero-crossing rate (dominant oscillation frequency proxy) ─────
+  const zcr = new Float32Array(nFrames)
+  for (let i = 0; i < nFrames; i++) {
+    const base = i * hopSize
+    let crosses = 0
+    for (let j = 1; j < frameSize; j++) {
+      if (raw[base + j - 1] * raw[base + j] < 0) crosses++
+    }
+    zcr[i] = crosses / frameSize
+  }
+
+  const _zcrDeltas: number[] = []
+  for (let i = 1; i < nFrames; i++) {
+    if (energy[i] >= noveltyLoudGate) _zcrDeltas.push(Math.abs(zcr[i] - zcr[i - 1]))
+  }
+  let zcrAdaptThresh = 0.01
+  if (_zcrDeltas.length >= 5) {
+    const sorted = [..._zcrDeltas].sort((a, b) => a - b)
+    zcrAdaptThresh = Math.max(0.002, sorted[Math.floor(sorted.length * 0.85)] ?? 0.01)
+  }
+
+  // Inject both signals into the onset array; the Step 3 peak-picker handles all three.
   for (let i = 2; i < nFrames; i++) {
     if (energy[i] < noveltyLoudGate) continue
-    const delta = Math.abs(tiltRatio[i] - tiltRatio[i - 1])
-    if (delta > noveltyAdaptThresh) {
-      onset[i] = Math.max(onset[i], (delta / noveltyAdaptThresh) * energy[i] * 3.0)
-    }
+    const tiltDelta = Math.abs(tiltRatio[i] - tiltRatio[i - 1])
+    const zcrDelta  = Math.abs(zcr[i] - zcr[i - 1])
+    const tiltNovelty = tiltDelta > noveltyAdaptThresh ? (tiltDelta / noveltyAdaptThresh) * energy[i] * 3.0 : 0
+    const zcrNovelty  = zcrDelta  > zcrAdaptThresh     ? (zcrDelta  / zcrAdaptThresh)    * energy[i] * 3.0 : 0
+    const novelty = Math.max(tiltNovelty, zcrNovelty)
+    if (novelty > 0) onset[i] = Math.max(onset[i], novelty)
   }
 
   // ── Step 3: Peak picking with adaptive threshold ──────────────────────────
@@ -756,14 +785,17 @@ export async function analyzeBeats(
     for (let f = prevFrame + 1; f < currFrame; f++) {
       if (energy[f] < decayThreshold) { decayed = true; break }
     }
-    // Spectral-tilt override: if the tonal character shifted substantially between
-    // the two candidates, they are different sounds regardless of whether energy
-    // decayed. A boom→tss transition moves tiltRatio by 0.5+ even when the boom
-    // tail is still audible. Threshold: 2× the recording's own adaptive threshold
-    // so gradual vowel drift doesn't trigger this but hard tonal cuts always do.
+    // Spectral-change override: if the tonal character shifted substantially
+    // between the two candidates, they are different sounds even if energy
+    // didn't fully decay. Two independent signals:
+    //   tiltRatio: boom→tss (hi-freq shift), fricative transitions
+    //   zcr:       vowel→vowel (oooo→eeee), pitch note changes
+    // Threshold is 2× each detector's own adaptive value so gradual drift
+    // inside one sustained sound doesn't trigger this.
     if (!decayed) {
       const tiltShift = Math.abs(tiltRatio[currFrame] - tiltRatio[prevFrame])
-      if (tiltShift > noveltyAdaptThresh * 2) decayed = true
+      const zcrShift  = Math.abs(zcr[currFrame]       - zcr[prevFrame])
+      if (tiltShift > noveltyAdaptThresh * 2 || zcrShift > zcrAdaptThresh * 2) decayed = true
     }
     if (decayed) filteredSamples.push(currSample)
     // else: energy never dipped AND tone didn't change → same sound's tail, drop it
