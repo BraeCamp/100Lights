@@ -375,6 +375,44 @@ function vecDist(a: number[], b: number[]): number {
 
 // seedVecs: optional pre-computed feature vectors to use as initial centroids
 // (from saved user corrections). Any remaining slots are filled with k-means++.
+// Build a full cluster-space vector from a spectral fingerprint (same dimensions as vectors
+// used inside clusterHits). Gap context is set to neutral (0.5); pitchDelta to 0.
+export function spectralToClusterVec(s: HitSpectral): number[] {
+  const base = hitToVec(s)
+  const f0Norm    = Math.min(1, (s.f0 ?? 0) / 800)
+  const pitchConf = s.pitchConfidence ?? 0
+  base.push(0.5)                                          // gapBefore — neutral
+  base.push(0.5)                                          // gapAfter  — neutral
+  base.push(f0Norm * Math.min(1, pitchConf * 5) * 3.0)  // enhanced pitch
+  base.push(0)                                            // pitchDelta — unknown
+  return base
+}
+
+// Returns true if any split pair rule is violated: a cluster contains hits matching
+// BOTH the distinct-spectral AND the confused-with-spectral from the same pair.
+export function checkSplitViolations(
+  assignments: Record<string, number>,
+  hits: BeatHit[],
+  pairs: Array<{ distinctSpectral: HitSpectral; confusedWithSpectral: HitSpectral }>,
+  matchDist = 0.4,
+): boolean {
+  if (pairs.length === 0) return false
+  const byCluster = new Map<number, BeatHit[]>()
+  for (const h of hits) {
+    const c = assignments[h.id] ?? 0
+    if (!byCluster.has(c)) byCluster.set(c, [])
+    byCluster.get(c)!.push(h)
+  }
+  for (const pair of pairs) {
+    for (const members of byCluster.values()) {
+      const hasDistinct  = members.some(h => h.spectral && spectralDistance(h.spectral, pair.distinctSpectral)   < matchDist)
+      const hasConfused  = members.some(h => h.spectral && spectralDistance(h.spectral, pair.confusedWithSpectral) < matchDist)
+      if (hasDistinct && hasConfused) return true
+    }
+  }
+  return false
+}
+
 export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): Record<string, number> {
   const actualK = Math.max(1, Math.min(CLUSTER_LETTERS.length, k))
 

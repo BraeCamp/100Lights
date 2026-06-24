@@ -57,7 +57,7 @@ import { applyCCValue, targetLabel, serializeMappings } from '@/lib/midi-mapping
 import MidiMappingPanel, { MidiLearnContext } from './MidiMappingPanel'
 import MidiKeyboard from './MidiKeyboard'
 import type { BeatHit, BeatAnalysis, BeatType, BeatTrackEntry, ReferenceSound, HitSpectral } from '@/lib/beat-analyzer'
-import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance, annotatePitchDeltas } from '@/lib/beat-analyzer'
+import { analyzeBeats, classifyHitLocally, NN_MAX_DIST, clusterHits, hitToVec, spectralToClusterVec, checkSplitViolations, CLUSTER_LETTERS, CLUSTER_COLORS, spectralDistance, annotatePitchDeltas } from '@/lib/beat-analyzer'
 import { clusterCorrectionGetAll, clusterCorrectionAdd, type ClusterCorrection } from '@/lib/cluster-corrections'
 import { clusterSplitAdd, clusterSplitGetAll } from '@/lib/cluster-splits'
 import { playDrumHit } from '@/lib/drum-samples'
@@ -943,6 +943,7 @@ interface LaneProps {
   onDeleteHit: (id: string) => void
   onAddHit: (t: number, note: number) => void
   onLibraryDrop?: (entryId: string, time: number) => void
+  onDtClusterDrop?: (clusterLetter: string) => void
   onToggleMute: () => void
   onLaneContextMenu: (e: React.MouseEvent) => void
   onHitRightClick: (e: React.MouseEvent, id: string) => void
@@ -1187,7 +1188,7 @@ function RecordingWave({ peaks }: { peaks: number[] }) {
   return <canvas ref={canvasRef} width={800} height={56} style={{ width: '100%', height: '100%', display: 'block' }} />
 }
 
-function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, onMultiSelect, selectedClipIds, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange, liveRecording = false, liveRecStartSec = 0, liveRecElapsed = 0, liveRecPeaks = [] }: LaneProps) {
+function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSuggestions, aiDeletions, typeOverrides, isCustom, isActiveLane, snapInterval, onSelectHit, onSelectLane, onOpenPianoRoll, onOpenStepSeq, onOpenChordBuilder, onMoveHit, onDeleteHit, onAddHit, onLibraryDrop, onDtClusterDrop, onToggleMute, onLaneContextMenu, onHitRightClick, onClipRightClick, onClipDelete, onClipSelect, onMultiSelect, selectedClipIds, onClipUpdate, pan, soloed, anySoloed, onPanChange, onSoloToggle, effects, fxOpen, fxAddOpen, onFxToggleOpen, onFxAddOpen, onFxAddClose, onFxAdd, onFxRemove, onFxToggleEnabled, onFxParamChange, onFxRandomize, automLanes, automOpen, automAddOpen, onAutomToggle, onAutomAddOpen, onAutomAddClose, onAutomAdd, onAutomRemove, onAutomPointAdd, onAutomPointUpdate, onAutomPointDelete, level = 0, miniMode = false, spectrumOpen = false, analyserNode, onToggleMini, onToggleSpectrum, loopBeats = 0, onLoopBeatsChange, inputArmed = false, inputSource, onToggleInput, onOpenInputPicker, allLaneTypes, sidechains, onSidechainChange, liveRecording = false, liveRecStartSec = 0, liveRecElapsed = 0, liveRecPeaks = [] }: LaneProps) {
   const color = typeColor(type, typeOverrides)
   const label = typeLabel(type, typeOverrides)
 
@@ -1395,13 +1396,21 @@ function Lane({ type, hits, clips, duration, pxWidth, selectedIds, muted, aiSugg
         onClick={miniMode ? undefined : handleLaneClick}
         onContextMenu={miniMode ? undefined : handleLaneRightClick}
         onDragOver={e => {
-          if (!e.dataTransfer.types.includes('application/x-library-entry-id')) return
+          const hasLib     = e.dataTransfer.types.includes('application/x-library-entry-id')
+          const hasCluster = e.dataTransfer.types.includes('application/x-dt-cluster')
+          if (!hasLib && !hasCluster) return
           e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setLibDragOver(true)
         }}
         onDragLeave={() => setLibDragOver(false)}
         onDrop={e => {
-          const entryId = e.dataTransfer.getData('application/x-library-entry-id')
           setLibDragOver(false)
+          const clusterLetter = e.dataTransfer.getData('application/x-dt-cluster')
+          if (clusterLetter && onDtClusterDrop) {
+            e.preventDefault()
+            onDtClusterDrop(clusterLetter)
+            return
+          }
+          const entryId = e.dataTransfer.getData('application/x-library-entry-id')
           if (!entryId || !onLibraryDrop) return
           e.preventDefault()
           const rect = e.currentTarget.getBoundingClientRect()
@@ -2505,6 +2514,8 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   const [dtLoading,       setDtLoading]       = useState(false)
   const [dtBpm,           setDtBpm]           = useState<number | null>(null)
   const [dtSelectedHitId, setDtSelectedHitId] = useState<string | null>(null)
+  const [dtRefining,      setDtRefining]      = useState(false)
+  const [dtRefineIter,    setDtRefineIter]    = useState(0)
   const dtGenRef    = useRef(0)
   const dtCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -2879,6 +2890,64 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
     showToast(`Added ${totalPlaced} clips across ${byCluster.size} lanes`)
   }
 
+  async function refineDtSeparation() {
+    const hits = dtHits
+    if (!hits || hits.length === 0 || dtRefining) return
+
+    const splits = await clusterSplitGetAll()
+    if (splits.length === 0) {
+      showToast('No corrections yet — mark sounds as distinct in the crop editor first')
+      return
+    }
+
+    setDtRefining(true)
+    setDtRefineIter(0)
+
+    let currentHits = hits
+    const currentK  = new Set(hits.map(h => h.clusterId ?? 'A')).size
+    let k = Math.max(currentK, splits.length + 1)
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      setDtRefineIter(attempt + 1)
+
+      // Build seed vectors: for each split pair, both spectral profiles become initial centroids
+      const seedVecs = splits.flatMap(p => [
+        spectralToClusterVec(p.distinctSpectral),
+        spectralToClusterVec(p.confusedWithSpectral),
+      ])
+
+      const assignments = clusterHits(currentHits, k, seedVecs)
+
+      const violated = checkSplitViolations(
+        assignments,
+        currentHits,
+        splits.map(s => ({ distinctSpectral: s.distinctSpectral, confusedWithSpectral: s.confusedWithSpectral })),
+      )
+
+      const newHits = currentHits.map(h => ({
+        ...h,
+        clusterId: CLUSTER_LETTERS[assignments[h.id] ?? 0] ?? 'A',
+      }))
+
+      if (!violated) {
+        setDtHits(newHits)
+        setDtRefining(false)
+        setDtRefineIter(0)
+        showToast(`Refined in ${attempt + 1} iteration${attempt === 0 ? '' : 's'} — violations resolved`)
+        return
+      }
+
+      currentHits = newHits
+      k = Math.min(CLUSTER_LETTERS.length, k + 1)
+    }
+
+    // Applied 10 iterations; use best result
+    setDtHits(currentHits)
+    setDtRefining(false)
+    setDtRefineIter(0)
+    showToast('Refined 10× — check if separation improved. Try marking more sounds as distinct.')
+  }
+
   useEffect(() => {
     const canvas = dtCanvasRef.current
     if (!canvas || !dtHits || !beatBox) { if (canvas) { const c = canvas.getContext('2d'); c?.clearRect(0, 0, canvas.width, canvas.height) }; return }
@@ -3139,6 +3208,38 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
   }
   function mkClip(id: string, laneType: string, buf: AudioBuffer, startTime: number, name: string): AudioClip {
     return { id, laneType, buf, startTime, muted: false, name, gain: 1, stretchDuration: null, loopDuration: null, gateThreshold: 0, originalBuf: null, fadeIn: 0, fadeOut: 0, color: null, reversed: false, warpMarkers: [] }
+  }
+
+  async function handleDtClusterDropOnLane(laneType: string, clusterLetter: string) {
+    if (!dtHits || !beatBox) return
+    const clusterHitList = dtHits.filter(h => (h.clusterId ?? 'A') === clusterLetter)
+    if (clusterHitList.length === 0) return
+    captureHistory()
+    const sorted = [...clusterHitList].sort((a, b) => a.time - b.time)
+    const raw = beatBox.getChannelData(0)
+    const sr  = beatBox.sampleRate
+    const MAX_DUR      = 0.5
+    const MIN_CLIP_DUR = 0.030
+    const ctx = new AudioContext()
+    const newClips: AudioClip[] = []
+    for (let i = 0; i < sorted.length; i++) {
+      const hit     = sorted[i]
+      const nextHit = sorted[i + 1]
+      const fallbackGap = nextHit ? (nextHit.time - hit.time) * 0.95 : MAX_DUR
+      const dur = hit.duration != null ? hit.duration : Math.min(fallbackGap, MAX_DUR)
+      if (dur < MIN_CLIP_DUR) continue
+      const s   = Math.floor(hit.time * sr)
+      const e   = Math.min(beatBox.length, s + Math.floor(dur * sr))
+      const buf = ctx.createBuffer(1, Math.max(1, e - s), sr)
+      buf.getChannelData(0).set(raw.subarray(s, e))
+      const label = dtClusterLabels[clusterLetter] ?? `Sound ${clusterLetter}`
+      newClips.push(mkClip(crypto.randomUUID(), laneType, buf, hit.time, label))
+    }
+    ctx.close()
+    if (newClips.length > 0) {
+      setAudioClips(prev => [...prev, ...newClips])
+      showToast(`Added ${newClips.length} clips to lane`)
+    }
   }
 
   async function handleLibraryDropOnLane(laneType: string, entryId: string, time: number) {
@@ -7721,6 +7822,7 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           onDeleteHit={deleteHit}
                           onAddHit={(t, note) => addHit(type as BeatType, t, note)}
                           onLibraryDrop={(entryId, t) => handleLibraryDropOnLane(type, entryId, t)}
+                          onDtClusterDrop={dtHits ? (letter) => handleDtClusterDropOnLane(type, letter) : undefined}
                           onToggleMute={() => toggleMute(type as BeatType)}
                           onLaneContextMenu={e => setLaneMenu({ type: type as BeatType, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 200) })}
                           onHitRightClick={(e, id) => setHitMenu({ hitId: id, x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 340) })}
@@ -9297,7 +9399,16 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                             const color = CLUSTER_COLORS[letter] ?? '#888'
                             const firstHit = clusterHits.sort((a, b) => a.time - b.time)[0]
                             return (
-                              <div key={letter} style={{ display: 'flex', alignItems: 'center', gap: 8, background: dtLearnedClusters.has(letter) ? 'rgba(34,197,94,0.06)' : 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '6px 10px', border: dtLearnedClusters.has(letter) ? '1px solid rgba(74,222,128,0.2)' : '1px solid transparent' }}>
+                              <div
+                                key={letter}
+                                draggable
+                                onDragStart={e => {
+                                  e.dataTransfer.setData('application/x-dt-cluster', letter)
+                                  e.dataTransfer.effectAllowed = 'copy'
+                                }}
+                                title="Drag onto a lane to place these clips there"
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, background: dtLearnedClusters.has(letter) ? 'rgba(34,197,94,0.06)' : 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '6px 10px', border: dtLearnedClusters.has(letter) ? '1px solid rgba(74,222,128,0.2)' : '1px solid transparent', cursor: 'grab' }}
+                              >
                                 {/* Cluster color dot */}
                                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
                                 {/* Editable label */}
@@ -9336,13 +9447,23 @@ export default function BeatLab({ projectId, onExport, hasSong, onRequestSongPla
                           })}
                         </div>
 
-                        <button
-                          data-hint="Place on Timeline||Slices each detected sound from the recording and places it as an audio clip. Each sound group gets its own lane. Rename the groups first if you want meaningful track names."
-                          onClick={dtCommitToTimeline}
-                          style={{ ...btnBase, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.4)', padding: '8px 18px', fontSize: 12, fontWeight: 600 }}
-                        >
-                          Place {dtHits.length} clips on timeline →
-                        </button>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <button
+                            data-hint="Refine Separation||Runs up to 10 re-clustering passes using your corrections as hard constraints. Each pass the algorithm sees which sounds it wrongly grouped and tries to pull them apart. Works best after you have marked at least one sound as 'distinct' in the crop editor."
+                            onClick={refineDtSeparation}
+                            disabled={dtRefining}
+                            style={{ ...btnBase, background: 'rgba(139,92,246,0.15)', color: 'rgba(167,139,250,1)', border: '1px solid rgba(139,92,246,0.4)', padding: '8px 18px', fontSize: 12, fontWeight: 600, opacity: dtRefining ? 0.7 : 1 }}
+                          >
+                            {dtRefining ? `Refining… (${dtRefineIter}/10)` : 'Refine separation ↻'}
+                          </button>
+                          <button
+                            data-hint="Place on Timeline||Slices each detected sound from the recording and places it as an audio clip. Each sound group gets its own lane. Rename the groups first if you want meaningful track names."
+                            onClick={dtCommitToTimeline}
+                            style={{ ...btnBase, background: 'rgba(250,204,21,0.15)', color: 'rgba(250,204,21,1)', border: '1px solid rgba(234,179,8,0.4)', padding: '8px 18px', fontSize: 12, fontWeight: 600 }}
+                          >
+                            Place {dtHits.length} clips on timeline →
+                          </button>
+                        </div>
                       </>
                     )
                   })()}

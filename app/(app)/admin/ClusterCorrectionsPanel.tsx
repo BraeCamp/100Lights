@@ -5,7 +5,20 @@ import { clusterCorrectionGetAll, clusterCorrectionClear, type ClusterCorrection
 import { clusterSplitGetAll, clusterSplitClear } from '@/lib/cluster-splits'
 import { spectralDistance, CLUSTER_LETTERS } from '@/lib/beat-analyzer'
 
+const DEDUP_DIST_LOCAL = 0.28
+
 const DEDUP_DIST = 0.28
+
+function dedupCorrections(all: ClusterCorrection[]): ClusterCorrection[] {
+  const sorted = [...all].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+  const out: ClusterCorrection[] = []
+  for (const c of sorted) {
+    if (!c.spectral) continue
+    if (!out.some(k => spectralDistance(k.spectral, c.spectral) < DEDUP_DIST_LOCAL)) out.push(c)
+    if (out.length >= CLUSTER_LETTERS.length - 1) break
+  }
+  return out
+}
 
 function dedup(all: ClusterCorrection[]): { rep: ClusterCorrection; count: number }[] {
   const sorted = [...all].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
@@ -29,10 +42,12 @@ const KEY_FEATURES = [
 ] as const
 
 export default function ClusterCorrectionsPanel() {
-  const [all, setAll]           = useState<ClusterCorrection[] | null>(null)
+  const [all, setAll]               = useState<ClusterCorrection[] | null>(null)
   const [splitCount, setSplitCount] = useState<number>(0)
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [clearing, setClearing] = useState(false)
+  const [expanded, setExpanded]     = useState<string | null>(null)
+  const [clearing, setClearing]     = useState(false)
+  const [baking, setBaking]         = useState(false)
+  const [bakeMsg, setBakeMsg]       = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -51,6 +66,32 @@ export default function ClusterCorrectionsPanel() {
     setClearing(false)
     setAll([])
     setSplitCount(0)
+    setBakeMsg(null)
+  }
+
+  async function handleBake() {
+    if (!all) return
+    setBaking(true)
+    setBakeMsg(null)
+    try {
+      const splits     = await clusterSplitGetAll()
+      const deduped    = dedupCorrections(all)
+      const splitPairs = splits.map(s => ({ distinctSpectral: s.distinctSpectral, confusedWithSpectral: s.confusedWithSpectral }))
+      const res = await fetch('/api/admin/bake-corrections', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ correctionSeeds: deduped.map(c => c.spectral), splitPairs }),
+      })
+      if (res.ok) {
+        setBakeMsg(`Baked ${deduped.length} seed${deduped.length !== 1 ? 's' : ''} + ${splitPairs.length} split pair${splitPairs.length !== 1 ? 's' : ''} into lib/cluster-seeds.ts`)
+      } else {
+        const { error } = await res.json()
+        setBakeMsg(`Error: ${error}`)
+      }
+    } catch (e) {
+      setBakeMsg(`Error: ${String(e)}`)
+    }
+    setBaking(false)
   }
 
   if (all === null) return <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '16px 0' }}>Loading…</p>
@@ -69,14 +110,30 @@ export default function ClusterCorrectionsPanel() {
             </span>
           )}
         </div>
-        <button
-          onClick={handleClear}
-          disabled={clearing || !all.length}
-          style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: all.length ? 'pointer' : 'not-allowed', background: 'rgba(239,68,68,0.08)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)' }}
-        >
-          {clearing ? 'Clearing…' : 'Clear all'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            onClick={handleBake}
+            disabled={baking || !all.length}
+            title="Write corrections as TypeScript constants into lib/cluster-seeds.ts so they are the default for all users (dev-only, requires filesystem write access)"
+            style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: all.length && !baking ? 'pointer' : 'not-allowed', background: 'rgba(250,204,21,0.08)', color: 'rgba(250,204,21,0.9)', border: '1px solid rgba(250,204,21,0.25)' }}
+          >
+            {baking ? 'Baking…' : 'Bake into code'}
+          </button>
+          <button
+            onClick={handleClear}
+            disabled={clearing || !all.length}
+            style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: all.length ? 'pointer' : 'not-allowed', background: 'rgba(239,68,68,0.08)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)' }}
+          >
+            {clearing ? 'Clearing…' : 'Clear all'}
+          </button>
+        </div>
       </div>
+
+      {bakeMsg && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, background: bakeMsg.startsWith('Error') ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)', border: `1px solid ${bakeMsg.startsWith('Error') ? 'rgba(239,68,68,0.25)' : 'rgba(74,222,128,0.25)'}`, fontSize: 12, color: bakeMsg.startsWith('Error') ? '#ef4444' : '#4ade80' }}>
+          {bakeMsg}
+        </div>
+      )}
 
       {groups.length === 0 ? (
         <div style={{ padding: 24, borderRadius: 10, textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
