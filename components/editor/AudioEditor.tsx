@@ -40,6 +40,7 @@ const Mixer = dynamic(() => import('./daw/Mixer'), { ssr: false })
 const PianoRoll = dynamic(() => import('./daw/PianoRoll'), { ssr: false })
 const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
+const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 
 // ── Initial project builder ───────────────────────────────────────────────────
 
@@ -166,8 +167,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
+  const [showPads,  setShowPads]  = useState(false)
 
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
+  useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   const onSaveRef = useRef(onSave)
@@ -384,6 +387,17 @@ export default function AudioEditor(props: AudioEditorProps) {
                     const t = project.tracks.find(tr => tr.id === selectedTrackId)
                     return t ? <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, borderLeft: `2px solid ${t.color}`, paddingLeft: 6 }}>{t.name}</span> : null
                   })()}
+                  {/* Pad Input toggle — only for MIDI / drum tracks */}
+                  {(() => {
+                    const t = project.tracks.find(tr => tr.id === selectedTrackId)
+                    return t && t.type !== 'audio' ? (
+                      <button
+                        onClick={() => setShowPads(v => !v)}
+                        title="Open pad / keyboard input"
+                        style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
+                      >⌨ Pads</button>
+                    ) : null
+                  })()}
                   <button
                     onClick={() => setSelectedTrackId(null)}
                     style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
@@ -400,6 +414,11 @@ export default function AudioEditor(props: AudioEditorProps) {
           </div>
         </div>
       </div>
+
+      {/* Floating pad / keyboard overlay */}
+      {showPads && selectedTrackId && (
+        <PadInput trackId={selectedTrackId} onClose={() => setShowPads(false)} />
+      )}
     </DawContext.Provider>
   )
 }
