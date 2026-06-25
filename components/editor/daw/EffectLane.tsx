@@ -1,0 +1,246 @@
+'use client'
+
+import { useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { useDaw } from '@/lib/daw-state'
+import type { ClipEffect, ClipEffectType } from '@/lib/daw-types'
+import ShapeModal from './ShapeModal'
+
+export const EFFECT_H = 40
+
+const EFFECT_COLORS: Record<ClipEffectType, string> = {
+  volume:     '#22c55e',
+  reverb:     '#3b82f6',
+  delay:      '#06b6d4',
+  filter:     '#eab308',
+  tremolo:    '#a855f7',
+  distortion: '#ef4444',
+  pitch:      '#f97316',
+}
+
+const EFFECT_DEFAULTS: Record<ClipEffectType, ClipEffect['params']> = {
+  volume:     { gain: 1.4 },
+  reverb:     { reverbWet: 0.4, reverbDecay: 2 },
+  delay:      { delayTime: 0.375, feedback: 0.4, delayWet: 0.3 },
+  filter:     { frequency: 800, filterType: 'lowpass', filterQ: 1 },
+  tremolo:    { tremoloRate: 4, tremoloDepth: 0.6 },
+  distortion: { distortion: 0.5 },
+  pitch:      { semitones: 0 },
+}
+
+const SHAPEABLE: Partial<Record<ClipEffectType, 'volume' | 'pitch'>> = {
+  volume: 'volume',
+  pitch:  'pitch',
+}
+
+function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: () => void }) {
+  const { dispatch } = useDaw()
+  function set(key: string, val: number) {
+    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { [key]: val } } })
+  }
+  function Slider({ label, k, min, max, step = 0.01, log = false }: { label: string; k: string; min: number; max: number; step?: number; log?: boolean }) {
+    const raw = (effect.params as Record<string, number>)[k] ?? (min + max) / 2
+    const normalized = log
+      ? (Math.log(raw / min) / Math.log(max / min))
+      : ((raw - min) / (max - min))
+    return (
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <span style={{ width: 60, flexShrink: 0 }}>{label}</span>
+        <input type="range" min={0} max={1} step={0.001} value={normalized}
+          onChange={e => {
+            const n = parseFloat(e.target.value)
+            const v = log ? min * Math.pow(max / min, n) : min + n * (max - min)
+            set(k, v)
+          }}
+          style={{ flex: 1, accentColor: EFFECT_COLORS[effect.type] }} />
+        <span style={{ width: 40, fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-primary)', fontSize: 9 }}>
+          {raw.toFixed(raw < 10 ? 2 : 0)}
+        </span>
+      </label>
+    )
+  }
+
+  return (
+    <div style={{ background: '#1e1e2e', border: `1px solid ${EFFECT_COLORS[effect.type]}`, borderRadius: 6, padding: '10px 12px', minWidth: 220, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: EFFECT_COLORS[effect.type], textTransform: 'capitalize' }}>{effect.type}</span>
+        <button onClick={onClose} style={{ fontSize: 9, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {effect.type === 'volume'     && <Slider label="Volume" k="gain" min={0} max={2} />}
+        {effect.type === 'reverb'     && <><Slider label="Wet" k="reverbWet" min={0} max={1} /><Slider label="Decay" k="reverbDecay" min={0.3} max={5} /></>}
+        {effect.type === 'delay'      && <><Slider label="Time" k="delayTime" min={0.05} max={2} /><Slider label="Feedback" k="feedback" min={0} max={0.95} /><Slider label="Wet" k="delayWet" min={0} max={1} /></>}
+        {effect.type === 'filter'     && <><Slider label="Freq" k="frequency" min={40} max={18000} log /><Slider label="Q" k="filterQ" min={0.1} max={20} log /></>}
+        {effect.type === 'tremolo'    && <><Slider label="Rate" k="tremoloRate" min={0.1} max={15} /><Slider label="Depth" k="tremoloDepth" min={0} max={1} /></>}
+        {effect.type === 'distortion' && <Slider label="Amount" k="distortion" min={0} max={1} />}
+        {effect.type === 'pitch'      && <Slider label="Semitones" k="semitones" min={-24} max={24} />}
+        {effect.params.shapeEnvelope && (
+          <div style={{ fontSize: 9, color: EFFECT_COLORS[effect.type], marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span>~</span><span>Shape active · {effect.params.shapeEnvelope.length} frames</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function EffectLaneView({
+  trackId, beatW, scrollLeft, viewWidth,
+}: { trackId: string; beatW: number; scrollLeft: number; viewWidth: number }) {
+  const { project, dispatch } = useDaw()
+  const effects = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
+  const [addMenu,     setAddMenu]     = useState<{ x: number; y: number; beat: number } | null>(null)
+  const [editTarget,  setEditTarget]  = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const [ctxMenu,     setCtxMenu]     = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const [shapeTarget, setShapeTarget] = useState<{ effect: ClipEffect; mode: 'volume' | 'pitch' } | null>(null)
+  const dragRef   = useRef<{ effectId: string; startX: number; startBeat: number } | null>(null)
+  const resizeRef = useRef<{ effectId: string; startX: number; startDur: number } | null>(null)
+  const laneRef   = useRef<HTMLDivElement>(null)
+
+  const viewStartBeat = scrollLeft / beatW
+  const viewEndBeat   = viewStartBeat + viewWidth / beatW
+
+  function beatFromClientX(clientX: number) {
+    const rect = laneRef.current?.getBoundingClientRect()
+    if (!rect) return 0
+    return (clientX - rect.left + scrollLeft) / beatW
+  }
+
+  const EFFECT_TYPES: ClipEffectType[] = ['volume', 'pitch', 'reverb', 'delay', 'filter', 'tremolo', 'distortion']
+
+  function addEffect(type: ClipEffectType, beat: number) {
+    const effect: ClipEffect = {
+      id: crypto.randomUUID(),
+      trackId,
+      type,
+      startBeat: Math.max(0, beat),
+      durationBeats: 4,
+      params: { ...EFFECT_DEFAULTS[type] },
+    }
+    dispatch({ type: 'ADD_CLIP_EFFECT', effect })
+  }
+
+  return (
+    <div ref={laneRef} style={{ flex: 1, height: EFFECT_H, position: 'relative', background: 'rgba(0,0,0,0.35)', borderBottom: '1px solid var(--border)', overflow: 'hidden', cursor: 'crosshair' }}
+      onContextMenu={e => { e.preventDefault(); const beat = beatFromClientX(e.clientX); setAddMenu({ x: e.clientX, y: e.clientY, beat }) }}
+      onClick={() => { setAddMenu(null); setEditTarget(null) }}
+    >
+      {/* Grid lines */}
+      {Array.from({ length: Math.ceil(viewEndBeat) - Math.floor(viewStartBeat) + 1 }, (_, i) => Math.floor(viewStartBeat) + i).map(b => {
+        const x = b * beatW - scrollLeft
+        return x >= 0 && x <= viewWidth ? (
+          <div key={b} style={{ position: 'absolute', left: x, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
+        ) : null
+      })}
+
+      {/* Scrolled effect clips */}
+      <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
+        {effects.map(eff => {
+          if (eff.startBeat + eff.durationBeats < viewStartBeat || eff.startBeat > viewEndBeat) return null
+          const left  = eff.startBeat * beatW
+          const width = Math.max(8, eff.durationBeats * beatW)
+          const color = EFFECT_COLORS[eff.type]
+          return (
+            <div key={eff.id} style={{ position: 'absolute', left, width, top: 3, bottom: 3, background: `${color}30`, border: `1px solid ${color}`, borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none' }}
+              onMouseDown={e => {
+                if (e.button !== 0) return
+                e.stopPropagation()
+                dragRef.current = { effectId: eff.id, startX: e.clientX, startBeat: eff.startBeat }
+                function mm(ev: MouseEvent) {
+                  if (!dragRef.current) return
+                  const newStart = Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW)
+                  dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: dragRef.current.effectId, patch: { startBeat: newStart } })
+                }
+                function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+                document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+              }}
+              onClick={e => { e.stopPropagation(); setCtxMenu(null); setEditTarget({ effect: eff, x: e.clientX, y: e.clientY }) }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setEditTarget(null); setCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
+            >
+              <span style={{ position: 'absolute', top: 3, left: 4, fontSize: 8, color, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', pointerEvents: 'none', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: width - 16 }}>
+                {eff.type}{eff.params.shapeEnvelope ? ' ~' : ''}
+              </span>
+              {/* Resize handle */}
+              <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 5, cursor: 'ew-resize' }}
+                onMouseDown={e => {
+                  e.stopPropagation()
+                  resizeRef.current = { effectId: eff.id, startX: e.clientX, startDur: eff.durationBeats }
+                  function mm(ev: MouseEvent) {
+                    if (!resizeRef.current) return
+                    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: resizeRef.current.effectId, patch: { durationBeats: Math.max(0.5, resizeRef.current.startDur + (ev.clientX - resizeRef.current.startX) / beatW) } })
+                  }
+                  function mu() { resizeRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+                  document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+                }} />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Add-effect context menu */}
+      {addMenu && createPortal(
+        <div style={{ position: 'fixed', zIndex: 1500, left: addMenu.x, top: addMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 140, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
+          onMouseLeave={() => setAddMenu(null)}>
+          <div style={{ fontSize: 9, color: 'var(--text-muted)', padding: '2px 10px 6px', letterSpacing: 0.5, textTransform: 'uppercase' }}>Add Effect</div>
+          {EFFECT_TYPES.map(t => (
+            <button key={t} onClick={() => { addEffect(t, addMenu.beat); setAddMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: EFFECT_COLORS[t], flexShrink: 0 }} />
+              <span style={{ textTransform: 'capitalize' }}>{t}</span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {/* Effect param editor (left-click) */}
+      {editTarget && createPortal(
+        <div style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
+          <EffectParamEditor effect={editTarget.effect} onClose={() => setEditTarget(null)} />
+        </div>,
+        document.body
+      )}
+
+      {/* Effect right-click context menu */}
+      {ctxMenu && createPortal(
+        <div style={{ position: 'fixed', zIndex: 1500, left: ctxMenu.x, top: ctxMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
+          onMouseLeave={() => setCtxMenu(null)}>
+          {SHAPEABLE[ctxMenu.effect.type] && (
+            <button
+              onClick={() => { setShapeTarget({ effect: ctxMenu.effect, mode: SHAPEABLE[ctxMenu.effect.type]! }); setCtxMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+              <span style={{ fontSize: 9 }}>~</span>
+              Shape {ctxMenu.effect.type === 'volume' ? 'Volume' : 'Pitch'}
+              {ctxMenu.effect.params.shapeEnvelope && <span style={{ fontSize: 8, color: EFFECT_COLORS[ctxMenu.effect.type], marginLeft: 4 }}>●</span>}
+            </button>
+          )}
+          <button
+            onClick={() => { setEditTarget({ effect: ctxMenu.effect, x: ctxMenu.x, y: ctxMenu.y }); setCtxMenu(null) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+            Edit Params
+          </button>
+          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+          <button
+            onClick={() => { dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: ctxMenu.effect.id }); setCtxMenu(null) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: '#ef4444' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+            Delete
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* Shape modal */}
+      {shapeTarget && (
+        <ShapeModal effect={shapeTarget.effect} mode={shapeTarget.mode} onClose={() => setShapeTarget(null)} />
+      )}
+    </div>
+  )
+}
