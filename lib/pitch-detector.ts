@@ -599,8 +599,10 @@ export class LivePitchDetector {
   private win:      Float32Array<ArrayBuffer>  = new Float32Array(HANN_SIZE)
   private smoothHz: number | null              = null
   private silFrames = 0
+  private mediaRec:  MediaRecorder | null      = null
+  private recChunks: Blob[]                    = []
 
-  async start(onPitch: (r: LivePitchResult | null) => void): Promise<void> {
+  async start(onPitch: (r: LivePitchResult | null) => void, captureAudio = false): Promise<void> {
     this.stop()
 
     this.stream   = await navigator.mediaDevices.getUserMedia({
@@ -616,6 +618,16 @@ export class LivePitchDetector {
     this.win      = new Float32Array(HANN_SIZE)
     this.smoothHz = null
     this.silFrames = 0
+    this.recChunks = []
+
+    if (captureAudio) {
+      try {
+        const mr = new MediaRecorder(this.stream)
+        mr.ondataavailable = (e) => { if (e.data.size > 0) this.recChunks.push(e.data) }
+        mr.start(200)
+        this.mediaRec = mr
+      } catch { /* capture unavailable on this browser */ }
+    }
 
     const SR = this.ctx.sampleRate
 
@@ -687,7 +699,41 @@ export class LivePitchDetector {
     this.rafId = requestAnimationFrame(tick)
   }
 
+  /**
+   * Stop live detection and return the captured audio blob (if captureAudio was true).
+   * Waits for the MediaRecorder to flush its last chunk before resolving.
+   */
+  async stopAndGetAudio(): Promise<Blob | null> {
+    const mr     = this.mediaRec
+    const chunks = this.recChunks
+    this.mediaRec  = null
+    this.recChunks = []
+
+    let blob: Blob | null = null
+    if (mr && mr.state !== 'inactive') {
+      blob = await new Promise<Blob | null>(resolve => {
+        mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+        mr.onstop = () => resolve(chunks.length > 0 ? new Blob(chunks, { type: mr.mimeType || 'audio/webm' }) : null)
+        mr.stop()
+      })
+    } else if (chunks.length > 0) {
+      blob = new Blob(chunks, { type: 'audio/webm' })
+    }
+
+    this._teardown()
+    return blob
+  }
+
   stop(): void {
+    if (this.mediaRec && this.mediaRec.state !== 'inactive') {
+      try { this.mediaRec.stop() } catch { /* ok */ }
+    }
+    this.mediaRec  = null
+    this.recChunks = []
+    this._teardown()
+  }
+
+  private _teardown(): void {
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null }
     this.analyser?.disconnect()
     this.stream?.getTracks().forEach(t => t.stop())

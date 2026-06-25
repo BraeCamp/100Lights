@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { LivePitchDetector, LivePitchResult, detectBufferPitch } from '../../../lib/pitch-detector'
+import { LivePitchDetector, LivePitchResult, detectBufferPitch, detectPitchCurveAsync, extractNoteEvents } from '../../../lib/pitch-detector'
 import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
@@ -466,7 +466,7 @@ export default function PadVoice() {
     const d = new LivePitchDetector()
     detectorRef.current = d
     try {
-      await d.start(r => { setResult(r); processFrameRef.current(r) })
+      await d.start(r => { setResult(r); processFrameRef.current(r) }, true)
       setIsRecording(true)
     } catch (e) {
       setMicError(e instanceof Error ? e.message : 'Microphone access denied')
@@ -474,22 +474,56 @@ export default function PadVoice() {
     }
   }, [engine, playing, project.arrangementClips, dispatch, setSelectedClipId])
 
-  const stopRecording = useCallback(() => {
+  const stopRecording = useCallback(async () => {
+    // Flush any currently-held note
     if (phaseRef.current === 'holding' && heldRef.current) {
       const prev    = heldRef.current
       const elapsed = engine.currentBeat - recStartRef.current
       if (Date.now() - prev.startTime >= MIN_NOTE_MS) {
-        void commitNote(prev.midi, prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
+        await commitNote(prev.midi, prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
       }
     }
-    detectorRef.current?.stop()
+
+    const det         = detectorRef.current
+    const recStart    = recStartRef.current
+    const isSampleMode = !!selectedSampleRef.current
     detectorRef.current = null
     phaseRef.current    = 'listening'
     heldRef.current     = null
     setHeld(null)
     setIsRecording(false)
     setResult(null)
-  }, [engine, commitNote])
+
+    if (!det) return
+    const blob = await det.stopAndGetAudio()
+
+    // Post-processing pass (MIDI mode only — sample mode creates AudioClips which are harder to dedup)
+    if (blob && !isSampleMode) {
+      try {
+        setRenderStatus('Checking for missed notes…')
+        const ab       = await blob.arrayBuffer()
+        const tempCtx  = new AudioContext()
+        const audioBuf = await tempCtx.decodeAudioData(ab).finally(() => tempCtx.close())
+        const curve    = await detectPitchCurveAsync(audioBuf, 2048, 512)
+        const events   = extractNoteEvents(curve, 0.08) // 80ms min — more lenient than live 200ms
+        const tempo    = engine.tempo ?? project.tempo ?? 120
+        const already  = transcribedRef.current
+
+        for (const evt of events) {
+          const noteBeat = recStart + (evt.start * tempo / 60)
+          const durBeats = Math.max(0.125, (evt.end - evt.start) * tempo / 60)
+          // Skip if any already-committed note covers the same pitch and overlaps in time
+          const covered = already.some(n =>
+            Math.abs(n.midi - evt.midi) <= 1 &&
+            n.startBeat < noteBeat + durBeats &&
+            n.startBeat + n.durationBeats > noteBeat
+          )
+          if (!covered) await commitNote(evt.midi, noteBeat, durBeats)
+        }
+      } catch { /* post-process failure is non-fatal */ }
+      finally { setRenderStatus(null) }
+    }
+  }, [engine, commitNote, project.tempo])
 
   useEffect(() => () => { detectorRef.current?.stop() }, [])
 
