@@ -499,7 +499,10 @@ export class DawEngine extends EventTarget {
       if (clip.startBeat > now + aheadBeats) continue
 
       const buf = this.bufferCache.get(clip.id)
-      if (!buf) continue
+      if (!buf) {
+        void this.loadClipBuffer(clip)  // fire-and-forget; cached on next tick
+        continue
+      }
 
       this._scheduleArrangementClip(clip, buf, now, contextNow)
     }
