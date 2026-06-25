@@ -596,16 +596,26 @@ export class DawEngine extends EventTarget {
       e.startBeat < clip.startBeat + clip.durationBeats &&
       e.startBeat + e.durationBeats > clip.startBeat
     )
+    const insertEffects = overlapping.filter(e => e.type !== 'pitch')
+    const pitchEffects  = overlapping.filter(e => e.type === 'pitch')
+
     let lastNode: AudioNode = fadeGain
     const allExtraNodes: AudioNode[] = []
     const allExtraOscs: OscillatorNode[] = []
-    for (const eff of overlapping) {
-      const r = this._buildClipEffect(eff, lastNode, startAt)
+    for (const eff of insertEffects) {
+      const effContextStart = startAt + Math.max(0, this.beatsToSeconds(eff.startBeat - clip.startBeat))
+      const r = this._buildClipEffect(eff, lastNode, startAt, effContextStart)
       lastNode = r.output
       allExtraNodes.push(...r.extraNodes)
       allExtraOscs.push(...r.extraOscs)
     }
     lastNode.connect(nodes.effectsInput)
+
+    // Pitch effects modify source.detune directly
+    for (const eff of pitchEffects) {
+      const effContextStart = startAt + Math.max(0, this.beatsToSeconds(eff.startBeat - clip.startBeat))
+      this._applyPitchEffect(eff, source, effContextStart)
+    }
 
     // Schedule playback
     let effectiveDuration: number
@@ -659,6 +669,7 @@ export class DawEngine extends EventTarget {
     eff: ClipEffect,
     input: AudioNode,
     startAt: number,
+    effContextStart: number,
   ): { output: AudioNode; extraNodes: AudioNode[]; extraOscs: OscillatorNode[] } {
     const extraNodes: AudioNode[] = []
     const extraOscs: OscillatorNode[] = []
@@ -667,10 +678,25 @@ export class DawEngine extends EventTarget {
 
     switch (eff.type) {
       case 'volume': {
-        const g = n(ctx.createGain()); g.gain.value = eff.params.gain ?? 1
+        const g = n(ctx.createGain())
+        const env = eff.params.shapeEnvelope
+        if (env && env.length > 0) {
+          const baseGain   = eff.params.gain ?? 1
+          const effDurSec  = this.beatsToSeconds(eff.durationBeats)
+          g.gain.setValueAtTime(Math.max(0, env[0] * baseGain), effContextStart)
+          for (let i = 1; i < env.length; i++) {
+            const t = effContextStart + (i / env.length) * effDurSec
+            if (t > ctx.currentTime) g.gain.linearRampToValueAtTime(Math.max(0, env[i] * baseGain), t)
+          }
+        } else {
+          g.gain.value = eff.params.gain ?? 1
+        }
         input.connect(g)
         return { output: g, extraNodes, extraOscs }
       }
+      case 'pitch':
+        // Handled separately via _applyPitchEffect (modifies source.detune, not an insert node)
+        return { output: input, extraNodes, extraOscs }
       case 'filter': {
         const f = n(ctx.createBiquadFilter())
         f.type = eff.params.filterType ?? 'lowpass'
@@ -720,6 +746,21 @@ export class DawEngine extends EventTarget {
       }
       default:
         return { output: input, extraNodes, extraOscs }
+    }
+  }
+
+  private _applyPitchEffect(eff: ClipEffect, source: AudioBufferSourceNode, effContextStart: number) {
+    const baseCents = (eff.params.semitones ?? 0) * 100
+    const env = eff.params.shapeEnvelope
+    if (env && env.length > 0) {
+      const effDurSec = this.beatsToSeconds(eff.durationBeats)
+      source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
+      for (let i = 1; i < env.length; i++) {
+        const t = effContextStart + (i / env.length) * effDurSec
+        if (t > this.ctx.currentTime) source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
+      }
+    } else {
+      source.detune.setValueAtTime(baseCents, effContextStart)
     }
   }
 

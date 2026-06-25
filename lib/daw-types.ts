@@ -136,7 +136,7 @@ export function defaultPolyInstrument(): TrackInstrument {
 
 // ── Clip Effects ─────────────────────────────────────────────────────────────
 
-export type ClipEffectType = 'volume' | 'reverb' | 'delay' | 'filter' | 'tremolo' | 'distortion'
+export type ClipEffectType = 'volume' | 'reverb' | 'delay' | 'filter' | 'tremolo' | 'distortion' | 'pitch'
 
 export interface ClipEffect {
   id: string
@@ -145,7 +145,7 @@ export interface ClipEffect {
   startBeat: number
   durationBeats: number
   params: {
-    gain?: number           // volume: 0-2
+    gain?: number           // volume: 0-2; also pitch base gain
     reverbWet?: number      // reverb: 0-1
     reverbDecay?: number    // reverb: 0.5-5s
     delayTime?: number      // delay: 0-2s
@@ -157,6 +157,9 @@ export interface ClipEffect {
     tremoloRate?: number    // tremolo: 0.1-15 Hz
     tremoloDepth?: number   // tremolo: 0-1
     distortion?: number     // distortion: 0-1
+    semitones?: number      // pitch: static offset in semitones
+    shapeEnvelope?: number[] // shaped volume (0-1) or pitch (semitone offsets) data
+    shapeSampleRate?: number // samples per second of shapeEnvelope (default 30)
   }
 }
 

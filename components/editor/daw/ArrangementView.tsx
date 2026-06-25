@@ -12,6 +12,7 @@ import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
 import IsolateModal from './IsolateModal'
+import ShapeModal from './ShapeModal'
 import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
@@ -32,6 +33,7 @@ const EFFECT_COLORS: Record<ClipEffectType, string> = {
   filter:     '#eab308',
   tremolo:    '#a855f7',
   distortion: '#ef4444',
+  pitch:      '#f97316',
 }
 
 const EFFECT_DEFAULTS: Record<ClipEffectType, ClipEffect['params']> = {
@@ -41,6 +43,13 @@ const EFFECT_DEFAULTS: Record<ClipEffectType, ClipEffect['params']> = {
   filter:     { frequency: 800, filterType: 'lowpass', filterQ: 1 },
   tremolo:    { tremoloRate: 4, tremoloDepth: 0.6 },
   distortion: { distortion: 0.5 },
+  pitch:      { semitones: 0 },
+}
+
+// Effect types that support volume/pitch shaping
+const SHAPEABLE: Partial<Record<ClipEffectType, 'volume' | 'pitch'>> = {
+  volume: 'volume',
+  pitch:  'pitch',
 }
 
 type SnapMode = 'off' | '1/16' | '1/8' | 'beat' | 'bar'
@@ -269,6 +278,12 @@ function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: (
         {effect.type === 'filter'     && <><Slider label="Freq" k="frequency" min={40} max={18000} log /><Slider label="Q" k="filterQ" min={0.1} max={20} log /></>}
         {effect.type === 'tremolo'    && <><Slider label="Rate" k="tremoloRate" min={0.1} max={15} /><Slider label="Depth" k="tremoloDepth" min={0} max={1} /></>}
         {effect.type === 'distortion' && <Slider label="Amount" k="distortion" min={0} max={1} />}
+        {effect.type === 'pitch'      && <Slider label="Semitones" k="semitones" min={-24} max={24} />}
+        {effect.params.shapeEnvelope && (
+          <div style={{ fontSize: 9, color: EFFECT_COLORS[effect.type], marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span>~</span><span>Shape active · {effect.params.shapeEnvelope.length} frames</span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -279,8 +294,10 @@ function EffectLaneView({
 }: { trackId: string; beatW: number; scrollLeft: number; viewWidth: number }) {
   const { project, dispatch } = useDaw()
   const effects = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
-  const [addMenu, setAddMenu]   = useState<{ x: number; y: number; beat: number } | null>(null)
+  const [addMenu,    setAddMenu]    = useState<{ x: number; y: number; beat: number } | null>(null)
   const [editTarget, setEditTarget] = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const [ctxMenu,    setCtxMenu]    = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const [shapeTarget, setShapeTarget] = useState<{ effect: ClipEffect; mode: 'volume' | 'pitch' } | null>(null)
   const dragRef  = useRef<{ effectId: string; startX: number; startBeat: number } | null>(null)
   const resizeRef = useRef<{ effectId: string; startX: number; startDur: number } | null>(null)
   const laneRef  = useRef<HTMLDivElement>(null)
@@ -294,7 +311,7 @@ function EffectLaneView({
     return (clientX - rect.left + scrollLeft) / beatW
   }
 
-  const EFFECT_TYPES: ClipEffectType[] = ['volume', 'reverb', 'delay', 'filter', 'tremolo', 'distortion']
+  const EFFECT_TYPES: ClipEffectType[] = ['volume', 'pitch', 'reverb', 'delay', 'filter', 'tremolo', 'distortion']
 
   function addEffect(type: ClipEffectType, beat: number) {
     const effect: ClipEffect = {
@@ -342,11 +359,11 @@ function EffectLaneView({
                 function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
                 document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
               }}
-              onClick={e => { e.stopPropagation(); setEditTarget({ effect: eff, x: e.clientX, y: e.clientY }) }}
-              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: eff.id }) }}
+              onClick={e => { e.stopPropagation(); setCtxMenu(null); setEditTarget({ effect: eff, x: e.clientX, y: e.clientY }) }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setEditTarget(null); setCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
             >
               <span style={{ position: 'absolute', top: 3, left: 4, fontSize: 8, color, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', pointerEvents: 'none', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: width - 16 }}>
-                {eff.type}
+                {eff.type}{eff.params.shapeEnvelope ? ' ~' : ''}
               </span>
               {/* Resize handle */}
               <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 5, cursor: 'ew-resize' }}
@@ -383,12 +400,51 @@ function EffectLaneView({
         document.body
       )}
 
-      {/* Effect param editor */}
+      {/* Effect param editor (left-click) */}
       {editTarget && createPortal(
         <div style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
           <EffectParamEditor effect={editTarget.effect} onClose={() => setEditTarget(null)} />
         </div>,
         document.body
+      )}
+
+      {/* Effect right-click context menu */}
+      {ctxMenu && createPortal(
+        <div style={{ position: 'fixed', zIndex: 1500, left: ctxMenu.x, top: ctxMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
+          onMouseLeave={() => setCtxMenu(null)}>
+          {SHAPEABLE[ctxMenu.effect.type] && (
+            <button
+              onClick={() => { setShapeTarget({ effect: ctxMenu.effect, mode: SHAPEABLE[ctxMenu.effect.type]! }); setCtxMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+              <span style={{ fontSize: 9 }}>~</span>
+              Shape {ctxMenu.effect.type === 'volume' ? 'Volume' : 'Pitch'}
+              {ctxMenu.effect.params.shapeEnvelope && <span style={{ fontSize: 8, color: EFFECT_COLORS[ctxMenu.effect.type], marginLeft: 4 }}>●</span>}
+            </button>
+          )}
+          <button
+            onClick={() => { setEditTarget({ effect: ctxMenu.effect, x: ctxMenu.x, y: ctxMenu.y }); setCtxMenu(null) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+            Edit Params
+          </button>
+          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+          <button
+            onClick={() => { dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: ctxMenu.effect.id }); setCtxMenu(null) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: '#ef4444' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+            Delete
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* Shape modal */}
+      {shapeTarget && (
+        <ShapeModal effect={shapeTarget.effect} mode={shapeTarget.mode} onClose={() => setShapeTarget(null)} />
       )}
     </div>
   )
