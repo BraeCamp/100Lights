@@ -664,7 +664,8 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
   const { project, dispatch, engine } = useDaw()
 
-  const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'tuner'>('pads')
+  const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'voice'>('pads')
+  const [showTuner,    setShowTuner]    = useState(false)
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
   const [octave,       setOctave]       = useState(4)
   const [pressing,     setPressing]     = useState<Set<number>>(new Set())
@@ -1031,6 +1032,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           }
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
             {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 800, letterSpacing: '0.05em' }}>● REC</span>}
+            <button
+              onClick={e => { e.stopPropagation(); setShowTuner(v => !v) }}
+              title="Tuner"
+              style={{ background: showTuner ? `${C.accent}22` : 'transparent', border: `1px solid ${showTuner ? C.accent : C.border}`, color: showTuner ? C.accent : C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 7px', borderRadius: 3 }}>
+              ♩ Tune
+            </button>
             <button onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
               title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
               style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 6px', borderRadius: 3 }}>
@@ -1042,9 +1049,16 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           </div>
         </div>
 
+        {/* Tuner panel — collapsible, toggled from header */}
+        {showTuner && (
+          <div style={{ borderBottom: `1px solid ${C.border}`, background: C.bgDark, flexShrink: 0 }}>
+            <PadTuner />
+          </div>
+        )}
+
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 2, padding: '6px 12px 0', background: C.bgCard, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-          {(['pads', 'keyboard', 'tuner'] as const).map(t => (
+          {(['pads', 'keyboard', 'voice'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '4px 14px', fontSize: 12, borderRadius: '4px 4px 0 0',
               border: `1px solid ${tab === t ? C.border : 'transparent'}`, borderBottom: 'none',
@@ -1222,7 +1236,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             </div>
           )}
 
-          {tab === 'tuner' && <PadTuner />}
+          {tab === 'voice' && (
+            <div style={{ padding: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, fontSize: 12 }}>
+              Voice recorder coming soon
+            </div>
+          )}
         </div>
 
         {/* Footer */}

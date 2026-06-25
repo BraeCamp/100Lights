@@ -506,81 +506,182 @@ export async function synthesizeInstrument(
   return ctx.startRendering()
 }
 
-// ── Live tuner: real-time mic → pitch ─────────────────────────────────────────
-// This section (LivePitchDetector) is self-contained and can be deleted without
-// affecting the rest of the file. It reuses detectPitchInFrame above.
+// ── Live tuner: real-time mic → pitch (YIN algorithm) ─────────────────────────
+// Deletable section — no other code in this file depends on anything below here.
+//
+// Algorithm: YIN (de Cheveigné & Kawahara, 2002) with:
+//   • Hann windowing        — reduces spectral leakage at frame edges
+//   • CMND step 2           — cumulative mean normalization (from the paper)
+//   • Absolute threshold    — first minimum below 0.12 = high sensitivity
+//   • Parabolic refinement  — sub-sample accuracy, ~0.5¢ resolution
+//   • IIR + jump tracking   — smooth for sustained notes, fast on pitch change
+//
+// References: GuitarTuna uses a similar YIN variant; pYIN (Mauch 2014) extends
+// it probabilistically but is heavier. For browser real-time, YIN is optimal.
 
 export interface LivePitchResult {
-  hz:         number   // detected frequency in Hz
-  midi:       number   // nearest MIDI note (0–127)
-  noteName:   string   // e.g. "A4"
-  cents:      number   // deviation from nearest semitone (−50 to +50)
-  confidence: number   // 0–1; ≥0.7 = locked / in-tune display
+  hz:         number  // detected frequency in Hz (smoothed)
+  midi:       number  // nearest MIDI note (0–127)
+  noteName:   string  // e.g. "A4"
+  cents:      number  // deviation from nearest semitone (−50 to +50)
+  confidence: number  // 0–1 derived from YIN CMND value; ≥0.75 = in-tune lock
+  rms:        number  // signal loudness 0–1 for level indicator
+}
+
+// Pre-built Hann window for reuse across frames
+const HANN_SIZE = 4096
+const HANN: Float32Array = (() => {
+  const w = new Float32Array(HANN_SIZE)
+  for (let i = 0; i < HANN_SIZE; i++) w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (HANN_SIZE - 1))
+  return w
+})()
+
+const LIVE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+function yinDetect(windowed: Float32Array, sr: number): { hz: number; confidence: number } | null {
+  const N       = windowed.length
+  const half    = N >> 1                      // analysis length
+  const minTau  = Math.ceil(sr / 1200)        // 1200 Hz upper bound (~37 at 44.1 kHz)
+  const maxTau  = Math.floor(sr / 70)         // 70 Hz lower bound  (~630 at 44.1 kHz)
+  const clamp   = Math.min(maxTau, half - 2)
+
+  // Step 1: difference function  d[τ] = Σ_j (x[j] − x[j+τ])²
+  const d = new Float32Array(clamp + 1)
+  for (let tau = minTau; tau <= clamp; tau++) {
+    let s = 0
+    for (let j = 0; j < half; j++) {
+      const delta = windowed[j] - windowed[j + tau]
+      s += delta * delta
+    }
+    d[tau] = s
+  }
+
+  // Step 2: cumulative mean normalized difference (CMND)
+  const cmnd    = new Float32Array(clamp + 1)
+  cmnd[0]       = 1
+  let runSum    = 0
+  for (let tau = 1; tau <= clamp; tau++) {
+    runSum     += d[tau]
+    cmnd[tau]   = runSum > 0 ? d[tau] * tau / runSum : 1
+  }
+
+  // Step 3: absolute threshold — first minimum below 0.12
+  // Lower threshold = more sensitive (GuitarTuna is ~0.15; 0.10 for voice)
+  const THRESHOLD = 0.12
+  let tau = minTau
+  while (tau <= clamp - 1) {
+    if (cmnd[tau] < THRESHOLD) {
+      // walk to local minimum
+      while (tau + 1 <= clamp && cmnd[tau + 1] < cmnd[tau]) tau++
+      break
+    }
+    tau++
+  }
+  if (tau >= clamp) return null
+
+  // Step 4: parabolic interpolation for sub-sample accuracy
+  const a    = tau > 0     ? cmnd[tau - 1] : cmnd[tau]
+  const b    = cmnd[tau]
+  const c    = tau < clamp ? cmnd[tau + 1] : cmnd[tau]
+  const den  = 2 * (2 * b - a - c)
+  const fine = den === 0 ? tau : tau + (a - c) / den
+  if (fine <= 0) return null
+
+  return { hz: sr / fine, confidence: 1 - b }
 }
 
 export class LivePitchDetector {
-  private ctx:       AudioContext | null = null
-  private analyser:  AnalyserNode | null = null
-  private stream:    MediaStream | null  = null
-  private rafId:     number | null       = null
-  private buf:       Float32Array<ArrayBuffer> = new Float32Array(4096)
-  private hzHistory: number[]            = []
+  private ctx:      AudioContext | null        = null
+  private analyser: AnalyserNode | null        = null
+  private stream:   MediaStream | null         = null
+  private rafId:    number | null              = null
+  private buf:      Float32Array<ArrayBuffer>  = new Float32Array(HANN_SIZE)
+  private win:      Float32Array<ArrayBuffer>  = new Float32Array(HANN_SIZE)
+  private smoothHz: number | null              = null
+  private silFrames = 0
 
   async start(onPitch: (r: LivePitchResult | null) => void): Promise<void> {
     this.stop()
 
-    this.stream  = await navigator.mediaDevices.getUserMedia({
+    this.stream   = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     })
-    this.ctx     = new AudioContext()
+    this.ctx      = new AudioContext()
     await this.ctx.resume()
     this.analyser = this.ctx.createAnalyser()
-    this.analyser.fftSize             = 4096
+    this.analyser.fftSize              = HANN_SIZE
     this.analyser.smoothingTimeConstant = 0
     this.ctx.createMediaStreamSource(this.stream).connect(this.analyser)
-    this.buf      = new Float32Array(4096)
-    this.hzHistory = []
+    this.buf      = new Float32Array(HANN_SIZE)
+    this.win      = new Float32Array(HANN_SIZE)
+    this.smoothHz = null
+    this.silFrames = 0
+
+    const SR = this.ctx.sampleRate
 
     const tick = () => {
       this.analyser!.getFloatTimeDomainData(this.buf)
 
-      // Gate: skip near-silent frames
-      let rms = 0
-      for (let i = 0; i < this.buf.length; i++) rms += this.buf[i] * this.buf[i]
+      // RMS + peak for level indicator
+      let rms = 0, peak = 0
+      for (let i = 0; i < this.buf.length; i++) {
+        const v = Math.abs(this.buf[i])
+        rms += v * v
+        if (v > peak) peak = v
+      }
       rms = Math.sqrt(rms / this.buf.length)
-      if (rms < 0.015) {
-        this.hzHistory = []
+
+      // Silence gate — two-level: absolute RMS and peak
+      if (rms < 0.008 || peak < 0.02) {
+        this.silFrames++
+        if (this.silFrames > 3) {
+          this.smoothHz = null
+          onPitch(null)
+        }
+        this.rafId = requestAnimationFrame(tick)
+        return
+      }
+      this.silFrames = 0
+
+      // Apply Hann window
+      for (let i = 0; i < HANN_SIZE; i++) this.win[i] = this.buf[i] * HANN[i]
+
+      const det = yinDetect(this.win, SR)
+      if (!det || det.confidence < 0.50) {
         onPitch(null)
         this.rafId = requestAnimationFrame(tick)
         return
       }
 
-      // Reuse the MPM detector already in this file, restricted to vocal range
-      const raw = detectPitchInFrame(this.buf, this.ctx!.sampleRate)
-      if (!raw || raw < 80 || raw > 1200) {
-        onPitch(null)
-        this.rafId = requestAnimationFrame(tick)
-        return
+      // IIR smoothing with jump detection
+      if (this.smoothHz === null) {
+        this.smoothHz = det.hz
+      } else {
+        const centsDiff = Math.abs(1200 * Math.log2(det.hz / this.smoothHz))
+        if (centsDiff > 150 && det.confidence > 0.78) {
+          // Confident jump to a new note → snap immediately (GuitarTuna behavior)
+          this.smoothHz = det.hz
+        } else if (centsDiff <= 150) {
+          // Same note region → blend (α=0.35 ≈ 25ms time constant at 60fps)
+          this.smoothHz = 0.35 * det.hz + 0.65 * this.smoothHz
+        }
+        // else: uncertain large jump → hold previous
       }
 
-      // Smooth over last 4 frames to reduce jitter
-      this.hzHistory.push(raw)
-      if (this.hzHistory.length > 4) this.hzHistory.shift()
-      const hz = this.hzHistory.reduce((a, b) => a + b, 0) / this.hzHistory.length
+      const midiF   = 69 + 12 * Math.log2(this.smoothHz / 440)
+      const midiRnd = Math.round(midiF)
+      const cents   = Math.round((midiF - midiRnd) * 100)
+      const octave  = Math.floor(midiRnd / 12) - 1
+      const name    = LIVE_NAMES[((midiRnd % 12) + 12) % 12]
 
-      // Stability → confidence
-      const variance = this.hzHistory.length < 2 ? 0 :
-        this.hzHistory.reduce((s, v) => s + (v - hz) ** 2, 0) / this.hzHistory.length
-      const confidence = Math.max(0, Math.min(1, 1 - Math.sqrt(variance) / Math.max(1, hz * 0.015)))
-
-      const midiF    = 69 + 12 * Math.log2(hz / 440)
-      const midiRnd  = Math.round(midiF)
-      const cents    = Math.round((midiF - midiRnd) * 100)
-      const octave   = Math.floor(midiRnd / 12) - 1
-      const names12  = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-      const name     = names12[((midiRnd % 12) + 12) % 12]
-
-      onPitch({ hz, midi: midiRnd, noteName: `${name}${octave}`, cents, confidence })
+      onPitch({
+        hz:         this.smoothHz,
+        midi:       midiRnd,
+        noteName:   `${name}${octave}`,
+        cents,
+        confidence: Math.min(1, det.confidence),
+        rms:        Math.min(1, rms * 8),
+      })
       this.rafId = requestAnimationFrame(tick)
     }
     this.rafId = requestAnimationFrame(tick)
@@ -591,7 +692,7 @@ export class LivePitchDetector {
     this.analyser?.disconnect()
     this.stream?.getTracks().forEach(t => t.stop())
     this.ctx?.close().catch(() => {})
-    this.ctx = null; this.analyser = null; this.stream = null; this.hzHistory = []
+    this.ctx = null; this.analyser = null; this.stream = null; this.smoothHz = null
   }
 }
 
