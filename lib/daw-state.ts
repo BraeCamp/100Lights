@@ -4,7 +4,7 @@ import React, { createContext, useContext, type Dispatch } from 'react'
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget, TrackType,
-  TrackEffect, AutomationLane, AutomationPoint,
+  TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
 } from './daw-types'
 import {
   defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT,
@@ -57,6 +57,10 @@ export type DawAction =
   | { type: 'REMOVE_AUTOMATION_POINT'; laneId: string; pointId: string }
   | { type: 'UPDATE_AUTOMATION_POINT'; laneId: string; pointId: string; patch: Partial<AutomationPoint> }
   | { type: 'CLEAR_AUTOMATION_LANE'; laneId: string }
+  // Clip effects (region-based FX)
+  | { type: 'ADD_CLIP_EFFECT'; effect: ClipEffect }
+  | { type: 'REMOVE_CLIP_EFFECT'; effectId: string }
+  | { type: 'UPDATE_CLIP_EFFECT'; effectId: string; patch: Partial<ClipEffect> }
   // Full replace (load from saved)
   | { type: 'LOAD_PROJECT'; project: DawProject }
 
@@ -291,6 +295,21 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         l.id === action.laneId ? { ...l, points: [] } : l
       )
       return { ...project, automationLanes }
+    }
+
+    case 'ADD_CLIP_EFFECT':
+      return { ...project, clipEffects: [...(project.clipEffects ?? []), action.effect] }
+
+    case 'REMOVE_CLIP_EFFECT':
+      return { ...project, clipEffects: (project.clipEffects ?? []).filter(e => e.id !== action.effectId) }
+
+    case 'UPDATE_CLIP_EFFECT': {
+      const clipEffects = (project.clipEffects ?? []).map(e =>
+        e.id === action.effectId
+          ? { ...e, ...action.patch, params: { ...e.params, ...(action.patch.params ?? {}) } }
+          : e
+      )
+      return { ...project, clipEffects }
     }
 
     case 'LOAD_PROJECT':

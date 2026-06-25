@@ -6,11 +6,12 @@ import { ZoomIn, ZoomOut, Maximize2, Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { decodeAiff } from '@/lib/wav-codec'
 import { encodeWav } from '@/lib/wav-codec'
-import type { DawTrack, DawClip, AudioClip, AutomationLane } from '@/lib/daw-types'
+import type { DawTrack, DawClip, AudioClip, AutomationLane, ClipEffect, ClipEffectType } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
+import IsolateModal from './IsolateModal'
 import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
@@ -22,6 +23,25 @@ const RULER_H    = SEC_H + BAR_H   // 44px total
 const MIN_BEAT_W = 10
 const MAX_BEAT_W = 200
 const AUTO_H     = 60
+const EFFECT_H   = 40
+
+const EFFECT_COLORS: Record<ClipEffectType, string> = {
+  volume:     '#22c55e',
+  reverb:     '#3b82f6',
+  delay:      '#06b6d4',
+  filter:     '#eab308',
+  tremolo:    '#a855f7',
+  distortion: '#ef4444',
+}
+
+const EFFECT_DEFAULTS: Record<ClipEffectType, ClipEffect['params']> = {
+  volume:     { gain: 1.4 },
+  reverb:     { reverbWet: 0.4, reverbDecay: 2 },
+  delay:      { delayTime: 0.375, feedback: 0.4, delayWet: 0.3 },
+  filter:     { frequency: 800, filterType: 'lowpass', filterQ: 1 },
+  tremolo:    { tremoloRate: 4, tremoloDepth: 0.6 },
+  distortion: { distortion: 0.5 },
+}
 
 type SnapMode = 'off' | '1/16' | '1/8' | 'beat' | 'bar'
 
@@ -207,6 +227,173 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 
 // ── Clip view ─────────────────────────────────────────────────────────────────
 
+// ── Effect lane ───────────────────────────────────────────────────────────────
+
+function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: () => void }) {
+  const { dispatch } = useDaw()
+  function set(key: string, val: number) {
+    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { [key]: val } } })
+  }
+  function Slider({ label, k, min, max, step = 0.01, log = false }: { label: string; k: string; min: number; max: number; step?: number; log?: boolean }) {
+    const raw = (effect.params as Record<string, number>)[k] ?? (min + max) / 2
+    const normalized = log
+      ? (Math.log(raw / min) / Math.log(max / min))
+      : ((raw - min) / (max - min))
+    return (
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <span style={{ width: 60, flexShrink: 0 }}>{label}</span>
+        <input type="range" min={0} max={1} step={0.001} value={normalized}
+          onChange={e => {
+            const n = parseFloat(e.target.value)
+            const v = log ? min * Math.pow(max / min, n) : min + n * (max - min)
+            set(k, v)
+          }}
+          style={{ flex: 1, accentColor: EFFECT_COLORS[effect.type] }} />
+        <span style={{ width: 40, fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-primary)', fontSize: 9 }}>
+          {raw.toFixed(raw < 10 ? 2 : 0)}
+        </span>
+      </label>
+    )
+  }
+
+  return (
+    <div style={{ background: '#1e1e2e', border: `1px solid ${EFFECT_COLORS[effect.type]}`, borderRadius: 6, padding: '10px 12px', minWidth: 220, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: EFFECT_COLORS[effect.type], textTransform: 'capitalize' }}>{effect.type}</span>
+        <button onClick={onClose} style={{ fontSize: 9, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {effect.type === 'volume'     && <Slider label="Volume" k="gain" min={0} max={2} />}
+        {effect.type === 'reverb'     && <><Slider label="Wet" k="reverbWet" min={0} max={1} /><Slider label="Decay" k="reverbDecay" min={0.3} max={5} /></>}
+        {effect.type === 'delay'      && <><Slider label="Time" k="delayTime" min={0.05} max={2} /><Slider label="Feedback" k="feedback" min={0} max={0.95} /><Slider label="Wet" k="delayWet" min={0} max={1} /></>}
+        {effect.type === 'filter'     && <><Slider label="Freq" k="frequency" min={40} max={18000} log /><Slider label="Q" k="filterQ" min={0.1} max={20} log /></>}
+        {effect.type === 'tremolo'    && <><Slider label="Rate" k="tremoloRate" min={0.1} max={15} /><Slider label="Depth" k="tremoloDepth" min={0} max={1} /></>}
+        {effect.type === 'distortion' && <Slider label="Amount" k="distortion" min={0} max={1} />}
+      </div>
+    </div>
+  )
+}
+
+function EffectLaneView({
+  trackId, beatW, scrollLeft, viewWidth,
+}: { trackId: string; beatW: number; scrollLeft: number; viewWidth: number }) {
+  const { project, dispatch } = useDaw()
+  const effects = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
+  const [addMenu, setAddMenu]   = useState<{ x: number; y: number; beat: number } | null>(null)
+  const [editTarget, setEditTarget] = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const dragRef  = useRef<{ effectId: string; startX: number; startBeat: number } | null>(null)
+  const resizeRef = useRef<{ effectId: string; startX: number; startDur: number } | null>(null)
+  const laneRef  = useRef<HTMLDivElement>(null)
+
+  const viewStartBeat = scrollLeft / beatW
+  const viewEndBeat   = viewStartBeat + viewWidth / beatW
+
+  function beatFromClientX(clientX: number) {
+    const rect = laneRef.current?.getBoundingClientRect()
+    if (!rect) return 0
+    return (clientX - rect.left + scrollLeft) / beatW
+  }
+
+  const EFFECT_TYPES: ClipEffectType[] = ['volume', 'reverb', 'delay', 'filter', 'tremolo', 'distortion']
+
+  function addEffect(type: ClipEffectType, beat: number) {
+    const effect: ClipEffect = {
+      id: crypto.randomUUID(),
+      trackId,
+      type,
+      startBeat: Math.max(0, beat),
+      durationBeats: 4,
+      params: { ...EFFECT_DEFAULTS[type] },
+    }
+    dispatch({ type: 'ADD_CLIP_EFFECT', effect })
+  }
+
+  return (
+    <div ref={laneRef} style={{ flex: 1, height: EFFECT_H, position: 'relative', background: 'rgba(0,0,0,0.35)', borderBottom: '1px solid var(--border)', overflow: 'hidden', cursor: 'crosshair' }}
+      onContextMenu={e => { e.preventDefault(); const beat = beatFromClientX(e.clientX); setAddMenu({ x: e.clientX, y: e.clientY, beat }) }}
+      onClick={() => { setAddMenu(null); setEditTarget(null) }}
+    >
+      {/* Grid lines */}
+      {Array.from({ length: Math.ceil(viewEndBeat) - Math.floor(viewStartBeat) + 1 }, (_, i) => Math.floor(viewStartBeat) + i).map(b => {
+        const x = b * beatW - scrollLeft
+        return x >= 0 && x <= viewWidth ? (
+          <div key={b} style={{ position: 'absolute', left: x, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
+        ) : null
+      })}
+
+      {/* Scrolled effect clips */}
+      <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
+        {effects.map(eff => {
+          if (eff.startBeat + eff.durationBeats < viewStartBeat || eff.startBeat > viewEndBeat) return null
+          const left  = eff.startBeat * beatW
+          const width = Math.max(8, eff.durationBeats * beatW)
+          const color = EFFECT_COLORS[eff.type]
+          return (
+            <div key={eff.id} style={{ position: 'absolute', left, width, top: 3, bottom: 3, background: `${color}30`, border: `1px solid ${color}`, borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none' }}
+              onMouseDown={e => {
+                if (e.button !== 0) return
+                e.stopPropagation()
+                dragRef.current = { effectId: eff.id, startX: e.clientX, startBeat: eff.startBeat }
+                function mm(ev: MouseEvent) {
+                  if (!dragRef.current) return
+                  const newStart = Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW)
+                  dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: dragRef.current.effectId, patch: { startBeat: newStart } })
+                }
+                function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+                document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+              }}
+              onClick={e => { e.stopPropagation(); setEditTarget({ effect: eff, x: e.clientX, y: e.clientY }) }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: eff.id }) }}
+            >
+              <span style={{ position: 'absolute', top: 3, left: 4, fontSize: 8, color, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', pointerEvents: 'none', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: width - 16 }}>
+                {eff.type}
+              </span>
+              {/* Resize handle */}
+              <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 5, cursor: 'ew-resize' }}
+                onMouseDown={e => {
+                  e.stopPropagation()
+                  resizeRef.current = { effectId: eff.id, startX: e.clientX, startDur: eff.durationBeats }
+                  function mm(ev: MouseEvent) {
+                    if (!resizeRef.current) return
+                    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: resizeRef.current.effectId, patch: { durationBeats: Math.max(0.5, resizeRef.current.startDur + (ev.clientX - resizeRef.current.startX) / beatW) } })
+                  }
+                  function mu() { resizeRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+                  document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+                }} />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Add-effect context menu */}
+      {addMenu && createPortal(
+        <div style={{ position: 'fixed', zIndex: 1500, left: addMenu.x, top: addMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 140, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
+          onMouseLeave={() => setAddMenu(null)}>
+          <div style={{ fontSize: 9, color: 'var(--text-muted)', padding: '2px 10px 6px', letterSpacing: 0.5, textTransform: 'uppercase' }}>Add Effect</div>
+          {EFFECT_TYPES.map(t => (
+            <button key={t} onClick={() => { addEffect(t, addMenu.beat); setAddMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: EFFECT_COLORS[t], flexShrink: 0 }} />
+              <span style={{ textTransform: 'capitalize' }}>{t}</span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {/* Effect param editor */}
+      {editTarget && createPortal(
+        <div style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
+          <EffectParamEditor effect={editTarget.effect} onClose={() => setEditTarget(null)} />
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
 // ── Clip crop modal ───────────────────────────────────────────────────────────
 
 function ClipCropModal({ clip, onClose }: { clip: AudioClip; onClose: () => void }) {
@@ -316,17 +503,17 @@ function ClipCropModal({ clip, onClose }: { clip: AudioClip; onClose: () => void
 
 // ── Clip view ─────────────────────────────────────────────────────────────────
 
-function ClipView({ clip, track, beatW, selected, multiSelected, onSelect, onShiftSelect, onDoubleClick, onMove, onResize, onCrop, onDelete }: {
+function ClipView({ clip, track, beatW, selected, multiSelected, onSelect, onShiftSelect, onDoubleClick, onMove, onResize, onCrop, onIsolate, onDelete }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   onSelect(): void; onShiftSelect(): void; onDoubleClick(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
-  onCrop(): void; onDelete(): void
+  onCrop(): void; onIsolate(beat: number): void; onDelete(): void
 }) {
   const clipDivRef = useRef<HTMLDivElement>(null)
   const dragRef    = useRef<{ startX: number; startBeat: number } | null>(null)
   const resizeRef  = useRef<{ startX: number; startDur: number } | null>(null)
-  const [ctxPos, setCtxPos] = useState<{ x: number; y: number } | null>(null)
+  const [ctxPos, setCtxPos] = useState<{ x: number; y: number; beat: number } | null>(null)
 
   const left  = clip.startBeat * beatW
   const width = Math.max(8, clip.durationBeats * beatW)
@@ -365,7 +552,10 @@ function ClipView({ clip, track, beatW, selected, multiSelected, onSelect, onShi
 
   const menuItems = [
     { label: 'Delete', fn: onDelete },
-    ...(isAudioClip(clip) ? [{ label: 'Crop', fn: onCrop }] : []),
+    ...(isAudioClip(clip) ? [
+      { label: 'Crop', fn: onCrop },
+      { label: 'Isolate on Playhead', fn: () => onIsolate(ctxPos?.beat ?? clip.startBeat) },
+    ] : []),
     { label: 'Open Piano Roll', fn: onDoubleClick },
   ]
 
@@ -376,7 +566,12 @@ function ClipView({ clip, track, beatW, selected, multiSelected, onSelect, onShi
         style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined }}
         onMouseDown={onMouseDownBody}
         onDoubleClick={onDoubleClick}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCtxPos({ x: e.clientX, y: e.clientY }) }}
+        onContextMenu={e => {
+          e.preventDefault(); e.stopPropagation()
+          const rect = clipDivRef.current?.getBoundingClientRect()
+          const beat = rect ? clip.startBeat + (e.clientX - rect.left) / beatW : clip.startBeat
+          setCtxPos({ x: e.clientX, y: e.clientY, beat })
+        }}
       >
         {isAudioClip(clip) && clip.waveformPeaks && clip.waveformPeaks.length > 0 && (
           <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', opacity: 0.7 }}>
@@ -508,9 +703,11 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
   const clips = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const dragHRef = useRef<{ startY: number; startH: number } | null>(null)
-  const [editing,    setEditing]    = useState(false)
-  const [draft,      setDraft]      = useState(track.name)
-  const [cropTarget, setCropTarget] = useState<AudioClip | null>(null)
+  const [editing,      setEditing]      = useState(false)
+  const [draft,        setDraft]        = useState(track.name)
+  const [cropTarget,   setCropTarget]   = useState<AudioClip | null>(null)
+  const [showFx,       setShowFx]       = useState(false)
+  const [isolateTgt,   setIsolateTgt]   = useState<number | null>(null)  // beat position
 
   const viewStartBeat = scrollLeft / beatW
   const viewEndBeat   = (scrollLeft + viewWidth) / beatW
@@ -615,6 +812,11 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
               className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0 }} />
             <AddAutoButton track={track} />
             <button
+              title="Toggle effects lane"
+              onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
+              style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
+            >FX</button>
+            <button
               title="Open device panel"
               onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
               style={{ fontSize: 9, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
@@ -675,6 +877,7 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
                   }}
                   onCrop={() => { if (isAudioClip(clip)) setCropTarget(clip) }}
+                  onIsolate={beat => setIsolateTgt(beat)}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
                 />
               )
@@ -741,7 +944,36 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
         </div>
       ))}
 
+      {/* Effects lane */}
+      {showFx && (
+        <div style={{ display: 'flex', height: EFFECT_H, flexShrink: 0 }}>
+          {/* Left header */}
+          <div style={{ width: HDR_W, height: EFFECT_H, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>FX</span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {(project.clipEffects ?? []).filter(e => e.trackId === track.id).length === 0
+                ? 'right-click lane to add'
+                : (project.clipEffects ?? []).filter(e => e.trackId === track.id).map(e => e.type).join(', ')}
+            </span>
+          </div>
+          {/* Lane */}
+          <EffectLaneView
+            trackId={track.id}
+            beatW={beatW}
+            scrollLeft={scrollLeft}
+            viewWidth={viewWidth}
+          />
+        </div>
+      )}
+
       {cropTarget && <ClipCropModal clip={cropTarget} onClose={() => setCropTarget(null)} />}
+      {isolateTgt !== null && (
+        <IsolateModal
+          trackId={track.id}
+          initialBeat={isolateTgt}
+          onClose={() => setIsolateTgt(null)}
+        />
+      )}
     </div>
   )
 }

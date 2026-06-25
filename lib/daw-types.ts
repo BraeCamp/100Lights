@@ -134,6 +134,32 @@ export function defaultPolyInstrument(): TrackInstrument {
   }
 }
 
+// ── Clip Effects ─────────────────────────────────────────────────────────────
+
+export type ClipEffectType = 'volume' | 'reverb' | 'delay' | 'filter' | 'tremolo' | 'distortion'
+
+export interface ClipEffect {
+  id: string
+  trackId: string
+  type: ClipEffectType
+  startBeat: number
+  durationBeats: number
+  params: {
+    gain?: number           // volume: 0-2
+    reverbWet?: number      // reverb: 0-1
+    reverbDecay?: number    // reverb: 0.5-5s
+    delayTime?: number      // delay: 0-2s
+    feedback?: number       // delay: 0-0.9
+    delayWet?: number       // delay: 0-1
+    frequency?: number      // filter: 20-20000 Hz
+    filterType?: BiquadFilterType
+    filterQ?: number        // filter: 0.1-20
+    tremoloRate?: number    // tremolo: 0.1-15 Hz
+    tremoloDepth?: number   // tremolo: 0-1
+    distortion?: number     // distortion: 0-1
+  }
+}
+
 // ── Automation ────────────────────────────────────────────────────────────────
 
 export interface AutomationPoint {
@@ -244,6 +270,7 @@ export interface DawProject {
   loopEnabled: boolean
   masterVolume: number
   automationLanes: AutomationLane[]
+  clipEffects: ClipEffect[]
 }
 
 // ── UI state ──────────────────────────────────────────────────────────────────
@@ -289,5 +316,6 @@ export function defaultProject(): DawProject {
     loopEnabled: true,
     masterVolume: 0.85,
     automationLanes: [],
+    clipEffects: [],
   }
 }

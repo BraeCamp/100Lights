@@ -1,6 +1,6 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -87,6 +87,8 @@ export class DawEngine extends EventTarget {
   private _midiClips: MidiClip[] = []
   private _tracks: DawTrack[] = []
   private _automationLanes: AutomationLane[] = []
+  private _clipEffects: ClipEffect[] = []
+  private _irCache = new Map<number, AudioBuffer>()
 
   // Metronome
   private _tickBuf: AudioBuffer | null = null
@@ -291,6 +293,7 @@ export class DawEngine extends EventTarget {
     this._midiClips  = project.arrangementClips.filter(isMidiClip)
     this._tracks     = project.tracks
     this._automationLanes = project.automationLanes ?? []
+    this._clipEffects     = project.clipEffects ?? []
     this.setMasterVolume(project.masterVolume)
 
     for (const t of project.tracks) {
@@ -575,20 +578,36 @@ export class DawEngine extends EventTarget {
     const source   = this.ctx.createBufferSource()
     const fadeGain = this.ctx.createGain()
     source.buffer  = buf
-
     source.connect(fadeGain)
-    fadeGain.connect(nodes.effectsInput)
 
+    // Timing
     const beatOffset  = clip.startBeat - now
     const startAt     = contextNow + this.beatsToSeconds(Math.max(0, beatOffset))
     const seekOffset  = now > clip.startBeat
       ? this.beatsToSeconds(now - clip.startBeat) + clip.trimStart
       : clip.trimStart
-
     const totalDuration = buf.duration - clip.trimStart - clip.trimEnd
     const clipDuration  = this.beatsToSeconds(clip.durationBeats)
     const alreadyPlayed = now > clip.startBeat ? this.beatsToSeconds(now - clip.startBeat) : 0
 
+    // Build clip-effect chain
+    const overlapping = this._clipEffects.filter(e =>
+      e.trackId === clip.trackId &&
+      e.startBeat < clip.startBeat + clip.durationBeats &&
+      e.startBeat + e.durationBeats > clip.startBeat
+    )
+    let lastNode: AudioNode = fadeGain
+    const allExtraNodes: AudioNode[] = []
+    const allExtraOscs: OscillatorNode[] = []
+    for (const eff of overlapping) {
+      const r = this._buildClipEffect(eff, lastNode, startAt)
+      lastNode = r.output
+      allExtraNodes.push(...r.extraNodes)
+      allExtraOscs.push(...r.extraOscs)
+    }
+    lastNode.connect(nodes.effectsInput)
+
+    // Schedule playback
     let effectiveDuration: number
     if (clip.loopEnabled && !clip.reverse) {
       source.loop      = true
@@ -631,7 +650,100 @@ export class DawEngine extends EventTarget {
       if (idx !== -1) this.scheduledSources.splice(idx, 1)
       source.disconnect()
       fadeGain.disconnect()
+      for (const n of allExtraNodes) { try { n.disconnect() } catch { /* ok */ } }
+      for (const o of allExtraOscs) { try { o.stop(); o.disconnect() } catch { /* ok */ } }
     }
+  }
+
+  private _buildClipEffect(
+    eff: ClipEffect,
+    input: AudioNode,
+    startAt: number,
+  ): { output: AudioNode; extraNodes: AudioNode[]; extraOscs: OscillatorNode[] } {
+    const extraNodes: AudioNode[] = []
+    const extraOscs: OscillatorNode[] = []
+    const ctx = this.ctx
+    function n<T extends AudioNode>(node: T): T { extraNodes.push(node); return node }
+
+    switch (eff.type) {
+      case 'volume': {
+        const g = n(ctx.createGain()); g.gain.value = eff.params.gain ?? 1
+        input.connect(g)
+        return { output: g, extraNodes, extraOscs }
+      }
+      case 'filter': {
+        const f = n(ctx.createBiquadFilter())
+        f.type = eff.params.filterType ?? 'lowpass'
+        f.frequency.value = eff.params.frequency ?? 1000
+        f.Q.value = eff.params.filterQ ?? 1
+        input.connect(f)
+        return { output: f, extraNodes, extraOscs }
+      }
+      case 'tremolo': {
+        const depth = eff.params.tremoloDepth ?? 0.5
+        const outG = n(ctx.createGain()); outG.gain.value = 1 - depth * 0.5
+        const lfoG = n(ctx.createGain()); lfoG.gain.value = depth * 0.5
+        const lfo = ctx.createOscillator(); extraOscs.push(lfo)
+        lfo.type = 'sine'; lfo.frequency.value = eff.params.tremoloRate ?? 4
+        lfo.connect(lfoG); lfoG.connect(outG.gain)
+        input.connect(outG); lfo.start(startAt)
+        return { output: outG, extraNodes, extraOscs }
+      }
+      case 'reverb': {
+        const wet = eff.params.reverbWet ?? 0.3
+        const dry = n(ctx.createGain()); dry.gain.value = 1 - wet
+        const wetG = n(ctx.createGain()); wetG.gain.value = wet
+        const conv = n(ctx.createConvolver()); conv.buffer = this._makeIR(eff.params.reverbDecay ?? 2)
+        const mix = n(ctx.createGain()); mix.gain.value = 1
+        input.connect(dry); dry.connect(mix)
+        input.connect(conv); conv.connect(wetG); wetG.connect(mix)
+        return { output: mix, extraNodes, extraOscs }
+      }
+      case 'delay': {
+        const wet = eff.params.delayWet ?? 0.3
+        const dry = n(ctx.createGain()); dry.gain.value = 1 - wet
+        const delay = n(ctx.createDelay(2.0)); delay.delayTime.value = eff.params.delayTime ?? 0.375
+        const fbG = n(ctx.createGain()); fbG.gain.value = Math.min(0.95, eff.params.feedback ?? 0.4)
+        const wetG = n(ctx.createGain()); wetG.gain.value = wet
+        const mix = n(ctx.createGain()); mix.gain.value = 1
+        input.connect(dry); dry.connect(mix)
+        input.connect(delay); delay.connect(fbG); fbG.connect(delay)
+        delay.connect(wetG); wetG.connect(mix)
+        return { output: mix, extraNodes, extraOscs }
+      }
+      case 'distortion': {
+        const ws = n(ctx.createWaveShaper())
+        ws.curve = this._makeDistortionCurve(eff.params.distortion ?? 0.5)
+        ws.oversample = '2x'
+        input.connect(ws)
+        return { output: ws, extraNodes, extraOscs }
+      }
+      default:
+        return { output: input, extraNodes, extraOscs }
+    }
+  }
+
+  private _makeIR(decay: number): AudioBuffer {
+    const key = Math.round(decay * 10)
+    if (this._irCache.has(key)) return this._irCache.get(key)!
+    const len = Math.ceil(this.ctx.sampleRate * Math.min(decay, 5))
+    const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate)
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch)
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2)
+    }
+    this._irCache.set(key, buf)
+    return buf
+  }
+
+  private _makeDistortionCurve(amount: number): Float32Array<ArrayBuffer> {
+    const n = 256; const curve = new Float32Array(new ArrayBuffer(n * 4))
+    const k = amount * 100
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1
+      curve[i] = ((Math.PI + k) * x) / (Math.PI + k * Math.abs(x))
+    }
+    return curve
   }
 
   private _killAllSources() {
