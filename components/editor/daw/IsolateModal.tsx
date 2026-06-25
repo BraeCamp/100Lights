@@ -99,7 +99,12 @@ export default function IsolateModal({
     const src = engine.ctx.createBufferSource()
     src.buffer = buf
     src.loop = true
-    src.connect(engine.ctx.destination)
+    const fade = engine.ctx.createGain()
+    const now  = engine.ctx.currentTime
+    fade.gain.setValueAtTime(0, now)
+    fade.gain.linearRampToValueAtTime(1, now + 0.005)
+    src.connect(fade)
+    fade.connect(engine.ctx.destination)
     src.start()
     sourceRef.current = src
     renderedRef.current = buf
@@ -157,7 +162,7 @@ export default function IsolateModal({
       `Isolated ${beat.toFixed(2)}b`,
       beat,
       engine.secondsToBeats(WINDOW_SEC),
-      { audioUrl: url, waveformPeaks: peaks, bufferDuration: buf.duration },
+      { audioUrl: url, waveformPeaks: peaks, bufferDuration: buf.duration, fadeIn: engine.secondsToBeats(0.004) },
     )
     dispatch({ type: 'ADD_CLIP', clip })
     try { sourceRef.current?.stop() } catch { /* ok */ }

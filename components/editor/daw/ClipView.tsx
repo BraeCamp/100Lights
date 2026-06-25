@@ -5,8 +5,9 @@ import type { DawTrack, DawClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import Waveform from './Waveform'
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, onSelect, onShiftSelect, onDoubleClick, onMove, onResize, onCrop, onIsolate, onDelete }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, onSelect, onShiftSelect, onDoubleClick, onMove, onResize, onCrop, onIsolate, onDelete }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
+  loopNativeBeats?: number
   onSelect(): void; onShiftSelect(): void; onDoubleClick(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
@@ -73,11 +74,25 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           setCtxPos({ x: e.clientX, y: e.clientY, beat })
         }}
       >
-        {isAudioClip(clip) && clip.waveformPeaks && clip.waveformPeaks.length > 0 && (
-          <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', opacity: 0.7 }}>
-            <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={56} />
-          </div>
-        )}
+        {isAudioClip(clip) && clip.waveformPeaks && clip.waveformPeaks.length > 0 && (() => {
+          const loopPx = loopNativeBeats ? Math.max(4, loopNativeBeats * beatW) : null
+          return (
+            <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', opacity: 0.7 }}>
+              {loopPx ? (
+                Array.from({ length: Math.ceil(width / loopPx) + 1 }, (_, i) => (
+                  <div key={i} style={{ position: 'absolute', left: i * loopPx, top: 0, bottom: 0, width: loopPx }}>
+                    {i > 0 && (
+                      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.3)', zIndex: 1 }} />
+                    )}
+                    <Waveform peaks={clip.waveformPeaks!} color={color} width={loopPx} height={56} />
+                  </div>
+                ))
+              ) : (
+                <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={56} />
+              )}
+            </div>
+          )
+        })()}
         {isMidiClip(clip) && clip.notes.length > 0 && (
           <div style={{ position: 'absolute', inset: 0 }}>
             {clip.notes.map(n => {
