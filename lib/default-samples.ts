@@ -18,6 +18,7 @@ const SEEDED_KEY          = '100lights-audio-seeded-v4'
 const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
 const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v1'
+const DEDUP_KEY           = '100lights-dedup-v1'
 const PARENT              = '100lights Audio'
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
@@ -159,8 +160,29 @@ export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
+async function dedupLibrary(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(DEDUP_KEY)) return
+  const all = await libraryGetAll()
+  // Group by folder+name; keep the most recent, delete the rest
+  const seen = new Map<string, LibraryEntry>()
+  const toDelete: string[] = []
+  for (const e of all) {
+    const key = `${e.folder ?? ''}|${e.name}`
+    const prev = seen.get(key)
+    if (!prev) { seen.set(key, e); continue }
+    // Keep whichever was added later (or has a blob already)
+    const keepNew = !prev.audioBlob && (e.audioBlob || e.addedAt > prev.addedAt)
+    if (keepNew) { toDelete.push(prev.id); seen.set(key, e) }
+    else { toDelete.push(e.id) }
+  }
+  await Promise.all(toDelete.map(id => libraryDelete(id)))
+  localStorage.setItem(DEDUP_KEY, '1')
+}
+
 export async function seedDefaultSamples(): Promise<void> {
   if (typeof window === 'undefined') return
+  dedupLibrary().catch(() => {})
   if (localStorage.getItem(SEEDED_KEY)) {
     seedKeyboardNotes().catch(() => {})
     seedDarkwave().catch(() => {})
@@ -237,7 +259,9 @@ export async function seedKeyboardNotes(): Promise<void> {
 
   const now = new Date().toISOString()
 
-  for (const preset of KEYBOARD_PRESETS) {
+  // Violin/viola are exclusively seeded by seedStrings() to avoid duplicates
+  const nonStringPresets = KEYBOARD_PRESETS.filter(p => p.type !== 'violin' && p.type !== 'viola')
+  for (const preset of nonStringPresets) {
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
       await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, {
         kind: 'melodic', beatType: preset.type, midiNote: midi,
