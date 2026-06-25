@@ -45,6 +45,7 @@ export default function Transport() {
     if (recording) {
       engine.stopRecording()
     } else {
+      if (!playing) engine.play()
       engine.startRecording()
     }
   }

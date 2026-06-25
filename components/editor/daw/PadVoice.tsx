@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { LivePitchDetector, LivePitchResult } from '../../../lib/pitch-detector'
-import { useDaw } from '../../../lib/daw-state'
+import { useDaw, makeMidiClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
 import type { MidiNote } from '../../../lib/daw-types'
 
@@ -142,7 +142,7 @@ function drawRoll(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function PadVoice() {
-  const { project, dispatch, engine, selectedClipId } = useDaw()
+  const { project, dispatch, engine, selectedClipId, setSelectedClipId, selectedTrackId, playing } = useDaw()
 
   const [result,       setResult]       = useState<LivePitchResult | null>(null)
   const [isRecording,  setIsRecording]  = useState(false)
@@ -262,16 +262,26 @@ export default function PadVoice() {
 
   // Start/stop voice recording
   const startRecording = useCallback(async () => {
-    const clipId = clipIdRef.current
-    if (!clipId) {
-      setMicError('Select a MIDI clip in the arrangement first.')
-      return
+    // Resolve or create a MIDI clip to record into
+    let clipId = clipIdRef.current
+    const existingClip = clipId ? project.arrangementClips.find(c => c.id === clipId) : null
+
+    if (!existingClip || !isMidiClip(existingClip)) {
+      // Need a track to create a clip on
+      const trackId = selectedTrackId
+      if (!trackId) {
+        setMicError('Select a track or MIDI clip in the arrangement first.')
+        return
+      }
+      const newClip = makeMidiClip(trackId, 'Voice', engine.currentBeat, 32)
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+      setSelectedClipId(newClip.id)
+      clipIdRef.current = newClip.id
+      clipId = newClip.id
     }
-    const clip = project.arrangementClips.find(c => c.id === clipId)
-    if (!clip || !isMidiClip(clip)) {
-      setMicError('Please select a MIDI clip to record into.')
-      return
-    }
+
+    // Start playback if not already playing
+    if (!playing) engine.play()
 
     setMicError(null)
     phaseRef.current   = 'listening'
@@ -323,10 +333,10 @@ export default function PadVoice() {
   const needleDeg = centsDeg(conf < 0.4 ? 0 : cents)
   const [nx, ny]  = aPt(needleDeg, AR - 8)
   const inTune    = conf >= 0.75 && Math.abs(cents) <= 8
-  const hasClip   = !!selectedClipId && (() => {
+  const hasTarget = !!selectedTrackId || (!!selectedClipId && (() => {
     const clip = project.arrangementClips.find(c => c.id === selectedClipId)
-    return clip && isMidiClip(clip)
-  })()
+    return !!(clip && isMidiClip(clip))
+  })())
 
   // Arc paths
   const arcStart = 270 - ASWEEP
@@ -400,12 +410,12 @@ export default function PadVoice() {
         {!isRecording ? (
           <button
             onClick={startRecording}
-            disabled={!hasClip}
-            title={hasClip ? 'Start voice transcription' : 'Select a MIDI clip first'}
+            disabled={!hasTarget}
+            title={hasTarget ? 'Start voice transcription' : 'Select a track first'}
             style={{
               display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px',
-              borderRadius: 6, border: 'none', cursor: hasClip ? 'pointer' : 'not-allowed',
-              background: hasClip ? '#ef4444' : '#2a1a1a', color: hasClip ? '#fff' : '#555',
+              borderRadius: 6, border: 'none', cursor: hasTarget ? 'pointer' : 'not-allowed',
+              background: hasTarget ? '#ef4444' : '#2a1a1a', color: hasTarget ? '#fff' : '#555',
               fontSize: 12, fontWeight: 700, flexShrink: 0,
             }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
@@ -443,9 +453,9 @@ export default function PadVoice() {
         </div>
       )}
 
-      {!hasClip && !isRecording && (
+      {!hasTarget && !isRecording && (
         <div style={{ margin: '0 14px 10px', padding: '6px 10px', borderRadius: 5, background: 'rgba(61,143,239,0.06)', border: '1px solid rgba(61,143,239,0.2)', fontSize: 11, color: '#3d8fef' }}>
-          Click a MIDI clip in the arrangement to record into it.
+          Click a track in the arrangement — a new MIDI clip will be created automatically when you start recording.
         </div>
       )}
 
