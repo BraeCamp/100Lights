@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { ChevronRight, ChevronDown } from 'lucide-react'
 import { LivePitchDetector, LivePitchResult, detectBufferPitch, detectPitchCurveAsync, extractNoteEvents } from '../../../lib/pitch-detector'
 import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
@@ -272,9 +273,16 @@ export default function PadVoice() {
   // Sample mode
   const [sampleEntries,    setSampleEntries]    = useState<LibraryEntry[]>([])
   const [selectedSample,   setSelectedSample]   = useState<LibraryEntry | null>(null)
-  const [showSamplePicker, setShowSamplePicker] = useState(false)
-  const [sampleSearch,     setSampleSearch]     = useState('')
-  const [renderStatus,     setRenderStatus]     = useState<string | null>(null)
+  const [showSamplePicker,  setShowSamplePicker]  = useState(false)
+  const [sampleSearch,      setSampleSearch]      = useState('')
+  const [openPickerFolders, setOpenPickerFolders] = useState<Set<string>>(new Set())
+  const [renderStatus,      setRenderStatus]      = useState<string | null>(null)
+
+  function togglePickerFolder(key: string) {
+    setOpenPickerFolders(prev => {
+      const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s
+    })
+  }
 
   const detectorRef       = useRef<LivePitchDetector | null>(null)
   const phaseRef          = useRef<'listening' | 'holding'>('listening')
@@ -339,7 +347,18 @@ export default function PadVoice() {
 
       setRenderStatus(`Rendering ${midiNoteName(midi)}…`)
       try {
-        const pitched  = await renderPitchedBuffer(sample.audioBlob!, semitones, durationSec)
+        let sampleBlob = sample.audioBlob
+        if (!sampleBlob) {
+          const fulfilled = await libraryFulfill(sample.id)
+          if (!fulfilled?.audioBlob) {
+            setRenderStatus(`Sample not loaded — skipping ${midiNoteName(midi)}`)
+            setTimeout(() => setRenderStatus(null), 2500)
+            return
+          }
+          sampleBlob = fulfilled.audioBlob
+          setSelectedSample(fulfilled)
+        }
+        const pitched  = await renderPitchedBuffer(sampleBlob, semitones, durationSec)
         const check    = checkPitch(pitched, midi)
         if (!check.ok) {
           setRenderStatus(`Pitch mismatch on ${midiNoteName(midi)} (got ${check.detected !== null ? midiNoteName(check.detected) : '?'}) — skipped`)
@@ -510,7 +529,8 @@ export default function PadVoice() {
         const already  = transcribedRef.current
 
         for (const evt of events) {
-          const noteBeat = recStart + (evt.start * tempo / 60)
+          // Beat offset relative to clip start (same coordinate space as live-committed notes)
+          const noteBeat = evt.start * tempo / 60
           const durBeats = Math.max(0.125, (evt.end - evt.start) * tempo / 60)
           // Skip if any already-committed note covers the same pitch and overlaps in time
           const covered = already.some(n =>
@@ -633,36 +653,54 @@ export default function PadVoice() {
             )}
 
             {/* parentFolder → sub-folders → entries */}
-            {[...pickerGroups.byParent.entries()].map(([parent, subMap]) => (
-              <div key={parent}>
-                <div style={{ padding: '4px 10px 2px', fontSize: 9, fontWeight: 700, color: 'rgba(139,92,246,0.7)', letterSpacing: '0.06em', background: 'rgba(139,92,246,0.06)', borderBottom: '1px solid #1a1a1a', textTransform: 'uppercase' }}>
-                  {parent}
+            {[...pickerGroups.byParent.entries()].map(([parent, subMap]) => {
+              const parentOpen = openPickerFolders.has(parent) || !!sampleSearch.trim()
+              return (
+                <div key={parent}>
+                  <button onClick={() => togglePickerFolder(parent)} style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', padding: '5px 10px 4px', fontSize: 9, fontWeight: 700, color: 'rgba(139,92,246,0.7)', letterSpacing: '0.06em', background: 'rgba(139,92,246,0.06)', borderBottom: '1px solid #1a1a1a', textTransform: 'uppercase', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+                    {parentOpen ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
+                    {parent}
+                    <span style={{ marginLeft: 'auto', fontWeight: 400, opacity: 0.5, textTransform: 'none', letterSpacing: 0 }}>{[...subMap.values()].reduce((s, a) => s + a.length, 0)}</span>
+                  </button>
+                  {parentOpen && [...subMap.entries()].map(([sub, entries]) => {
+                    const subKey = `${parent}/${sub}`
+                    const subOpen = openPickerFolders.has(subKey) || !!sampleSearch.trim()
+                    return (
+                      <div key={sub}>
+                        <button onClick={() => togglePickerFolder(subKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', padding: '3px 14px 3px 20px', fontSize: 9, color: '#666', background: '#111', borderBottom: '1px solid #1a1a1a', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+                          {subOpen ? <ChevronDown size={8} /> : <ChevronRight size={8} />}
+                          {sub}
+                          <span style={{ marginLeft: 'auto', opacity: 0.4 }}>{entries.length}</span>
+                        </button>
+                        {subOpen && entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
+                      </div>
+                    )
+                  })}
                 </div>
-                {[...subMap.entries()].map(([sub, entries]) => (
-                  <div key={sub}>
-                    <div style={{ padding: '3px 14px 2px', fontSize: 9, color: '#555', background: '#111', borderBottom: '1px solid #1a1a1a' }}>{sub}</div>
-                    {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
-                  </div>
-                ))}
-              </div>
-            ))}
+              )
+            })}
 
             {/* user folders */}
-            {[...pickerGroups.byFolder.entries()].map(([folder, entries]) => (
-              <div key={folder}>
-                <div style={{ padding: '4px 10px 2px', fontSize: 9, fontWeight: 700, color: '#666', letterSpacing: '0.05em', background: '#111', borderBottom: '1px solid #1a1a1a', textTransform: 'uppercase' }}>
-                  {folder}
+            {[...pickerGroups.byFolder.entries()].map(([folder, entries]) => {
+              const isOpen = openPickerFolders.has(folder) || !!sampleSearch.trim()
+              return (
+                <div key={folder}>
+                  <button onClick={() => togglePickerFolder(folder)} style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', padding: '5px 10px 4px', fontSize: 9, fontWeight: 700, color: '#666', letterSpacing: '0.05em', background: '#111', borderBottom: '1px solid #1a1a1a', border: 'none', cursor: 'pointer', textAlign: 'left', textTransform: 'uppercase' }}>
+                    {isOpen ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
+                    {folder}
+                    <span style={{ marginLeft: 'auto', fontWeight: 400, opacity: 0.4, textTransform: 'none', letterSpacing: 0 }}>{entries.length}</span>
+                  </button>
+                  {isOpen && entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
                 </div>
-                {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
-              </div>
-            ))}
+              )
+            })}
 
             {/* unfiled */}
             {pickerGroups.unfiled.length > 0 && (
               <div>
-                {pickerGroups.byParent.size > 0 || pickerGroups.byFolder.size > 0 ? (
+                {(pickerGroups.byParent.size > 0 || pickerGroups.byFolder.size > 0) && (
                   <div style={{ padding: '3px 10px 2px', fontSize: 9, color: '#444', background: '#111', borderBottom: '1px solid #1a1a1a' }}>Unfiled</div>
-                ) : null}
+                )}
                 {pickerGroups.unfiled.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
               </div>
             )}
@@ -678,8 +716,12 @@ export default function PadVoice() {
         <div style={{ width: 140, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 4px 6px', borderRight: '1px solid #1e1e1e' }}>
           <svg width={140} height={90} style={{ overflow: 'visible' }}>
             <path d={arcPath(ACX, ACY, AR, arcStart, arcEnd)} fill="none" stroke="#252525" strokeWidth={8} strokeLinecap="round" />
-            {conf >= 0.4 && (
-              <path d={arcPath(ACX, ACY, AR, 270, hiEnd)} fill="none" stroke={color} strokeWidth={8} strokeLinecap="round" opacity={0.6} />
+            {conf >= 0.4 && Math.abs(hiEnd - 270) > 0.5 && (
+              <path
+                d={hiEnd >= 270
+                  ? arcPath(ACX, ACY, AR, 270, hiEnd)
+                  : arcPath(ACX, ACY, AR, hiEnd, 270)}
+                fill="none" stroke={color} strokeWidth={8} strokeLinecap="round" opacity={0.6} />
             )}
             {TICK_CENTS.map(c => {
               const d  = centsDeg(c)
