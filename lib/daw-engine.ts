@@ -681,11 +681,11 @@ export class DawEngine extends EventTarget {
         const g = n(ctx.createGain())
         const env = eff.params.shapeEnvelope
         if (env && env.length > 0) {
-          const baseGain   = eff.params.gain ?? 1
-          const effDurSec  = this.beatsToSeconds(eff.durationBeats)
+          const baseGain = eff.params.gain ?? 1
+          const sr       = eff.params.shapeSampleRate ?? 30
           g.gain.setValueAtTime(Math.max(0, env[0] * baseGain), effContextStart)
           for (let i = 1; i < env.length; i++) {
-            const t = effContextStart + (i / env.length) * effDurSec
+            const t = effContextStart + i / sr
             if (t > ctx.currentTime) g.gain.linearRampToValueAtTime(Math.max(0, env[i] * baseGain), t)
           }
         } else {
@@ -753,10 +753,10 @@ export class DawEngine extends EventTarget {
     const baseCents = (eff.params.semitones ?? 0) * 100
     const env = eff.params.shapeEnvelope
     if (env && env.length > 0) {
-      const effDurSec = this.beatsToSeconds(eff.durationBeats)
+      const sr = eff.params.shapeSampleRate ?? 30
       source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
       for (let i = 1; i < env.length; i++) {
-        const t = effContextStart + (i / env.length) * effDurSec
+        const t = effContextStart + i / sr
         if (t > this.ctx.currentTime) source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
       }
     } else {

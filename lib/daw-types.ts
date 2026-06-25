@@ -144,6 +144,7 @@ export interface ClipEffect {
   type: ClipEffectType
   startBeat: number
   durationBeats: number
+  row?: number
   params: {
     gain?: number           // volume: 0-2; also pitch base gain
     reverbWet?: number      // reverb: 0-1

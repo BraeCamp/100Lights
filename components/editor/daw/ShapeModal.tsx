@@ -125,7 +125,7 @@ export default function ShapeModal({
   mode: 'volume' | 'pitch'
   onClose: () => void
 }) {
-  const { dispatch } = useDaw()
+  const { dispatch, engine, playing } = useDaw()
   const [buf,      setBuf]      = useState<AudioBuffer | null>(null)
   const [envelope, setEnvelope] = useState<number[] | null>(null)
   const [recording, setRecording] = useState(false)
@@ -166,6 +166,7 @@ export default function ShapeModal({
   }
 
   async function startRec() {
+    if (!playing) engine.play()
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const actx   = new AudioContext()

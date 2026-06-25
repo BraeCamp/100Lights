@@ -358,8 +358,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
 
       {/* Effects lane */}
       {showFx && (
-        <div style={{ display: 'flex', height: EFFECT_H, flexShrink: 0 }}>
-          <div style={{ width: HDR_W, height: EFFECT_H, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
+          <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>FX</span>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {(project.clipEffects ?? []).filter(e => e.trackId === track.id).length === 0
