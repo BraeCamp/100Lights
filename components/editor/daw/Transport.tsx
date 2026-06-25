@@ -1,8 +1,12 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2 } from 'lucide-react'
 import { useDaw, formatBeat } from '@/lib/daw-state'
+import dynamic from 'next/dynamic'
+
+const PadTuner = dynamic(() => import('./PadTuner'), { ssr: false })
 
 export default function Transport() {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome } = useDaw()
@@ -13,6 +17,7 @@ export default function Transport() {
   const [editingBpm, setEditingBpm] = useState(false)
   const [bpmDraft, setBpmDraft] = useState('')
   const [editingTimeSig, setEditingTimeSig] = useState(false)
+  const [showTuner, setShowTuner] = useState(false)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
 
   // Direct DOM mutation every frame — keeps position display smooth without React re-renders
@@ -304,6 +309,44 @@ export default function Transport() {
           style={{ width: 68, accentColor: 'var(--accent)' }}
         />
       </div>
+
+      <div style={divider} />
+
+      {/* Tuner toggle */}
+      <button
+        onClick={() => setShowTuner(v => !v)}
+        title="Open tuner"
+        style={{
+          ...base,
+          width: 'auto', padding: '0 9px',
+          fontSize: 12,
+          background: showTuner ? 'var(--accent)' : '#1e1e1e',
+          border: showTuner ? '1px solid var(--accent)' : '1px solid var(--border)',
+          color: showTuner ? '#fff' : 'var(--text-secondary)',
+        }}
+      >
+        ♩
+      </button>
+
+      {/* Floating tuner panel */}
+      {showTuner && typeof document !== 'undefined' && createPortal(
+        <div style={{
+          position: 'fixed', top: 56, right: 12, zIndex: 9998,
+          width: 290, background: '#111', border: '1px solid #2a2a2a',
+          borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '7px 12px', borderBottom: '1px solid #1e1e1e', background: '#171717',
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>♩ Tuner</span>
+            <button onClick={() => setShowTuner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+          </div>
+          <PadTuner />
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

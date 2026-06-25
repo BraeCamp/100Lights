@@ -10,7 +10,7 @@ import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import dynamic from 'next/dynamic'
 
-const PadTuner = dynamic(() => import('./PadTuner'), { ssr: false })
+const PadVoice = dynamic(() => import('./PadVoice'), { ssr: false })
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -662,10 +662,9 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
-  const { project, dispatch, engine } = useDaw()
+  const { project, dispatch, engine, recording, metronome, setMetronome } = useDaw()
 
   const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'voice'>('pads')
-  const [showTuner,    setShowTuner]    = useState(false)
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
   const [octave,       setOctave]       = useState(4)
   const [pressing,     setPressing]     = useState<Set<number>>(new Set())
@@ -1030,13 +1029,28 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             ? <span style={{ fontSize: 10, fontWeight: 800, color: C.accent, background: 'rgba(61,143,239,0.15)', border: `1px solid rgba(61,143,239,0.4)`, borderRadius: 3, padding: '1px 6px', letterSpacing: '0.06em' }}>ACTIVE</span>
             : <span style={{ fontSize: 10, color: C.muted }}>click to activate</span>
           }
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-            {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 800, letterSpacing: '0.05em' }}>● REC</span>}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
+            {/* Record toggle */}
             <button
-              onClick={e => { e.stopPropagation(); setShowTuner(v => !v) }}
-              title="Tuner"
-              style={{ background: showTuner ? `${C.accent}22` : 'transparent', border: `1px solid ${showTuner ? C.accent : C.border}`, color: showTuner ? C.accent : C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 7px', borderRadius: 3 }}>
-              ♩ Tune
+              onClick={e => { e.stopPropagation(); recording ? engine.stopRecording() : engine.startRecording() }}
+              title={recording ? 'Stop recording' : 'Start recording'}
+              style={{ display: 'flex', alignItems: 'center', gap: 3, background: recording ? 'rgba(239,68,68,0.14)' : 'transparent', border: `1px solid ${recording ? C.red : C.border}`, color: recording ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: recording ? 800 : 400 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', display: 'inline-block', flexShrink: 0 }} />
+              {recording ? 'REC' : 'REC'}
+            </button>
+            {/* BPM */}
+            <button
+              onClick={e => { e.stopPropagation(); const t = prompt('BPM:', String(project.tempo)); if (t) { const n = parseFloat(t); if (!isNaN(n) && n > 0) dispatch({ type: 'SET_TEMPO', tempo: n }) } }}
+              title="BPM — click to edit"
+              style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontFamily: 'monospace' }}>
+              {project.tempo} BPM
+            </button>
+            {/* Metronome */}
+            <button
+              onClick={e => { e.stopPropagation(); const next = !metronome; setMetronome(next); engine.setMetronome(next) }}
+              title={metronome ? 'Metronome on' : 'Metronome off'}
+              style={{ background: metronome ? `${C.accent}22` : 'transparent', border: `1px solid ${metronome ? C.accent : C.border}`, color: metronome ? C.accent : C.muted, cursor: 'pointer', fontSize: 13, padding: '1px 5px', borderRadius: 3 }}>
+              ♩
             </button>
             <button onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
               title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
@@ -1048,13 +1062,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>
         </div>
-
-        {/* Tuner panel — collapsible, toggled from header */}
-        {showTuner && (
-          <div style={{ borderBottom: `1px solid ${C.border}`, background: C.bgDark, flexShrink: 0 }}>
-            <PadTuner />
-          </div>
-        )}
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 2, padding: '6px 12px 0', background: C.bgCard, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
@@ -1237,9 +1244,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           )}
 
           {tab === 'voice' && (
-            <div style={{ padding: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, fontSize: 12 }}>
-              Voice recorder coming soon
-            </div>
+            <PadVoice />
           )}
         </div>
 
