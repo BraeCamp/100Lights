@@ -12,11 +12,21 @@ import type { BeatType, HitSpectral } from './beat-analyzer'
 
 export type LibraryCategory = BeatType | 'voice' | 'custom'
 
+/** Enough info to re-render a synthesized entry on demand (lazy download). */
+export interface RenderSpec {
+  kind:      'drum' | 'melodic'
+  beatType:  string    // BeatType string — avoids circular import
+  midiNote?: number
+  duration:  number
+  channels:  number
+}
+
 export interface LibraryEntry {
   id:           string
   name:         string
   category:     LibraryCategory
-  audioBlob:    Blob
+  audioBlob?:   Blob           // undefined = stub not yet rendered
+  renderSpec?:  RenderSpec     // present on auto-generated 100lights entries
   spectral?:    HitSpectral   // perceptual fingerprint — set for drum/instrument entries
   duration:     number        // seconds
   addedAt:      string        // ISO timestamp
@@ -71,7 +81,12 @@ export async function libraryAdd(entry: LibraryEntry): Promise<void> {
   await tx(db, 'readwrite', s => s.put(entry))
 }
 
-export async function libraryUpdate(id: string, patch: Partial<Pick<LibraryEntry, 'name' | 'category' | 'folder'>>): Promise<void> {
+export async function libraryGetById(id: string): Promise<LibraryEntry | null> {
+  const db = await openDB()
+  return tx<LibraryEntry | null>(db, 'readonly', s => s.get(id) as IDBRequest<LibraryEntry | null>)
+}
+
+export async function libraryUpdate(id: string, patch: Partial<Omit<LibraryEntry, 'id'>>): Promise<void> {
   const db = await openDB()
   const existing = await tx<LibraryEntry>(db, 'readonly', s => s.get(id))
   if (!existing) return

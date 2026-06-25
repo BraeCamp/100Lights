@@ -6,6 +6,7 @@ import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, AudioClip, DawClip, LaunchQuantization } from '@/lib/daw-types'
 import { isAudioClip } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
 
 const SLOT_W  = 160
@@ -193,9 +194,14 @@ function ClipSlot({ track, sceneIndex, clip }: {
 
     if (libId) {
       const entries = await libraryGetAll()
-      const entry   = entries.find(en => en.id === libId)
+      let entry = entries.find(en => en.id === libId)
       if (!entry) return
-      const url = URL.createObjectURL(entry.audioBlob)
+      if (!entry.audioBlob) {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (!fulfilled?.audioBlob) return
+        entry = fulfilled
+      }
+      const url = URL.createObjectURL(entry.audioBlob!)
       const newClip = makeAudioClip(track.id, entry.name, 0, 8, { audioUrl: url, loopEnabled: true })
       dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: newClip })
       const buf = await engine.loadClipBuffer(newClip)

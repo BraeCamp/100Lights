@@ -6,6 +6,7 @@ import { useDaw, makeMidiClip } from '@/lib/daw-state'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import type { LibraryEntry } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import dynamic from 'next/dynamic'
@@ -245,7 +246,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
       const firstId = (pad.customSounds ?? [])[0]?.id
       if (firstId) {
         const entry = all.find(x => x.id === firstId)
-        if (entry) setCropBlob(entry.audioBlob)
+        if (entry?.audioBlob) setCropBlob(entry.audioBlob)
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,7 +257,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
     const firstId = (pad.customSounds ?? [])[0]?.id
     if (!firstId) { setCropBlob(null); return }
     const entry = entries.find(e => e.id === firstId)
-    if (entry) setCropBlob(entry.audioBlob)
+    if (entry?.audioBlob) setCropBlob(entry.audioBlob)
   }, [pad.customSounds, entries])
 
   useEffect(() => {
@@ -284,7 +285,14 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
     try {
       const ctx = new AudioContext()
       await ctx.resume()
-      const ab  = await entry.audioBlob.arrayBuffer()
+      let blob = entry.audioBlob
+      if (!blob) {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (!fulfilled?.audioBlob) return
+        blob = fulfilled.audioBlob
+        setEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))
+      }
+      const ab  = await blob.arrayBuffer()
       const buf = await ctx.decodeAudioData(ab)
       const src = ctx.createBufferSource()
       src.buffer = buf
@@ -749,9 +757,16 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           for (const sound of missing) {
             const entry = all.find(e => e.id === sound.id)
             if (entry) {
-              const ab  = await entry.audioBlob.arrayBuffer()
-              const buf = await engine.ctx.decodeAudioData(ab)
-              soundBuffers.current.set(sound.id, buf)
+              let blob = entry.audioBlob
+              if (!blob) {
+                const fulfilled = await libraryFulfill(entry.id)
+                blob = fulfilled?.audioBlob
+              }
+              if (blob) {
+                const ab  = await blob.arrayBuffer()
+                const buf = await engine.ctx.decodeAudioData(ab)
+                soundBuffers.current.set(sound.id, buf)
+              }
             }
           }
         } catch { /* ignore decode errors */ }

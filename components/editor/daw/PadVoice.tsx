@@ -6,6 +6,7 @@ import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
 import { libraryGetAll } from '../../../lib/sound-library'
+import { libraryFulfill } from '../../../lib/default-samples'
 import type { MidiNote } from '../../../lib/daw-types'
 import type { LibraryEntry } from '../../../lib/sound-library'
 
@@ -141,15 +142,79 @@ function drawRoll(
 }
 
 // ── Sample row (reusable inside picker) ──────────────────────────────────────
-function SampleRow({ entry, selected, onSelect }: { entry: LibraryEntry; selected: boolean; onSelect: () => void }) {
+function SampleRow({
+  entry, selected, onSelect, onFulfilled,
+}: {
+  entry: LibraryEntry
+  selected: boolean
+  onSelect: (fulfilled: LibraryEntry) => void
+  onFulfilled: (fulfilled: LibraryEntry) => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  async function getBlob(): Promise<LibraryEntry | null> {
+    if (entry.audioBlob) return entry
+    setLoading(true)
+    try {
+      const fulfilled = await libraryFulfill(entry.id)
+      if (fulfilled) onFulfilled(fulfilled)
+      return fulfilled
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handlePlay(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (playing) {
+      audioRef.current?.pause()
+      if (audioRef.current) audioRef.current.src = ''
+      audioRef.current = null
+      setPlaying(false)
+      return
+    }
+    const e2 = await getBlob()
+    if (!e2?.audioBlob) return
+    const url = URL.createObjectURL(e2.audioBlob)
+    const el = new Audio(url)
+    audioRef.current = el
+    el.onended = () => { setPlaying(false); URL.revokeObjectURL(url) }
+    el.play().then(() => setPlaying(true)).catch(() => { setPlaying(false); URL.revokeObjectURL(url) })
+  }
+
+  async function handleSelect() {
+    const e2 = entry.audioBlob ? entry : await getBlob()
+    if (e2) onSelect(e2)
+  }
+
+  const isStub = !entry.audioBlob
+
   return (
-    <button onClick={onSelect} style={{
-      display: 'block', width: '100%', textAlign: 'left', padding: '4px 14px',
+    <div style={{
+      display: 'flex', alignItems: 'center',
       background: selected ? 'rgba(61,143,239,0.12)' : 'transparent',
-      border: 'none', cursor: 'pointer', borderBottom: '1px solid #141414',
+      borderBottom: '1px solid #141414',
     }}>
-      <span style={{ fontSize: 11, color: selected ? '#3d8fef' : '#bbb' }}>{entry.name}</span>
-    </button>
+      <button onClick={handleSelect} style={{
+        flex: 1, textAlign: 'left', padding: '4px 14px',
+        background: 'transparent', border: 'none', cursor: 'pointer',
+      }}>
+        <span style={{ fontSize: 11, color: selected ? '#3d8fef' : isStub ? '#666' : '#bbb' }}>
+          {entry.name}
+        </span>
+        {isStub && !loading && <span style={{ fontSize: 9, color: '#444', marginLeft: 5 }}>↓</span>}
+        {loading && <span style={{ fontSize: 9, color: '#555', marginLeft: 5 }}>…</span>}
+      </button>
+      <button onClick={handlePlay} style={{
+        background: 'none', border: 'none', cursor: 'pointer',
+        color: playing ? '#3d8fef' : '#444', padding: '4px 10px 4px 4px',
+        fontSize: 13, lineHeight: 1, flexShrink: 0,
+      }}>
+        {playing ? '■' : '▶'}
+      </button>
+    </div>
   )
 }
 
@@ -230,6 +295,11 @@ export default function PadVoice() {
 
   useEffect(() => { libraryGetAll().then(setSampleEntries).catch(() => {}) }, [])
 
+  const handleFulfilled = useCallback((fulfilled: LibraryEntry) => {
+    setSampleEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))
+    setSelectedSample(prev => prev?.id === fulfilled.id ? fulfilled : prev)
+  }, [])
+
   useEffect(() => {
     if (!result) return
     const mid = Math.round(result.midi)
@@ -269,7 +339,7 @@ export default function PadVoice() {
 
       setRenderStatus(`Rendering ${midiNoteName(midi)}…`)
       try {
-        const pitched  = await renderPitchedBuffer(sample.audioBlob, semitones, durationSec)
+        const pitched  = await renderPitchedBuffer(sample.audioBlob!, semitones, durationSec)
         const check    = checkPitch(pitched, midi)
         if (!check.ok) {
           setRenderStatus(`Pitch mismatch on ${midiNoteName(midi)} (got ${check.detected !== null ? midiNoteName(check.detected) : '?'}) — skipped`)
@@ -537,7 +607,7 @@ export default function PadVoice() {
                 {[...subMap.entries()].map(([sub, entries]) => (
                   <div key={sub}>
                     <div style={{ padding: '3px 14px 2px', fontSize: 9, color: '#555', background: '#111', borderBottom: '1px solid #1a1a1a' }}>{sub}</div>
-                    {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onSelect={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }} />)}
+                    {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
                   </div>
                 ))}
               </div>
@@ -549,7 +619,7 @@ export default function PadVoice() {
                 <div style={{ padding: '4px 10px 2px', fontSize: 9, fontWeight: 700, color: '#666', letterSpacing: '0.05em', background: '#111', borderBottom: '1px solid #1a1a1a', textTransform: 'uppercase' }}>
                   {folder}
                 </div>
-                {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onSelect={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }} />)}
+                {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
               </div>
             ))}
 
@@ -559,7 +629,7 @@ export default function PadVoice() {
                 {pickerGroups.byParent.size > 0 || pickerGroups.byFolder.size > 0 ? (
                   <div style={{ padding: '3px 10px 2px', fontSize: 9, color: '#444', background: '#111', borderBottom: '1px solid #1a1a1a' }}>Unfiled</div>
                 ) : null}
-                {pickerGroups.unfiled.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onSelect={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }} />)}
+                {pickerGroups.unfiled.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onFulfilled={handleFulfilled} onSelect={f => { setSelectedSample(f); setShowSamplePicker(false); setSampleSearch('') }} />)}
               </div>
             )}
           </div>

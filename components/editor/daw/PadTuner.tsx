@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react'
 import { LivePitchDetector, LivePitchResult } from '../../../lib/pitch-detector'
 import { useDaw } from '../../../lib/daw-state'
 import { libraryGetAll, LibraryEntry } from '../../../lib/sound-library'
+import { libraryFulfill } from '../../../lib/default-samples'
 import { isMidiClip, MidiNote } from '../../../lib/daw-types'
 
 const C = {
@@ -105,8 +106,14 @@ export default function PadTuner() {
               ??  entries.find(e => e.name === r.noteName)
     if (!entry) return
     try {
+      let blob = entry.audioBlob
+      if (!blob) {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (!fulfilled?.audioBlob) return
+        blob = fulfilled.audioBlob
+      }
       const ctx = new AudioContext(); await ctx.resume()
-      const buf = await ctx.decodeAudioData(await entry.audioBlob.arrayBuffer())
+      const buf = await ctx.decodeAudioData(await blob.arrayBuffer())
       const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination)
       src.onended = () => setIsPlaying(false)
       src.start(0); playRef.current = { src, ctx }; setIsPlaying(true)

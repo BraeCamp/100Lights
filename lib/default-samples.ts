@@ -2,20 +2,23 @@
  * Seeds the "100lights Audio" default samples into the user's sound library.
  * Runs once per browser profile (keyed by localStorage flags).
  *
- * Sounds are synthesized on the fly using the same drum/melodic engines used
- * by the live DAW, then encoded as WAV and stored in IndexedDB.
+ * v3+: entries are stored as stubs (no audioBlob) and rendered on demand via
+ * libraryFulfill(). This makes the first load instant.
  */
 
-import { libraryAdd, libraryGetAll } from './sound-library'
+import { libraryAdd, libraryGetAll, libraryDelete, libraryGetById } from './sound-library'
+import type { LibraryEntry, RenderSpec } from './sound-library'
 import { playDrumHit }     from './drum-samples'
 import { playMelodicNote } from './instrument-synth'
 import { encodeWav }       from './wav-codec'
 import type { BeatType }   from './beat-analyzer'
 import type { LibraryCategory } from './sound-library'
 
-const SEEDED_KEY      = '100lights-audio-seeded-v1'
-const NOTES_SEEDED_KEY = '100lights-notes-seeded-v2'  // bumped: longer note durations
+const SEEDED_KEY      = '100lights-audio-seeded-v3'
+const NOTES_SEEDED_KEY = '100lights-notes-seeded-v3'
 const PARENT          = '100lights Audio'
+
+// ── Audio renderers ───────────────────────────────────────────────────────────
 
 async function renderDrum(type: BeatType, durationSec: number): Promise<AudioBuffer> {
   const SR  = 44100
@@ -82,60 +85,86 @@ const KEYBOARD_PRESETS: KeyboardPreset[] = [
   { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
 ]
 
+// ── Stub helpers ──────────────────────────────────────────────────────────────
+
+function makeStub(
+  name: string,
+  category: LibraryCategory,
+  renderSpec: RenderSpec,
+  folder: string,
+  now: string,
+): LibraryEntry {
+  return {
+    id:           crypto.randomUUID(),
+    name,
+    category,
+    renderSpec,
+    duration:     renderSpec.duration,
+    addedAt:      now,
+    folder,
+    parentFolder: PARENT,
+  }
+}
+
+// ── On-demand fulfillment ─────────────────────────────────────────────────────
+
+/**
+ * Renders the audio for a stub entry (one with renderSpec but no audioBlob),
+ * persists the result to IndexedDB, and returns the fulfilled entry.
+ * If the entry already has a blob, returns it as-is.
+ */
+export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
+  const entry = await libraryGetById(id)
+  if (!entry) return null
+  if (entry.audioBlob) return entry
+
+  const spec = entry.renderSpec
+  if (!spec) return null
+
+  try {
+    let buf: AudioBuffer
+    if (spec.kind === 'drum') {
+      buf = await renderDrum(spec.beatType as BeatType, spec.duration)
+    } else {
+      buf = await renderMelodic(spec.beatType as BeatType, spec.midiNote ?? 60, spec.duration, spec.channels)
+    }
+    const fulfilled: LibraryEntry = { ...entry, audioBlob: toWavBlob(buf), duration: buf.duration }
+    await libraryAdd(fulfilled)  // put() replaces the stub
+    return fulfilled
+  } catch {
+    return null
+  }
+}
+
 // ── Public entry points ───────────────────────────────────────────────────────
 
 export async function seedDefaultSamples(): Promise<void> {
   if (typeof window === 'undefined') return
   if (localStorage.getItem(SEEDED_KEY)) {
-    // Seed keyboard notes even if main samples already done (separate flag)
     seedKeyboardNotes().catch(() => {})
     return
   }
 
+  // Migration: delete any old pre-rendered 100lights entries (v1/v2 blobs)
   const existing = await libraryGetAll()
-  if (existing.some(e => e.parentFolder === PARENT)) {
-    localStorage.setItem(SEEDED_KEY, '1')
-    seedKeyboardNotes().catch(() => {})
-    return
-  }
+  const oldEntries = existing.filter(e => e.parentFolder === PARENT && !e.renderSpec)
+  await Promise.all(oldEntries.map(e => libraryDelete(e.id)))
 
   const now = new Date().toISOString()
 
   for (const d of DRUMS) {
-    try {
-      const buf = await renderDrum(d.type, d.dur)
-      await libraryAdd({
-        id:           crypto.randomUUID(),
-        name:         d.name,
-        category:     d.type as LibraryCategory,
-        audioBlob:    toWavBlob(buf),
-        duration:     buf.duration,
-        addedAt:      now,
-        folder:       'Drums',
-        parentFolder: PARENT,
-      })
-    } catch { /* skip */ }
+    await libraryAdd(makeStub(d.name, d.type as LibraryCategory, {
+      kind: 'drum', beatType: d.type, duration: d.dur, channels: 1,
+    }, 'Drums', now))
   }
 
   for (const k of KEYS) {
-    try {
-      const buf = await renderMelodic(k.type, k.note, k.dur)
-      await libraryAdd({
-        id:           crypto.randomUUID(),
-        name:         k.name,
-        category:     k.type as LibraryCategory,
-        audioBlob:    toWavBlob(buf),
-        duration:     buf.duration,
-        addedAt:      now,
-        folder:       'Keys',
-        parentFolder: PARENT,
-      })
-    } catch { /* skip */ }
+    await libraryAdd(makeStub(k.name, k.type as LibraryCategory, {
+      kind: 'melodic', beatType: k.type, midiNote: k.note, duration: k.dur, channels: 2,
+    }, 'Keys', now))
   }
 
   localStorage.setItem(SEEDED_KEY, '1')
-
-  // Keyboard notes run in background after drums/keys are done
   seedKeyboardNotes().catch(() => {})
 }
 
@@ -143,29 +172,22 @@ export async function seedKeyboardNotes(): Promise<void> {
   if (typeof window === 'undefined') return
   if (localStorage.getItem(NOTES_SEEDED_KEY)) return
 
+  // Migration: delete any old pre-rendered keyboard notes
   const existing = await libraryGetAll()
-  if (existing.some(e => e.parentFolder === PARENT && KEYBOARD_PRESETS.some(p => p.folder === e.folder))) {
-    localStorage.setItem(NOTES_SEEDED_KEY, '1')
-    return
-  }
+  const oldNotes = existing.filter(
+    e => e.parentFolder === PARENT && !e.renderSpec &&
+         KEYBOARD_PRESETS.some(p => p.folder === e.folder)
+  )
+  await Promise.all(oldNotes.map(e => libraryDelete(e.id)))
 
   const now = new Date().toISOString()
 
   for (const preset of KEYBOARD_PRESETS) {
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
-      try {
-        const buf = await renderMelodic(preset.type, midi, preset.duration, preset.channels)
-        await libraryAdd({
-          id:           crypto.randomUUID(),
-          name:         midiNoteName(midi),
-          category:     preset.type as LibraryCategory,
-          audioBlob:    toWavBlob(buf),
-          duration:     buf.duration,
-          addedAt:      now,
-          folder:       preset.folder,
-          parentFolder: PARENT,
-        })
-      } catch { /* skip */ }
+      await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, {
+        kind: 'melodic', beatType: preset.type, midiNote: midi,
+        duration: preset.duration, channels: preset.channels,
+      }, preset.folder, now))
     }
   }
 

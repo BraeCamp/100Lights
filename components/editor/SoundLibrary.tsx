@@ -8,6 +8,7 @@ import {
   CATEGORY_LABELS, LIBRARY_CATEGORIES,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
 
@@ -22,7 +23,7 @@ function colorFor(cat: string) { return CAT_COLORS[cat] ?? '#94a3b8' }
 
 // ── Entry row ─────────────────────────────────────────────────────────────────
 function EntryRow({
-  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange,
+  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange, onFulfilled,
 }: {
   entry: LibraryEntry
   folders: string[]
@@ -30,11 +31,13 @@ function EntryRow({
   onRename: (id: string, name: string) => void
   onCategoryChange: (id: string, cat: LibraryCategory) => void
   onFolderChange: (id: string, folder: string | undefined) => void
+  onFulfilled?: (e: LibraryEntry) => void
 }) {
   const [editing, setEditing]         = useState(false)
   const [draft, setDraft]             = useState(entry.name)
   const [playing, setPlaying]         = useState(false)
   const [folderOpen, setFolderOpen]   = useState(false)
+  const [fulfilling, setFulfilling]   = useState(false)
   const folderRef = useRef<HTMLDivElement>(null)
 
   // Waveform / scrub refs
@@ -51,12 +54,24 @@ function EntryRow({
 
   async function ensurePcm() {
     if (pcmRef.current) return
-    const ab  = await entry.audioBlob.arrayBuffer()
+    let blob = entry.audioBlob
+    if (!blob) {
+      if (!entry.renderSpec) return
+      setFulfilling(true)
+      try {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (!fulfilled?.audioBlob) return
+        blob = fulfilled.audioBlob
+        onFulfilled?.(fulfilled)
+      } finally {
+        setFulfilling(false)
+      }
+    }
+    const ab  = await blob.arrayBuffer()
     const ctx = new AudioContext()
     const buf = await ctx.decodeAudioData(ab)
     bufRef.current = buf
     pcmRef.current = buf.getChannelData(0)
-    // keep ctx alive for playback
     ctxRef.current = ctx
     drawWave()
   }
@@ -148,9 +163,9 @@ function EntryRow({
     ctxRef.current?.close().catch(() => {})
   }, [])
 
-  // Decode and draw waveform on mount / blob change
+  // Decode and draw waveform once blob is available
   useEffect(() => {
-    void ensurePcm()
+    if (entry.audioBlob) void ensurePcm()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry.audioBlob])
 
@@ -230,14 +245,20 @@ function EntryRow({
       </div>
 
       {/* Waveform canvas — fills remaining space, click to seek, drag to scrub */}
-      <canvas
-        ref={waveRef}
-        width={280}
-        height={56}
-        style={{ flex: 1, minWidth: 60, height: 28, cursor: 'crosshair', borderRadius: 4, background: 'rgba(0,0,0,0.2)' }}
-        onClick={onCanvasClick}
-        onMouseDown={onCanvasMouseDown}
-      />
+      {!entry.audioBlob ? (
+        <div style={{ flex: 1, minWidth: 60, height: 28, borderRadius: 4, background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 9, color: '#444' }}>{fulfilling ? 'Rendering…' : '↓ click ▶ to render'}</span>
+        </div>
+      ) : (
+        <canvas
+          ref={waveRef}
+          width={280}
+          height={56}
+          style={{ flex: 1, minWidth: 60, height: 28, cursor: 'crosshair', borderRadius: 4, background: 'rgba(0,0,0,0.2)' }}
+          onClick={onCanvasClick}
+          onMouseDown={onCanvasMouseDown}
+        />
+      )}
 
       {/* Duration */}
       <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>
@@ -1009,6 +1030,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
       onRename={handleRename}
       onCategoryChange={handleCategoryChange}
       onFolderChange={handleFolderChange}
+      onFulfilled={fulfilled => setEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))}
     />
   )
 

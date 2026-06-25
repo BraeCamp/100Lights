@@ -9,6 +9,7 @@ import { encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, DawClip, AudioClip, AutomationLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
 import dynamic from 'next/dynamic'
 
@@ -394,9 +395,14 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
     const libId = e.dataTransfer.getData('application/x-library-entry-id')
     if (libId) {
       const entries = await libraryGetAll()
-      const entry   = entries.find(en => en.id === libId)
+      let entry = entries.find(en => en.id === libId)
       if (!entry) return
-      const url  = URL.createObjectURL(entry.audioBlob)
+      if (!entry.audioBlob) {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (!fulfilled?.audioBlob) return
+        entry = fulfilled
+      }
+      const url  = URL.createObjectURL(entry.audioBlob!)
       const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: url })
       dispatch({ type: 'ADD_CLIP', clip })
       const buf = await engine.loadClipBuffer(clip)

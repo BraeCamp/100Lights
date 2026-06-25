@@ -7,6 +7,7 @@ import {
   CATEGORY_LABELS, LIBRARY_CATEGORIES,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 
 // ── Note sorting helpers ──────────────────────────────────────────────────────
 const NOTE_PC: Record<string, number> = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 }
@@ -292,17 +293,24 @@ export default function SoundLibraryPanel() {
     })
   }
 
-  function playEntry(entry: LibraryEntry, context: LibraryEntry[]) {
+  async function playEntry(entry: LibraryEntry, context: LibraryEntry[]) {
     audioRef.current?.pause()
     if (urlRef.current) URL.revokeObjectURL(urlRef.current)
     if (playingId === entry.id) { setPlayingId(null); return }
-    urlRef.current = URL.createObjectURL(entry.audioBlob)
+    let blob = entry.audioBlob
+    if (!blob) {
+      const fulfilled = await libraryFulfill(entry.id)
+      if (!fulfilled?.audioBlob) return
+      blob = fulfilled.audioBlob
+      setEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))
+    }
+    urlRef.current = URL.createObjectURL(blob)
     const audio = new Audio(urlRef.current)
     audioRef.current = audio
     audio.onended = () => setPlayingId(null)
     audio.play().catch(() => {})
     setPlayingId(entry.id)
-    void context  // keep ref for prev/next (context passed to each row)
+    void context
   }
 
   async function handleFiles(files: FileList) {
