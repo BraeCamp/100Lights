@@ -4,6 +4,10 @@
  *
  * v3+: entries are stored as stubs (no audioBlob) and rendered on demand via
  * libraryFulfill(). This makes the first load instant.
+ *
+ * Violin/viola use real FluidR3 GM soundfont samples fetched from CDN rather
+ * than synthesis. The nearest available soundfont note is pitch-shifted to
+ * the exact target MIDI note.
  */
 
 import { libraryAdd, libraryGetAll, libraryDelete, libraryGetById } from './sound-library'
@@ -17,9 +21,12 @@ import type { LibraryCategory } from './sound-library'
 const SEEDED_KEY          = '100lights-audio-seeded-v4'
 const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
-const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v1'
+const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v2'  // v2: switched from synth → soundfont
 const DEDUP_KEY           = '100lights-dedup-v1'
 const PARENT              = '100lights Audio'
+
+const VIOLIN_SF_URL = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/violin-mp3.js'
+const VIOLA_SF_URL  = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/viola-mp3.js'
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
 
@@ -40,6 +47,77 @@ async function renderMelodic(type: BeatType, midiNote: number, durationSec: numb
 function toWavBlob(buf: AudioBuffer): Blob {
   const channels = Array.from({ length: buf.numberOfChannels }, (_, ch) => buf.getChannelData(ch))
   return new Blob([encodeWav(channels, buf.sampleRate)], { type: 'audio/wav' })
+}
+
+// ── Soundfont renderer (violin / viola from FluidR3 GM CDN) ───────────────────
+
+// Note names matching midi-js-soundfonts key format (flats, not sharps)
+const SF_NOTE_NAMES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']
+
+function midiToSfKey(midi: number): string {
+  return `${SF_NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`
+}
+
+function sfKeyToMidi(key: string): number {
+  const m = key.match(/^([A-G]b?)(-?\d+)$/)
+  if (!m) return -1
+  const pc = SF_NOTE_NAMES.indexOf(m[1])
+  return pc >= 0 ? (parseInt(m[2]) + 1) * 12 + pc : -1
+}
+
+// In-memory cache so we only fetch each soundfont file once per page load
+const sfCache = new Map<string, Record<string, string>>()
+
+async function fetchSoundfont(url: string): Promise<Record<string, string>> {
+  if (sfCache.has(url)) return sfCache.get(url)!
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`Soundfont fetch failed: ${resp.status}`)
+  const text  = await resp.text()
+  // The file format is: if(_MIDIAPP.sf2){var violin={"A0":"data:audio/mp3;base64,...",...};}
+  const start = text.indexOf('{')
+  const end   = text.lastIndexOf('}')
+  if (start === -1 || end === -1) throw new Error('Could not parse soundfont JS')
+  const map = JSON.parse(text.slice(start, end + 1)) as Record<string, string>
+  sfCache.set(url, map)
+  return map
+}
+
+async function renderSoundfont(
+  soundfontUrl: string,
+  targetMidi:   number,
+): Promise<AudioBuffer> {
+  const map           = await fetchSoundfont(soundfontUrl)
+  const available     = Object.keys(map).map(sfKeyToMidi).filter(m => m >= 0)
+  if (available.length === 0) throw new Error('Soundfont has no usable notes')
+
+  const nearestMidi   = available.reduce((best, m) =>
+    Math.abs(m - targetMidi) < Math.abs(best - targetMidi) ? m : best
+  )
+  const semitones     = targetMidi - nearestMidi
+  const dataUrl       = map[midiToSfKey(nearestMidi)]
+  if (!dataUrl) throw new Error(`No sample for ${midiToSfKey(nearestMidi)} in soundfont`)
+
+  // Decode base64 data URL → ArrayBuffer
+  const base64  = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const binary  = atob(base64)
+  const bytes   = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+  // Decode MP3 to AudioBuffer via a temporary AudioContext
+  const tmpCtx   = new AudioContext()
+  const sourceBuf = await tmpCtx.decodeAudioData(bytes.buffer)
+  tmpCtx.close()
+
+  // Render with optional pitch-shift into an OfflineAudioContext
+  const SR      = 44100
+  const dur     = sourceBuf.duration   // use the sample's natural length
+  const ctx     = new OfflineAudioContext(2, Math.ceil(dur * SR), SR)
+  const src     = ctx.createBufferSource()
+  src.buffer    = sourceBuf
+  if (semitones !== 0) src.detune.value = semitones * 100
+  src.connect(ctx.destination)
+  src.start(0)
+  return ctx.startRendering()
 }
 
 // ── Catalog ───────────────────────────────────────────────────────────────────
@@ -93,18 +171,18 @@ interface KeyboardPreset {
 }
 
 const KEYBOARD_PRESETS: KeyboardPreset[] = [
-  { type: 'piano-grand',    folder: 'Piano – All Notes',         minMidi: 36, maxMidi: 84, duration: 4.5, channels: 2 },
-  { type: 'piano-electric', folder: 'Elec. Piano – All Notes',   minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
-  { type: 'piano-rhodes',   folder: 'Rhodes – All Notes',        minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
-  { type: 'synth-lead',     folder: 'Synth Lead – All Notes',    minMidi: 48, maxMidi: 72, duration: 3.0, channels: 1 },
-  { type: 'synth-strings',  folder: 'Strings – All Notes',       minMidi: 36, maxMidi: 84, duration: 4.5, channels: 2 },
-  { type: 'synth-organ',    folder: 'Organ – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.5, channels: 2 },
-  { type: 'synth-choir',    folder: 'Choir – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.8, channels: 2 },
-  { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
-  { type: 'synth-dark',     folder: 'Dark Synth – All Notes',    minMidi: 36, maxMidi: 72, duration: 4.0,  channels: 2 },
-  { type: 'synth-pluck',    folder: 'Metallic Pluck – All Notes', minMidi: 36, maxMidi: 72, duration: 1.3,  channels: 1 },
-  { type: 'violin',         folder: 'Violin – All Notes',         minMidi: 55, maxMidi: 88, duration: 10.5, channels: 2 },
-  { type: 'viola',          folder: 'Viola – All Notes',          minMidi: 48, maxMidi: 77, duration: 10.5, channels: 2 },
+  { type: 'piano-grand',    folder: 'Piano – All Notes',          minMidi: 36, maxMidi: 84, duration: 4.5, channels: 2 },
+  { type: 'piano-electric', folder: 'Elec. Piano – All Notes',    minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
+  { type: 'piano-rhodes',   folder: 'Rhodes – All Notes',         minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
+  { type: 'synth-lead',     folder: 'Synth Lead – All Notes',     minMidi: 48, maxMidi: 72, duration: 3.0, channels: 1 },
+  { type: 'synth-strings',  folder: 'Strings – All Notes',        minMidi: 36, maxMidi: 84, duration: 4.5, channels: 2 },
+  { type: 'synth-organ',    folder: 'Organ – All Notes',          minMidi: 36, maxMidi: 84, duration: 3.5, channels: 2 },
+  { type: 'synth-choir',    folder: 'Choir – All Notes',          minMidi: 36, maxMidi: 84, duration: 3.8, channels: 2 },
+  { type: 'synth-bass',     folder: 'Bass – All Notes',           minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
+  { type: 'synth-dark',     folder: 'Dark Synth – All Notes',     minMidi: 36, maxMidi: 72, duration: 4.0, channels: 2 },
+  { type: 'synth-pluck',    folder: 'Metallic Pluck – All Notes', minMidi: 36, maxMidi: 72, duration: 1.3, channels: 1 },
+  { type: 'violin',         folder: 'Violin – All Notes',         minMidi: 55, maxMidi: 88, duration: 4.0, channels: 2 },
+  { type: 'viola',          folder: 'Viola – All Notes',          minMidi: 48, maxMidi: 77, duration: 4.0, channels: 2 },
 ]
 
 // ── Stub helpers ──────────────────────────────────────────────────────────────
@@ -147,6 +225,8 @@ export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
     let buf: AudioBuffer
     if (spec.kind === 'drum') {
       buf = await renderDrum(spec.beatType as BeatType, spec.duration)
+    } else if (spec.kind === 'soundfont' && spec.soundfontUrl) {
+      buf = await renderSoundfont(spec.soundfontUrl, spec.midiNote ?? 60)
     } else {
       buf = await renderMelodic(spec.beatType as BeatType, spec.midiNote ?? 60, spec.duration, spec.channels)
     }
@@ -219,16 +299,31 @@ export async function seedStrings(): Promise<void> {
   if (typeof window === 'undefined') return
   if (localStorage.getItem(STRINGS_SEEDED_KEY)) return
 
-  const now = new Date().toISOString()
+  // Remove old synthesized violin/viola stubs (v1 — kind: 'melodic')
+  const existing = await libraryGetAll()
+  const oldStubs = existing.filter(e =>
+    (e.folder === 'Violin – All Notes' || e.folder === 'Viola – All Notes') &&
+    e.renderSpec?.kind === 'melodic'
+  )
+  await Promise.all(oldStubs.map(e => libraryDelete(e.id)))
+
+  const now          = new Date().toISOString()
   const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
+
   for (const preset of stringPresets) {
+    const soundfontUrl = preset.type === 'violin' ? VIOLIN_SF_URL : VIOLA_SF_URL
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
       await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, {
-        kind: 'melodic', beatType: preset.type, midiNote: midi,
-        duration: preset.duration, channels: preset.channels,
+        kind: 'soundfont',
+        beatType: preset.type,
+        midiNote: midi,
+        duration: preset.duration,
+        channels: preset.channels,
+        soundfontUrl,
       }, preset.folder, now))
     }
   }
+
   localStorage.setItem(STRINGS_SEEDED_KEY, '1')
 }
 

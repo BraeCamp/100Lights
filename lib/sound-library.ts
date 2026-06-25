@@ -14,11 +14,12 @@ export type LibraryCategory = BeatType | 'voice' | 'custom'
 
 /** Enough info to re-render a synthesized entry on demand (lazy download). */
 export interface RenderSpec {
-  kind:      'drum' | 'melodic'
-  beatType:  string    // BeatType string — avoids circular import
-  midiNote?: number
-  duration:  number
-  channels:  number
+  kind:          'drum' | 'melodic' | 'soundfont'
+  beatType:      string    // BeatType string — avoids circular import
+  midiNote?:     number
+  duration:      number
+  channels:      number
+  soundfontUrl?: string    // for kind === 'soundfont': URL of the midi-js-soundfont JS file
 }
 
 export interface LibraryEntry {
