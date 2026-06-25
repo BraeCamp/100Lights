@@ -190,6 +190,7 @@ export interface AudioClip {
   fadeOut: number
   trimStart: number
   trimEnd: number
+  bufferDuration?: number   // seconds — populated on first buffer load for crop math
 }
 
 export interface MidiNote {

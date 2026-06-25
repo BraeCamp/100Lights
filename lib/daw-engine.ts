@@ -587,13 +587,28 @@ export class DawEngine extends EventTarget {
 
     const totalDuration = buf.duration - clip.trimStart - clip.trimEnd
     const clipDuration  = this.beatsToSeconds(clip.durationBeats)
-    const playDuration  = Math.min(totalDuration, clipDuration)
+    const alreadyPlayed = now > clip.startBeat ? this.beatsToSeconds(now - clip.startBeat) : 0
 
-    if (clip.reverse) {
-      source.playbackRate.value = -1
-      source.start(startAt, buf.duration - clip.trimStart, playDuration)
+    let effectiveDuration: number
+    if (clip.loopEnabled && !clip.reverse) {
+      source.loop      = true
+      source.loopStart = clip.trimStart
+      source.loopEnd   = Math.max(clip.trimStart + 0.001, buf.duration - clip.trimEnd)
+      const loopLen    = source.loopEnd - source.loopStart
+      const wrapped    = loopLen > 0
+        ? source.loopStart + ((Math.max(0, seekOffset - source.loopStart)) % loopLen)
+        : seekOffset
+      effectiveDuration = Math.max(0, clipDuration - alreadyPlayed)
+      source.start(startAt, wrapped)
+      if (effectiveDuration > 0) source.stop(startAt + effectiveDuration)
     } else {
-      source.start(startAt, seekOffset, playDuration)
+      effectiveDuration = Math.min(totalDuration, clipDuration)
+      if (clip.reverse) {
+        source.playbackRate.value = -1
+        source.start(startAt, buf.duration - clip.trimStart, effectiveDuration)
+      } else {
+        source.start(startAt, seekOffset, effectiveDuration)
+      }
     }
 
     if (clip.fadeIn > 0) {
@@ -605,8 +620,8 @@ export class DawEngine extends EventTarget {
     }
     if (clip.fadeOut > 0) {
       const fs = this.beatsToSeconds(clip.fadeOut)
-      fadeGain.gain.setValueAtTime(clip.gain, startAt + playDuration - fs)
-      fadeGain.gain.linearRampToValueAtTime(0, startAt + playDuration)
+      fadeGain.gain.setValueAtTime(clip.gain, startAt + effectiveDuration - fs)
+      fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
     }
 
     const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id }
