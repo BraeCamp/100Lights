@@ -138,6 +138,15 @@ export function defaultPolyInstrument(): TrackInstrument {
 
 export type ClipEffectType = 'volume' | 'reverb' | 'delay' | 'filter' | 'tremolo' | 'distortion' | 'pitch'
 
+export interface AutoPoint {
+  id: string
+  t: number              // beats from effect start (0..durationBeats)
+  v: number              // normalized 0-1
+  smooth: boolean        // whether bezier handles are active
+  h1: [number, number]   // left handle offset  [dt_beats, dv]
+  h2: [number, number]   // right handle offset [dt_beats, dv]
+}
+
 export interface ClipEffect {
   id: string
   trackId: string
@@ -161,6 +170,10 @@ export interface ClipEffect {
     semitones?: number      // pitch: static offset in semitones
     shapeEnvelope?: number[] // shaped volume (0-1) or pitch (semitone offsets) data
     shapeSampleRate?: number // samples per second of shapeEnvelope (default 30)
+  }
+  automation?: {
+    param: string
+    points: AutoPoint[]
   }
 }
 

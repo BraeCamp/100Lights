@@ -4,6 +4,7 @@ import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane
 import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
+import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 
 // Per-track Web Audio routing nodes
 interface TrackNodes {
@@ -679,17 +680,26 @@ export class DawEngine extends EventTarget {
     switch (eff.type) {
       case 'volume': {
         const g = n(ctx.createGain())
-        const env = eff.params.shapeEnvelope
-        if (env && env.length > 0) {
-          const baseGain = eff.params.gain ?? 1
-          const sr       = eff.params.shapeSampleRate ?? 30
-          g.gain.setValueAtTime(Math.max(0, env[0] * baseGain), effContextStart)
-          for (let i = 1; i < env.length; i++) {
-            const t = effContextStart + i / sr
-            if (t > ctx.currentTime) g.gain.linearRampToValueAtTime(Math.max(0, env[i] * baseGain), t)
-          }
+        const meta = CLIP_EFFECT_PARAM_META.volume
+        if (eff.automation?.points.length) {
+          const effDurSec = this.beatsToSeconds(eff.durationBeats)
+          const N = Math.max(2, Math.ceil(effDurSec * 60))
+          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
+          const curve = new Float32Array(vals.map(v => normToParam(v, meta)))
+          g.gain.setValueCurveAtTime(curve, effContextStart, effDurSec)
         } else {
-          g.gain.value = eff.params.gain ?? 1
+          const env = eff.params.shapeEnvelope
+          if (env && env.length > 0) {
+            const baseGain = eff.params.gain ?? 1
+            const sr       = eff.params.shapeSampleRate ?? 30
+            g.gain.setValueAtTime(Math.max(0, env[0] * baseGain), effContextStart)
+            for (let i = 1; i < env.length; i++) {
+              const t = effContextStart + i / sr
+              if (t > ctx.currentTime) g.gain.linearRampToValueAtTime(Math.max(0, env[i] * baseGain), t)
+            }
+          } else {
+            g.gain.value = eff.params.gain ?? 1
+          }
         }
         input.connect(g)
         return { output: g, extraNodes, extraOscs }
@@ -700,8 +710,17 @@ export class DawEngine extends EventTarget {
       case 'filter': {
         const f = n(ctx.createBiquadFilter())
         f.type = eff.params.filterType ?? 'lowpass'
-        f.frequency.value = eff.params.frequency ?? 1000
         f.Q.value = eff.params.filterQ ?? 1
+        if (eff.automation?.points.length) {
+          const meta = CLIP_EFFECT_PARAM_META.filter
+          const effDurSec = this.beatsToSeconds(eff.durationBeats)
+          const N = Math.max(2, Math.ceil(effDurSec * 60))
+          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
+          const curve = new Float32Array(vals.map(v => normToParam(v, meta)))
+          f.frequency.setValueCurveAtTime(curve, effContextStart, effDurSec)
+        } else {
+          f.frequency.value = eff.params.frequency ?? 1000
+        }
         input.connect(f)
         return { output: f, extraNodes, extraOscs }
       }
@@ -710,28 +729,60 @@ export class DawEngine extends EventTarget {
         const outG = n(ctx.createGain()); outG.gain.value = 1 - depth * 0.5
         const lfoG = n(ctx.createGain()); lfoG.gain.value = depth * 0.5
         const lfo = ctx.createOscillator(); extraOscs.push(lfo)
-        lfo.type = 'sine'; lfo.frequency.value = eff.params.tremoloRate ?? 4
+        lfo.type = 'sine'
+        if (eff.automation?.points.length) {
+          const meta = CLIP_EFFECT_PARAM_META.tremolo
+          const effDurSec = this.beatsToSeconds(eff.durationBeats)
+          const N = Math.max(2, Math.ceil(effDurSec * 60))
+          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
+          const curve = new Float32Array(vals.map(v => normToParam(v, meta)))
+          lfo.frequency.setValueCurveAtTime(curve, effContextStart, effDurSec)
+        } else {
+          lfo.frequency.value = eff.params.tremoloRate ?? 4
+        }
         lfo.connect(lfoG); lfoG.connect(outG.gain)
         input.connect(outG); lfo.start(startAt)
         return { output: outG, extraNodes, extraOscs }
       }
       case 'reverb': {
-        const wet = eff.params.reverbWet ?? 0.3
-        const dry = n(ctx.createGain()); dry.gain.value = 1 - wet
-        const wetG = n(ctx.createGain()); wetG.gain.value = wet
+        const staticWet = eff.params.reverbWet ?? 0.3
+        const dry  = n(ctx.createGain())
+        const wetG = n(ctx.createGain())
         const conv = n(ctx.createConvolver()); conv.buffer = this._makeIR(eff.params.reverbDecay ?? 2)
-        const mix = n(ctx.createGain()); mix.gain.value = 1
+        const mix  = n(ctx.createGain()); mix.gain.value = 1
+        if (eff.automation?.points.length) {
+          const effDurSec = this.beatsToSeconds(eff.durationBeats)
+          const N = Math.max(2, Math.ceil(effDurSec * 60))
+          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
+          const wetCurve = new Float32Array(vals)
+          const dryCurve = new Float32Array(vals.map(v => 1 - v))
+          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, effDurSec)
+          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, effDurSec)
+        } else {
+          wetG.gain.value = staticWet; dry.gain.value = 1 - staticWet
+        }
         input.connect(dry); dry.connect(mix)
         input.connect(conv); conv.connect(wetG); wetG.connect(mix)
         return { output: mix, extraNodes, extraOscs }
       }
       case 'delay': {
-        const wet = eff.params.delayWet ?? 0.3
-        const dry = n(ctx.createGain()); dry.gain.value = 1 - wet
+        const staticWet = eff.params.delayWet ?? 0.3
+        const dry   = n(ctx.createGain())
         const delay = n(ctx.createDelay(2.0)); delay.delayTime.value = eff.params.delayTime ?? 0.375
-        const fbG = n(ctx.createGain()); fbG.gain.value = Math.min(0.95, eff.params.feedback ?? 0.4)
-        const wetG = n(ctx.createGain()); wetG.gain.value = wet
-        const mix = n(ctx.createGain()); mix.gain.value = 1
+        const fbG   = n(ctx.createGain()); fbG.gain.value = Math.min(0.95, eff.params.feedback ?? 0.4)
+        const wetG  = n(ctx.createGain())
+        const mix   = n(ctx.createGain()); mix.gain.value = 1
+        if (eff.automation?.points.length) {
+          const effDurSec = this.beatsToSeconds(eff.durationBeats)
+          const N = Math.max(2, Math.ceil(effDurSec * 60))
+          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
+          const wetCurve = new Float32Array(vals)
+          const dryCurve = new Float32Array(vals.map(v => 1 - v))
+          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, effDurSec)
+          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, effDurSec)
+        } else {
+          wetG.gain.value = staticWet; dry.gain.value = 1 - staticWet
+        }
         input.connect(dry); dry.connect(mix)
         input.connect(delay); delay.connect(fbG); fbG.connect(delay)
         delay.connect(wetG); wetG.connect(mix)
@@ -751,16 +802,25 @@ export class DawEngine extends EventTarget {
 
   private _applyPitchEffect(eff: ClipEffect, source: AudioBufferSourceNode, effContextStart: number) {
     const baseCents = (eff.params.semitones ?? 0) * 100
-    const env = eff.params.shapeEnvelope
-    if (env && env.length > 0) {
-      const sr = eff.params.shapeSampleRate ?? 30
-      source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
-      for (let i = 1; i < env.length; i++) {
-        const t = effContextStart + i / sr
-        if (t > this.ctx.currentTime) source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
-      }
+    if (eff.automation?.points.length) {
+      const meta = CLIP_EFFECT_PARAM_META.pitch
+      const effDurSec = this.beatsToSeconds(eff.durationBeats)
+      const N = Math.max(2, Math.ceil(effDurSec * 60))
+      const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
+      const curve = new Float32Array(vals.map(v => normToParam(v, meta) * 100))
+      source.detune.setValueCurveAtTime(curve, effContextStart, effDurSec)
     } else {
-      source.detune.setValueAtTime(baseCents, effContextStart)
+      const env = eff.params.shapeEnvelope
+      if (env && env.length > 0) {
+        const sr = eff.params.shapeSampleRate ?? 30
+        source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
+        for (let i = 1; i < env.length; i++) {
+          const t = effContextStart + i / sr
+          if (t > this.ctx.currentTime) source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
+        }
+      } else {
+        source.detune.setValueAtTime(baseCents, effContextStart)
+      }
     }
   }
 
