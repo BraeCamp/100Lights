@@ -198,16 +198,17 @@ export default function PadVoice() {
   const [sampleSearch,     setSampleSearch]     = useState('')
   const [renderStatus,     setRenderStatus]     = useState<string | null>(null)
 
-  const detectorRef      = useRef<LivePitchDetector | null>(null)
-  const phaseRef         = useRef<'listening' | 'holding'>('listening')
-  const heldRef          = useRef<HeldNote | null>(null)
-  const silenceRef       = useRef<number | null>(null)
-  const transcribedRef   = useRef<TranscribedNote[]>([])
-  const recStartRef      = useRef(0)
-  const clipIdRef        = useRef<string | null>(null)
-  const trackIdRef       = useRef<string | null>(null)
+  const detectorRef       = useRef<LivePitchDetector | null>(null)
+  const phaseRef          = useRef<'listening' | 'holding'>('listening')
+  const heldRef           = useRef<HeldNote | null>(null)
+  const silenceRef        = useRef<number | null>(null)
+  const transcribedRef    = useRef<TranscribedNote[]>([])
+  const recStartRef       = useRef(0)
+  const clipIdRef         = useRef<string | null>(null)
+  const trackIdRef        = useRef<string | null>(null)
   const selectedSampleRef = useRef<LibraryEntry | null>(null)
-  const canvasRef        = useRef<HTMLCanvasElement>(null)
+  const processFrameRef   = useRef<(r: LivePitchResult | null) => void>(() => {})
+  const canvasRef         = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => { clipIdRef.current = selectedClipId },     [selectedClipId])
   useEffect(() => { trackIdRef.current = selectedTrackId },   [selectedTrackId])
@@ -237,39 +238,40 @@ export default function PadVoice() {
   }, [engine, isRecording, loMidi])
 
   // ── Commit note ─────────────────────────────────────────────────────────────
+  // NOTE: intentionally has no project.arrangementClips dep — that stale closure
+  // caused every note after the first to be silently dropped (the detector callback
+  // captured processFrame once; the old processFrame had the old commitNote which
+  // looked up the clip in a stale snapshot and found nothing after the first ADD_MIDI_NOTE
+  // caused a re-render). Using only stable refs / dispatch fixes this.
   const commitNote = useCallback(async (midi: number, startBeat: number, durationBeats: number) => {
     const sample  = selectedSampleRef.current
     const trackId = trackIdRef.current
 
     if (sample && trackId) {
       // ── Audio-clip path ──
-      const rootMidi   = parseSampleRoot(sample.name)
-      const semitones  = midi - rootMidi
-      const tempo      = engine.tempo ?? 120
+      const rootMidi    = parseSampleRoot(sample.name)
+      const semitones   = midi - rootMidi
+      const tempo       = engine.tempo ?? 120
       const durationSec = Math.max(0.1, (durationBeats / tempo) * 60)
 
       setRenderStatus(`Rendering ${midiNoteName(midi)}…`)
       try {
-        const pitched = await renderPitchedBuffer(sample.audioBlob, semitones, durationSec)
-
-        // Verify pitch
-        const check = checkPitch(pitched, midi)
+        const pitched  = await renderPitchedBuffer(sample.audioBlob, semitones, durationSec)
+        const check    = checkPitch(pitched, midi)
         if (!check.ok) {
-          setRenderStatus(`Pitch mismatch on ${midiNoteName(midi)} (detected ${check.detected !== null ? midiNoteName(check.detected) : '?'}) — skipped`)
+          setRenderStatus(`Pitch mismatch on ${midiNoteName(midi)} (got ${check.detected !== null ? midiNoteName(check.detected) : '?'}) — skipped`)
           setTimeout(() => setRenderStatus(null), 3000)
           return
         }
-
-        const wavBlob = bufferToWavBlob(pitched)
-        const audioUrl = URL.createObjectURL(wavBlob)
-        const absStart = recStartRef.current + startBeat
-        const actualDur = Math.max(0.125, pitched.duration / tempo * 60)
-
-        const clip = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, actualDur * tempo / 60, { audioUrl })
+        const wavBlob   = bufferToWavBlob(pitched)
+        const audioUrl  = URL.createObjectURL(wavBlob)
+        const absStart  = recStartRef.current + startBeat
+        const clipBeats = Math.max(0.125, pitched.duration * tempo / 60)
+        const clip      = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, clipBeats, { audioUrl })
         dispatch({ type: 'ADD_CLIP', clip })
-        setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: clip.durationBeats }])
+        setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: clipBeats }])
         setRenderStatus(null)
-      } catch (e) {
+      } catch {
         setRenderStatus(`Error rendering ${midiNoteName(midi)}`)
         setTimeout(() => setRenderStatus(null), 3000)
       }
@@ -277,22 +279,25 @@ export default function PadVoice() {
       // ── MIDI path ──
       const clipId = clipIdRef.current
       if (!clipId) return
-      const clip = project.arrangementClips.find(c => c.id === clipId)
-      if (!clip || !isMidiClip(clip)) return
-
+      const safeDur = Math.max(0.125, durationBeats)
+      const safeBeat = Math.max(0, startBeat)
       const note: MidiNote = {
         id:            crypto.randomUUID(),
         pitch:         midi,
-        startBeat:     Math.max(0, startBeat),
-        durationBeats: Math.max(0.125, durationBeats),
+        startBeat:     safeBeat,
+        durationBeats: safeDur,
         velocity:      100,
       }
       dispatch({ type: 'ADD_MIDI_NOTE', clipId, note })
-      setTranscribed(prev => [...prev, { id: note.id, midi, startBeat: note.startBeat, durationBeats: note.durationBeats }])
+      // Grow the MIDI clip container to fit the new note
+      dispatch({ type: 'UPDATE_CLIP', clipId, patch: { durationBeats: safeBeat + safeDur + 1 } })
+      setTranscribed(prev => [...prev, { id: note.id, midi, startBeat: safeBeat, durationBeats: safeDur }])
     }
-  }, [dispatch, engine, project.arrangementClips])
+  }, [dispatch, engine])  // stable — no project dep
 
   // ── Pitch frame processing ───────────────────────────────────────────────────
+  // Always call via processFrameRef so the detector callback (captured once at
+  // recording start) always calls the latest version — avoids stale closures.
   const processFrame = useCallback((r: LivePitchResult | null) => {
     const now     = Date.now()
     const elapsed = engine.currentBeat - recStartRef.current
@@ -335,6 +340,9 @@ export default function PadVoice() {
     }
   }, [engine, commitNote])
 
+  // Keep ref in sync so the captured detector callback always calls the latest version
+  useEffect(() => { processFrameRef.current = processFrame }, [processFrame])
+
   // ── Start / Stop ─────────────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
     const sample  = selectedSampleRef.current
@@ -355,7 +363,7 @@ export default function PadVoice() {
           setMicError('Select a track or MIDI clip first.')
           return
         }
-        const newClip = makeMidiClip(trackId, 'Voice', engine.currentBeat, 32)
+        const newClip = makeMidiClip(trackId, 'Voice', engine.currentBeat, 1)
         dispatch({ type: 'ADD_CLIP', clip: newClip })
         setSelectedClipId(newClip.id)
         clipIdRef.current = newClip.id
@@ -375,13 +383,13 @@ export default function PadVoice() {
     const d = new LivePitchDetector()
     detectorRef.current = d
     try {
-      await d.start(r => { setResult(r); processFrame(r) })
+      await d.start(r => { setResult(r); processFrameRef.current(r) })
       setIsRecording(true)
     } catch (e) {
       setMicError(e instanceof Error ? e.message : 'Microphone access denied')
       detectorRef.current = null
     }
-  }, [engine, playing, project.arrangementClips, dispatch, setSelectedClipId, processFrame])
+  }, [engine, playing, project.arrangementClips, dispatch, setSelectedClipId])
 
   const stopRecording = useCallback(() => {
     if (phaseRef.current === 'holding' && heldRef.current) {

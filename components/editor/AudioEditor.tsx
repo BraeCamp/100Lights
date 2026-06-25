@@ -95,7 +95,8 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   // ── Undo history ────────────────────────────────────────────────────────────
   const historyRef = useRef<DawProject[]>([])
-  const projectRef = useRef(project)
+  const projectRef        = useRef(project)
+  const selectedTrackIdRef = useRef<string | null>(null)
   // Seed default samples once per browser (no-op if already done)
   useEffect(() => { seedDefaultSamples().catch(() => {}) }, [])
 
@@ -133,11 +134,28 @@ export default function AudioEditor(props: AudioEditorProps) {
       setRecording((e as CustomEvent<{ recording: boolean }>).detail.recording)
     }
 
+    const onRecordingComplete = (e: Event) => {
+      const { blob, startBeat, durationBeats } = (e as CustomEvent<{ blob: Blob; startBeat: number; durationBeats: number }>).detail
+      if (durationBeats < 0.1) return
+      const url = URL.createObjectURL(blob)
+      const p   = projectRef.current
+      // Use selected track if it's audio, otherwise fall back to first audio track
+      const trackId = (() => {
+        const sel = selectedTrackIdRef.current
+        if (sel && p.tracks.find(t => t.id === sel && t.type === 'audio')) return sel
+        return p.tracks.find(t => t.type === 'audio')?.id ?? null
+      })()
+      if (!trackId) return
+      const clip = makeAudioClip(trackId, 'Recording', startBeat, durationBeats, { audioUrl: url })
+      dispatch({ type: 'ADD_CLIP', clip })
+    }
     engine.addEventListener('transport', onTransport)
     engine.addEventListener('recording', onRecording)
+    engine.addEventListener('recording-complete', onRecordingComplete)
     return () => {
       engine.removeEventListener('transport', onTransport)
       engine.removeEventListener('recording', onRecording)
+      engine.removeEventListener('recording-complete', onRecordingComplete)
     }
   }, [])
 
@@ -169,6 +187,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [view, setView] = useState<DawView>('arrangement')
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null)
+  useEffect(() => { selectedTrackIdRef.current = selectedTrackId }, [selectedTrackId])
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [showPads,  setShowPads]  = useState(false)

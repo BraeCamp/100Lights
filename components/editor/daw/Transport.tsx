@@ -43,6 +43,7 @@ export default function Transport() {
 
   function handleRecord() {
     if (recording) {
+      if (playing) engine.stop()   // pause at current position, not rewind
       engine.stopRecording()
     } else {
       if (!playing) engine.play()

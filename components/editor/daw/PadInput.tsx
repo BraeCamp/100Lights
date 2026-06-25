@@ -1032,7 +1032,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
             {/* Record toggle */}
             <button
-              onClick={e => { e.stopPropagation(); if (recording) { engine.stopRecording() } else { if (!engine.isPlaying) engine.play(); engine.startRecording() } }}
+              onClick={e => { e.stopPropagation(); if (recording) { if (engine.isPlaying) engine.stop(); engine.stopRecording() } else { if (!engine.isPlaying) engine.play(); engine.startRecording() } }}
               title={recording ? 'Stop recording' : 'Start recording'}
               style={{ display: 'flex', alignItems: 'center', gap: 3, background: recording ? 'rgba(239,68,68,0.14)' : 'transparent', border: `1px solid ${recording ? C.red : C.border}`, color: recording ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: recording ? 800 : 400 }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', display: 'inline-block', flexShrink: 0 }} />

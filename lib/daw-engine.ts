@@ -257,6 +257,7 @@ export class DawEngine extends EventTarget {
   }
 
   stop() {
+    this._startBeat = this.currentBeat  // preserve position (pause, not rewind)
     this.isPlaying = false
     this._stopScheduler()
     this._killAllSources()
@@ -695,12 +696,19 @@ export class DawEngine extends EventTarget {
   // ── Recording ─────────────────────────────────────────────────────────────
 
   private _mediaRecorder: MediaRecorder | null = null
-  private _recChunks: Blob[] = []
+  private _recChunks:   Blob[]                 = []
+  private _captureNode: MediaStreamAudioDestinationNode | null = null
+  private _recStartBeat = 0
 
   async startRecording(): Promise<void> {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    this._recChunks = []
-    this._mediaRecorder = new MediaRecorder(stream)
+    if (this._mediaRecorder) await this.stopRecording()
+    // Tap the master bus — captures everything the engine plays
+    this._captureNode  = this.ctx.createMediaStreamDestination()
+    this.masterCompressor.connect(this._captureNode)
+    this._recChunks    = []
+    this._recStartBeat = this.currentBeat
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+    this._mediaRecorder = new MediaRecorder(this._captureNode.stream, { mimeType: mime })
     this._mediaRecorder.ondataavailable = e => { if (e.data.size > 0) this._recChunks.push(e.data) }
     this._mediaRecorder.start(100)
     this.isRecording = true
@@ -709,14 +717,23 @@ export class DawEngine extends EventTarget {
 
   async stopRecording(): Promise<Blob | null> {
     if (!this._mediaRecorder) return null
+    const endBeat = this.currentBeat  // capture before scheduler stops
     return new Promise(resolve => {
       this._mediaRecorder!.onstop = () => {
-        const blob = new Blob(this._recChunks, { type: 'audio/webm' })
+        const mime = this._mediaRecorder?.mimeType || 'audio/webm'
+        const blob = new Blob(this._recChunks, { type: mime })
         this._recChunks = []
+        if (this._captureNode) {
+          try { this.masterCompressor.disconnect(this._captureNode) } catch { /* ok */ }
+          this._captureNode = null
+        }
         this._mediaRecorder?.stream.getTracks().forEach(t => t.stop())
         this._mediaRecorder = null
         this.isRecording = false
         this.dispatchEvent(new CustomEvent('recording', { detail: { recording: false } }))
+        this.dispatchEvent(new CustomEvent('recording-complete', {
+          detail: { blob, startBeat: this._recStartBeat, durationBeats: Math.max(0.25, endBeat - this._recStartBeat) },
+        }))
         resolve(blob)
       }
       this._mediaRecorder!.stop()
