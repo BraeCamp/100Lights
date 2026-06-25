@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { ChevronRight, ChevronDown } from 'lucide-react'
-import { LivePitchDetector, LivePitchResult, detectPitchCurveAsync, extractNoteEvents } from '../../../lib/pitch-detector'
+import { LivePitchDetector, LivePitchResult, detectPitchCurveAsync } from '../../../lib/pitch-detector'
 import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
@@ -496,31 +496,42 @@ export default function PadVoice() {
     if (!det) return
     const blob = await det.stopAndGetAudio()
 
-    // Post-processing pass (MIDI mode only — sample mode creates AudioClips which are harder to dedup)
-    if (blob && !isSampleMode) {
+    // Post-processing (sample mode only): re-analyze each committed note's audio segment
+    // against the actual recording to correct any live-detection pitch errors before they
+    // reach the placed clip. This ensures the sample is pitched to the exact detected note.
+    if (blob && isSampleMode) {
       try {
-        setRenderStatus('Checking for missed notes…')
+        setRenderStatus('Verifying pitch…')
         const ab       = await blob.arrayBuffer()
         const tempCtx  = new AudioContext()
         const audioBuf = await tempCtx.decodeAudioData(ab).finally(() => tempCtx.close())
-        const curve    = await detectPitchCurveAsync(audioBuf, 2048, 512)
-        const events   = extractNoteEvents(curve, 0.08) // 80ms min — more lenient than live 200ms
+        const curve    = await detectPitchCurveAsync(audioBuf, 2048, 256)
         const tempo    = engine.tempo ?? project.tempo ?? 120
-        const already  = transcribedRef.current
-
-        for (const evt of events) {
-          // Beat offset relative to clip start (same coordinate space as live-committed notes)
-          const noteBeat = evt.start * tempo / 60
-          const durBeats = Math.max(0.125, (evt.end - evt.start) * tempo / 60)
-          // Skip if any already-committed note covers the same pitch and overlaps in time
-          const covered = already.some(n =>
-            Math.abs(n.midi - evt.midi) <= 1 &&
-            n.startBeat < noteBeat + durBeats &&
-            n.startBeat + n.durationBeats > noteBeat
-          )
-          if (!covered) await commitNote(evt.midi, noteBeat, durBeats)
+        const sample   = selectedSampleRef.current
+        if (sample?.audioBlob) {
+          const rootMidi = parseSampleRoot(sample.name)
+          for (const note of transcribedRef.current) {
+            const noteStartSec = note.startBeat * 60 / tempo
+            const noteEndSec   = noteStartSec + Math.max(0.1, note.durationBeats * 60 / tempo)
+            // Collect voiced frames in this note's time range
+            const frames = curve.filter(f =>
+              f.time >= noteStartSec && f.time <= noteEndSec && f.freq !== null && f.amplitude > 0.05
+            )
+            if (frames.length < 3) continue
+            const meanHz = frames.reduce((s, f) => s + f.freq!, 0) / frames.length
+            const measuredMidi    = 12 * Math.log2(meanHz / 440) + 69
+            const correctedShift  = measuredMidi - rootMidi
+            const committedShift  = note.midi - rootMidi
+            // Only re-render if the measured pitch meaningfully differs from what was committed
+            if (Math.abs(correctedShift - committedShift) > 0.35) {
+              const pitched  = await renderPitchedBuffer(sample.audioBlob, correctedShift)
+              const wavBlob  = bufferToWavBlob(pitched)
+              const audioUrl = URL.createObjectURL(wavBlob)
+              dispatch({ type: 'UPDATE_CLIP', clipId: note.id, patch: { audioUrl } })
+            }
+          }
         }
-      } catch { /* post-process failure is non-fatal */ }
+      } catch { /* non-fatal */ }
       finally { setRenderStatus(null) }
     }
   }, [engine, commitNote, project.tempo])
