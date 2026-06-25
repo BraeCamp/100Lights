@@ -8,8 +8,10 @@ import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
 import { libraryGetAll } from '../../../lib/sound-library'
 import { libraryFulfill } from '../../../lib/default-samples'
+import { getPresets, clampToPreset, presetDisplayName } from '../../../lib/midi-presets'
 import type { MidiNote } from '../../../lib/daw-types'
 import type { LibraryEntry } from '../../../lib/sound-library'
+import type { MidiPreset } from '../../../lib/midi-presets'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const MIN_NOTE_MS    = 100
@@ -261,7 +263,12 @@ export default function PadVoice() {
   const [held,           setHeld]           = useState<HeldNote | null>(null)
   const [loMidi,         setLoMidi]         = useState(48)
 
-  // Sample mode
+  // Preset mode
+  const [presets,         setPresets]         = useState<MidiPreset[]>([])
+  const [selectedPreset,  setSelectedPreset]  = useState<MidiPreset | null>(null)
+  const [showPresetPicker, setShowPresetPicker] = useState(false)
+
+  // Sample mode (single sample + pitch-shift fallback)
   const [sampleEntries,    setSampleEntries]    = useState<LibraryEntry[]>([])
   const [selectedSample,   setSelectedSample]   = useState<LibraryEntry | null>(null)
   const [showSamplePicker,  setShowSamplePicker]  = useState(false)
@@ -275,24 +282,33 @@ export default function PadVoice() {
     })
   }
 
-  const detectorRef       = useRef<LivePitchDetector | null>(null)
-  const phaseRef          = useRef<'listening' | 'holding'>('listening')
-  const heldRef           = useRef<HeldNote | null>(null)
-  const silenceRef        = useRef<number | null>(null)
-  const transcribedRef    = useRef<TranscribedNote[]>([])
-  const recStartRef       = useRef(0)
-  const clipIdRef         = useRef<string | null>(null)
-  const trackIdRef        = useRef<string | null>(null)
-  const selectedSampleRef = useRef<LibraryEntry | null>(null)
-  const processFrameRef   = useRef<(r: LivePitchResult | null) => void>(() => {})
-  const canvasRef         = useRef<HTMLCanvasElement>(null)
+  const detectorRef        = useRef<LivePitchDetector | null>(null)
+  const phaseRef           = useRef<'listening' | 'holding'>('listening')
+  const heldRef            = useRef<HeldNote | null>(null)
+  const silenceRef         = useRef<number | null>(null)
+  const transcribedRef     = useRef<TranscribedNote[]>([])
+  const recStartRef        = useRef(0)
+  const clipIdRef          = useRef<string | null>(null)
+  const trackIdRef         = useRef<string | null>(null)
+  const selectedSampleRef  = useRef<LibraryEntry | null>(null)
+  const selectedPresetRef  = useRef<MidiPreset | null>(null)
+  const sampleEntriesRef   = useRef<LibraryEntry[]>([])
+  const processFrameRef    = useRef<(r: LivePitchResult | null) => void>(() => {})
+  const canvasRef          = useRef<HTMLCanvasElement>(null)
 
-  useEffect(() => { clipIdRef.current = selectedClipId },     [selectedClipId])
-  useEffect(() => { trackIdRef.current = selectedTrackId },   [selectedTrackId])
-  useEffect(() => { transcribedRef.current = transcribed },   [transcribed])
+  useEffect(() => { clipIdRef.current = selectedClipId },       [selectedClipId])
+  useEffect(() => { trackIdRef.current = selectedTrackId },     [selectedTrackId])
+  useEffect(() => { transcribedRef.current = transcribed },     [transcribed])
   useEffect(() => { selectedSampleRef.current = selectedSample }, [selectedSample])
+  useEffect(() => { selectedPresetRef.current = selectedPreset }, [selectedPreset])
 
-  useEffect(() => { libraryGetAll().then(setSampleEntries).catch(() => {}) }, [])
+  useEffect(() => {
+    setPresets(getPresets())
+    libraryGetAll().then(entries => {
+      setSampleEntries(entries)
+      sampleEntriesRef.current = entries
+    }).catch(() => {})
+  }, [])
 
   const handleFulfilled = useCallback((fulfilled: LibraryEntry) => {
     setSampleEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))
@@ -326,14 +342,57 @@ export default function PadVoice() {
   // looked up the clip in a stale snapshot and found nothing after the first ADD_MIDI_NOTE
   // caused a re-render). Using only stable refs / dispatch fixes this.
   const commitNote = useCallback(async (midi: number, startBeat: number, durationBeats: number) => {
+    const preset  = selectedPresetRef.current
     const sample  = selectedSampleRef.current
     const trackId = trackIdRef.current
 
-    if (sample && trackId) {
-      // ── Audio-clip path ──
+    if (preset && trackId) {
+      // ── Preset path: look up the exact note from the preset's folder ──────
+      const noteName   = midiNoteName(clampToPreset(preset, midi))
+      const allEntries = sampleEntriesRef.current
+      let entry = allEntries.find(e => e.folder === preset.folder && e.name === noteName)
+
+      setRenderStatus(`Rendering ${noteName}…`)
+      try {
+        if (!entry) {
+          // Refresh from IndexedDB in case entries weren't loaded yet
+          const fresh = await libraryGetAll()
+          sampleEntriesRef.current = fresh
+          setSampleEntries(fresh)
+          entry = fresh.find(e => e.folder === preset.folder && e.name === noteName)
+        }
+        if (!entry) {
+          setRenderStatus(`No sample for ${noteName} in "${preset.name}"`)
+          setTimeout(() => setRenderStatus(null), 2500)
+          return
+        }
+        let blob = entry.audioBlob
+        if (!blob) {
+          const fulfilled = await libraryFulfill(entry.id)
+          if (!fulfilled?.audioBlob) {
+            setRenderStatus(`Could not load ${noteName}`)
+            setTimeout(() => setRenderStatus(null), 2500)
+            return
+          }
+          blob = fulfilled.audioBlob
+          sampleEntriesRef.current = sampleEntriesRef.current.map(e => e.id === fulfilled.id ? fulfilled : e)
+        }
+        const audioUrl     = URL.createObjectURL(blob)
+        const absStart     = recStartRef.current + startBeat
+        const noteDurBeats = Math.max(0.125, durationBeats)
+        const clip         = makeAudioClip(trackId, `${preset.name} ${noteName}`, absStart, noteDurBeats, { audioUrl })
+        dispatch({ type: 'ADD_CLIP', clip })
+        setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: noteDurBeats }])
+        setRenderStatus(null)
+      } catch {
+        setRenderStatus(`Error placing ${noteName}`)
+        setTimeout(() => setRenderStatus(null), 3000)
+      }
+
+    } else if (sample && trackId) {
+      // ── Single-sample + pitch-shift path ────────────────────────────────
       const rootMidi  = parseSampleRoot(sample.name)
       const semitones = midi - rootMidi
-      const tempo     = engine.tempo ?? 120
 
       setRenderStatus(`Rendering ${midiNoteName(midi)}…`)
       try {
@@ -348,11 +407,10 @@ export default function PadVoice() {
           sampleBlob = fulfilled.audioBlob
           setSelectedSample(fulfilled)
         }
-        const pitched  = await renderPitchedBuffer(sampleBlob, semitones)
+        const pitched      = await renderPitchedBuffer(sampleBlob, semitones)
         const wavBlob      = bufferToWavBlob(pitched)
         const audioUrl     = URL.createObjectURL(wavBlob)
         const absStart     = recStartRef.current + startBeat
-        // Clip plays for the detected note length; full sample audio is in the buffer for crop-expand
         const noteDurBeats = Math.max(0.125, durationBeats)
         const clip         = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, noteDurBeats, { audioUrl })
         dispatch({ type: 'ADD_CLIP', clip })
@@ -437,11 +495,12 @@ export default function PadVoice() {
 
   // ── Start / Stop ─────────────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
+    const preset  = selectedPresetRef.current
     const sample  = selectedSampleRef.current
     const trackId = trackIdRef.current
 
-    if (sample) {
-      // Sample mode — only need a track
+    if (preset || sample) {
+      // Audio-clip mode — only need a track
       if (!trackId) {
         setMicError('Select a track in the arrangement first.')
         return
@@ -612,30 +671,78 @@ export default function PadVoice() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0e0e0e', overflowY: 'auto', position: 'relative' }}>
 
-      {/* ── Sample picker strip ── */}
+      {/* ── Preset picker strip ── */}
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid #1e1e1e', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>Preset:</span>
+        <button
+          onClick={() => { setShowPresetPicker(v => !v); setShowSamplePicker(false) }}
+          style={{
+            flex: 1, textAlign: 'left', fontSize: 11, padding: '4px 8px', borderRadius: 4,
+            background: selectedPreset ? 'rgba(61,143,239,0.08)' : '#1a1a1a',
+            border: `1px solid ${selectedPreset ? 'rgba(61,143,239,0.3)' : '#2a2a2a'}`,
+            color: selectedPreset ? '#3d8fef' : '#555', cursor: 'pointer',
+          }}>
+          {selectedPreset ? presetDisplayName(selectedPreset) : 'None'}
+          <span style={{ float: 'right', opacity: 0.5 }}>▾</span>
+        </button>
+        {selectedPreset && (
+          <button onClick={() => setSelectedPreset(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 14, padding: '0 2px' }}>×</button>
+        )}
+      </div>
+
+      {/* ── Preset picker dropdown ── */}
+      {showPresetPicker && (
+        <div style={{
+          position: 'absolute', top: 42, left: 12, right: 12, zIndex: 51,
+          background: '#141414', border: '1px solid #2a2a2a', borderRadius: 6,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden',
+        }}>
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {presets.map(p => (
+              <button key={p.id}
+                onClick={() => { setSelectedPreset(p); setSelectedSample(null); setShowPresetPicker(false) }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px',
+                  background: selectedPreset?.id === p.id ? 'rgba(61,143,239,0.10)' : 'transparent',
+                  borderBottom: '1px solid #1a1a1a', border: 'none', cursor: 'pointer',
+                }}>
+                <span style={{ fontSize: 11, color: selectedPreset?.id === p.id ? '#3d8fef' : '#bbb', fontWeight: 600 }}>{p.name}</span>
+                <span style={{ fontSize: 10, color: '#555', marginLeft: 8 }}>{`${NOTE_PC_NAMES[p.loNote % 12]}${Math.floor(p.loNote / 12) - 1}→${NOTE_PC_NAMES[p.hiNote % 12]}${Math.floor(p.hiNote / 12) - 1}`}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{ padding: '5px 8px', borderTop: '1px solid #1e1e1e', display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={() => setShowPresetPicker(false)} style={{ fontSize: 10, color: '#555', background: 'none', border: 'none', cursor: 'pointer' }}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sample picker strip (single sample + pitch-shift, fallback mode) ── */}
       <div style={{ padding: '8px 12px', borderBottom: '1px solid #1e1e1e', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>Sample:</span>
         <button
-          onClick={() => setShowSamplePicker(v => !v)}
+          onClick={() => { setShowSamplePicker(v => !v); setShowPresetPicker(false) }}
           style={{
             flex: 1, textAlign: 'left', fontSize: 11, padding: '4px 8px', borderRadius: 4,
-            background: selectedSample ? 'rgba(61,143,239,0.08)' : '#1a1a1a',
-            border: `1px solid ${selectedSample ? 'rgba(61,143,239,0.3)' : '#2a2a2a'}`,
-            color: selectedSample ? '#3d8fef' : '#555', cursor: 'pointer',
+            background: selectedSample && !selectedPreset ? 'rgba(61,143,239,0.08)' : '#1a1a1a',
+            border: `1px solid ${selectedSample && !selectedPreset ? 'rgba(61,143,239,0.3)' : '#2a2a2a'}`,
+            color: selectedSample && !selectedPreset ? '#3d8fef' : '#555', cursor: 'pointer',
+            opacity: selectedPreset ? 0.4 : 1,
           }}>
-          {selectedSample ? `${selectedSample.name}${selectedSample.folder ? ` · ${selectedSample.folder}` : ''}` : 'None — writes MIDI notes'}
+          {selectedSample ? `${selectedSample.name}${selectedSample.folder ? ` · ${selectedSample.folder}` : ''}` : selectedPreset ? 'Overridden by preset' : 'None — writes MIDI notes'}
           <span style={{ float: 'right', opacity: 0.5 }}>▾</span>
         </button>
-        {selectedSample && (
+        {selectedSample && !selectedPreset && (
           <button onClick={() => setSelectedSample(null)}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 14, padding: '0 2px' }}>×</button>
         )}
       </div>
 
       {/* ── Sample picker dropdown ── */}
-      {showSamplePicker && (
+      {showSamplePicker && !selectedPreset && (
         <div style={{
-          position: 'absolute', top: 42, left: 12, right: 12, zIndex: 50,
+          position: 'absolute', top: 84, left: 12, right: 12, zIndex: 50,
           background: '#141414', border: '1px solid #2a2a2a', borderRadius: 6,
           boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden',
         }}>
