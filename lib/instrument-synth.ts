@@ -290,6 +290,72 @@ export function playSynth(
       oct.start(when); oct.stop(when + 4.0)
     }
 
+  } else if (variant === 'synth-dark') {
+    // Dark synth / coldwave pad: hollow square + sub octave, resonant low-pass, slow attack.
+    // Slow LFO pitch drift gives an unsettling, slightly detuned quality.
+    filter.frequency.setValueAtTime(200, when)
+    filter.frequency.linearRampToValueAtTime(650, when + 0.9)
+    filter.Q.value = 5
+    masterGain.gain.setValueAtTime(0.001, when)
+    masterGain.gain.linearRampToValueAtTime(velocity * 0.24, when + 0.65)
+    masterGain.gain.setValueAtTime(velocity * 0.24, when + 2.5)
+    masterGain.gain.exponentialRampToValueAtTime(0.001, when + 3.8)
+
+    const osc  = ctx.createOscillator(); osc.type = 'square';   osc.frequency.value = hz
+    const sub  = ctx.createOscillator(); sub.type = 'sawtooth'; sub.frequency.value = hz / 2
+    const subG = ctx.createGain(); subG.gain.value = 0.35
+
+    // Very slow LFO (0.28 Hz) — barely perceptible pitch drift
+    const lfo  = ctx.createOscillator(); lfo.frequency.value = 0.28
+    const lfoG = ctx.createGain(); lfoG.gain.value = 3
+    lfo.connect(lfoG); lfoG.connect(osc.detune); lfoG.connect(sub.detune)
+
+    osc.connect(filter)
+    sub.connect(subG); subG.connect(filter)
+    lfo.start(when); lfo.stop(when + 4.0)
+    osc.start(when); osc.stop(when + 4.0)
+    sub.start(when); sub.stop(when + 4.0)
+
+  } else if (variant === 'synth-drone') {
+    // Drone: three near-unison oscillators at slightly different frequencies.
+    // Creates slow amplitude and timbre beating — slowly evolving texture.
+    filter.frequency.setValueAtTime(280, when)
+    filter.frequency.linearRampToValueAtTime(750, when + 2.2)
+    filter.Q.value = 1.8
+    masterGain.gain.setValueAtTime(0.001, when)
+    masterGain.gain.linearRampToValueAtTime(velocity * 0.20, when + 1.6)
+    masterGain.gain.setValueAtTime(velocity * 0.20, when + 3.5)
+    masterGain.gain.exponentialRampToValueAtTime(0.001, when + 5.2)
+
+    // Root, +2 cents (0.6 Hz beating), slightly flat fifth (adds modal depth)
+    const freqs: [number, OscillatorType, number][] = [
+      [hz,         'sine',     0.50],
+      [hz * 1.0012, 'triangle', 0.30],
+      [hz * 1.494,  'sine',     0.20],
+    ]
+    for (const [f, t, g] of freqs) {
+      const osc = ctx.createOscillator(); osc.type = t; osc.frequency.value = f
+      const og  = ctx.createGain(); og.gain.value = g
+      osc.connect(og); og.connect(filter)
+      osc.start(when); osc.stop(when + 5.3)
+    }
+
+  } else if (variant === 'synth-pluck') {
+    // Metallic pluck: fast resonant filter sweep over square + harmonic, EBM sequencer feel.
+    filter.frequency.setValueAtTime(hz * 9, when)
+    filter.frequency.exponentialRampToValueAtTime(hz * 1.1, when + 0.12)
+    filter.Q.value = 7
+    masterGain.gain.setValueAtTime(velocity * 0.60, when)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.18, when + 0.07)
+    masterGain.gain.exponentialRampToValueAtTime(0.001, when + 1.1)
+
+    const osc  = ctx.createOscillator(); osc.type = 'square';   osc.frequency.value = hz
+    const osc2 = ctx.createOscillator(); osc2.type = 'sawtooth'; osc2.frequency.value = hz * 2
+    const og2  = ctx.createGain(); og2.gain.value = 0.18
+    osc.connect(filter); osc2.connect(og2); og2.connect(filter)
+    osc.start(when); osc.stop(when + 1.2)
+    osc2.start(when); osc2.stop(when + 1.2)
+
   } else {
     // Lead: detuned saw pair + filter envelope (classic supersaw-lite)
     filter.frequency.setValueAtTime(hz * 6, when)
@@ -330,4 +396,5 @@ export const MELODIC_TYPES = new Set<BeatType>([
   'piano-grand', 'piano-electric', 'piano-rhodes',
   'synth-lead', 'synth-pad', 'synth-bass', 'synth-arp',
   'synth-strings', 'synth-organ', 'synth-choir',
+  'synth-dark', 'synth-drone', 'synth-pluck',
 ])

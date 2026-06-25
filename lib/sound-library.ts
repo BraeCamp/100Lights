@@ -140,15 +140,21 @@ export const CATEGORY_LABELS: Record<LibraryCategory, string> = {
   'synth-strings':   'Strings',
   'synth-organ':     'Organ',
   'synth-choir':     'Choir',
+  'synth-dark':      'Dark Synth',
+  'synth-drone':     'Drone',
+  'synth-pluck':     'Metallic Pluck',
   other:             'Other',
   voice:             'Voice',
   custom:            'Custom',
 }
 
-export const LIBRARY_CATEGORIES: LibraryCategory[] = [
-  'kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim',
-  'guitar-acoustic', 'guitar-electric', 'guitar-nylon',
-  'piano-grand', 'piano-electric', 'piano-rhodes',
-  'synth-lead', 'synth-pad', 'synth-bass', 'synth-arp',
-  'other', 'voice', 'custom',
+export const CATEGORY_GROUPS: Array<{ label: string; categories: LibraryCategory[] }> = [
+  { label: 'Drums',    categories: ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim'] },
+  { label: 'Guitar',   categories: ['guitar-acoustic', 'guitar-electric', 'guitar-nylon'] },
+  { label: 'Piano',    categories: ['piano-grand', 'piano-electric', 'piano-rhodes'] },
+  { label: 'Synth',    categories: ['synth-lead', 'synth-pad', 'synth-bass', 'synth-arp', 'synth-strings', 'synth-organ', 'synth-choir'] },
+  { label: 'Darkwave', categories: ['synth-dark', 'synth-drone', 'synth-pluck'] },
+  { label: 'Other',    categories: ['voice', 'other', 'custom'] },
 ]
+
+export const LIBRARY_CATEGORIES: LibraryCategory[] = CATEGORY_GROUPS.flatMap(g => g.categories)

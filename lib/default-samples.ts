@@ -14,9 +14,10 @@ import { encodeWav }       from './wav-codec'
 import type { BeatType }   from './beat-analyzer'
 import type { LibraryCategory } from './sound-library'
 
-const SEEDED_KEY      = '100lights-audio-seeded-v4'
-const NOTES_SEEDED_KEY = '100lights-notes-seeded-v4'
-const PARENT          = '100lights Audio'
+const SEEDED_KEY          = '100lights-audio-seeded-v4'
+const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
+const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
+const PARENT              = '100lights Audio'
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
 
@@ -64,6 +65,15 @@ const KEYS: Array<{ name: string; type: BeatType; note: number; dur: number }> =
   { name: 'Bass',           type: 'synth-bass',     note: 36, dur: 2.0 },
 ]
 
+const DARKWAVE: Array<{ name: string; type: BeatType; note: number; dur: number }> = [
+  { name: 'Dark Synth',      type: 'synth-dark',  note: 55, dur: 4.0 },
+  { name: 'Cold Wave',       type: 'synth-dark',  note: 60, dur: 4.0 },
+  { name: 'Drone',           type: 'synth-drone', note: 48, dur: 5.0 },
+  { name: 'Void Drone',      type: 'synth-drone', note: 43, dur: 5.0 },
+  { name: 'Metallic Pluck',  type: 'synth-pluck', note: 60, dur: 1.2 },
+  { name: 'Steel Pulse',     type: 'synth-pluck', note: 55, dur: 1.2 },
+]
+
 // ── Keyboard note presets ─────────────────────────────────────────────────────
 
 const NOTE_NAMES_12 = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -89,6 +99,8 @@ const KEYBOARD_PRESETS: KeyboardPreset[] = [
   { type: 'synth-organ',    folder: 'Organ – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.5, channels: 2 },
   { type: 'synth-choir',    folder: 'Choir – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.8, channels: 2 },
   { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
+  { type: 'synth-dark',     folder: 'Dark Synth – All Notes',    minMidi: 36, maxMidi: 72, duration: 4.0, channels: 2 },
+  { type: 'synth-pluck',    folder: 'Metallic Pluck – All Notes', minMidi: 36, maxMidi: 72, duration: 1.3, channels: 1 },
 ]
 
 // ── Stub helpers ──────────────────────────────────────────────────────────────
@@ -148,6 +160,7 @@ export async function seedDefaultSamples(): Promise<void> {
   if (typeof window === 'undefined') return
   if (localStorage.getItem(SEEDED_KEY)) {
     seedKeyboardNotes().catch(() => {})
+    seedDarkwave().catch(() => {})
     return
   }
 
@@ -172,6 +185,20 @@ export async function seedDefaultSamples(): Promise<void> {
 
   localStorage.setItem(SEEDED_KEY, '1')
   seedKeyboardNotes().catch(() => {})
+  seedDarkwave().catch(() => {})
+}
+
+export async function seedDarkwave(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(DARKWAVE_SEEDED_KEY)) return
+
+  const now = new Date().toISOString()
+  for (const k of DARKWAVE) {
+    await libraryAdd(makeStub(k.name, k.type as LibraryCategory, {
+      kind: 'melodic', beatType: k.type, midiNote: k.note, duration: k.dur, channels: 2,
+    }, 'Darkwave', now))
+  }
+  localStorage.setItem(DARKWAVE_SEEDED_KEY, '1')
 }
 
 export async function seedKeyboardNotes(): Promise<void> {

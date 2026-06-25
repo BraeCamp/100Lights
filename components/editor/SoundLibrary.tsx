@@ -5,7 +5,7 @@ import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderP
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
   getAudioDurationFromBlob,
-  CATEGORY_LABELS, LIBRARY_CATEGORIES,
+  CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -14,10 +14,19 @@ import { encodeWav, decodeAiff } from '@/lib/wav-codec'
 
 // ── Category color map ────────────────────────────────────────────────────────
 const CAT_COLORS: Record<string, string> = {
+  // Drums
   kick: '#ef4444', snare: '#f97316', hihat: '#eab308', 'open-hihat': '#84cc16',
   clap: '#22c55e', tom: '#14b8a6', crash: '#06b6d4', rim: '#3b82f6',
-  'guitar-acoustic': '#8b5cf6', 'guitar-electric': '#a855f7', 'piano-grand': '#ec4899',
-  'synth-lead': '#f43f5e', 'synth-bass': '#6366f1', voice: '#0ea5e9', custom: '#94a3b8',
+  // Guitar / Piano
+  'guitar-acoustic': '#8b5cf6', 'guitar-electric': '#a855f7', 'guitar-nylon': '#9333ea',
+  'piano-grand': '#ec4899', 'piano-electric': '#db2777', 'piano-rhodes': '#be185d',
+  // Synth
+  'synth-lead': '#f43f5e', 'synth-pad': '#e879f9', 'synth-bass': '#6366f1',
+  'synth-arp': '#38bdf8', 'synth-strings': '#a78bfa', 'synth-organ': '#fb923c', 'synth-choir': '#c084fc',
+  // Darkwave
+  'synth-dark': '#7c3aed', 'synth-drone': '#4c1d95', 'synth-pluck': '#5b21b6',
+  // Other
+  voice: '#0ea5e9', other: '#64748b', custom: '#94a3b8',
 }
 function colorFor(cat: string) { return CAT_COLORS[cat] ?? '#94a3b8' }
 
@@ -776,7 +785,11 @@ export function AddToLibraryModal({
             />
             <select value={category} onChange={e => setCat(e.target.value as LibraryCategory)}
               style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-              {LIBRARY_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+              {CATEGORY_GROUPS.map(g => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.categories.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+                </optgroup>
+              ))}
             </select>
 
             <div style={{ display: 'flex', gap: 8 }}>
