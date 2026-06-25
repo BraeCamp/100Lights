@@ -12,7 +12,7 @@ import type { MidiNote } from '../../../lib/daw-types'
 import type { LibraryEntry } from '../../../lib/sound-library'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const MIN_NOTE_MS    = 200
+const MIN_NOTE_MS    = 100
 const SILENCE_GAP_MS = 80
 const PITCH_CHANGE_ST = 0.6
 
@@ -55,7 +55,12 @@ const PITCH_H      = 6
 const KEY_W        = 26
 
 interface TranscribedNote { id: string; midi: number; startBeat: number; durationBeats: number }
-interface HeldNote        { midi: number; startBeat: number; startTime: number }
+interface HeldNote        { midi: number; startBeat: number; startTime: number; midiSamples: number[] }
+
+function medianOf(arr: number[]): number {
+  const s = arr.slice().sort((a, b) => a - b)
+  return s[Math.floor(s.length / 2)]
+}
 
 function isBlackKey(midi: number) { return [1,3,6,8,10].includes(midi % 12) }
 
@@ -389,19 +394,24 @@ export default function PadVoice() {
       const midi = Math.round(r.midi)
 
       if (phaseRef.current === 'listening') {
-        const h: HeldNote = { midi, startBeat: elapsed, startTime: now }
+        const h: HeldNote = { midi, startBeat: elapsed, startTime: now, midiSamples: [midi] }
         phaseRef.current  = 'holding'
         heldRef.current   = h
         setHeld(h)
       } else if (phaseRef.current === 'holding' && heldRef.current) {
-        if (Math.abs(midi - heldRef.current.midi) >= PITCH_CHANGE_ST) {
+        // Compare against median of accumulated samples so single-frame noise
+        // doesn't prematurely split a note or skew the committed pitch.
+        const refMidi = medianOf(heldRef.current.midiSamples)
+        if (Math.abs(midi - refMidi) >= PITCH_CHANGE_ST) {
           const prev = heldRef.current
           if (now - prev.startTime >= MIN_NOTE_MS) {
-            void commitNote(prev.midi, prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
+            void commitNote(refMidi, prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
           }
-          const h: HeldNote = { midi, startBeat: elapsed, startTime: now }
+          const h: HeldNote = { midi, startBeat: elapsed, startTime: now, midiSamples: [midi] }
           heldRef.current  = h
           setHeld(h)
+        } else {
+          heldRef.current.midiSamples.push(midi)
         }
       }
     } else {
@@ -411,7 +421,7 @@ export default function PadVoice() {
         } else if (now - silenceRef.current > SILENCE_GAP_MS) {
           const prev = heldRef.current
           if (now - prev.startTime >= MIN_NOTE_MS) {
-            void commitNote(prev.midi, prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
+            void commitNote(medianOf(prev.midiSamples), prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
           }
           heldRef.current    = null
           phaseRef.current   = 'listening'
@@ -479,7 +489,7 @@ export default function PadVoice() {
       const prev    = heldRef.current
       const elapsed = engine.currentBeat - recStartRef.current
       if (Date.now() - prev.startTime >= MIN_NOTE_MS) {
-        await commitNote(prev.midi, prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
+        await commitNote(medianOf(prev.midiSamples), prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
       }
     }
 

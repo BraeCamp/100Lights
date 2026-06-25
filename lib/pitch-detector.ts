@@ -643,10 +643,11 @@ export class LivePitchDetector {
       }
       rms = Math.sqrt(rms / this.buf.length)
 
-      // Silence gate — two-level: absolute RMS and peak
-      if (rms < 0.008 || peak < 0.02) {
+      // Silence gate — low thresholds so guitar/voice ring-out is tracked.
+      // 0.003 RMS ≈ -50 dBFS; 0.008 peak ≈ -42 dBFS.
+      if (rms < 0.003 || peak < 0.008) {
         this.silFrames++
-        if (this.silFrames > 3) {
+        if (this.silFrames > 5) {
           this.smoothHz = null
           onPitch(null)
         }
@@ -659,7 +660,7 @@ export class LivePitchDetector {
       for (let i = 0; i < HANN_SIZE; i++) this.win[i] = this.buf[i] * HANN[i]
 
       const det = yinDetect(this.win, SR)
-      if (!det || det.confidence < 0.50) {
+      if (!det || det.confidence < 0.44) {
         onPitch(null)
         this.rafId = requestAnimationFrame(tick)
         return
