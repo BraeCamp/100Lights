@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { LivePitchDetector, LivePitchResult, detectBufferPitch } from '../../../lib/pitch-detector'
 import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
@@ -138,6 +138,19 @@ function drawRoll(
     ctx.fillStyle = 'rgba(239,68,68,0.85)'
     ctx.fillRect(nowX - 1, 0, 2, H)
   }
+}
+
+// ── Sample row (reusable inside picker) ──────────────────────────────────────
+function SampleRow({ entry, selected, onSelect }: { entry: LibraryEntry; selected: boolean; onSelect: () => void }) {
+  return (
+    <button onClick={onSelect} style={{
+      display: 'block', width: '100%', textAlign: 'left', padding: '4px 14px',
+      background: selected ? 'rgba(61,143,239,0.12)' : 'transparent',
+      border: 'none', cursor: 'pointer', borderBottom: '1px solid #141414',
+    }}>
+      <span style={{ fontSize: 11, color: selected ? '#3d8fef' : '#bbb' }}>{entry.name}</span>
+    </button>
+  )
 }
 
 // ── Audio rendering helpers ───────────────────────────────────────────────────
@@ -421,9 +434,51 @@ export default function PadVoice() {
   const inTune    = conf >= 0.75 && Math.abs(cents) <= 8
   const hasTarget = !!(selectedTrackId || selectedClipId)
 
-  const filteredSamples = sampleEntries.filter(e =>
-    !sampleSearch || e.name.toLowerCase().includes(sampleSearch.toLowerCase()) || (e.folder ?? '').toLowerCase().includes(sampleSearch.toLowerCase())
-  )
+  // ── Grouped + sorted picker data ────────────────────────────────────────────
+  const pickerGroups = useMemo(() => {
+    const q = sampleSearch.trim().toLowerCase()
+    const filtered = sampleEntries.filter(e =>
+      !q ||
+      e.name.toLowerCase().includes(q) ||
+      (e.folder ?? '').toLowerCase().includes(q) ||
+      (e.parentFolder ?? '').toLowerCase().includes(q)
+    )
+
+    // Sort within a group: note names descending, non-note names alphabetically
+    function sortDescNote(arr: LibraryEntry[]): LibraryEntry[] {
+      const withMidi = arr.map(e => ({ e, m: parseSampleRoot(e.name) }))
+      // Only apply note sort if name actually parses (regex test)
+      const isNote = (name: string) => /^[A-G]#?-?\d+$/.test(name)
+      if (arr.every(e => isNote(e.name))) {
+        return withMidi.sort((a, b) => b.m - a.m).map(x => x.e)
+      }
+      return [...arr].sort((a, b) => a.name.localeCompare(b.name))
+    }
+
+    // parentFolder → folder → entries[]
+    const byParent = new Map<string, Map<string, LibraryEntry[]>>()
+    const byFolder = new Map<string, LibraryEntry[]>()
+    const unfiled:  LibraryEntry[] = []
+
+    for (const e of filtered) {
+      if (e.parentFolder) {
+        const sub = e.folder ?? '(ungrouped)'
+        const m   = byParent.get(e.parentFolder) ?? new Map<string, LibraryEntry[]>()
+        m.set(sub, [...(m.get(sub) ?? []), e])
+        byParent.set(e.parentFolder, m)
+      } else if (e.folder) {
+        byFolder.set(e.folder, [...(byFolder.get(e.folder) ?? []), e])
+      } else {
+        unfiled.push(e)
+      }
+    }
+
+    // Sort each leaf array
+    byParent.forEach(subMap => subMap.forEach((arr, k) => subMap.set(k, sortDescNote(arr))))
+    byFolder.forEach((arr, k) => byFolder.set(k, sortDescNote(arr)))
+
+    return { byParent, byFolder, unfiled: sortDescNote(unfiled), total: filtered.length }
+  }, [sampleEntries, sampleSearch])
 
   const arcStart = 270 - ASWEEP
   const arcEnd   = 270 + ASWEEP
@@ -468,21 +523,45 @@ export default function PadVoice() {
               style={{ width: '100%', fontSize: 11, background: '#1e1e1e', border: '1px solid #2a2a2a', borderRadius: 4, color: '#ccc', padding: '4px 8px', boxSizing: 'border-box' }}
             />
           </div>
-          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-            {filteredSamples.length === 0 && (
+          <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+            {pickerGroups.total === 0 && (
               <div style={{ padding: '12px 10px', fontSize: 11, color: '#444', textAlign: 'center' }}>No samples found</div>
             )}
-            {filteredSamples.map(e => (
-              <button key={e.id} onClick={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px',
-                  background: selectedSample?.id === e.id ? 'rgba(61,143,239,0.1)' : 'transparent',
-                  border: 'none', cursor: 'pointer', borderBottom: '1px solid #1a1a1a',
-                }}>
-                <span style={{ fontSize: 11, color: selectedSample?.id === e.id ? '#3d8fef' : '#ccc' }}>{e.name}</span>
-                {e.folder && <span style={{ fontSize: 9, color: '#444', marginLeft: 6 }}>{e.folder}</span>}
-              </button>
+
+            {/* parentFolder → sub-folders → entries */}
+            {[...pickerGroups.byParent.entries()].map(([parent, subMap]) => (
+              <div key={parent}>
+                <div style={{ padding: '4px 10px 2px', fontSize: 9, fontWeight: 700, color: 'rgba(139,92,246,0.7)', letterSpacing: '0.06em', background: 'rgba(139,92,246,0.06)', borderBottom: '1px solid #1a1a1a', textTransform: 'uppercase' }}>
+                  {parent}
+                </div>
+                {[...subMap.entries()].map(([sub, entries]) => (
+                  <div key={sub}>
+                    <div style={{ padding: '3px 14px 2px', fontSize: 9, color: '#555', background: '#111', borderBottom: '1px solid #1a1a1a' }}>{sub}</div>
+                    {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onSelect={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }} />)}
+                  </div>
+                ))}
+              </div>
             ))}
+
+            {/* user folders */}
+            {[...pickerGroups.byFolder.entries()].map(([folder, entries]) => (
+              <div key={folder}>
+                <div style={{ padding: '4px 10px 2px', fontSize: 9, fontWeight: 700, color: '#666', letterSpacing: '0.05em', background: '#111', borderBottom: '1px solid #1a1a1a', textTransform: 'uppercase' }}>
+                  {folder}
+                </div>
+                {entries.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onSelect={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }} />)}
+              </div>
+            ))}
+
+            {/* unfiled */}
+            {pickerGroups.unfiled.length > 0 && (
+              <div>
+                {pickerGroups.byParent.size > 0 || pickerGroups.byFolder.size > 0 ? (
+                  <div style={{ padding: '3px 10px 2px', fontSize: 9, color: '#444', background: '#111', borderBottom: '1px solid #1a1a1a' }}>Unfiled</div>
+                ) : null}
+                {pickerGroups.unfiled.map(e => <SampleRow key={e.id} entry={e} selected={selectedSample?.id === e.id} onSelect={() => { setSelectedSample(e); setShowSamplePicker(false); setSampleSearch('') }} />)}
+              </div>
+            )}
           </div>
           <div style={{ padding: '5px 8px', borderTop: '1px solid #1e1e1e', display: 'flex', justifyContent: 'flex-end' }}>
             <button onClick={() => setShowSamplePicker(false)} style={{ fontSize: 10, color: '#555', background: 'none', border: 'none', cursor: 'pointer' }}>Close</button>
