@@ -710,3 +710,26 @@ export function midiToName(midi: number): string {
   const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
   return `${names[midi % 12]}${Math.floor(midi / 12) - 1}`
 }
+
+/**
+ * Run YIN pitch detection on a slice of a mono Float32Array.
+ * Pass `offset` to skip the attack transient (e.g. 20% into the buffer).
+ * Returns detected MIDI note + frequency + YIN confidence, or null if unvoiced.
+ */
+export function detectBufferPitch(
+  samples: Float32Array,
+  sampleRate: number,
+  offset = 0,
+): { hz: number; midi: number; confidence: number } | null {
+  const size = Math.min(HANN_SIZE, samples.length - offset)
+  if (size < 1024) return null
+  // Apply Hann window to the chunk
+  const windowed = new Float32Array(size)
+  for (let i = 0; i < size; i++) {
+    windowed[i] = samples[offset + i] * HANN[Math.floor(i * HANN_SIZE / size)]
+  }
+  const r = yinDetect(windowed, sampleRate)
+  if (!r || r.confidence < 0.55) return null
+  const midi = Math.round(69 + 12 * Math.log2(r.hz / 440))
+  return { hz: r.hz, midi, confidence: r.confidence }
+}
