@@ -25,6 +25,8 @@ const CAT_COLORS: Record<string, string> = {
   'synth-arp': '#38bdf8', 'synth-strings': '#a78bfa', 'synth-organ': '#fb923c', 'synth-choir': '#c084fc',
   // Darkwave
   'synth-dark': '#7c3aed', 'synth-drone': '#4c1d95', 'synth-pluck': '#5b21b6',
+  // Strings
+  violin: '#d97706', viola: '#b45309',
   // Other
   voice: '#0ea5e9', other: '#64748b', custom: '#94a3b8',
 }

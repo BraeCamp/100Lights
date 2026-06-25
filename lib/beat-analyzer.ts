@@ -118,6 +118,8 @@ export type BeatType =
   'synth-strings' | 'synth-organ' | 'synth-choir' |
   // Darkwave / industrial
   'synth-dark' | 'synth-drone' | 'synth-pluck' |
+  // Bowed strings
+  'violin' | 'viola' |
   // Fallback
   'other'
 
@@ -150,6 +152,8 @@ export const DEFAULT_NOTES: Record<BeatType, number> = {
   'synth-dark':      55,
   'synth-drone':     48,
   'synth-pluck':     60,
+  violin:            69,
+  viola:             57,
   other:             60,
 }
 
@@ -255,6 +259,8 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
   'synth-dark':      ['synth-drone', 'synth-pad', 'synth-strings', 'other'],
   'synth-drone':     ['synth-dark', 'synth-pad', 'synth-strings', 'other'],
   'synth-pluck':     ['synth-arp', 'synth-lead', 'guitar-electric', 'other'],
+  'violin':          ['viola', 'synth-strings', 'synth-choir', 'other'],
+  'viola':           ['violin', 'synth-strings', 'synth-choir', 'other'],
   'other':           ['snare', 'clap', 'kick', 'tom', 'hihat', 'rim', 'open-hihat', 'crash'],
 }
 
@@ -1021,6 +1027,8 @@ export async function analyzeBeats(
     'synth-dark':      Math.max(0.09, subdivSec),
     'synth-drone':     Math.max(0.15, subdivSec),
     'synth-pluck':     Math.max(0.04, subdivSec / 4),
+    violin:            Math.max(0.12, subdivSec),
+    viola:             Math.max(0.12, subdivSec),
     other:             Math.max(0.07, subdivSec),
   }
   const lastByType: Partial<Record<BeatType, number>> = {}

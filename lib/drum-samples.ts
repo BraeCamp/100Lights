@@ -269,6 +269,8 @@ const DEFAULT_NOTE: Record<BeatType, number> = {
   'synth-dark':      55,
   'synth-drone':     48,
   'synth-pluck':     60,
+  violin:            69,
+  viola:             57,
   other:             60,
 }
 

@@ -602,10 +602,14 @@ export class LivePitchDetector {
   private mediaRec:  MediaRecorder | null      = null
   private recChunks: Blob[]                    = []
 
-  async start(onPitch: (r: LivePitchResult | null) => void, captureAudio = false): Promise<void> {
+  async start(
+    onPitch: (r: LivePitchResult | null) => void,
+    captureAudio = false,
+    stream?: MediaStream,
+  ): Promise<void> {
     this.stop()
 
-    this.stream   = await navigator.mediaDevices.getUserMedia({
+    this.stream = stream ?? await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     })
     this.ctx      = new AudioContext()

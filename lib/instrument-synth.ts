@@ -376,6 +376,64 @@ export function playSynth(
   }
 }
 
+// ── Bowed string — violin / viola ────────────────────────────────────────────
+// Sawtooth + detuned copy through a resonant lowpass, with a slow-attack bow
+// envelope and a vibrato LFO that kicks in after the attack settles.
+// Designed for 10-second sustained notes: amplitude and pitch are flat through
+// the plateau so samples are consistent regardless of which beat they fall on.
+
+export function playBowedString(
+  ctx: AudioContext, variant: BeatType, midiNote: number,
+  when: number, velocity: number, dest: AudioNode = ctx.destination,
+) {
+  const hz      = midiToHz(Math.max(40, Math.min(100, midiNote)))
+  const dur     = 10.5  // slightly over 10s to avoid a hard clip at the sample end
+  const attack  = 0.35
+  const release = 0.45
+  const peak    = velocity * (variant === 'viola' ? 0.30 : 0.28)
+
+  // Timbre: viola is warmer (lower cutoff, more mid body)
+  const cutoff  = variant === 'viola' ? 2800 : 3800
+  const q       = 0.7
+
+  const masterGain = ctx.createGain()
+  masterGain.gain.setValueAtTime(0.001, when)
+  masterGain.gain.linearRampToValueAtTime(peak, when + attack)
+  masterGain.gain.setValueAtTime(peak, when + dur - release)
+  masterGain.gain.linearRampToValueAtTime(0.001, when + dur)
+  masterGain.connect(dest)
+
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = cutoff
+  filter.Q.value = q
+  filter.connect(masterGain)
+
+  // Vibrato LFO — delayed 0.5s then ramps to ±12¢ over 0.4s for natural bowing feel
+  const lfo    = ctx.createOscillator()
+  lfo.type     = 'sine'
+  lfo.frequency.value = variant === 'viola' ? 5.4 : 5.8
+  const lfoAmt = ctx.createGain()
+  lfoAmt.gain.setValueAtTime(0, when)
+  lfoAmt.gain.setValueAtTime(0, when + attack + 0.1)
+  lfoAmt.gain.linearRampToValueAtTime(12, when + attack + 0.5)  // 12 cents peak deviation
+  lfo.connect(lfoAmt)
+  lfo.start(when); lfo.stop(when + dur + 0.05)
+
+  // Primary oscillator + detuned unison (+4 cents for slight thickness)
+  for (const detune of [0, 4]) {
+    const osc = ctx.createOscillator()
+    osc.type = 'sawtooth'
+    osc.frequency.value = hz
+    osc.detune.value = detune
+    lfoAmt.connect(osc.detune)
+    const g = ctx.createGain()
+    g.gain.value = detune === 0 ? 0.7 : 0.3
+    osc.connect(g); g.connect(filter)
+    osc.start(when); osc.stop(when + dur + 0.05)
+  }
+}
+
 // ── Unified melodic dispatcher ────────────────────────────────────────────────
 
 export function playMelodicNote(
@@ -388,6 +446,8 @@ export function playMelodicNote(
     playPiano(ctx, type, midiNote, when, velocity, dest)
   } else if (type.startsWith('synth')) {
     playSynth(ctx, type, midiNote, when, velocity, dest)
+  } else if (type === 'violin' || type === 'viola') {
+    playBowedString(ctx, type, midiNote, when, velocity, dest)
   }
 }
 
@@ -397,4 +457,5 @@ export const MELODIC_TYPES = new Set<BeatType>([
   'synth-lead', 'synth-pad', 'synth-bass', 'synth-arp',
   'synth-strings', 'synth-organ', 'synth-choir',
   'synth-dark', 'synth-drone', 'synth-pluck',
+  'violin', 'viola',
 ])

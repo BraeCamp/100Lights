@@ -17,6 +17,7 @@ import type { LibraryCategory } from './sound-library'
 const SEEDED_KEY          = '100lights-audio-seeded-v4'
 const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
+const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v1'
 const PARENT              = '100lights Audio'
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
@@ -99,8 +100,10 @@ const KEYBOARD_PRESETS: KeyboardPreset[] = [
   { type: 'synth-organ',    folder: 'Organ – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.5, channels: 2 },
   { type: 'synth-choir',    folder: 'Choir – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.8, channels: 2 },
   { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
-  { type: 'synth-dark',     folder: 'Dark Synth – All Notes',    minMidi: 36, maxMidi: 72, duration: 4.0, channels: 2 },
-  { type: 'synth-pluck',    folder: 'Metallic Pluck – All Notes', minMidi: 36, maxMidi: 72, duration: 1.3, channels: 1 },
+  { type: 'synth-dark',     folder: 'Dark Synth – All Notes',    minMidi: 36, maxMidi: 72, duration: 4.0,  channels: 2 },
+  { type: 'synth-pluck',    folder: 'Metallic Pluck – All Notes', minMidi: 36, maxMidi: 72, duration: 1.3,  channels: 1 },
+  { type: 'violin',         folder: 'Violin – All Notes',         minMidi: 55, maxMidi: 88, duration: 10.5, channels: 2 },
+  { type: 'viola',          folder: 'Viola – All Notes',          minMidi: 48, maxMidi: 77, duration: 10.5, channels: 2 },
 ]
 
 // ── Stub helpers ──────────────────────────────────────────────────────────────
@@ -161,6 +164,7 @@ export async function seedDefaultSamples(): Promise<void> {
   if (localStorage.getItem(SEEDED_KEY)) {
     seedKeyboardNotes().catch(() => {})
     seedDarkwave().catch(() => {})
+    seedStrings().catch(() => {})
     return
   }
 
@@ -186,6 +190,24 @@ export async function seedDefaultSamples(): Promise<void> {
   localStorage.setItem(SEEDED_KEY, '1')
   seedKeyboardNotes().catch(() => {})
   seedDarkwave().catch(() => {})
+  seedStrings().catch(() => {})
+}
+
+export async function seedStrings(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(STRINGS_SEEDED_KEY)) return
+
+  const now = new Date().toISOString()
+  const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
+  for (const preset of stringPresets) {
+    for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
+      await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, {
+        kind: 'melodic', beatType: preset.type, midiNote: midi,
+        duration: preset.duration, channels: preset.channels,
+      }, preset.folder, now))
+    }
+  }
+  localStorage.setItem(STRINGS_SEEDED_KEY, '1')
 }
 
 export async function seedDarkwave(): Promise<void> {
