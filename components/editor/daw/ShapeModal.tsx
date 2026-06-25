@@ -125,7 +125,7 @@ export default function ShapeModal({
   mode: 'volume' | 'pitch'
   onClose: () => void
 }) {
-  const { dispatch, engine, playing } = useDaw()
+  const { dispatch, engine, playing, project } = useDaw()
   const [buf,      setBuf]      = useState<AudioBuffer | null>(null)
   const [envelope, setEnvelope] = useState<number[] | null>(null)
   const [recording, setRecording] = useState(false)
@@ -210,8 +210,13 @@ export default function ShapeModal({
   useEffect(() => () => { cancelAnimationFrame(rafRef.current); try { recRef.current?.stop() } catch {} }, [])
 
   function handleApply() {
-    if (!envelope) return
-    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { shapeEnvelope: envelope, shapeSampleRate: ENV_SR } } })
+    if (!envelope || !buf) return
+    const tempo = project.tempo ?? 120
+    const durationBeats = buf.duration * tempo / 60
+    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: {
+      durationBeats,
+      params: { shapeEnvelope: envelope, shapeSampleRate: ENV_SR },
+    }})
     onClose()
   }
 
