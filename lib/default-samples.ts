@@ -14,8 +14,8 @@ import { encodeWav }       from './wav-codec'
 import type { BeatType }   from './beat-analyzer'
 import type { LibraryCategory } from './sound-library'
 
-const SEEDED_KEY      = '100lights-audio-seeded-v3'
-const NOTES_SEEDED_KEY = '100lights-notes-seeded-v3'
+const SEEDED_KEY      = '100lights-audio-seeded-v4'
+const NOTES_SEEDED_KEY = '100lights-notes-seeded-v4'
 const PARENT          = '100lights Audio'
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
@@ -58,6 +58,9 @@ const KEYS: Array<{ name: string; type: BeatType; note: number; dur: number }> =
   { name: 'Rhodes',         type: 'piano-rhodes',   note: 60, dur: 3.0 },
   { name: 'Synth Lead',     type: 'synth-lead',     note: 60, dur: 2.5 },
   { name: 'Synth Pad',      type: 'synth-pad',      note: 60, dur: 3.5 },
+  { name: 'Strings',        type: 'synth-strings',  note: 60, dur: 4.5 },
+  { name: 'Organ',          type: 'synth-organ',    note: 60, dur: 3.5 },
+  { name: 'Choir',          type: 'synth-choir',    note: 60, dur: 3.8 },
   { name: 'Bass',           type: 'synth-bass',     note: 36, dur: 2.0 },
 ]
 
@@ -82,6 +85,9 @@ const KEYBOARD_PRESETS: KeyboardPreset[] = [
   { type: 'piano-electric', folder: 'Elec. Piano – All Notes',   minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
   { type: 'piano-rhodes',   folder: 'Rhodes – All Notes',        minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
   { type: 'synth-lead',     folder: 'Synth Lead – All Notes',    minMidi: 48, maxMidi: 72, duration: 3.0, channels: 1 },
+  { type: 'synth-strings',  folder: 'Strings – All Notes',       minMidi: 36, maxMidi: 84, duration: 4.5, channels: 2 },
+  { type: 'synth-organ',    folder: 'Organ – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.5, channels: 2 },
+  { type: 'synth-choir',    folder: 'Choir – All Notes',         minMidi: 36, maxMidi: 84, duration: 3.8, channels: 2 },
   { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
 ]
 

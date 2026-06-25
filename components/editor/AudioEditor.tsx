@@ -188,7 +188,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null)
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId }, [selectedTrackId])
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
+  const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [showPads,  setShowPads]  = useState(false)
 
@@ -302,6 +303,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setSelectedTrackId,
     selectedClipId,
     setSelectedClipId,
+    selectedClipIds,
+    setSelectedClipIds,
     playing,
     recording,
     position,
@@ -309,7 +312,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     metronome,
     setMetronome,
   }), [
-    project, dispatch, view, editTarget, selectedTrackId, selectedClipId,
+    project, dispatch, view, editTarget, selectedTrackId, selectedClipId, selectedClipIds,
     playing, recording, position, setPosition, metronome,
   ])
 

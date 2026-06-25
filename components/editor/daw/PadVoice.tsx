@@ -221,23 +221,18 @@ function SampleRow({
 
 // ── Audio rendering helpers ───────────────────────────────────────────────────
 
-async function renderPitchedBuffer(
-  blob: Blob,
-  semitones: number,
-  durationSec: number,
-): Promise<AudioBuffer> {
-  const rate  = Math.pow(2, semitones / 12)
+async function renderPitchedBuffer(blob: Blob, semitones: number): Promise<AudioBuffer> {
+  const rate   = Math.pow(2, semitones / 12)
   const arrBuf = await blob.arrayBuffer()
-  // Decode in a temporary context
-  const tmp = new AudioContext()
-  const input = await tmp.decodeAudioData(arrBuf.slice(0))
+  const tmp    = new AudioContext()
+  const input  = await tmp.decodeAudioData(arrBuf.slice(0))
   await tmp.close()
 
   const SR     = 44100
-  const outDur = Math.min(durationSec + 0.15, input.duration / rate, 10)
+  const outDur = Math.min(input.duration / rate, 10)
   const ctx    = new OfflineAudioContext(input.numberOfChannels, Math.ceil(outDur * SR), SR)
   const src    = ctx.createBufferSource()
-  src.buffer         = input
+  src.buffer             = input
   src.playbackRate.value = rate
   src.connect(ctx.destination)
   src.start(0)
@@ -331,10 +326,9 @@ export default function PadVoice() {
 
     if (sample && trackId) {
       // ── Audio-clip path ──
-      const rootMidi    = parseSampleRoot(sample.name)
-      const semitones   = midi - rootMidi
-      const tempo       = engine.tempo ?? 120
-      const durationSec = Math.max(0.1, (durationBeats / tempo) * 60)
+      const rootMidi  = parseSampleRoot(sample.name)
+      const semitones = midi - rootMidi
+      const tempo     = engine.tempo ?? 120
 
       setRenderStatus(`Rendering ${midiNoteName(midi)}…`)
       try {
@@ -349,14 +343,15 @@ export default function PadVoice() {
           sampleBlob = fulfilled.audioBlob
           setSelectedSample(fulfilled)
         }
-        const pitched  = await renderPitchedBuffer(sampleBlob, semitones, durationSec)
-        const wavBlob   = bufferToWavBlob(pitched)
-        const audioUrl  = URL.createObjectURL(wavBlob)
-        const absStart  = recStartRef.current + startBeat
-        const clipBeats = Math.max(0.125, pitched.duration * tempo / 60)
-        const clip      = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, clipBeats, { audioUrl })
+        const pitched  = await renderPitchedBuffer(sampleBlob, semitones)
+        const wavBlob      = bufferToWavBlob(pitched)
+        const audioUrl     = URL.createObjectURL(wavBlob)
+        const absStart     = recStartRef.current + startBeat
+        // Clip plays for the detected note length; full sample audio is in the buffer for crop-expand
+        const noteDurBeats = Math.max(0.125, durationBeats)
+        const clip         = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, noteDurBeats, { audioUrl })
         dispatch({ type: 'ADD_CLIP', clip })
-        setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: clipBeats }])
+        setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: noteDurBeats }])
         setRenderStatus(null)
       } catch {
         setRenderStatus(`Error rendering ${midiNoteName(midi)}`)

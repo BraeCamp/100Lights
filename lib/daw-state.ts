@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, type Dispatch } from 'react'
+import React, { createContext, useContext, type Dispatch } from 'react'
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget, TrackType,
@@ -316,6 +316,8 @@ export interface DawContextValue {
   setSelectedTrackId: (id: string | null) => void
   selectedClipId: string | null
   setSelectedClipId: (id: string | null) => void
+  selectedClipIds: Set<string>
+  setSelectedClipIds: React.Dispatch<React.SetStateAction<Set<string>>>
   // Transport (live)
   playing: boolean
   recording: boolean

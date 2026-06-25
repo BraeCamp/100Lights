@@ -229,6 +229,67 @@ export function playSynth(
     osc.start(when); osc.stop(when + 0.22)
     osc2.start(when); osc2.stop(when + 0.22)
 
+  } else if (variant === 'synth-strings') {
+    // Strings: slow attack, long sustain, 4 detuned saws with LFO vibrato
+    filter.frequency.setValueAtTime(900, when)
+    filter.frequency.linearRampToValueAtTime(2000, when + 0.8)
+    filter.Q.value = 0.8
+    masterGain.gain.setValueAtTime(0.001, when)
+    masterGain.gain.linearRampToValueAtTime(velocity * 0.26, when + 0.55)
+    masterGain.gain.setValueAtTime(velocity * 0.26, when + 3.2)
+    masterGain.gain.linearRampToValueAtTime(0.001, when + 4.5)
+
+    const detunes = [-14, -5, 5, 14]
+    for (const det of detunes) {
+      const osc = ctx.createOscillator(); osc.type = 'sawtooth'
+      osc.frequency.value = hz; osc.detune.value = det
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2
+      const lfoGain = ctx.createGain(); lfoGain.gain.value = 5
+      lfo.connect(lfoGain); lfoGain.connect(osc.detune)
+      lfo.start(when + 0.3); lfo.stop(when + 4.6)
+      osc.connect(filter)
+      osc.start(when); osc.stop(when + 4.6)
+    }
+
+  } else if (variant === 'synth-organ') {
+    // Organ: Hammond-style drawbars — additive harmonics, no attack/release
+    filter.frequency.value = 6000
+    filter.Q.value = 0.3
+    masterGain.gain.setValueAtTime(velocity * 0.28, when)
+    masterGain.gain.setValueAtTime(velocity * 0.28, when + 3.2)
+    masterGain.gain.linearRampToValueAtTime(0.001, when + 3.5)
+
+    const harmonics = [1, 2, 3, 4, 6, 8]
+    const levels    = [0.40, 0.32, 0.18, 0.12, 0.08, 0.04]
+    for (let i = 0; i < harmonics.length; i++) {
+      const osc = ctx.createOscillator(); osc.type = 'sine'
+      osc.frequency.value = hz * harmonics[i]
+      const g = ctx.createGain(); g.gain.value = levels[i]
+      osc.connect(g); g.connect(filter)
+      osc.start(when); osc.stop(when + 3.6)
+    }
+
+  } else if (variant === 'synth-choir') {
+    // Choir: formant-filtered sine voices, warm slow attack
+    filter.frequency.setValueAtTime(700, when)
+    filter.frequency.linearRampToValueAtTime(1100, when + 0.4)
+    filter.Q.value = 8
+    masterGain.gain.setValueAtTime(0.001, when)
+    masterGain.gain.linearRampToValueAtTime(velocity * 0.22, when + 0.4)
+    masterGain.gain.setValueAtTime(velocity * 0.22, when + 2.8)
+    masterGain.gain.exponentialRampToValueAtTime(0.001, when + 3.8)
+
+    for (const det of [-10, 0, 10]) {
+      const fund = ctx.createOscillator(); fund.type = 'sine'
+      fund.frequency.value = hz; fund.detune.value = det
+      const oct  = ctx.createOscillator(); oct.type = 'sine'
+      oct.frequency.value = hz * 2; oct.detune.value = det
+      const octG = ctx.createGain(); octG.gain.value = 0.28
+      fund.connect(filter); oct.connect(octG); octG.connect(filter)
+      fund.start(when); fund.stop(when + 4.0)
+      oct.start(when); oct.stop(when + 4.0)
+    }
+
   } else {
     // Lead: detuned saw pair + filter envelope (classic supersaw-lite)
     filter.frequency.setValueAtTime(hz * 6, when)
@@ -268,4 +329,5 @@ export const MELODIC_TYPES = new Set<BeatType>([
   'guitar-acoustic', 'guitar-electric', 'guitar-nylon',
   'piano-grand', 'piano-electric', 'piano-rhodes',
   'synth-lead', 'synth-pad', 'synth-bass', 'synth-arp',
+  'synth-strings', 'synth-organ', 'synth-choir',
 ])

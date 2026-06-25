@@ -207,9 +207,9 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 
 // ── Clip view ─────────────────────────────────────────────────────────────────
 
-function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMove, onResize, onDelete }: {
-  clip: DawClip; track: DawTrack; beatW: number; selected: boolean
-  onSelect(): void; onDoubleClick(): void
+function ClipView({ clip, track, beatW, selected, multiSelected, onSelect, onShiftSelect, onDoubleClick, onMove, onResize, onDelete }: {
+  clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
+  onSelect(): void; onShiftSelect(): void; onDoubleClick(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void; onDelete(): void
 }) {
@@ -223,7 +223,8 @@ function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMov
 
   function onMouseDownBody(e: React.MouseEvent) {
     if (e.button !== 0) return
-    e.stopPropagation(); onSelect()
+    e.stopPropagation()
+    if (e.shiftKey) { onShiftSelect() } else { onSelect() }
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     function mm(ev: MouseEvent) {
       if (!dragRef.current) return
@@ -247,7 +248,7 @@ function ClipView({ clip, track, beatW, selected, onSelect, onDoubleClick, onMov
   return (
     <>
       <div
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${selected ? '#fff' : color}`, borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none', boxSizing: 'border-box' }}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined }}
         onMouseDown={onMouseDownBody}
         onDoubleClick={onDoubleClick}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCtxPos({ x: e.clientX, y: e.clientY }) }}
@@ -377,7 +378,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
 function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds } = useDaw()
   const clips = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const dragHRef = useRef<{ startY: number; startH: number } | null>(null)
@@ -501,6 +502,7 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
           data-testid="track-lane"
           data-track-type={track.type}
           style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgba(61,143,239,0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
+          onMouseDown={() => { setSelectedClipIds(new Set()); setSelectedClipId(null) }}
           onDoubleClick={handleDoubleClick}
           onDragOver={e => e.preventDefault()}
           onDrop={handleDrop}
@@ -513,23 +515,70 @@ function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
           })}
           {/* Scrolled clip container — clips positioned at clip.startBeat * beatW from beat 0 */}
           <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
-            {visibleClips.map(clip => (
-              <ClipView
-                key={clip.id}
-                clip={clip}
-                track={track} beatW={beatW}
-                selected={selectedClipId === clip.id}
-                onSelect={() => setSelectedClipId(clip.id)}
-                onDoubleClick={() => setEditTarget({ type: clip.kind === 'midi' ? 'midi-clip' : 'audio-clip', clipId: clip.id })}
-                onMove={(sb, tid, alt) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })}
-                onResize={(db, alt) => {
-                  const endBeat    = clip.startBeat + db
-                  const snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
-                  dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: Math.max(0.25, snappedEnd - clip.startBeat) } })
-                }}
-                onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
-              />
-            ))}
+            {visibleClips.map(clip => {
+              const isSelected      = selectedClipId === clip.id
+              const isMultiSelected = selectedClipIds.has(clip.id)
+              return (
+                <ClipView
+                  key={clip.id}
+                  clip={clip}
+                  track={track} beatW={beatW}
+                  selected={isSelected}
+                  multiSelected={isMultiSelected}
+                  onSelect={() => { setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])) }}
+                  onShiftSelect={() => {
+                    setSelectedClipIds(prev => {
+                      const next = new Set(prev)
+                      if (next.has(clip.id)) { next.delete(clip.id) } else { next.add(clip.id) }
+                      return next
+                    })
+                    setSelectedClipId(clip.id)
+                  }}
+                  onDoubleClick={() => setEditTarget({ type: clip.kind === 'midi' ? 'midi-clip' : 'audio-clip', clipId: clip.id })}
+                  onMove={(sb, tid, alt) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })}
+                  onResize={(db, alt) => {
+                    const endBeat    = clip.startBeat + db
+                    const snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
+                    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: Math.max(0.25, snappedEnd - clip.startBeat) } })
+                  }}
+                  onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
+                />
+              )
+            })}
+            {/* Repeat handle — appears at the right edge of the rightmost selected clip in this track */}
+            {(() => {
+              const sel = clips.filter(c => selectedClipIds.has(c.id))
+              if (sel.length === 0) return null
+              const rightmost = sel.reduce((a, b) => (a.startBeat + a.durationBeats >= b.startBeat + b.durationBeats ? a : b))
+              const handleX   = (rightmost.startBeat + rightmost.durationBeats) * beatW + 2
+              return (
+                <div
+                  title="Repeat selection"
+                  style={{
+                    position: 'absolute', left: handleX, top: '50%', transform: 'translateY(-50%)',
+                    width: 18, height: 18, borderRadius: 9, background: '#3d8fef',
+                    color: '#fff', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', zIndex: 10, userSelect: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
+                  }}
+                  onClick={e => {
+                    e.stopPropagation()
+                    const allSelected = project.arrangementClips.filter(c => selectedClipIds.has(c.id))
+                    if (allSelected.length === 0) return
+                    const selStart = Math.min(...allSelected.map(c => c.startBeat))
+                    const selEnd   = Math.max(...allSelected.map(c => c.startBeat + c.durationBeats))
+                    const span     = selEnd - selStart
+                    if (span <= 0) return
+                    const newIds = new Set<string>()
+                    for (const c of allSelected) {
+                      const newClip = { ...c, id: crypto.randomUUID(), startBeat: c.startBeat + span }
+                      dispatch({ type: 'ADD_CLIP', clip: newClip })
+                      newIds.add(newClip.id)
+                    }
+                    setSelectedClipIds(newIds)
+                  }}
+                >»</div>
+              )
+            })()}
           </div>
           {/* Height resize handle */}
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, cursor: 'ns-resize', zIndex: 2 }}

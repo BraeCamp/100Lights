@@ -114,6 +114,8 @@ export type BeatType =
   'piano-grand' | 'piano-electric' | 'piano-rhodes' |
   // EDM synth
   'synth-lead' | 'synth-pad' | 'synth-bass' | 'synth-arp' |
+  // Continuous / sustained synths
+  'synth-strings' | 'synth-organ' | 'synth-choir' |
   // Fallback
   'other'
 
@@ -140,6 +142,9 @@ export const DEFAULT_NOTES: Record<BeatType, number> = {
   'synth-pad':       60,
   'synth-bass':      48,
   'synth-arp':       72,
+  'synth-strings':   60,
+  'synth-organ':     60,
+  'synth-choir':     60,
   other:             60,
 }
 
@@ -239,6 +244,9 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
   'synth-pad':       ['synth-lead', 'synth-arp', 'piano-grand', 'guitar-nylon', 'other'],
   'synth-bass':      ['synth-lead', 'kick', 'tom', 'other'],
   'synth-arp':       ['synth-lead', 'guitar-electric', 'piano-electric', 'other'],
+  'synth-strings':   ['synth-pad', 'synth-choir', 'piano-grand', 'other'],
+  'synth-organ':     ['synth-lead', 'piano-electric', 'synth-pad', 'other'],
+  'synth-choir':     ['synth-pad', 'synth-strings', 'piano-grand', 'other'],
   'other':           ['snare', 'clap', 'kick', 'tom', 'hihat', 'rim', 'open-hihat', 'crash'],
 }
 
@@ -999,6 +1007,9 @@ export async function analyzeBeats(
     'synth-pad':       Math.max(0.09, subdivSec),
     'synth-bass':      Math.max(0.07, subdivSec / 2),
     'synth-arp':       Math.max(0.04, subdivSec / 4),
+    'synth-strings':   Math.max(0.09, subdivSec),
+    'synth-organ':     Math.max(0.05, subdivSec / 2),
+    'synth-choir':     Math.max(0.09, subdivSec),
     other:             Math.max(0.07, subdivSec),
   }
   const lastByType: Partial<Record<BeatType, number>> = {}
