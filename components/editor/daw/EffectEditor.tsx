@@ -231,13 +231,26 @@ export default function EffectEditor({
         if (p.id !== dragging.current!.id) return p
         const { kind, startT, startV, startH } = dragging.current!
         if (kind === 'point') {
+          const siblings = pointsRef.current.filter(q => q.id !== p.id)
+          const prevT = siblings.filter(q => q.t < startT).reduce((m, q) => Math.max(m, q.t), -Infinity)
+          const nextT = siblings.filter(q => q.t > startT).reduce((m, q) => Math.min(m, q.t), Infinity)
+          const tMin = isFinite(prevT) ? prevT + 0.01 : 0
+          const tMax = isFinite(nextT) ? nextT - 0.01 : effect.durationBeats
           return { ...p,
-            t: Math.max(0, Math.min(effect.durationBeats, startT + dt)),
+            t: Math.max(tMin, Math.min(tMax, startT + dt)),
             v: Math.max(0, Math.min(1, startV + dv)),
           }
         }
-        if (kind === 'h2') return { ...p, h2: [startH[0] + dt, startH[1] + dv] as [number, number], smooth: true }
-        return { ...p, h1: [startH[0] + dt, startH[1] + dv] as [number, number], smooth: true }
+        const clampHandle = (hStart: [number, number], side: 'h1' | 'h2'): [number, number] => {
+          const absT  = Math.max(0, Math.min(effect.durationBeats, p.t + hStart[0] + dt))
+          const absV  = Math.max(0, Math.min(1, p.v + hStart[1] + dv))
+          const offT  = absT - p.t
+          // h1 must point left (≤0), h2 must point right (≥0) — prevents S-curve crossing
+          const offTC = side === 'h1' ? Math.min(0, offT) : Math.max(0, offT)
+          return [offTC, absV - p.v]
+        }
+        if (kind === 'h2') return { ...p, h2: clampHandle(startH, 'h2'), smooth: true }
+        return { ...p, h1: clampHandle(startH, 'h1'), smooth: true }
       })
       forceRender(n => n + 1)
     }

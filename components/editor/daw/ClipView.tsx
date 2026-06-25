@@ -1,30 +1,56 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import type { DawTrack, DawClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import Waveform from './Waveform'
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, onSelect, onShiftSelect, onDoubleClick, onMove, onResize, onCrop, onIsolate, onDelete }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
-  onSelect(): void; onShiftSelect(): void; onDoubleClick(): void
+  isCropping?: boolean
+  onSelect(): void; onShiftSelect(): void; onDoubleClick(): void; onSettings?(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
-  onCrop(): void; onIsolate(beat: number): void; onDelete(): void
+  onCrop(): void
+  onCropChange?(trimStart: number, trimEnd: number): void
+  onCropSnap?(beat: number): number
+  onIsolate(beat: number): void; onSplice?(): void; onDelete(): void
 }) {
   const clipDivRef = useRef<HTMLDivElement>(null)
+  const menuRef    = useRef<HTMLDivElement>(null)
   const dragRef    = useRef<{ startX: number; startBeat: number } | null>(null)
   const resizeRef  = useRef<{ startX: number; startDur: number } | null>(null)
   const [ctxPos, setCtxPos] = useState<{ x: number; y: number; beat: number } | null>(null)
+
+  useEffect(() => {
+    if (!ctxPos) return
+    function handler(e: MouseEvent) {
+      if (menuRef.current?.contains(e.target as Node)) return
+      setCtxPos(null)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [ctxPos])
 
   const left  = clip.startBeat * beatW
   const width = Math.max(8, clip.durationBeats * beatW)
   const color = track.color
 
+  // Trim overlay positions (fraction of clip width) — audio clips only
+  const audioClip = isAudioClip(clip) ? clip : null
+  const bufDur  = audioClip?.bufferDuration ?? null
+  const trimS   = audioClip?.trimStart ?? 0
+  const trimE   = audioClip?.trimEnd   ?? 0
+  const inFrac  = bufDur && bufDur > 0 ? trimS / bufDur : 0
+  const outFrac = bufDur && bufDur > 0 ? (bufDur - trimE) / bufDur : 1
+  const inPx    = inFrac * width
+  const outPx   = outFrac * width
+
   function onMouseDownBody(e: React.MouseEvent) {
     if (e.button !== 0) return
     e.stopPropagation()
+    if (isCropping) return  // don't drag while cropping
     if (e.shiftKey) { onShiftSelect() } else { onSelect() }
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     function mm(ev: MouseEvent) {
@@ -51,22 +77,73 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
+  // Crop handle drag — shared for IN (left) and OUT (right)
+  function onMouseDownCropHandle(e: React.MouseEvent, side: 'in' | 'out') {
+    if (!bufDur || !onCropChange) return
+    e.stopPropagation()
+    const startX      = e.clientX
+    const startInSec  = isAudioClip(clip) ? clip.trimStart : 0
+    const startOutSec = isAudioClip(clip) ? clip.trimEnd   : 0
+
+    function mm(ev: MouseEvent) {
+      if (!isAudioClip(clip) || !bufDur || !onCropChange) return
+      const dx = ev.clientX - startX
+      // Fraction of buffer moved
+      const dFrac = dx / width
+
+      if (side === 'in') {
+        // New IN position in buffer seconds
+        const rawSec = startInSec + dFrac * bufDur
+        let newTrimStart = rawSec
+
+        // Snap to grid if snapper provided
+        if (onCropSnap && clip.durationBeats > 0) {
+          const arrangBeat = clip.startBeat + (rawSec / bufDur) * clip.durationBeats
+          const snapped    = onCropSnap(arrangBeat)
+          newTrimStart     = ((snapped - clip.startBeat) / clip.durationBeats) * bufDur
+        }
+        newTrimStart = Math.max(0, Math.min(bufDur - clip.trimEnd - 0.001, newTrimStart))
+        onCropChange(newTrimStart, clip.trimEnd)
+      } else {
+        // New OUT position in buffer seconds (from buffer start)
+        const outSec    = bufDur - startOutSec
+        const rawOutSec = outSec + dFrac * bufDur
+        let newTrimEnd  = bufDur - rawOutSec
+
+        // Snap to grid
+        if (onCropSnap && clip.durationBeats > 0) {
+          const arrangBeat = clip.startBeat + (rawOutSec / bufDur) * clip.durationBeats
+          const snapped    = onCropSnap(arrangBeat)
+          const snappedOut = ((snapped - clip.startBeat) / clip.durationBeats) * bufDur
+          newTrimEnd       = bufDur - snappedOut
+        }
+        newTrimEnd = Math.max(0, Math.min(bufDur - clip.trimStart - 0.001, newTrimEnd))
+        onCropChange(clip.trimStart, newTrimEnd)
+      }
+    }
+    function mu() { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+  }
+
   const menuItems = [
     { label: 'Delete', fn: onDelete },
+    { label: 'Splice at Playhead', fn: () => onSplice?.() },
     ...(isAudioClip(clip) ? [
-      { label: 'Crop', fn: onCrop },
+      { label: 'Clip Settings', fn: () => onSettings?.() },
+      { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
       { label: 'Isolate on Playhead', fn: () => onIsolate(ctxPos?.beat ?? clip.startBeat) },
-    ] : []),
-    { label: 'Open Piano Roll', fn: onDoubleClick },
+    ] : [
+      { label: 'Open Piano Roll', fn: onDoubleClick },
+    ]),
   ]
 
   return (
     <>
       <div
         ref={clipDivRef}
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined }}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined }}
         onMouseDown={onMouseDownBody}
-        onDoubleClick={onDoubleClick}
+        onDoubleClick={isAudioClip(clip) ? () => onSettings?.() : onDoubleClick}
         onContextMenu={e => {
           e.preventDefault(); e.stopPropagation()
           const rect = clipDivRef.current?.getBoundingClientRect()
@@ -74,6 +151,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           setCtxPos({ x: e.clientX, y: e.clientY, beat })
         }}
       >
+        {/* Waveform / MIDI notes */}
         {isAudioClip(clip) && clip.waveformPeaks && clip.waveformPeaks.length > 0 && (() => {
           const loopPx = loopNativeBeats ? Math.max(4, loopNativeBeats * beatW) : null
           return (
@@ -103,15 +181,46 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             })}
           </div>
         )}
-        <div style={{ position: 'absolute', top: 2, left: 4, right: 8, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+
+        {/* Trimmed region overlays — always visible when trim is active */}
+        {bufDur && inFrac > 0.001 && (
+          <div style={{ position: 'absolute', left: 0, width: inPx, top: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', zIndex: 4, pointerEvents: 'none' }} />
+        )}
+        {bufDur && outFrac < 0.999 && (
+          <div style={{ position: 'absolute', left: outPx, right: 0, top: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', zIndex: 4, pointerEvents: 'none' }} />
+        )}
+
+        {/* Crop handles — visible in crop mode */}
+        {isCropping && bufDur && (
+          <>
+            {/* IN handle */}
+            <div
+              onMouseDown={e => onMouseDownCropHandle(e, 'in')}
+              style={{ position: 'absolute', left: Math.max(0, inPx - 2), top: 0, bottom: 0, width: 5, background: '#f59e0b', cursor: 'ew-resize', zIndex: 6 }}
+            >
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 10, background: '#f59e0b', borderRadius: '0 0 3px 3px' }} />
+            </div>
+            {/* OUT handle */}
+            <div
+              onMouseDown={e => onMouseDownCropHandle(e, 'out')}
+              style={{ position: 'absolute', left: Math.min(width - 5, outPx - 3), top: 0, bottom: 0, width: 5, background: '#f59e0b', cursor: 'ew-resize', zIndex: 6 }}
+            >
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 10, background: '#f59e0b', borderRadius: '0 0 3px 3px' }} />
+            </div>
+          </>
+        )}
+
+        {/* Clip label */}
+        <div style={{ position: 'absolute', top: 2, left: 4, right: 8, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 5 }}>
           {clip.name}
           {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
         </div>
-        <div onMouseDown={onMouseDownResize} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize' }} />
+
+        <div onMouseDown={onMouseDownResize} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 7 }} />
       </div>
 
       {ctxPos && (
-        <div style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 140, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }} onMouseLeave={() => setCtxPos(null)}>
+        <div ref={menuRef} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 140, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
           {menuItems.map(it => (
             <button key={it.label} onClick={() => { it.fn(); setCtxPos(null) }}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}

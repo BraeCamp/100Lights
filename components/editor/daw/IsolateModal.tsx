@@ -6,12 +6,25 @@ import { useDaw, makeAudioClip, extractPeaks } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import { encodeWav } from '@/lib/wav-codec'
 
-const WINDOW_SEC = 1.0   // seconds of audio captured per position
+const MIN_WIN_BEATS = 1 / 128
+const MAX_WIN_BEATS = 8
 
 function audioBufferToWavBlob(buf: AudioBuffer): Blob {
   const channels: Float32Array[] = []
   for (let i = 0; i < buf.numberOfChannels; i++) channels.push(buf.getChannelData(i))
   return new Blob([encodeWav(channels, buf.sampleRate)], { type: 'audio/wav' })
+}
+
+function boomerangBuffer(buf: AudioBuffer): AudioBuffer {
+  const len = buf.length
+  const out = new AudioBuffer({ length: len * 2, sampleRate: buf.sampleRate, numberOfChannels: buf.numberOfChannels })
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const src = buf.getChannelData(c)
+    const dst = out.getChannelData(c)
+    for (let i = 0; i < len; i++) dst[i] = src[i]
+    for (let i = 0; i < len; i++) dst[len + i] = src[len - 1 - i]
+  }
+  return out
 }
 
 function drawWaveform(canvas: HTMLCanvasElement, buf: AudioBuffer | null) {
@@ -45,28 +58,44 @@ export default function IsolateModal({
   onClose: () => void
 }) {
   const { project, dispatch, engine } = useDaw()
-  const [beat,    setBeat]    = useState(initialBeat)
-  const [status,  setStatus]  = useState<'loading' | 'ready' | 'error'>('loading')
-  const canvasRef  = useRef<HTMLCanvasElement>(null)
-  const sourceRef  = useRef<AudioBufferSourceNode | null>(null)
-  const renderedRef = useRef<AudioBuffer | null>(null)
-  const beatRef    = useRef(initialBeat)
+  const [beat,        setBeat]        = useState(initialBeat)
+  const [windowBeats, setWindowBeats] = useState(1 / 16)
+  const [boomerang,   setBoomerang]   = useState(false)
+  const [status,      setStatus]      = useState<'loading' | 'ready' | 'error'>('loading')
+  const canvasRef    = useRef<HTMLCanvasElement>(null)
+  const sourceRef    = useRef<AudioBufferSourceNode | null>(null)
+  const fadeRef      = useRef<GainNode | null>(null)
+  const renderedRef  = useRef<AudioBuffer | null>(null)
+  const beatRef      = useRef(initialBeat)
+  const winBeatsRef  = useRef(1 / 16)
+  const boomerangRef = useRef(false)
   const renderingRef = useRef(false)
 
-  beatRef.current = beat
+  beatRef.current     = beat
+  winBeatsRef.current = windowBeats
+  boomerangRef.current = boomerang
 
-  const render = useCallback(async (targetBeat: number): Promise<AudioBuffer | null> => {
+  // Log-scale slider helpers
+  function sliderToBeats(t: number): number {
+    return MIN_WIN_BEATS * Math.pow(MAX_WIN_BEATS / MIN_WIN_BEATS, t)
+  }
+  function beatsToSlider(b: number): number {
+    return Math.log(b / MIN_WIN_BEATS) / Math.log(MAX_WIN_BEATS / MIN_WIN_BEATS)
+  }
+
+  const render = useCallback(async (targetBeat: number, winB?: number): Promise<AudioBuffer | null> => {
+    const wb = winB ?? winBeatsRef.current
     if (engine.ctx.state === 'suspended') await engine.ctx.resume()
     const positionSec = engine.beatsToSeconds(targetBeat)
-    const windowBeats = engine.secondsToBeats(WINDOW_SEC)
+    const windowSec   = engine.beatsToSeconds(wb)
     const audioClips = project.arrangementClips.filter(
       c => isAudioClip(c) && c.trackId === trackId &&
-           c.startBeat < targetBeat + windowBeats &&
+           c.startBeat < targetBeat + wb &&
            c.startBeat + c.durationBeats > targetBeat
     )
 
     const SR = engine.ctx.sampleRate
-    const offCtx = new OfflineAudioContext(2, Math.ceil(WINDOW_SEC * SR), SR)
+    const offCtx = new OfflineAudioContext(2, Math.max(1, Math.ceil(windowSec * SR)), SR)
 
     let hasAudio = false
     for (const clip of audioClips) {
@@ -82,7 +111,7 @@ export default function IsolateModal({
       const src = offCtx.createBufferSource()
       src.buffer = buf
       src.connect(offCtx.destination)
-      src.start(startInWindow, offsetIntoClip, WINDOW_SEC)
+      src.start(startInWindow, offsetIntoClip, windowSec)
       hasAudio = true
     }
 
@@ -94,12 +123,15 @@ export default function IsolateModal({
   }, [project, trackId, engine])
 
   const startLoop = useCallback((buf: AudioBuffer) => {
-    sourceRef.current?.stop()
+    try { sourceRef.current?.stop() } catch { /* ok */ }
     sourceRef.current?.disconnect()
-    const src = engine.ctx.createBufferSource()
-    src.buffer = buf
-    src.loop = true
+    fadeRef.current?.disconnect()
+    const playBuf = boomerangRef.current ? boomerangBuffer(buf) : buf
+    const src  = engine.ctx.createBufferSource()
+    src.buffer = playBuf
+    src.loop   = true
     const fade = engine.ctx.createGain()
+    fadeRef.current = fade
     const now  = engine.ctx.currentTime
     fade.gain.setValueAtTime(0, now)
     fade.gain.linearRampToValueAtTime(1, now + 0.005)
@@ -111,12 +143,14 @@ export default function IsolateModal({
     if (canvasRef.current) drawWaveform(canvasRef.current, buf)
   }, [engine])
 
-  const loadAt = useCallback(async (targetBeat: number) => {
+  const loadAt = useCallback(async (targetBeat: number, winB?: number) => {
     if (renderingRef.current) return
     renderingRef.current = true
     setStatus('loading')
+    // Stop immediately so stale audio doesn't play if render fails
+    try { sourceRef.current?.stop() } catch { /* ok */ }
     try {
-      const buf = await render(targetBeat)
+      const buf = await render(targetBeat, winB)
       if (!buf) { setStatus('error'); return }
       startLoop(buf)
       setStatus('ready')
@@ -133,6 +167,7 @@ export default function IsolateModal({
     return () => {
       try { sourceRef.current?.stop() } catch { /* ok */ }
       sourceRef.current?.disconnect()
+      fadeRef.current?.disconnect()
     }
   }, []) // intentionally runs once
 
@@ -152,17 +187,18 @@ export default function IsolateModal({
   }, [loadAt])
 
   function handleSelect() {
-    const buf = renderedRef.current
-    if (!buf) return
-    const peaks = extractPeaks(buf)
-    const blob = audioBufferToWavBlob(buf)
-    const url = URL.createObjectURL(blob)
-    const clip = makeAudioClip(
+    const rawBuf = renderedRef.current
+    if (!rawBuf) return
+    const buf    = boomerang ? boomerangBuffer(rawBuf) : rawBuf
+    const peaks  = extractPeaks(buf)
+    const blob   = audioBufferToWavBlob(buf)
+    const url    = URL.createObjectURL(blob)
+    const clip   = makeAudioClip(
       trackId,
-      `Isolated ${beat.toFixed(2)}b`,
+      `Isolated ${beat.toFixed(2)}b${boomerang ? ' ↔' : ''}`,
       beat,
-      engine.secondsToBeats(WINDOW_SEC),
-      { audioUrl: url, waveformPeaks: peaks, bufferDuration: buf.duration, fadeIn: engine.secondsToBeats(0.004) },
+      boomerang ? windowBeats * 2 : windowBeats,
+      { audioUrl: url, waveformPeaks: peaks, bufferDuration: buf.duration, loopEnabled: true, fadeIn: engine.secondsToBeats(0.004) },
     )
     dispatch({ type: 'ADD_CLIP', clip })
     try { sourceRef.current?.stop() } catch { /* ok */ }
@@ -177,7 +213,7 @@ export default function IsolateModal({
   return createPortal(
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
-      onClick={e => { if (e.target === e.currentTarget) { try { sourceRef.current?.stop() } catch {} onClose() } }}
+      onClick={e => { if (e.target === e.currentTarget) { try { sourceRef.current?.stop() } catch {} fadeRef.current?.disconnect(); onClose() } }}
     >
       <div style={{ background: '#181828', border: '1px solid var(--border)', borderRadius: 10, padding: 20, width: 460, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
         {/* Header */}
@@ -205,6 +241,51 @@ export default function IsolateModal({
           )}
         </div>
 
+        {/* Window size */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Window size</span>
+            <span style={{ fontSize: 10, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+              {windowBeats < 0.1 ? windowBeats.toFixed(4) : windowBeats.toFixed(3)} b
+              &nbsp;·&nbsp;{(engine.beatsToSeconds(windowBeats) * 1000).toFixed(1)} ms
+            </span>
+          </div>
+          <input
+            type="range" min={0} max={1} step={0.0001}
+            value={beatsToSlider(windowBeats)}
+            onChange={e => {
+              const wb = sliderToBeats(parseFloat(e.target.value))
+              setWindowBeats(wb)
+              winBeatsRef.current = wb
+              void loadAt(beatRef.current, wb)
+            }}
+            className="cf-slider"
+            style={{ width: '100%' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>1/128 b</span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>8 b</span>
+          </div>
+        </div>
+
+        {/* Boomerang toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <button
+            onClick={() => {
+              const next = !boomerang
+              setBoomerang(next)
+              boomerangRef.current = next
+              if (renderedRef.current) startLoop(renderedRef.current)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: boomerang ? 'var(--text-primary)' : 'var(--text-muted)' }}
+          >
+            <div style={{ width: 28, height: 14, borderRadius: 7, background: boomerang ? 'var(--accent)' : 'var(--border)', position: 'relative', transition: 'background 0.15s', flexShrink: 0 }}>
+              <div style={{ position: 'absolute', top: 2, left: boomerang ? 16 : 2, width: 10, height: 10, borderRadius: 5, background: '#fff', transition: 'left 0.15s' }} />
+            </div>
+            <span style={{ fontSize: 10 }}>Boomerang (↔ ping-pong loop)</span>
+          </button>
+        </div>
+
         {/* Scrub hint */}
         <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', marginBottom: 16 }}>
           ← / → scrub by 1/8 note · Shift+arrow = 1 beat · Ctrl+arrow = 1 bar
@@ -222,13 +303,13 @@ export default function IsolateModal({
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={() => { try { sourceRef.current?.stop() } catch {} onClose() }}
+          <button onClick={() => { try { sourceRef.current?.stop() } catch {} fadeRef.current?.disconnect(); onClose() }}
             style={{ fontSize: 11, padding: '6px 16px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
             Cancel
           </button>
           <button onClick={handleSelect} disabled={status !== 'ready'}
             style={{ fontSize: 11, padding: '6px 16px', borderRadius: 5, border: 'none', background: status === 'ready' ? 'var(--accent)' : 'var(--border)', color: '#fff', cursor: status === 'ready' ? 'pointer' : 'default', fontWeight: 600 }}>
-            Select → Create 1s Clip
+            Select → Place Clip ({windowBeats < 0.1 ? windowBeats.toFixed(4) : windowBeats.toFixed(3)} b)
           </button>
         </div>
       </div>

@@ -11,8 +11,8 @@ import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
 import EffectLaneView, { EFFECT_H } from './EffectLane'
-import ClipCropModal from './ClipCropModal'
 import IsolateModal from './IsolateModal'
+import ClipSettingsModal from './ClipSettingsModal'
 import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
@@ -120,9 +120,18 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   const dragHRef  = useRef<{ startY: number; startH: number } | null>(null)
   const [editing,    setEditing]    = useState(false)
   const [draft,      setDraft]      = useState(track.name)
-  const [cropTarget, setCropTarget] = useState<AudioClip | null>(null)
-  const [showFx,     setShowFx]     = useState(false)
-  const [isolateTgt, setIsolateTgt] = useState<number | null>(null)
+  const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
+  const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
+  const [showFx,         setShowFx]         = useState(false)
+  const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
+
+  // Escape exits crop mode
+  useEffect(() => {
+    if (!croppingClipId) return
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setCroppingClipId(null) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [croppingClipId])
 
   const viewStartBeat = scrollLeft / beatW
   const viewEndBeat   = (scrollLeft + viewWidth) / beatW
@@ -244,7 +253,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           data-track-id={track.id}
           data-track-type={track.type}
           style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgba(61,143,239,0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
-          onMouseDown={() => { setSelectedClipIds(new Set()); setSelectedClipId(null) }}
+          onMouseDown={() => { setSelectedClipIds(new Set()); setSelectedClipId(null); setCroppingClipId(null) }}
           onDoubleClick={handleDoubleClick}
           onDragOver={e => e.preventDefault()}
           onDrop={handleDrop}
@@ -275,7 +284,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     })
                     setSelectedClipId(clip.id)
                   }}
-                  onDoubleClick={() => setEditTarget({ type: clip.kind === 'midi' ? 'midi-clip' : 'audio-clip', clipId: clip.id })}
+                  isCropping={croppingClipId === clip.id}
+                  onDoubleClick={() => setEditTarget({ type: 'midi-clip', clipId: clip.id })}
+                  onSettings={() => { if (isAudioClip(clip)) setSettingsTarget(clip) }}
                   onMove={(sb, tid, alt) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })}
                   onResize={(db, alt) => {
                     const endBeat     = clip.startBeat + db
@@ -283,23 +294,48 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
                     const patch: Record<string, unknown> = { durationBeats: newDurBeats }
                     if (isAudioClip(clip) && clip.bufferDuration) {
-                      const nativeSec   = clip.bufferDuration - clip.trimStart
+                      const nativeSec   = clip.bufferDuration - clip.trimStart - clip.trimEnd
                       const newDurSec   = engine.beatsToSeconds(newDurBeats)
                       if (newDurSec > nativeSec + 0.001) {
                         patch.loopEnabled = true
                         patch.trimEnd     = 0
                       } else {
                         patch.loopEnabled = false
-                        patch.trimEnd     = Math.max(0, nativeSec - newDurSec)
+                        patch.trimEnd     = Math.max(0, clip.bufferDuration - clip.trimStart - newDurSec)
                       }
                     }
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
                   }}
                   loopNativeBeats={isAudioClip(clip) && clip.loopEnabled && clip.bufferDuration
-                    ? engine.secondsToBeats(clip.bufferDuration - clip.trimStart)
+                    ? engine.secondsToBeats(clip.bufferDuration - clip.trimStart - clip.trimEnd)
                     : undefined}
-                  onCrop={() => { if (isAudioClip(clip)) setCropTarget(clip) }}
+                  onCrop={() => setCroppingClipId(prev => prev === clip.id ? null : clip.id)}
+                  onCropChange={(ts, te) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { trimStart: ts, trimEnd: te } })}
+                  onCropSnap={(b) => snapBeat(b, snap, project.timeSignatureNum)}
                   onIsolate={beat => setIsolateTgt(beat)}
+                  onSplice={() => {
+                    const playhead = engine.currentBeat
+                    if (playhead <= clip.startBeat || playhead >= clip.startBeat + clip.durationBeats) return
+                    const beatOffset = playhead - clip.startBeat
+                    if (isAudioClip(clip) && clip.bufferDuration) {
+                      const bufDur    = clip.bufferDuration
+                      const nativeDur = bufDur - clip.trimStart - clip.trimEnd
+                      const frac      = beatOffset / clip.durationBeats
+                      const splitSec  = clip.trimStart + frac * nativeDur
+                      const leftClip  = { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, trimEnd: Math.max(0, bufDur - splitSec) }
+                      const rightClip = { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, trimStart: splitSec }
+                      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+                      dispatch({ type: 'ADD_CLIP', clip: leftClip })
+                      dispatch({ type: 'ADD_CLIP', clip: rightClip })
+                    } else if (!isAudioClip(clip)) {
+                      // MIDI: notes before splice go left (truncated if they span), notes at/after go right
+                      const leftNotes  = clip.notes.filter(n => n.startBeat < beatOffset).map(n => ({ ...n, durationBeats: Math.min(n.durationBeats, beatOffset - n.startBeat) }))
+                      const rightNotes = clip.notes.filter(n => n.startBeat >= beatOffset).map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - beatOffset }))
+                      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, notes: leftNotes } })
+                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, notes: rightNotes } })
+                    }
+                  }}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
                 />
               )
@@ -386,7 +422,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
         </div>
       )}
 
-      {cropTarget && <ClipCropModal clip={cropTarget} onClose={() => setCropTarget(null)} />}
+      {settingsTarget && (
+        <ClipSettingsModal
+          clip={project.arrangementClips.find(c => c.id === settingsTarget.id && c.kind === 'audio') as AudioClip ?? settingsTarget}
+          onClose={() => setSettingsTarget(null)}
+        />
+      )}
       {isolateTgt !== null && (
         <IsolateModal
           trackId={track.id}

@@ -5,6 +5,7 @@ import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
+import { wsola, extractTrimmed } from './wsola'
 
 // Per-track Web Audio routing nodes
 interface TrackNodes {
@@ -60,6 +61,7 @@ export class DawEngine extends EventTarget {
   private trackNodes = new Map<string, TrackNodes>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   bufferCache = new Map<string, AudioBuffer>()
+  private stretchedBufferCache = new Map<string, AudioBuffer>()
 
   private scheduledSources: ScheduledSource[] = []
   private schedulerHandle: ReturnType<typeof setInterval> | null = null
@@ -72,6 +74,7 @@ export class DawEngine extends EventTarget {
 
   // MIDI scheduling
   private _scheduledNoteKeys = new Set<NoteKey>()
+  private _noteKeyVersion   = 0
 
   // Transport
   isPlaying = false
@@ -254,7 +257,7 @@ export class DawEngine extends EventTarget {
     this._startCtxTime = this.ctx.currentTime
     this.isPlaying = true
     this._nextMetronomeBeat = Math.ceil(this._startBeat)
-    this._scheduledNoteKeys.clear()
+    this._noteKeyVersion++; this._scheduledNoteKeys.clear()
     this._startScheduler()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: true, beat: this._startBeat } }))
   }
@@ -265,7 +268,7 @@ export class DawEngine extends EventTarget {
     this._stopScheduler()
     this._killAllSources()
     this._stopAllSessionSlots()
-    this._scheduledNoteKeys.clear()
+    this._noteKeyVersion++; this._scheduledNoteKeys.clear()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
   }
 
@@ -276,7 +279,7 @@ export class DawEngine extends EventTarget {
     if (wasPlaying) {
       this._startCtxTime = this.ctx.currentTime
       this._nextMetronomeBeat = Math.ceil(beat)
-      this._scheduledNoteKeys.clear()
+      this._noteKeyVersion++; this._scheduledNoteKeys.clear()
       this._startScheduler()
     }
     this.dispatchEvent(new CustomEvent('seek', { detail: { beat } }))
@@ -475,7 +478,7 @@ export class DawEngine extends EventTarget {
     // Loop wraparound
     if (this.loopEnabled && this.currentBeat >= this.loopEnd) {
       this._killAllSources()
-      this._scheduledNoteKeys.clear()
+      this._noteKeyVersion++; this._scheduledNoteKeys.clear()
       this._startBeat    = this.loopStart
       this._startCtxTime = this.ctx.currentTime
       this._nextMetronomeBeat = Math.ceil(this.loopStart)
@@ -533,9 +536,10 @@ export class DawEngine extends EventTarget {
         this._scheduledNoteKeys.add(noteKey)
         playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, startAt, dur)
 
-        // Expire key after note is done
+        // Expire key after note ends — capture version so a loop-reset clear() doesn't invalidate a fresh schedule
         const expireMs = (startAt - contextNow + dur + 0.1) * 1000
-        setTimeout(() => this._scheduledNoteKeys.delete(noteKey), Math.max(0, expireMs))
+        const keyVer   = this._noteKeyVersion
+        setTimeout(() => { if (this._noteKeyVersion === keyVer) this._scheduledNoteKeys.delete(noteKey) }, Math.max(0, expireMs))
       }
     }
 
@@ -578,18 +582,96 @@ export class DawEngine extends EventTarget {
 
     const source   = this.ctx.createBufferSource()
     const fadeGain = this.ctx.createGain()
-    source.buffer  = buf
     source.connect(fadeGain)
 
-    // Timing
-    const beatOffset  = clip.startBeat - now
-    const startAt     = contextNow + this.beatsToSeconds(Math.max(0, beatOffset))
-    const seekOffset  = now > clip.startBeat
-      ? this.beatsToSeconds(now - clip.startBeat) + clip.trimStart
-      : clip.trimStart
-    const totalDuration = buf.duration - clip.trimStart - clip.trimEnd
+    // Clip-level pitch transpose (semitones + fine cents)
+    const clipDetune = ((clip.pitchSemitones ?? 0) * 100) + (clip.pitchCents ?? 0)
+
+    // Warp: resolve the actual playback buffer and timing
     const clipDuration  = this.beatsToSeconds(clip.durationBeats)
     const alreadyPlayed = now > clip.startBeat ? this.beatsToSeconds(now - clip.startBeat) : 0
+    const beatOffset    = clip.startBeat - now
+    const startAt       = contextNow + this.beatsToSeconds(Math.max(0, beatOffset))
+
+    let playBuf           = buf
+    let playTrimStart     = clip.trimStart
+    let playTrimEnd       = clip.trimEnd
+    let effectiveDuration = 0
+    let basePlaybackRate  = 1.0
+
+    if (clip.warpEnabled && !clip.reverse) {
+      const nativeDur = buf.duration - clip.trimStart - clip.trimEnd
+      const stretchFactor = nativeDur > 0 && clipDuration > 0 ? nativeDur / clipDuration : 1
+
+      if (clip.warpMode === 'stretch' && Math.abs(stretchFactor - 1) > 0.002) {
+        // WSOLA: pre-render trimmed + stretched buffer
+        const cacheKey = `${clip.id}:${stretchFactor.toFixed(4)}`
+        let stretched = this.stretchedBufferCache.get(cacheKey)
+        if (!stretched) {
+          const trimmed = extractTrimmed(buf, clip.trimStart, clip.trimEnd)
+          stretched = wsola(trimmed, stretchFactor)
+          this.stretchedBufferCache.set(cacheKey, stretched)
+        }
+        playBuf        = stretched
+        playTrimStart  = 0
+        playTrimEnd    = 0
+        const seekOff  = Math.min(alreadyPlayed, stretched.duration)
+        effectiveDuration = Math.max(0, stretched.duration - seekOff)
+        source.buffer = playBuf
+        source.start(startAt, seekOff, effectiveDuration)
+      } else {
+        // Re-pitch: speed and pitch change together (vinyl-style), no rate compensation
+        basePlaybackRate = stretchFactor
+        source.buffer = buf
+        const seekOffset = now > clip.startBeat
+          ? this.beatsToSeconds(now - clip.startBeat) * stretchFactor + clip.trimStart
+          : clip.trimStart
+        const totalDuration = buf.duration - clip.trimStart - clip.trimEnd
+        effectiveDuration = Math.min(totalDuration, clipDuration * stretchFactor) - (seekOffset - clip.trimStart)
+        effectiveDuration = Math.max(0, effectiveDuration)
+        source.start(startAt, seekOffset, effectiveDuration)
+      }
+    } else {
+      // Normal playback
+      source.buffer = buf
+      const seekOffset    = now > clip.startBeat
+        ? this.beatsToSeconds(now - clip.startBeat) + clip.trimStart
+        : clip.trimStart
+      const totalDuration = buf.duration - playTrimStart - playTrimEnd
+
+      if (clip.loopEnabled && !clip.reverse) {
+        source.loop      = true
+        source.loopStart = playTrimStart
+        source.loopEnd   = Math.max(playTrimStart + 0.001, buf.duration - playTrimEnd)
+        const loopLen    = source.loopEnd - source.loopStart
+        const wrapped    = loopLen > 0
+          ? source.loopStart + ((Math.max(0, seekOffset - source.loopStart)) % loopLen)
+          : seekOffset
+        effectiveDuration = Math.max(0, clipDuration - alreadyPlayed)
+        source.start(startAt, wrapped)
+        if (effectiveDuration > 0) source.stop(startAt + effectiveDuration)
+      } else if (clip.reverse) {
+        basePlaybackRate = -1.0
+        // Reversed playback starts from the trim-end boundary and goes backward
+        const revSeekOffset = Math.max(0, buf.duration - playTrimEnd - alreadyPlayed)
+        effectiveDuration   = Math.max(0, Math.min(totalDuration, clipDuration) - alreadyPlayed)
+        source.start(startAt, revSeekOffset, effectiveDuration)
+      } else {
+        effectiveDuration = Math.max(0, Math.min(totalDuration, clipDuration) - alreadyPlayed)
+        source.start(startAt, seekOffset, effectiveDuration)
+      }
+    }
+
+    // Apply clip-level pitch. Web Audio detune alone changes speed (effectiveRate = rate * 2^(detune/1200)).
+    // Compensate with an inverse playbackRate so only pitch shifts — not speed.
+    // Re-pitch warp mode is exempt: pitch intentionally tracks speed there.
+    const shouldCompensateRate = !(clip.warpEnabled && clip.warpMode === 'repitch')
+    const pitchRateComp = shouldCompensateRate && clipDetune !== 0
+      ? Math.pow(2, -clipDetune / 1200)
+      : 1.0
+    const effectiveBaseRate = basePlaybackRate * pitchRateComp
+    source.playbackRate.value = effectiveBaseRate
+    source.detune.value       = clipDetune
 
     // Build clip-effect chain
     const overlapping = this._clipEffects.filter(e =>
@@ -612,33 +694,10 @@ export class DawEngine extends EventTarget {
     }
     lastNode.connect(nodes.effectsInput)
 
-    // Pitch effects modify source.detune directly
+    // Pitch effects modify source.detune (and rate, for speed-invariant pitch shift)
     for (const eff of pitchEffects) {
       const effContextStart = startAt + Math.max(0, this.beatsToSeconds(eff.startBeat - clip.startBeat))
-      this._applyPitchEffect(eff, source, effContextStart)
-    }
-
-    // Schedule playback
-    let effectiveDuration: number
-    if (clip.loopEnabled && !clip.reverse) {
-      source.loop      = true
-      source.loopStart = clip.trimStart
-      source.loopEnd   = Math.max(clip.trimStart + 0.001, buf.duration - clip.trimEnd)
-      const loopLen    = source.loopEnd - source.loopStart
-      const wrapped    = loopLen > 0
-        ? source.loopStart + ((Math.max(0, seekOffset - source.loopStart)) % loopLen)
-        : seekOffset
-      effectiveDuration = Math.max(0, clipDuration - alreadyPlayed)
-      source.start(startAt, wrapped)
-      if (effectiveDuration > 0) source.stop(startAt + effectiveDuration)
-    } else {
-      effectiveDuration = Math.min(totalDuration, clipDuration)
-      if (clip.reverse) {
-        source.playbackRate.value = -1
-        source.start(startAt, buf.duration - clip.trimStart, effectiveDuration)
-      } else {
-        source.start(startAt, seekOffset, effectiveDuration)
-      }
+      this._applyPitchEffect(eff, source, effContextStart, clipDetune, effectiveBaseRate, shouldCompensateRate)
     }
 
     if (clip.fadeIn > 0) {
@@ -648,9 +707,10 @@ export class DawEngine extends EventTarget {
     } else {
       fadeGain.gain.value = clip.gain
     }
-    if (clip.fadeOut > 0) {
-      const fs = this.beatsToSeconds(clip.fadeOut)
-      fadeGain.gain.setValueAtTime(clip.gain, startAt + effectiveDuration - fs)
+    if (clip.fadeOut > 0 && effectiveDuration > 0) {
+      const fs        = this.beatsToSeconds(clip.fadeOut)
+      const fadeStart = Math.max(startAt, startAt + effectiveDuration - fs)
+      fadeGain.gain.setValueAtTime(clip.gain, fadeStart)
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
     }
 
@@ -800,26 +860,60 @@ export class DawEngine extends EventTarget {
     }
   }
 
-  private _applyPitchEffect(eff: ClipEffect, source: AudioBufferSourceNode, effContextStart: number) {
-    const baseCents = (eff.params.semitones ?? 0) * 100
+  private _applyPitchEffect(
+    eff: ClipEffect,
+    source: AudioBufferSourceNode,
+    effContextStart: number,
+    clipDetuneOffset = 0,
+    effectiveBaseRate = 1.0,
+    shouldCompensateRate = true,
+  ) {
+    const effDurSec = this.beatsToSeconds(eff.durationBeats)
+    const baseCents = (eff.params.semitones ?? 0) * 100 + clipDetuneOffset
+
     if (eff.automation?.points.length) {
       const meta = CLIP_EFFECT_PARAM_META.pitch
-      const effDurSec = this.beatsToSeconds(eff.durationBeats)
       const N = Math.max(2, Math.ceil(effDurSec * 60))
       const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-      const curve = new Float32Array(vals.map(v => normToParam(v, meta) * 100))
-      source.detune.setValueCurveAtTime(curve, effContextStart, effDurSec)
+      const detuneArr = vals.map(v => normToParam(v, meta) * 100 + clipDetuneOffset)
+      source.detune.setValueCurveAtTime(new Float32Array(detuneArr), effContextStart, effDurSec)
+      if (shouldCompensateRate) {
+        // effectCents = totalDetune - clipDetuneOffset; rate compensates only for the effect's added cents
+        const rateCurve = new Float32Array(detuneArr.map(c => effectiveBaseRate * Math.pow(2, -(c - clipDetuneOffset) / 1200)))
+        source.playbackRate.setValueCurveAtTime(rateCurve, effContextStart, effDurSec)
+        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
+        source.playbackRate.setValueAtTime(effectiveBaseRate, effContextStart + effDurSec)
+      }
     } else {
       const env = eff.params.shapeEnvelope
       if (env && env.length > 0) {
         const sr = eff.params.shapeSampleRate ?? 30
         source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
+        if (shouldCompensateRate)
+          source.playbackRate.setValueAtTime(effectiveBaseRate * Math.pow(2, -(env[0] * 100) / 1200), effContextStart)
         for (let i = 1; i < env.length; i++) {
           const t = effContextStart + i / sr
-          if (t > this.ctx.currentTime) source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
+          if (t > this.ctx.currentTime) {
+            const efx = env[i] * 100
+            source.detune.linearRampToValueAtTime(baseCents + efx, t)
+            if (shouldCompensateRate)
+              source.playbackRate.linearRampToValueAtTime(effectiveBaseRate * Math.pow(2, -efx / 1200), t)
+          }
+        }
+        if (shouldCompensateRate) {
+          const endT = effContextStart + env.length / sr
+          source.detune.setValueAtTime(clipDetuneOffset, endT)
+          source.playbackRate.setValueAtTime(effectiveBaseRate, endT)
         }
       } else {
+        // Static pitch effect
+        const effectCents = (eff.params.semitones ?? 0) * 100
         source.detune.setValueAtTime(baseCents, effContextStart)
+        if (shouldCompensateRate) {
+          source.playbackRate.setValueAtTime(effectiveBaseRate * Math.pow(2, -effectCents / 1200), effContextStart)
+          source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
+          source.playbackRate.setValueAtTime(effectiveBaseRate, effContextStart + effDurSec)
+        }
       }
     }
   }
@@ -852,6 +946,16 @@ export class DawEngine extends EventTarget {
       try { source.stop(); source.disconnect(); gainNode.disconnect() } catch { /* ok */ }
     }
     this.scheduledSources = []
+  }
+
+  clearStretchedCache(clipId?: string) {
+    if (clipId) {
+      for (const key of [...this.stretchedBufferCache.keys()]) {
+        if (key.startsWith(clipId + ':')) this.stretchedBufferCache.delete(key)
+      }
+    } else {
+      this.stretchedBufferCache.clear()
+    }
   }
 
   // ── One-shot preview (for session slots without transport running) ──────────

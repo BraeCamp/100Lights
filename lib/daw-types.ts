@@ -234,6 +234,10 @@ export interface AudioClip {
   trimStart: number
   trimEnd: number
   bufferDuration?: number   // seconds — populated on first buffer load for crop math
+  warpEnabled?: boolean
+  warpMode?: 'repitch' | 'stretch'
+  pitchSemitones?: number
+  pitchCents?: number
 }
 
 export interface MidiNote {
@@ -330,7 +334,7 @@ export function defaultProject(): DawProject {
     sessionGrid: {},
     loopStart: 0,
     loopEnd: 16,
-    loopEnabled: true,
+    loopEnabled: false,
     masterVolume: 0.85,
     automationLanes: [],
     clipEffects: [],
