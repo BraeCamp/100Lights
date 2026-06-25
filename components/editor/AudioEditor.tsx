@@ -197,8 +197,12 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
-  const onSaveRef = useRef(onSave)
-  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+  const onSaveRef        = useRef(onSave)
+  const selectedClipIdRef  = useRef(selectedClipId)
+  const selectedClipIdsRef = useRef(selectedClipIds)
+  useEffect(() => { onSaveRef.current        = onSave },          [onSave])
+  useEffect(() => { selectedClipIdRef.current  = selectedClipId },  [selectedClipId])
+  useEffect(() => { selectedClipIdsRef.current = selectedClipIds }, [selectedClipIds])
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -257,6 +261,21 @@ export default function AudioEditor(props: AudioEditorProps) {
         e.preventDefault()
         const prev = historyRef.current.pop()
         if (prev) rawDispatch({ type: 'LOAD_PROJECT', project: prev })
+        return
+      }
+
+      if (e.code === 'Delete' || e.code === 'Backspace') {
+        const ids = selectedClipIdsRef.current
+        if (ids.size > 0) {
+          e.preventDefault()
+          ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
+          setSelectedClipIds(new Set())
+          setSelectedClipId(null)
+        } else if (selectedClipIdRef.current) {
+          e.preventDefault()
+          dispatch({ type: 'REMOVE_CLIP', clipId: selectedClipIdRef.current })
+          setSelectedClipId(null)
+        }
         return
       }
 
