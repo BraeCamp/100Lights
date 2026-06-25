@@ -22,7 +22,7 @@ const SEEDED_KEY          = '100lights-audio-seeded-v4'
 const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
 const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v2'  // v2: switched from synth → soundfont
-const DEDUP_KEY           = '100lights-dedup-v1'
+const DEDUP_KEY           = '100lights-dedup-v2'
 const PARENT              = '100lights Audio'
 
 const VIOLIN_SF_URL = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/violin-mp3.js'
@@ -302,14 +302,29 @@ export async function seedStrings(): Promise<void> {
   // Remove old synthesized violin/viola stubs (v1 — kind: 'melodic')
   const existing = await libraryGetAll()
   const oldStubs = existing.filter(e =>
-    (e.folder === 'Violin – All Notes' || e.folder === 'Viola – All Notes') &&
-    e.renderSpec?.kind === 'melodic'
+    (e.folder === 'Violin – All Notes' || e.folder === 'Viola – All Notes' || e.folder === 'Strings') &&
+    e.renderSpec?.kind === 'melodic' &&
+    (e.category === 'violin' || e.category === 'viola')
   )
   await Promise.all(oldStubs.map(e => libraryDelete(e.id)))
 
-  const now          = new Date().toISOString()
-  const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
+  const now = new Date().toISOString()
 
+  // Single accessible entries — one playable sample per instrument in the "Strings" sub-folder
+  // A4 (69) for violin (open A string), A3 (57) for viola (open A string)
+  const SINGLES = [
+    { name: 'Violin', category: 'violin' as LibraryCategory, midi: 69, url: VIOLIN_SF_URL },
+    { name: 'Viola',  category: 'viola'  as LibraryCategory, midi: 57, url: VIOLA_SF_URL  },
+  ]
+  for (const s of SINGLES) {
+    await libraryAdd(makeStub(s.name, s.category, {
+      kind: 'soundfont', beatType: s.category, midiNote: s.midi,
+      duration: 4.0, channels: 2, soundfontUrl: s.url,
+    }, 'Strings', now))
+  }
+
+  // Per-note folders — used by MIDI presets (one entry per MIDI note)
+  const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
   for (const preset of stringPresets) {
     const soundfontUrl = preset.type === 'violin' ? VIOLIN_SF_URL : VIOLA_SF_URL
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
