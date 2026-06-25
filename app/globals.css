@@ -84,8 +84,19 @@ input[type="range"].cf-slider {
   appearance: none;
   height: 3px;
   border-radius: 2px;
+  background: rgba(255,255,255,0.15);
   outline: none;
   cursor: pointer;
+}
+input[type="range"].cf-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.15);
+}
+input[type="range"].cf-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.15);
 }
 input[type="range"].cf-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
