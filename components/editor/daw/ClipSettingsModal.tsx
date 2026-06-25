@@ -179,11 +179,11 @@ export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; 
         <Section title="Pitch" />
 
         <Row label="Semitones">
-          <Slider value={clip.pitchSemitones ?? 0} min={-24} max={24} step={1} onChange={v => patch({ pitchSemitones: v })} />
+          <Slider value={clip.pitchSemitones ?? 0} min={-24} max={24} step={1} onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchSemitones: v }) }} />
           <NumDisplay value={clip.pitchSemitones ?? 0} unit="st" decimals={0} sign />
         </Row>
         <Row label="Fine">
-          <Slider value={clip.pitchCents ?? 0} min={-100} max={100} step={1} onChange={v => patch({ pitchCents: v })} />
+          <Slider value={clip.pitchCents ?? 0} min={-100} max={100} step={1} onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchCents: v }) }} />
           <NumDisplay value={clip.pitchCents ?? 0} unit="¢" decimals={0} sign />
         </Row>
 

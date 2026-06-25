@@ -182,11 +182,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           </div>
         )}
 
-        {/* Trimmed region overlays — always visible when trim is active */}
-        {bufDur && inFrac > 0.001 && (
+        {/* Trimmed region overlays — only visible in crop mode */}
+        {isCropping && bufDur && inFrac > 0.001 && (
           <div style={{ position: 'absolute', left: 0, width: inPx, top: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', zIndex: 4, pointerEvents: 'none' }} />
         )}
-        {bufDur && outFrac < 0.999 && (
+        {isCropping && bufDur && outFrac < 0.999 && (
           <div style={{ position: 'absolute', left: outPx, right: 0, top: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', zIndex: 4, pointerEvents: 'none' }} />
         )}
 

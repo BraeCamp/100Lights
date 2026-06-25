@@ -73,6 +73,33 @@ export function wsola(buf: AudioBuffer, stretchFactor: number): AudioBuffer {
   return result
 }
 
+// Linear-interpolation resample — changes duration by 1/rate (rate>1 = shorter = pitch up).
+function resampleLinear(buf: AudioBuffer, rate: number): AudioBuffer {
+  const nCh    = buf.numberOfChannels
+  const inLen  = buf.length
+  const outLen = Math.max(1, Math.round(inLen / rate))
+  const out    = new AudioBuffer({ length: outLen, sampleRate: buf.sampleRate, numberOfChannels: nCh })
+  for (let c = 0; c < nCh; c++) {
+    const inp = buf.getChannelData(c)
+    const dst = out.getChannelData(c)
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * rate
+      const i0  = Math.min(inLen - 1, Math.floor(pos))
+      const i1  = Math.min(inLen - 1, i0 + 1)
+      dst[i]    = inp[i0] + (inp[i1] - inp[i0]) * (pos - i0)
+    }
+  }
+  return out
+}
+
+// Pitch-shift without changing duration: resample (shifts pitch + speed) then WSOLA-stretch back.
+export function pitchShiftBuffer(buf: AudioBuffer, detuneCents: number): AudioBuffer {
+  if (Math.abs(detuneCents) < 1) return buf
+  const rate      = Math.pow(2, detuneCents / 1200)
+  const resampled = resampleLinear(buf, rate)
+  return wsola(resampled, rate)
+}
+
 // Extract the region between trimStart and (buf.duration − trimEnd) as a new buffer.
 export function extractTrimmed(buf: AudioBuffer, trimStart: number, trimEnd: number): AudioBuffer {
   const sr  = buf.sampleRate

@@ -5,7 +5,7 @@ import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
-import { wsola, extractTrimmed } from './wsola'
+import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 
 // Per-track Web Audio routing nodes
 interface TrackNodes {
@@ -62,6 +62,7 @@ export class DawEngine extends EventTarget {
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
+  private pitchShiftCache      = new Map<string, AudioBuffer>()
 
   private scheduledSources: ScheduledSource[] = []
   private schedulerHandle: ReturnType<typeof setInterval> | null = null
@@ -587,6 +588,21 @@ export class DawEngine extends EventTarget {
     // Clip-level pitch transpose (semitones + fine cents)
     const clipDetune = ((clip.pitchSemitones ?? 0) * 100) + (clip.pitchCents ?? 0)
 
+    // Pre-render pitch-shifted buffer (preserves speed) for non-warp, non-reverse clips.
+    // Web Audio detune/playbackRate both affect the same rate — pitch-only shift requires
+    // offline resample + WSOLA. Warp and reverse modes fall back to plain detune (speed changes).
+    let effectiveDetune = clipDetune
+    if (clipDetune !== 0 && !clip.warpEnabled && !clip.reverse) {
+      const pitchKey = `${clip.id}:pitch:${clipDetune}`
+      let pitched = this.pitchShiftCache.get(pitchKey)
+      if (!pitched) {
+        pitched = pitchShiftBuffer(buf, clipDetune)
+        this.pitchShiftCache.set(pitchKey, pitched)
+      }
+      buf = pitched
+      effectiveDetune = 0
+    }
+
     // Warp: resolve the actual playback buffer and timing
     const clipDuration  = this.beatsToSeconds(clip.durationBeats)
     const alreadyPlayed = now > clip.startBeat ? this.beatsToSeconds(now - clip.startBeat) : 0
@@ -662,16 +678,8 @@ export class DawEngine extends EventTarget {
       }
     }
 
-    // Apply clip-level pitch. Web Audio detune alone changes speed (effectiveRate = rate * 2^(detune/1200)).
-    // Compensate with an inverse playbackRate so only pitch shifts — not speed.
-    // Re-pitch warp mode is exempt: pitch intentionally tracks speed there.
-    const shouldCompensateRate = !(clip.warpEnabled && clip.warpMode === 'repitch')
-    const pitchRateComp = shouldCompensateRate && clipDetune !== 0
-      ? Math.pow(2, -clipDetune / 1200)
-      : 1.0
-    const effectiveBaseRate = basePlaybackRate * pitchRateComp
-    source.playbackRate.value = effectiveBaseRate
-    source.detune.value       = clipDetune
+    source.playbackRate.value = basePlaybackRate
+    source.detune.value       = effectiveDetune
 
     // Build clip-effect chain
     const overlapping = this._clipEffects.filter(e =>
@@ -694,10 +702,10 @@ export class DawEngine extends EventTarget {
     }
     lastNode.connect(nodes.effectsInput)
 
-    // Pitch effects modify source.detune (and rate, for speed-invariant pitch shift)
+    // Pitch effects modify source.detune (added on top of effectiveDetune)
     for (const eff of pitchEffects) {
       const effContextStart = startAt + Math.max(0, this.beatsToSeconds(eff.startBeat - clip.startBeat))
-      this._applyPitchEffect(eff, source, effContextStart, clipDetune, effectiveBaseRate, shouldCompensateRate)
+      this._applyPitchEffect(eff, source, effContextStart, effectiveDetune)
     }
 
     if (clip.fadeIn > 0) {
@@ -865,8 +873,6 @@ export class DawEngine extends EventTarget {
     source: AudioBufferSourceNode,
     effContextStart: number,
     clipDetuneOffset = 0,
-    effectiveBaseRate = 1.0,
-    shouldCompensateRate = true,
   ) {
     const effDurSec = this.beatsToSeconds(eff.durationBeats)
     const baseCents = (eff.params.semitones ?? 0) * 100 + clipDetuneOffset
@@ -877,43 +883,21 @@ export class DawEngine extends EventTarget {
       const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
       const detuneArr = vals.map(v => normToParam(v, meta) * 100 + clipDetuneOffset)
       source.detune.setValueCurveAtTime(new Float32Array(detuneArr), effContextStart, effDurSec)
-      if (shouldCompensateRate) {
-        // effectCents = totalDetune - clipDetuneOffset; rate compensates only for the effect's added cents
-        const rateCurve = new Float32Array(detuneArr.map(c => effectiveBaseRate * Math.pow(2, -(c - clipDetuneOffset) / 1200)))
-        source.playbackRate.setValueCurveAtTime(rateCurve, effContextStart, effDurSec)
-        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
-        source.playbackRate.setValueAtTime(effectiveBaseRate, effContextStart + effDurSec)
-      }
+      source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
     } else {
       const env = eff.params.shapeEnvelope
       if (env && env.length > 0) {
         const sr = eff.params.shapeSampleRate ?? 30
         source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
-        if (shouldCompensateRate)
-          source.playbackRate.setValueAtTime(effectiveBaseRate * Math.pow(2, -(env[0] * 100) / 1200), effContextStart)
         for (let i = 1; i < env.length; i++) {
           const t = effContextStart + i / sr
-          if (t > this.ctx.currentTime) {
-            const efx = env[i] * 100
-            source.detune.linearRampToValueAtTime(baseCents + efx, t)
-            if (shouldCompensateRate)
-              source.playbackRate.linearRampToValueAtTime(effectiveBaseRate * Math.pow(2, -efx / 1200), t)
-          }
+          if (t > this.ctx.currentTime)
+            source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
         }
-        if (shouldCompensateRate) {
-          const endT = effContextStart + env.length / sr
-          source.detune.setValueAtTime(clipDetuneOffset, endT)
-          source.playbackRate.setValueAtTime(effectiveBaseRate, endT)
-        }
+        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + env.length / sr)
       } else {
-        // Static pitch effect
-        const effectCents = (eff.params.semitones ?? 0) * 100
         source.detune.setValueAtTime(baseCents, effContextStart)
-        if (shouldCompensateRate) {
-          source.playbackRate.setValueAtTime(effectiveBaseRate * Math.pow(2, -effectCents / 1200), effContextStart)
-          source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
-          source.playbackRate.setValueAtTime(effectiveBaseRate, effContextStart + effDurSec)
-        }
+        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
       }
     }
   }
@@ -955,6 +939,16 @@ export class DawEngine extends EventTarget {
       }
     } else {
       this.stretchedBufferCache.clear()
+    }
+  }
+
+  clearPitchCache(clipId?: string) {
+    if (clipId) {
+      for (const key of [...this.pitchShiftCache.keys()]) {
+        if (key.startsWith(clipId + ':')) this.pitchShiftCache.delete(key)
+      }
+    } else {
+      this.pitchShiftCache.clear()
     }
   }
 

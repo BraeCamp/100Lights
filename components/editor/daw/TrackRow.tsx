@@ -294,15 +294,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
                     const patch: Record<string, unknown> = { durationBeats: newDurBeats }
                     if (isAudioClip(clip) && clip.bufferDuration) {
-                      const nativeSec   = clip.bufferDuration - clip.trimStart - clip.trimEnd
-                      const newDurSec   = engine.beatsToSeconds(newDurBeats)
-                      if (newDurSec > nativeSec + 0.001) {
-                        patch.loopEnabled = true
-                        patch.trimEnd     = 0
-                      } else {
-                        patch.loopEnabled = false
-                        patch.trimEnd     = Math.max(0, clip.bufferDuration - clip.trimStart - newDurSec)
-                      }
+                      const nativeSec = clip.bufferDuration - clip.trimStart - clip.trimEnd
+                      const newDurSec = engine.beatsToSeconds(newDurBeats)
+                      // Only enable loop when dragging past native duration. NEVER change trimEnd/trimStart.
+                      if (newDurSec > nativeSec + 0.001) patch.loopEnabled = true
                     }
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
                   }}
