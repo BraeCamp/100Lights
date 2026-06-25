@@ -8,6 +8,9 @@ import { libraryGetAll } from '@/lib/sound-library'
 import type { LibraryEntry } from '@/lib/sound-library'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
+import dynamic from 'next/dynamic'
+
+const PadTuner = dynamic(() => import('./PadTuner'), { ssr: false })
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -221,12 +224,15 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
   onPadChange: (patch: Partial<Pad>) => void
   onClose: () => void
 }) {
-  const [entries,      setEntries]      = useState<LibraryEntry[]>([])
-  const [loading,      setLoading]      = useState(true)
-  const [showLibrary,  setShowLibrary]  = useState(false)
-  const [search,       setSearch]       = useState('')
-  const [cropBlob,     setCropBlob]     = useState<Blob | null>(null)
-  const [expandedId,   setExpandedId]   = useState<string | null>(null)
+  const [entries,          setEntries]          = useState<LibraryEntry[]>([])
+  const [loading,          setLoading]          = useState(true)
+  const [showLibrary,      setShowLibrary]      = useState(false)
+  const [search,           setSearch]           = useState('')
+  const [cropBlob,         setCropBlob]         = useState<Blob | null>(null)
+  const [expandedId,       setExpandedId]       = useState<string | null>(null)
+  const [openPickerFolders,setOpenPickerFolders] = useState<Set<string>>(new Set())
+  const [previewId,        setPreviewId]        = useState<string | null>(null)
+  const previewRef = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   const sounds = pad.customSounds ?? []
@@ -261,6 +267,41 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
     return () => document.removeEventListener('mousedown', onDocDown)
   }, [onClose])
 
+  // Preview playback
+  useEffect(() => () => stopPreview(), [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  function stopPreview() {
+    if (previewRef.current) {
+      try { previewRef.current.src.stop() } catch { /* */ }
+      previewRef.current.ctx.close().catch(() => {})
+      previewRef.current = null
+    }
+    setPreviewId(null)
+  }
+
+  async function playPreview(entry: LibraryEntry) {
+    stopPreview()
+    try {
+      const ctx = new AudioContext()
+      await ctx.resume()
+      const ab  = await entry.audioBlob.arrayBuffer()
+      const buf = await ctx.decodeAudioData(ab)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      src.onended = () => setPreviewId(null)
+      src.start(0)
+      previewRef.current = { src, ctx }
+      setPreviewId(entry.id)
+    } catch { setPreviewId(null) }
+  }
+
+  function togglePickerFolder(key: string) {
+    setOpenPickerFolders(prev => {
+      const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s
+    })
+  }
+
   function addSound(entry: LibraryEntry) {
     const current = pad.customSounds ?? []
     if (current.some(s => s.id === entry.id)) return
@@ -276,7 +317,76 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
     onPadChange({ customSounds: (pad.customSounds ?? []).map(s => s.id === id ? { ...s, ...patch } : s) })
   }
 
-  const filtered = entries.filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
+  const hasSearch = search.trim().length > 0
+
+  // Note-name → MIDI for sort inside picker folders
+  const NOTE_PC_PICKER: Record<string, number> = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 }
+  function pickerNoteToMidi(name: string): number | null {
+    const m = name.match(/^([A-G]#?)(-?\d+)$/)
+    if (!m) return null
+    const pc = NOTE_PC_PICKER[m[1]]
+    return pc !== undefined ? (parseInt(m[2]) + 1) * 12 + pc : null
+  }
+  function pickerSortByNote(arr: LibraryEntry[]) {
+    const midis = arr.map(e => pickerNoteToMidi(e.name))
+    return midis.some(m => m === null) ? arr : [...arr].sort((a, b) => (pickerNoteToMidi(a.name) ?? 0) - (pickerNoteToMidi(b.name) ?? 0))
+  }
+
+  // Group entries for picker (computed inline since PadPopover is not a stable component)
+  const pickerGroups = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filt = q ? entries.filter(e => e.name.toLowerCase().includes(q)) : entries
+    const byParent = new Map<string, Map<string, LibraryEntry[]>>()
+    const byFolder = new Map<string, LibraryEntry[]>()
+    const unfiled: LibraryEntry[] = []
+    for (const e of filt) {
+      if (e.parentFolder) {
+        const sub    = e.folder ?? ''
+        const subMap = byParent.get(e.parentFolder) ?? new Map<string, LibraryEntry[]>()
+        subMap.set(sub, [...(subMap.get(sub) ?? []), e])
+        byParent.set(e.parentFolder, subMap)
+      } else if (e.folder) {
+        byFolder.set(e.folder, [...(byFolder.get(e.folder) ?? []), e])
+      } else {
+        unfiled.push(e)
+      }
+    }
+    for (const [, subMap] of byParent) {
+      for (const [k, arr] of subMap) subMap.set(k, pickerSortByNote(arr))
+    }
+    return { byParent, byFolder, unfiled }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, search])
+
+  const totalFiltered = [...pickerGroups.byParent.values()].reduce((n, sm) => n + [...sm.values()].reduce((a, b) => a + b.length, 0), 0)
+    + [...pickerGroups.byFolder.values()].reduce((n, a) => n + a.length, 0)
+    + pickerGroups.unfiled.length
+
+  function pickerEntry(entry: LibraryEntry) {
+    const already = sounds.some(s => s.id === entry.id)
+    const isPrev  = previewId === entry.id
+    return (
+      <div key={entry.id} style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <button
+          onClick={e => { e.stopPropagation(); isPrev ? stopPreview() : playPreview(entry) }}
+          title={isPrev ? 'Stop preview' : 'Preview'}
+          style={{ background: 'transparent', border: 'none', color: isPrev ? C.yellow : C.muted, cursor: 'pointer', fontSize: 10, padding: '0 4px', flexShrink: 0, lineHeight: 1, width: 20 }}
+        >{isPrev ? '■' : '▶'}</button>
+        <button
+          onClick={() => addSound(entry)}
+          disabled={already}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, textAlign: 'left', padding: '4px 4px', border: 'none', background: already ? `${C.accent}22` : 'transparent', color: already ? C.accent : C.text, cursor: already ? 'default' : 'pointer', fontSize: 11, borderRadius: 3 }}
+          onMouseEnter={e => { if (!already) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = already ? `${C.accent}22` : 'transparent' }}
+        >
+          <span style={{ fontSize: 11 }}>{already ? '✓' : '🔊'}</span>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
+          <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>{entry.duration.toFixed(1)}s</span>
+        </button>
+      </div>
+    )
+  }
+
   const left = Math.min(anchor.x, (typeof window !== 'undefined' ? window.innerWidth  : 800) - 270)
   const top  = Math.min(anchor.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 580)
 
@@ -419,29 +529,58 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
             />
             {loading ? (
               <div style={{ fontSize: 11, color: C.muted, padding: '8px 4px' }}>Loading…</div>
-            ) : filtered.length === 0 ? (
+            ) : totalFiltered === 0 ? (
               <div style={{ fontSize: 11, color: C.muted, padding: '8px 4px' }}>
                 {entries.length === 0 ? 'No sounds in library — import one first' : 'No matches'}
               </div>
             ) : (
-              <div style={{ maxHeight: 140, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {filtered.map(entry => {
-                  const already = sounds.some(s => s.id === entry.id)
+              <div style={{ maxHeight: 180, overflowY: 'auto', fontSize: 11 }}>
+                {/* Parent-grouped folders (e.g. "100lights Audio") */}
+                {[...pickerGroups.byParent.entries()].map(([parentName, subFolders]) => {
+                  const pKey = `p:${parentName}`
+                  const pOpen = openPickerFolders.has(pKey) || hasSearch
+                  const total = [...subFolders.values()].reduce((n, a) => n + a.length, 0)
                   return (
-                    <button
-                      key={entry.id}
-                      onClick={() => addSound(entry)}
-                      disabled={already}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', padding: '5px 6px', borderRadius: 3, border: 'none', background: already ? `${C.accent}22` : 'transparent', color: already ? C.accent : C.text, cursor: already ? 'default' : 'pointer', fontSize: 11, opacity: already ? 0.7 : 1 }}
-                      onMouseEnter={e => { if (!already) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)' }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = already ? `${C.accent}22` : 'transparent' }}
-                    >
-                      <span style={{ fontSize: 13 }}>{already ? '✓' : '🔊'}</span>
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
-                      <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>{entry.duration.toFixed(1)}s</span>
-                    </button>
+                    <div key={pKey}>
+                      <div onClick={() => togglePickerFolder(pKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', cursor: 'pointer', background: 'rgba(61,143,239,0.07)', borderRadius: 3, marginBottom: 1 }}>
+                        <span style={{ fontSize: 9, color: 'rgba(61,143,239,0.8)' }}>{pOpen ? '▾' : '▸'}</span>
+                        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgba(61,143,239,0.9)' }}>{parentName}</span>
+                        <span style={{ fontSize: 9, color: C.muted }}>{total}</span>
+                      </div>
+                      {pOpen && [...subFolders.entries()].map(([subName, subEntries]) => {
+                        const sKey = `${pKey}/${subName}`
+                        const sOpen = openPickerFolders.has(sKey) || hasSearch
+                        return (
+                          <div key={sKey} style={{ paddingLeft: 8, marginBottom: 1 }}>
+                            <div onClick={() => togglePickerFolder(sKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px', cursor: 'pointer', background: C.bgDark, borderRadius: 2 }}>
+                              <span style={{ fontSize: 9, color: C.muted }}>{sOpen ? '▾' : '▸'}</span>
+                              <span style={{ flex: 1, fontSize: 10, color: C.text }}>{subName}</span>
+                              <span style={{ fontSize: 9, color: C.muted }}>{subEntries.length}</span>
+                            </div>
+                            {sOpen && subEntries.map(pickerEntry)}
+                          </div>
+                        )
+                      })}
+                    </div>
                   )
                 })}
+                {/* User folders */}
+                {[...pickerGroups.byFolder.entries()].map(([folderName, folderEntries]) => {
+                  const fKey = `f:${folderName}`
+                  const fOpen = openPickerFolders.has(fKey) || hasSearch
+                  return (
+                    <div key={fKey} style={{ marginBottom: 1 }}>
+                      <div onClick={() => togglePickerFolder(fKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px', cursor: 'pointer', background: C.bgDark, borderRadius: 2 }}>
+                        <span style={{ fontSize: 9, color: C.muted }}>{fOpen ? '▾' : '▸'}</span>
+                        <span style={{ flex: 1, fontSize: 10, color: C.text }}>📁 {folderName}</span>
+                        <span style={{ fontSize: 9, color: C.muted }}>{folderEntries.length}</span>
+                      </div>
+                      {fOpen && folderEntries.map(pickerEntry)}
+                    </div>
+                  )
+                })}
+                {/* Unfiled */}
+                {pickerGroups.unfiled.map(pickerEntry)}
               </div>
             )}
           </div>
@@ -525,7 +664,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
   const { project, dispatch, engine } = useDaw()
 
-  const [tab,          setTab]          = useState<'pads' | 'keyboard'>('pads')
+  const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'tuner'>('pads')
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
   const [octave,       setOctave]       = useState(4)
   const [pressing,     setPressing]     = useState<Set<number>>(new Set())
@@ -905,7 +1044,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 2, padding: '6px 12px 0', background: C.bgCard, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-          {(['pads', 'keyboard'] as const).map(t => (
+          {(['pads', 'keyboard', 'tuner'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '4px 14px', fontSize: 12, borderRadius: '4px 4px 0 0',
               border: `1px solid ${tab === t ? C.border : 'transparent'}`, borderBottom: 'none',
@@ -1082,6 +1221,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               </div>
             </div>
           )}
+
+          {tab === 'tuner' && <PadTuner />}
         </div>
 
         {/* Footer */}

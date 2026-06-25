@@ -35,13 +35,15 @@ function snapBeat(beat: number, mode: SnapMode, beatsPerBar = 4): number {
 
 // ── Ruler ─────────────────────────────────────────────────────────────────────
 
-function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig }: {
-  beatW: number; scrollLeft: number
+function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
+  beatW: number; scrollLeft: number; snap: SnapMode
   onSeek: (beat: number) => void
   onEditTimeSig: (e: React.MouseEvent) => void
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { project } = useDaw()
+  const canvasRef    = useRef<HTMLCanvasElement>(null)
+  const loopDragRef  = useRef<{ type: 'start'|'end'|'move'; startX: number; startLoopStart: number; startLoopEnd: number } | null>(null)
+  const [loopCursor, setLoopCursor] = useState('grab')
+  const { project, dispatch } = useDaw()
   const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled } = project
   const pxPerSec = beatW * tempo / 60
 
@@ -147,8 +149,56 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig }: {
           }
         }}
       />
-      {loopEnabled && (
-        <div style={{ position: 'absolute', top: 0, left: loopL, width: loopR - loopL, height: SEC_H, background: 'rgba(61,143,239,0.15)', pointerEvents: 'none', borderLeft: '1px solid rgba(61,143,239,0.5)', borderRight: '1px solid rgba(61,143,239,0.5)' }} />
+      {loopEnabled && loopR > loopL && (
+        <div
+          style={{
+            position: 'absolute', top: 0, left: loopL, width: Math.max(4, loopR - loopL), height: SEC_H,
+            background: 'rgba(61,143,239,0.18)', boxSizing: 'border-box',
+            borderLeft: '2px solid rgba(61,143,239,0.7)', borderRight: '2px solid rgba(61,143,239,0.7)',
+            cursor: loopCursor,
+          }}
+          onMouseMove={e => {
+            if (loopDragRef.current) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            const relX = e.clientX - rect.left
+            setLoopCursor(relX < 8 || relX > rect.width - 8 ? 'ew-resize' : 'grab')
+          }}
+          onMouseLeave={() => { if (!loopDragRef.current) setLoopCursor('grab') }}
+          onMouseDown={e => {
+            e.stopPropagation()
+            if (e.button !== 0) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            const relX = e.clientX - rect.left
+            const type = relX < 8 ? 'start' : relX > rect.width - 8 ? 'end' : 'move'
+            loopDragRef.current = { type, startX: e.clientX, startLoopStart: loopStart, startLoopEnd: loopEnd }
+            setLoopCursor(type === 'move' ? 'grabbing' : 'ew-resize')
+            function mm(ev: MouseEvent) {
+              if (!loopDragRef.current) return
+              const { type: t, startX, startLoopStart: s, startLoopEnd: en } = loopDragRef.current
+              const db      = (ev.clientX - startX) / beatW
+              const useSnap = ev.altKey ? 'off' as SnapMode : snap
+              const dur     = en - s
+              let ns = s, ne = en
+              if (t === 'start') {
+                ns = Math.min(snapBeat(Math.max(0, s + db), useSnap, sigNum), en - 0.25)
+              } else if (t === 'end') {
+                ne = Math.max(snapBeat(en + db, useSnap, sigNum), s + 0.25)
+              } else {
+                ns = snapBeat(Math.max(0, s + db), useSnap, sigNum)
+                ne = ns + dur
+              }
+              dispatch({ type: 'SET_LOOP', start: ns, end: ne })
+            }
+            function mu() {
+              loopDragRef.current = null
+              setLoopCursor('grab')
+              document.removeEventListener('mousemove', mm)
+              document.removeEventListener('mouseup', mu)
+            }
+            document.addEventListener('mousemove', mm)
+            document.addEventListener('mouseup', mu)
+          }}
+        />
       )}
     </div>
   )
@@ -592,7 +642,7 @@ export default function ArrangementView() {
       <div style={{ display: 'flex', flexShrink: 0 }} onWheel={handleWheel}>
         <div style={{ width: HDR_W, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <Ruler beatW={beatW} scrollLeft={scrollLeft} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} />
+          <Ruler beatW={beatW} scrollLeft={scrollLeft} snap={snap} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} />
         </div>
       </div>
 

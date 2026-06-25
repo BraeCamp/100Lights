@@ -506,6 +506,95 @@ export async function synthesizeInstrument(
   return ctx.startRendering()
 }
 
+// ── Live tuner: real-time mic → pitch ─────────────────────────────────────────
+// This section (LivePitchDetector) is self-contained and can be deleted without
+// affecting the rest of the file. It reuses detectPitchInFrame above.
+
+export interface LivePitchResult {
+  hz:         number   // detected frequency in Hz
+  midi:       number   // nearest MIDI note (0–127)
+  noteName:   string   // e.g. "A4"
+  cents:      number   // deviation from nearest semitone (−50 to +50)
+  confidence: number   // 0–1; ≥0.7 = locked / in-tune display
+}
+
+export class LivePitchDetector {
+  private ctx:       AudioContext | null = null
+  private analyser:  AnalyserNode | null = null
+  private stream:    MediaStream | null  = null
+  private rafId:     number | null       = null
+  private buf:       Float32Array<ArrayBuffer> = new Float32Array(4096)
+  private hzHistory: number[]            = []
+
+  async start(onPitch: (r: LivePitchResult | null) => void): Promise<void> {
+    this.stop()
+
+    this.stream  = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    })
+    this.ctx     = new AudioContext()
+    await this.ctx.resume()
+    this.analyser = this.ctx.createAnalyser()
+    this.analyser.fftSize             = 4096
+    this.analyser.smoothingTimeConstant = 0
+    this.ctx.createMediaStreamSource(this.stream).connect(this.analyser)
+    this.buf      = new Float32Array(4096)
+    this.hzHistory = []
+
+    const tick = () => {
+      this.analyser!.getFloatTimeDomainData(this.buf)
+
+      // Gate: skip near-silent frames
+      let rms = 0
+      for (let i = 0; i < this.buf.length; i++) rms += this.buf[i] * this.buf[i]
+      rms = Math.sqrt(rms / this.buf.length)
+      if (rms < 0.015) {
+        this.hzHistory = []
+        onPitch(null)
+        this.rafId = requestAnimationFrame(tick)
+        return
+      }
+
+      // Reuse the MPM detector already in this file, restricted to vocal range
+      const raw = detectPitchInFrame(this.buf, this.ctx!.sampleRate)
+      if (!raw || raw < 80 || raw > 1200) {
+        onPitch(null)
+        this.rafId = requestAnimationFrame(tick)
+        return
+      }
+
+      // Smooth over last 4 frames to reduce jitter
+      this.hzHistory.push(raw)
+      if (this.hzHistory.length > 4) this.hzHistory.shift()
+      const hz = this.hzHistory.reduce((a, b) => a + b, 0) / this.hzHistory.length
+
+      // Stability → confidence
+      const variance = this.hzHistory.length < 2 ? 0 :
+        this.hzHistory.reduce((s, v) => s + (v - hz) ** 2, 0) / this.hzHistory.length
+      const confidence = Math.max(0, Math.min(1, 1 - Math.sqrt(variance) / Math.max(1, hz * 0.015)))
+
+      const midiF    = 69 + 12 * Math.log2(hz / 440)
+      const midiRnd  = Math.round(midiF)
+      const cents    = Math.round((midiF - midiRnd) * 100)
+      const octave   = Math.floor(midiRnd / 12) - 1
+      const names12  = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+      const name     = names12[((midiRnd % 12) + 12) % 12]
+
+      onPitch({ hz, midi: midiRnd, noteName: `${name}${octave}`, cents, confidence })
+      this.rafId = requestAnimationFrame(tick)
+    }
+    this.rafId = requestAnimationFrame(tick)
+  }
+
+  stop(): void {
+    if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null }
+    this.analyser?.disconnect()
+    this.stream?.getTracks().forEach(t => t.stop())
+    this.ctx?.close().catch(() => {})
+    this.ctx = null; this.analyser = null; this.stream = null; this.hzHistory = []
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function freqToMidi(freq: number): number {

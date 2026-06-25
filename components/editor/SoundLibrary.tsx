@@ -783,7 +783,7 @@ const FOLDERS_KEY = 'sound-library-folders'
 export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
+  const [openFolders,      setOpenFolders]      = useState<Set<string>>(new Set())
   const [downloading,      setDownloading]      = useState<Set<string>>(new Set())
   const [dragOverFolder,   setDragOverFolder]   = useState<string | null>(null)
   const [draggingFolder,   setDraggingFolder]   = useState<string | null>(null)
@@ -868,7 +868,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     saveFolders([...folders, name])
     setAddingFolder(false)
     setNewFolderDraft('')
-    setCollapsedFolders(prev => { const s = new Set(prev); s.delete(name); return s })
+    setOpenFolders(prev => { const s = new Set(prev); s.add(name); return s })
   }
 
   function renameFolder(oldName: string, newName: string) {
@@ -885,7 +885,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
   }
 
   function toggleFolderCollapse(name: string) {
-    setCollapsedFolders(prev => {
+    setOpenFolders(prev => {
       const s = new Set(prev)
       s.has(name) ? s.delete(name) : s.add(name)
       return s
@@ -961,6 +961,21 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     setDraggingFolder(null)
   }
 
+  // ── Note-name sort helper (C2, C#2 … B5) ─────────────────────────────────────
+  const NOTE_PC_MAP: Record<string, number> = { C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11 }
+  function noteNameMidi(name: string): number | null {
+    const m = name.match(/^([A-G]#?)(-?\d+)$/)
+    if (!m) return null
+    const pc = NOTE_PC_MAP[m[1]]
+    return pc !== undefined ? (parseInt(m[2]) + 1) * 12 + pc : null
+  }
+  function sortByNoteName(arr: LibraryEntry[]): LibraryEntry[] {
+    if (!arr.length) return arr
+    const midis = arr.map(e => noteNameMidi(e.name))
+    if (midis.some(m => m === null)) return arr
+    return [...arr].sort((a, b) => (noteNameMidi(a.name) ?? 0) - (noteNameMidi(b.name) ?? 0))
+  }
+
   // Group entries (filtered by search query)
   const { byFolder, unfiled, byParent } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -973,7 +988,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
       if (e.parentFolder) {
         const subMap = byParent.get(e.parentFolder) ?? new Map<string, LibraryEntry[]>()
         const sub    = e.folder ?? ''
-        subMap.set(sub, [...(subMap.get(sub) ?? []), e])
+        subMap.set(sub, sortByNoteName([...(subMap.get(sub) ?? []), e]))
         byParent.set(e.parentFolder, subMap)
       } else if (e.folder && folders.includes(e.folder)) {
         byFolder.set(e.folder, [...(byFolder.get(e.folder) ?? []), e])
@@ -982,6 +997,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
       }
     }
     return { byFolder, unfiled, byParent }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, folders, searchQuery])
 
   const entryRow = (entry: LibraryEntry) => (
@@ -1055,7 +1071,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
             {/* 100lights Audio default sample groups — shown before user folders */}
             {[...byParent.entries()].map(([parentName, subFolders]) => {
               const parentKey = `parent:${parentName}`
-              const parentCollapsed = collapsedFolders.has(parentKey)
+              const parentCollapsed = !openFolders.has(parentKey)
               const totalCount = [...subFolders.values()].reduce((n, arr) => n + arr.length, 0)
               return (
                 <div key={parentName} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -1077,7 +1093,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
                   {/* Sub-folders */}
                   {!parentCollapsed && [...subFolders.entries()].map(([subName, subEntries]) => {
                     const subKey = `${parentKey}/${subName}`
-                    const subCollapsed = collapsedFolders.has(subKey)
+                    const subCollapsed = !openFolders.has(subKey)
                     return (
                       <div key={subName} style={{ paddingLeft: 10 }}>
                         <div
@@ -1105,7 +1121,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
             {/* User folder sections */}
             {folders.map((folder, idx) => {
               const folderEntries = byFolder.get(folder) ?? []
-              const collapsed     = collapsedFolders.has(folder)
+              const collapsed     = !openFolders.has(folder)
               const reorderBefore = folderDropTarget === folder && draggingFolder !== folder
               // show 'after' indicator on the last folder when drop target is '__end__'
               const reorderAfter  = folderDropTarget === '__end__' && idx === folders.length - 1
