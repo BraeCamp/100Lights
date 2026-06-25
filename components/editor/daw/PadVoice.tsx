@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { ChevronRight, ChevronDown } from 'lucide-react'
-import { LivePitchDetector, LivePitchResult, detectBufferPitch, detectPitchCurveAsync, extractNoteEvents } from '../../../lib/pitch-detector'
+import { LivePitchDetector, LivePitchResult, detectPitchCurveAsync, extractNoteEvents } from '../../../lib/pitch-detector'
 import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
@@ -249,15 +249,6 @@ function bufferToWavBlob(buf: AudioBuffer): Blob {
   return new Blob([encodeWav(channels, buf.sampleRate)], { type: 'audio/wav' })
 }
 
-// Run YIN on the rendered buffer (middle 20% to avoid attack transient)
-function checkPitch(buf: AudioBuffer, targetMidi: number): { ok: boolean; detected: number | null } {
-  const data   = buf.getChannelData(0)
-  const offset = Math.floor(data.length * 0.2)
-  const r      = detectBufferPitch(data, buf.sampleRate, offset)
-  if (!r) return { ok: true, detected: null }   // can't detect = pass through
-  const ok = Math.abs(r.midi - targetMidi) <= 2  // ±2 semitones tolerance
-  return { ok, detected: r.midi }
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function PadVoice() {
@@ -359,12 +350,6 @@ export default function PadVoice() {
           setSelectedSample(fulfilled)
         }
         const pitched  = await renderPitchedBuffer(sampleBlob, semitones, durationSec)
-        const check    = checkPitch(pitched, midi)
-        if (!check.ok) {
-          setRenderStatus(`Pitch mismatch on ${midiNoteName(midi)} (got ${check.detected !== null ? midiNoteName(check.detected) : '?'}) — skipped`)
-          setTimeout(() => setRenderStatus(null), 3000)
-          return
-        }
         const wavBlob   = bufferToWavBlob(pitched)
         const audioUrl  = URL.createObjectURL(wavBlob)
         const absStart  = recStartRef.current + startBeat
