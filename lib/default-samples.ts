@@ -14,7 +14,7 @@ import type { BeatType }   from './beat-analyzer'
 import type { LibraryCategory } from './sound-library'
 
 const SEEDED_KEY      = '100lights-audio-seeded-v1'
-const NOTES_SEEDED_KEY = '100lights-notes-seeded-v1'
+const NOTES_SEEDED_KEY = '100lights-notes-seeded-v2'  // bumped: longer note durations
 const PARENT          = '100lights Audio'
 
 async function renderDrum(type: BeatType, durationSec: number): Promise<AudioBuffer> {
@@ -75,11 +75,11 @@ interface KeyboardPreset {
 }
 
 const KEYBOARD_PRESETS: KeyboardPreset[] = [
-  { type: 'piano-grand',    folder: 'Piano – All Notes',         minMidi: 36, maxMidi: 84, duration: 1.5, channels: 2 },
-  { type: 'piano-electric', folder: 'Elec. Piano – All Notes',   minMidi: 36, maxMidi: 84, duration: 1.5, channels: 2 },
-  { type: 'piano-rhodes',   folder: 'Rhodes – All Notes',        minMidi: 36, maxMidi: 84, duration: 1.5, channels: 2 },
-  { type: 'synth-lead',     folder: 'Synth Lead – All Notes',    minMidi: 48, maxMidi: 72, duration: 1.0, channels: 1 },
-  { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 1.2, channels: 1 },
+  { type: 'piano-grand',    folder: 'Piano – All Notes',         minMidi: 36, maxMidi: 84, duration: 4.5, channels: 2 },
+  { type: 'piano-electric', folder: 'Elec. Piano – All Notes',   minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
+  { type: 'piano-rhodes',   folder: 'Rhodes – All Notes',        minMidi: 36, maxMidi: 84, duration: 4.0, channels: 2 },
+  { type: 'synth-lead',     folder: 'Synth Lead – All Notes',    minMidi: 48, maxMidi: 72, duration: 3.0, channels: 1 },
+  { type: 'synth-bass',     folder: 'Bass – All Notes',          minMidi: 24, maxMidi: 48, duration: 3.5, channels: 1 },
 ]
 
 // ── Public entry points ───────────────────────────────────────────────────────
