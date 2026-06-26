@@ -143,7 +143,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         ref={clipDivRef}
         style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined }}
         onMouseDown={onMouseDownBody}
-        onDoubleClick={isAudioClip(clip) ? () => onSettings?.() : onDoubleClick}
+        onDoubleClick={e => { e.stopPropagation(); isAudioClip(clip) ? onSettings?.() : onDoubleClick() }}
         onContextMenu={e => {
           e.preventDefault(); e.stopPropagation()
           const rect = clipDivRef.current?.getBoundingClientRect()

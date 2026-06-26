@@ -151,7 +151,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [trackCtxMenu, track.id])
 
-  function openMidi() {
+  function openDigitalMidi() {
     const midiClips = clips.filter(c => isMidiClip(c))
     if (midiClips.length > 0) {
       const target = midiClips.find(c => c.id === selectedClipId) ?? midiClips[0]
@@ -162,6 +162,23 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
       setEditTarget({ type: 'midi-clip', clipId: newClip.id })
     }
   }
+
+  function newMidiClip() {
+    const newClip = makeMidiClip(track.id, 'MIDI Clip', engine.currentBeat, 4)
+    dispatch({ type: 'ADD_CLIP', clip: newClip })
+  }
+
+  // Auto-load waveform peaks for any audio clips that don't have them yet
+  useEffect(() => {
+    for (const clip of clips) {
+      if (!isAudioClip(clip) || clip.waveformPeaks?.length) continue
+      engine.loadClipBuffer(clip).then(buf => {
+        if (!buf) return
+        const peaks = extractPeaks(buf)
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, bufferDuration: buf.duration } })
+      }).catch(() => {})
+    }
+  }, [clips]) // eslint-disable-line
 
   const viewStartBeat = scrollLeft / beatW
   const viewEndBeat   = (scrollLeft + viewWidth) / beatW
@@ -347,13 +364,21 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
             {/* MIDI section */}
             {track.type !== 'drum' && (<>
               <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
-              <button onClick={() => { openMidi(); setTrackCtxMenu(null) }}
+              <button onClick={() => { newMidiClip(); setTrackCtxMenu(null) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
                 <span>♩</span>
-                <span>{clips.some(c => isMidiClip(c)) ? 'Open MIDI Editor' : 'New MIDI Clip'}</span>
+                <span>New MIDI Clip</span>
+              </button>
+              <button onClick={() => { openDigitalMidi(); setTrackCtxMenu(null) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+              >
+                <span>🎹</span>
+                <span>Open Digital MIDI</span>
               </button>
             </>)}
 
