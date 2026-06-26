@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
@@ -125,6 +126,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [scrollLeft, setScrollLeft] = useState(0)
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
 
   const gridRef   = useRef<HTMLDivElement>(null)
   const selBoxRef = useRef<{ startX: number; startY: number; endX: number; endY: number } | null>(null)
@@ -142,6 +144,44 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     g.gain.exponentialRampToValueAtTime(0.001, engine.ctx.currentTime + 0.5)
     osc.connect(g); g.connect(engine.masterGain)
     osc.start(); osc.stop(engine.ctx.currentTime + 0.5)
+  }
+
+  // Close ctx menu on outside click
+  useEffect(() => {
+    if (!ctxMenu) return
+    function onDown(e: MouseEvent) {
+      const menu = document.getElementById('pr-ctx-menu')
+      if (menu && !menu.contains(e.target as Node)) setCtxMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [ctxMenu])
+
+  const CHORD_PRESETS: Array<{ label: string; intervals: number[] }> = [
+    { label: 'Major',      intervals: [4, 7] },
+    { label: 'Minor',      intervals: [3, 7] },
+    { label: 'Power',      intervals: [7] },
+    { label: 'Major 7',    intervals: [4, 7, 11] },
+    { label: 'Minor 7',    intervals: [3, 7, 10] },
+    { label: 'Octave +1',  intervals: [12] },
+    { label: 'Octave −1',  intervals: [-12] },
+  ]
+
+  function expandToChord(source: MidiNote, intervals: number[]) {
+    for (const semi of intervals) {
+      const newPitch = source.pitch + semi
+      if (newPitch < 0 || newPitch > 127) continue
+      const newNote: MidiNote = {
+        id:            crypto.randomUUID(),
+        pitch:         newPitch,
+        startBeat:     source.startBeat,
+        durationBeats: source.durationBeats,
+        velocity:      source.velocity,
+        presetId:      source.presetId,
+      }
+      dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: newNote })
+    }
+    setCtxMenu(null)
   }
 
   function handleGridMouseDown(e: React.MouseEvent<HTMLDivElement>) {
@@ -351,15 +391,24 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 const y = (NUM_NOTES - 1 - note.pitch) * NOTE_H
                 const w = Math.max(4, note.durationBeats * beatW - 1)
                 const sel = selectedNotes.has(note.id)
+                const hasPreset = !!note.presetId
                 return (
-                  <div key={note.id} style={{
-                    position: 'absolute', left: x, top: y + 1,
-                    width: w, height: NOTE_H - 2,
-                    background: color,
-                    border: sel ? '1px solid #fff' : `1px solid ${color}cc`,
-                    borderRadius: 2, boxSizing: 'border-box',
-                    opacity: 0.9,
-                  }} />
+                  <div
+                    key={note.id}
+                    onContextMenu={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setCtxMenu({ note, x: e.clientX, y: e.clientY })
+                    }}
+                    style={{
+                      position: 'absolute', left: x, top: y + 1,
+                      width: w, height: NOTE_H - 2,
+                      background: color,
+                      border: sel ? '1px solid #fff' : hasPreset ? `1px solid #a78bfa` : `1px solid ${color}cc`,
+                      borderRadius: 2, boxSizing: 'border-box',
+                      opacity: 0.9, cursor: 'context-menu',
+                    }}
+                  />
                 )
               })}
             </div>
@@ -385,6 +434,44 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           />
         </div>
       </div>
+
+      {/* Right-click chord context menu */}
+      {ctxMenu && createPortal(
+        <div
+          id="pr-ctx-menu"
+          style={{
+            position: 'fixed', top: ctxMenu.y, left: ctxMenu.x, zIndex: 9999,
+            background: '#161616', border: '1px solid #2e2e2e', borderRadius: 7,
+            padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.75)', minWidth: 160,
+          }}
+        >
+          <div style={{ padding: '4px 12px 6px', fontSize: 9, fontWeight: 700, color: '#555', letterSpacing: '0.08em' }}>
+            {NOTE_NAMES[ctxMenu.note.pitch % 12]}{octave(ctxMenu.note.pitch)}
+            {ctxMenu.note.presetId && <span style={{ color: '#7c3aed', marginLeft: 5 }}>● preset</span>}
+          </div>
+          <div style={{ borderTop: '1px solid #222', paddingTop: 3 }}>
+            {CHORD_PRESETS.map(({ label, intervals }) => (
+              <button
+                key={label}
+                onClick={() => expandToChord(ctxMenu.note, intervals)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '5px 14px', fontSize: 11, color: '#ccc',
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(61,143,239,0.12)' }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+              >
+                {label}
+                <span style={{ float: 'right', fontSize: 9, color: '#555' }}>
+                  {intervals.map(i => (i > 0 ? `+${i}` : `${i}`)).join(' ')}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

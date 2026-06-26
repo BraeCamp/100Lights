@@ -9,6 +9,8 @@ import { encodeWav } from '../../../lib/wav-codec'
 import { libraryGetAll } from '../../../lib/sound-library'
 import { libraryFulfill } from '../../../lib/default-samples'
 import { getPresets, clampToPreset, presetDisplayName } from '../../../lib/midi-presets'
+import { captureAudioInput } from '../../../lib/audio-capture'
+import type { AudioInputSource } from '../../../lib/audio-capture'
 import type { MidiNote } from '../../../lib/daw-types'
 import type { LibraryEntry } from '../../../lib/sound-library'
 import type { MidiPreset } from '../../../lib/midi-presets'
@@ -282,6 +284,10 @@ export default function PadVoice() {
     })
   }
 
+  // Push-to-record mode
+  const [pushToRecord,    setPushToRecord]    = useState(false)
+  const [ptrHolding,      setPtrHolding]      = useState(false)
+
   const detectorRef        = useRef<LivePitchDetector | null>(null)
   const phaseRef           = useRef<'listening' | 'holding'>('listening')
   const heldRef            = useRef<HeldNote | null>(null)
@@ -294,6 +300,8 @@ export default function PadVoice() {
   const selectedPresetRef  = useRef<MidiPreset | null>(null)
   const sampleEntriesRef   = useRef<LibraryEntry[]>([])
   const processFrameRef    = useRef<(r: LivePitchResult | null) => void>(() => {})
+  // Controls the confidence threshold in processFrame: 0.72 normal, 0.45 high sensitivity
+  const sensitivityRef     = useRef(0.72)
   const canvasRef          = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => { clipIdRef.current = selectedClipId },       [selectedClipId])
@@ -432,6 +440,7 @@ export default function PadVoice() {
         startBeat:     safeBeat,
         durationBeats: safeDur,
         velocity:      100,
+        presetId:      selectedPresetRef.current?.id,
       }
       dispatch({ type: 'ADD_MIDI_NOTE', clipId, note })
       // Grow the MIDI clip container to fit the new note
@@ -447,7 +456,7 @@ export default function PadVoice() {
     const now     = Date.now()
     const elapsed = engine.currentBeat - recStartRef.current
 
-    if (r && r.confidence >= 0.72) {
+    if (r && r.confidence >= sensitivityRef.current) {
       silenceRef.current = null
       const midi = Math.round(r.midi)
 
@@ -534,13 +543,19 @@ export default function PadVoice() {
     const d = new LivePitchDetector()
     detectorRef.current = d
     try {
-      await d.start(r => { setResult(r); processFrameRef.current(r) }, true)
+      // If the selected track has an input source configured, use it; otherwise default to mic
+      const trackInputSrc = project.tracks.find(t => t.id === trackId)?.inputSource as AudioInputSource | undefined
+      let stream: MediaStream | undefined
+      if (trackInputSrc) {
+        stream = await captureAudioInput(trackInputSrc)
+      }
+      await d.start(r => { setResult(r); processFrameRef.current(r) }, true, stream)
       setIsRecording(true)
     } catch (e) {
       setMicError(e instanceof Error ? e.message : 'Microphone access denied')
       detectorRef.current = null
     }
-  }, [engine, playing, project.arrangementClips, dispatch, setSelectedClipId])
+  }, [engine, playing, project.arrangementClips, project.tracks, dispatch, setSelectedClipId])
 
   const stopRecording = useCallback(async () => {
     // Flush any currently-held note
@@ -872,33 +887,90 @@ export default function PadVoice() {
       </div>
 
       {/* ── Controls ── */}
-      <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        {!isRecording ? (
-          <button onClick={startRecording} disabled={!hasTarget}
-            title={hasTarget ? 'Start voice transcription' : 'Select a track first'}
+      <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        {!pushToRecord ? (
+          /* Normal record button */
+          !isRecording ? (
+            <button onClick={startRecording} disabled={!hasTarget}
+              title={hasTarget ? 'Start voice transcription' : 'Select a track first'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px',
+                borderRadius: 6, border: 'none', cursor: hasTarget ? 'pointer' : 'not-allowed',
+                background: hasTarget ? '#ef4444' : '#2a1a1a', color: hasTarget ? '#fff' : '#555',
+                fontSize: 12, fontWeight: 700, flexShrink: 0,
+              }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
+              Record Voice
+            </button>
+          ) : (
+            <button onClick={stopRecording}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px',
+                borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                background: '#1a1a1a', color: '#ef4444', outline: '1px solid #ef4444', border: 'none', flexShrink: 0,
+              }}>
+              <span style={{ width: 10, height: 10, background: '#ef4444', display: 'inline-block' }} />
+              Stop
+            </button>
+          )
+        ) : (
+          /* Push-to-record hold button */
+          <button
+            disabled={!hasTarget}
+            onPointerDown={e => {
+              e.currentTarget.setPointerCapture(e.pointerId)
+              sensitivityRef.current = 0.45
+              setPtrHolding(true)
+              void startRecording()
+            }}
+            onPointerUp={async () => {
+              sensitivityRef.current = 0.72
+              setPtrHolding(false)
+              await stopRecording()
+              engine.stop()
+            }}
+            onPointerLeave={async () => {
+              if (!ptrHolding) return
+              sensitivityRef.current = 0.72
+              setPtrHolding(false)
+              await stopRecording()
+              engine.stop()
+            }}
+            title={hasTarget ? 'Hold to record — release to pause' : 'Select a track first'}
             style={{
               display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px',
               borderRadius: 6, border: 'none', cursor: hasTarget ? 'pointer' : 'not-allowed',
-              background: hasTarget ? '#ef4444' : '#2a1a1a', color: hasTarget ? '#fff' : '#555',
+              background: ptrHolding ? '#7f1d1d' : hasTarget ? '#991b1b' : '#2a1a1a',
+              color: ptrHolding ? '#fca5a5' : hasTarget ? '#fecaca' : '#555',
               fontSize: 12, fontWeight: 700, flexShrink: 0,
+              outline: ptrHolding ? '2px solid #ef4444' : 'none',
+              userSelect: 'none', touchAction: 'none',
             }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
-            Record Voice
-          </button>
-        ) : (
-          <button onClick={stopRecording}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px',
-              borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700,
-              background: '#1a1a1a', color: '#ef4444', outline: '1px solid #ef4444', border: 'none', flexShrink: 0,
-            }}>
-            <span style={{ width: 10, height: 10, background: '#ef4444', display: 'inline-block' }} />
-            Stop
+            {ptrHolding ? 'Recording…' : 'Hold to Record'}
           </button>
         )}
 
-        {isRecording && (
-          <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700, letterSpacing: '0.06em' }}>● RECORDING</span>
+        {/* Push-to-record toggle */}
+        <button
+          onClick={() => {
+            if (isRecording) void stopRecording()
+            setPushToRecord(v => !v)
+            setPtrHolding(false)
+          }}
+          title={pushToRecord ? 'Disable push-to-record' : 'Enable push-to-record — hold the button to record with high sensitivity'}
+          style={{
+            padding: '5px 8px', borderRadius: 5, fontSize: 10, fontWeight: 700,
+            border: `1px solid ${pushToRecord ? '#ef4444' : '#2a2a2a'}`,
+            background: pushToRecord ? 'rgba(239,68,68,0.10)' : 'transparent',
+            color: pushToRecord ? '#ef4444' : '#444',
+            cursor: 'pointer', flexShrink: 0, letterSpacing: '0.04em',
+          }}>
+          PTR
+        </button>
+
+        {isRecording && !ptrHolding && (
+          <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700, letterSpacing: '0.06em' }}>● REC</span>
         )}
 
         {renderStatus && (

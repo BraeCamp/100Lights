@@ -247,6 +247,7 @@ export interface MidiNote {
   startBeat: number    // relative to clip startBeat
   durationBeats: number
   velocity: number     // 0–127
+  presetId?: string    // MIDI preset active when this note was recorded
 }
 
 export interface MidiClip {

@@ -286,10 +286,10 @@ export default function ArrangementView() {
         {/* Add track buttons */}
         <div style={{ display: 'flex', height: 36 }}>
           <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
-            {(['audio', 'midi', 'drum'] as const).map(type => (
+            {(['audio', 'drum'] as const).map(type => (
               <button key={type} onClick={() => dispatch({ type: 'ADD_TRACK', trackType: type })}
                 style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                +{type[0].toUpperCase()}
+                {type === 'audio' ? '+Track' : '+Drum'}
               </button>
             ))}
           </div>

@@ -7,8 +7,7 @@ import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-sta
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, AutomationLane } from '@/lib/daw-types'
 import { isAudioClip } from '@/lib/daw-types'
-import type { AudioInputSource } from '@/lib/audio-capture'
-import { AUDIO_INPUT_LABELS } from '@/lib/audio-capture'
+import TrackInputCard from './TrackInputCard'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
@@ -126,6 +125,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
+  const [showInputCard,  setShowInputCard]  = useState(false)
+  const inputBtnRef = useRef<HTMLButtonElement>(null)
 
   // Escape exits crop mode
   useEffect(() => {
@@ -231,7 +232,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
               style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>M</button>
             <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } })}
               style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>S</button>
-            {track.type === 'audio' && (<>
+            {track.type !== 'drum' && (<>
               {/* Arm button */}
               <button
                 title={track.armed ? 'Disarm track' : 'Arm for recording'}
@@ -239,15 +240,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                 style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${track.armed ? '#ef4444' : 'var(--border)'}`, background: track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>
                 ●
               </button>
-              {/* Input source cycler */}
+              {/* Input source — opens settings card */}
               <button
-                title={track.inputSource ? `Input: ${AUDIO_INPUT_LABELS[track.inputSource as AudioInputSource]} — click to change` : 'Set input source'}
-                onClick={e => {
-                  e.stopPropagation()
-                  const next: (string | null)[] = [null, 'mic', 'system']
-                  const cur = next.indexOf(track.inputSource ?? null)
-                  dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { inputSource: next[(cur + 1) % next.length] } })
-                }}
+                ref={inputBtnRef}
+                title="Audio input settings"
+                onClick={e => { e.stopPropagation(); setShowInputCard(v => !v) }}
                 style={{
                   fontSize: 7, height: 14, borderRadius: 2, padding: '0 3px',
                   border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
@@ -257,6 +254,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                 }}>
                 {track.inputSource === 'mic' ? 'MIC' : track.inputSource === 'system' ? 'SYS' : '·IN'}
               </button>
+              {showInputCard && inputBtnRef.current && (
+                <TrackInputCard
+                  track={track}
+                  anchorEl={inputBtnRef.current}
+                  onClose={() => setShowInputCard(false)}
+                />
+              )}
             </>)}
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
               onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
