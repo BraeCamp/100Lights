@@ -6,6 +6,9 @@ import { X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
+import { getPresets, type MidiPreset } from '@/lib/midi-presets'
+import { libraryGetAll } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 
 const NOTE_H     = 10
 const PIANO_W    = 52
@@ -127,6 +130,51 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
+  const [presets, setPresets]           = useState<MidiPreset[]>([])
+  const [showPresetPicker, setShowPresetPicker] = useState(false)
+  const [previewing, setPreviewing]     = useState(false)
+  const presetPickerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setPresets(getPresets()) }, [])
+
+  useEffect(() => {
+    if (!showPresetPicker) return
+    function onDown(e: MouseEvent) {
+      if (presetPickerRef.current && !presetPickerRef.current.contains(e.target as Node)) setShowPresetPicker(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showPresetPicker])
+
+  async function previewMiddleC(presetId: string) {
+    if (previewing || !engine.ctx) return
+    const preset = presets.find(p => p.id === presetId)
+    if (!preset) return
+    setPreviewing(true)
+    try {
+      const NOTE_NAMES_PC = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+      const target = 60
+      const targetName = `${NOTE_NAMES_PC[target % 12]}${Math.floor(target / 12) - 1}`
+      const entries = await libraryGetAll()
+      const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
+      const exact = inFolder.find(e => e.name === targetName)
+      const entry = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
+        if (!best) return e
+        return Math.abs((e.renderSpec?.midiNote ?? 60) - target) < Math.abs((best.renderSpec?.midiNote ?? 60) - target) ? e : best
+      }, null)
+      if (!entry) return
+      const fulfilled = await libraryFulfill(entry.id)
+      if (!fulfilled?.audioBlob || !engine.ctx) return
+      const buf = await engine.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      const src = engine.ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(engine.masterGain)
+      src.start()
+      src.stop(engine.ctx.currentTime + 1.5)
+    } catch { /* ignore */ } finally {
+      setTimeout(() => setPreviewing(false), 1500)
+    }
+  }
 
   const gridRef   = useRef<HTMLDivElement>(null)
   const selBoxRef = useRef<{ startX: number; startY: number; endX: number; endY: number } | null>(null)
@@ -337,6 +385,73 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <button onClick={() => setBeatW(w => Math.min(200, w * 1.3))} style={prBtn} title="Zoom in"><ZoomIn size={12} /></button>
         <button onClick={() => setBeatW(w => Math.max(20, w * 0.77))} style={prBtn} title="Zoom out"><ZoomOut size={12} /></button>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Preset picker */}
+        <div style={{ position: 'relative' }} ref={presetPickerRef}>
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            {clip.presetId && (
+              <button
+                onClick={() => previewMiddleC(clip.presetId!)}
+                disabled={previewing}
+                title="Preview middle C of this preset"
+                style={{ ...prBtn, fontSize: 10, padding: '2px 5px', border: '1px solid rgba(167,139,250,0.4)', background: previewing ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.10)', color: '#a78bfa' }}
+              >▶</button>
+            )}
+            <button
+              onClick={() => setShowPresetPicker(v => !v)}
+              style={{
+                ...prBtn, fontSize: 9, padding: '2px 8px', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                border: `1px solid ${clip.presetId ? 'rgba(167,139,250,0.5)' : 'var(--border)'}`,
+                background: clip.presetId ? 'rgba(124,58,237,0.15)' : 'transparent',
+                color: clip.presetId ? '#a78bfa' : 'var(--text-muted)',
+              }}
+              title={clip.presetId ? `Preset: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'}` : 'Assign a preset to this clip'}
+            >
+              {clip.presetId ? (presets.find(p => p.id === clip.presetId)?.name ?? 'Preset') : '+ Preset'}
+            </button>
+          </div>
+
+          {showPresetPicker && createPortal(
+            (() => {
+              const btn = presetPickerRef.current?.getBoundingClientRect()
+              if (!btn) return null
+              const spaceBelow = window.innerHeight - btn.bottom
+              const menuH = Math.min(presets.length * 28 + 48, 260)
+              const top = spaceBelow > menuH + 8 ? btn.bottom + 4 : btn.top - menuH - 4
+              return (
+                <div style={{
+                  position: 'fixed', top, right: window.innerWidth - btn.right,
+                  width: 210, zIndex: 9999,
+                  background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+                  padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
+                  maxHeight: 260, overflowY: 'auto',
+                }}>
+                  <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP PRESET</div>
+                  {clip.presetId && (
+                    <button onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: undefined } }); setShowPresetPicker(false) }}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#666', cursor: 'pointer' }}>
+                      ✕ Remove preset
+                    </button>
+                  )}
+                  {presets.map(p => (
+                    <button key={p.id}
+                      onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); setShowPresetPicker(false) }}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, cursor: 'pointer', border: 'none',
+                        background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
+                        color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
+                      }}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              )
+            })(),
+            document.body
+          )}
+        </div>
       </div>
 
       {/* Body */}

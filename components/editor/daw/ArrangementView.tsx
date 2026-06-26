@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
-import { useDaw } from '@/lib/daw-state'
+import { useDaw, makeMidiClip } from '@/lib/daw-state'
+import { isMidiClip } from '@/lib/daw-types'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 
 const SEC_H   = 24
@@ -179,7 +180,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, selectedTrackId, editTarget, setEditTarget } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -239,6 +240,29 @@ export default function ArrangementView() {
     setScrollLeft(0)
   }
 
+  function openPianoRoll() {
+    // If a MIDI clip is selected, open it
+    if (selectedClipId) {
+      const clip = project.arrangementClips.find(c => c.id === selectedClipId)
+      if (clip && isMidiClip(clip)) { setEditTarget({ type: 'midi-clip', clipId: clip.id }); return }
+    }
+    // Find any MIDI clip on selected track
+    if (selectedTrackId) {
+      const track = project.tracks.find(t => t.id === selectedTrackId)
+      if (track && track.type !== 'drum') {
+        const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
+        if (existing) { setEditTarget({ type: 'midi-clip', clipId: existing.id }); return }
+        // Create a new MIDI clip on the selected track
+        const newClip = makeMidiClip(selectedTrackId, 'MIDI', engine.currentBeat, 4)
+        dispatch({ type: 'ADD_CLIP', clip: newClip })
+        setEditTarget({ type: 'midi-clip', clipId: newClip.id })
+        return
+      }
+    }
+    // Toggle off if already open
+    if (editTarget) { setEditTarget(null); return }
+  }
+
   return (
     <div ref={outerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative' }}>
 
@@ -256,6 +280,14 @@ export default function ArrangementView() {
           </button>
         ))}
         <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 2 }} title="Hold ⌥ Option while dragging to bypass snap">⌥=free</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
+          ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
+          border: `1px solid ${editTarget?.type === 'midi-clip' ? '#7c3aed' : 'var(--border)'}`,
+          background: editTarget?.type === 'midi-clip' ? 'rgba(124,58,237,0.18)' : 'transparent',
+          color: editTarget?.type === 'midi-clip' ? '#a78bfa' : 'var(--text-muted)',
+          letterSpacing: '0.04em',
+        }}>PIANO ROLL</button>
       </div>
 
       {/* Ruler row */}

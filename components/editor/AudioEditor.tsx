@@ -14,6 +14,7 @@ import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import SoundLibraryPanel from './SoundLibrary'
 import { seedDefaultSamples } from '@/lib/default-samples'
+import { getPresets } from '@/lib/midi-presets'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
 
@@ -106,6 +107,9 @@ export default function AudioEditor(props: AudioEditorProps) {
   const inputStreamsRef = useRef<Map<string, MediaStream>>(new Map())
   // Seed default samples once per browser (no-op if already done)
   useEffect(() => { seedDefaultSamples().catch(() => {}) }, [])
+
+  // Keep engine in sync with available MIDI presets
+  useEffect(() => { engineRef.current?.setPresets(getPresets()) }, [])
 
   useEffect(() => { projectRef.current = project }, [project])
 

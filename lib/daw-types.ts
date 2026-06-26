@@ -259,6 +259,7 @@ export interface MidiClip {
   durationBeats: number
   notes: MidiNote[]
   isDrumClip: boolean
+  presetId?: string   // MIDI preset for note playback (overrides track instrument)
 }
 
 export type DawClip = AudioClip | MidiClip

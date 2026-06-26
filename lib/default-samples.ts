@@ -82,7 +82,7 @@ async function fetchSoundfont(url: string): Promise<Record<string, string>> {
   return map
 }
 
-async function renderSoundfont(
+export async function renderSoundfont(
   soundfontUrl: string,
   targetMidi:   number,
 ): Promise<AudioBuffer> {

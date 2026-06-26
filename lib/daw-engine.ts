@@ -6,6 +6,9 @@ import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
+import { libraryGetAll } from './sound-library'
+import { libraryFulfill } from './default-samples'
+import type { MidiPreset } from './midi-presets'
 
 // Per-track Web Audio routing nodes
 interface TrackNodes {
@@ -76,6 +79,13 @@ export class DawEngine extends EventTarget {
   // MIDI scheduling
   private _scheduledNoteKeys = new Set<NoteKey>()
   private _noteKeyVersion   = 0
+
+  // MIDI preset playback
+  private _presets:         MidiPreset[] = []
+  private _presetBufCache = new Map<string, AudioBuffer | null>()   // key: `${presetId}:${pitch}`
+  private _presetLoading  = new Set<string>()
+
+  setPresets(presets: MidiPreset[]) { this._presets = presets }
 
   // Transport
   isPlaying = false
@@ -459,6 +469,35 @@ export class DawEngine extends EventTarget {
     return Math.min(1, elapsed / duration)
   }
 
+  // ── Preset buffer loading ─────────────────────────────────────────────────
+
+  private async _loadPresetBuffer(presetId: string, pitch: number): Promise<void> {
+    const key = `${presetId}:${pitch}`
+    if (this._presetLoading.has(key)) return
+    this._presetLoading.add(key)
+    try {
+      const preset = this._presets.find(p => p.id === presetId)
+      if (!preset) { this._presetBufCache.set(key, null); return }
+
+      const entries = await libraryGetAll()
+      const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+      const noteName = `${NOTE_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
+      const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
+      const exact    = inFolder.find(e => e.name === noteName)
+      const entry    = exact ?? inFolder[0]
+      if (!entry) { this._presetBufCache.set(key, null); return }
+
+      const fulfilled = await libraryFulfill(entry.id)
+      if (!fulfilled?.audioBlob || !this.ctx) { this._presetBufCache.set(key, null); return }
+      const buf = await this.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      this._presetBufCache.set(key, buf)
+    } catch {
+      this._presetBufCache.set(key, null)
+    } finally {
+      this._presetLoading.delete(key)
+    }
+  }
+
   // ── Arrangement scheduling ─────────────────────────────────────────────────
 
   private _startScheduler() {
@@ -534,9 +573,27 @@ export class DawEngine extends EventTarget {
         const startAt = contextNow + this.beatsToSeconds(Math.max(0, noteAbsBeat - now))
         const dur     = this.beatsToSeconds(note.durationBeats)
 
-        this._scheduledNoteKeys.add(noteKey)
-        playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, startAt, dur)
+        // Use clip-level preset if set, otherwise fall back to track instrument
+        if (clip.presetId) {
+          const bufKey = `${clip.presetId}:${note.pitch}`
+          const buf    = this._presetBufCache.get(bufKey)
+          if (buf === undefined) {
+            // Buffer not loaded yet — kick off async load; note will be retried next tick
+            void this._loadPresetBuffer(clip.presetId, note.pitch)
+            continue
+          }
+          if (buf !== null) {
+            const src = this.ctx.createBufferSource()
+            src.buffer = buf
+            src.connect(nodes.effectsInput)
+            src.start(startAt)
+            if (dur > 0) src.stop(startAt + dur)
+          }
+        } else {
+          playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, startAt, dur)
+        }
 
+        this._scheduledNoteKeys.add(noteKey)
         // Expire key after note ends — capture version so a loop-reset clear() doesn't invalidate a fresh schedule
         const expireMs = (startAt - contextNow + dur + 0.1) * 1000
         const keyVer   = this._noteKeyVersion

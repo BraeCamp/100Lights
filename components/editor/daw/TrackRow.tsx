@@ -244,8 +244,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
           style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: isSelected ? 'rgba(61,143,239,0.10)' : 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s' }}
         >
-          {/* Name row — MIDI button lives here so it's always visible */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+          {/* Name row */}
+          <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
                 onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) }}
@@ -256,20 +256,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
               <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
                 {track.name}
               </span>
-            )}
-            {track.type !== 'drum' && (
-              <button
-                title={clips.some(c => isMidiClip(c)) ? 'Open MIDI editor' : 'New MIDI clip'}
-                onClick={e => { e.stopPropagation(); openMidi() }}
-                style={{
-                  fontSize: 9, padding: '1px 5px', height: 16, borderRadius: 3, flexShrink: 0,
-                  border: `1px solid ${clips.some(c => isMidiClip(c)) ? '#7c3aed' : 'rgba(124,58,237,0.4)'}`,
-                  background: clips.some(c => isMidiClip(c)) ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.06)',
-                  color: clips.some(c => isMidiClip(c)) ? '#a78bfa' : 'rgba(167,139,250,0.5)',
-                  cursor: 'pointer', fontWeight: 700, letterSpacing: '0.03em',
-                }}>
-                MIDI
-              </button>
             )}
           </div>
           <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
