@@ -244,17 +244,34 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
           style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: isSelected ? 'rgba(61,143,239,0.10)' : 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s' }}
         >
-          {editing ? (
-            <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-              onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) }}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } e.stopPropagation() }}
-              style={{ fontSize: 11, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none' }}
-            />
-          ) : (
-            <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
-              {track.name}
-            </span>
-          )}
+          {/* Name row — MIDI button lives here so it's always visible */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            {editing ? (
+              <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+                onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) }}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } e.stopPropagation() }}
+                style={{ flex: 1, fontSize: 11, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
+              />
+            ) : (
+              <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
+                {track.name}
+              </span>
+            )}
+            {track.type !== 'drum' && (
+              <button
+                title={clips.some(c => isMidiClip(c)) ? 'Open MIDI editor' : 'New MIDI clip'}
+                onClick={e => { e.stopPropagation(); openMidi() }}
+                style={{
+                  fontSize: 9, padding: '1px 5px', height: 16, borderRadius: 3, flexShrink: 0,
+                  border: `1px solid ${clips.some(c => isMidiClip(c)) ? '#7c3aed' : 'rgba(124,58,237,0.4)'}`,
+                  background: clips.some(c => isMidiClip(c)) ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.06)',
+                  color: clips.some(c => isMidiClip(c)) ? '#a78bfa' : 'rgba(167,139,250,0.5)',
+                  cursor: 'pointer', fontWeight: 700, letterSpacing: '0.03em',
+                }}>
+                MIDI
+              </button>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
             <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } })}
               style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>M</button>
@@ -300,13 +317,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
               onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
               style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
             >FX</button>
-            {track.type !== 'drum' && (
-              <button
-                title="Open MIDI editor"
-                onClick={e => { e.stopPropagation(); openMidi() }}
-                style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${clips.some(c => isMidiClip(c)) ? '#a78bfa' : 'var(--border)'}`, background: clips.some(c => isMidiClip(c)) ? 'rgba(167,139,250,0.12)' : 'var(--bg-surface)', color: clips.some(c => isMidiClip(c)) ? '#a78bfa' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
-              >♩</button>
-            )}
             <button
               title="Track settings (right-click for more)"
               onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
