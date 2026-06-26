@@ -104,7 +104,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <ProjectEditor
-        projectId={id}
+        projectId={isDemo ? undefined : id}
         projectName={isDemo ? 'The Creator Mindset — Demo' : '…'}
         modules={isDemo ? ['video', 'audio', 'transcript', 'content', 'storyboard'] : undefined}
         allowImport={!isDemo}

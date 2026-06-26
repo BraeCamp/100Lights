@@ -310,6 +310,9 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   }, [projectId]) // eslint-disable-line
 
   // ── Save ──────────────────────────────────────────────────
+  // Demo projects (no projectId, allowImport=false) are read-only — never persisted
+  const isDemo = !projectId && !allowImport
+
   async function save(patch: {
     name?: string
     outputs?: Output[]
@@ -347,6 +350,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       modules:     mods,
     }
 
+    if (isDemo) return
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
