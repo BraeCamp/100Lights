@@ -289,6 +289,7 @@ export default function PadVoice() {
   const [ptrHolding,      setPtrHolding]      = useState(false)
 
   const detectorRef        = useRef<LivePitchDetector | null>(null)
+  const previewDetectorRef = useRef<LivePitchDetector | null>(null)
   const phaseRef           = useRef<'listening' | 'holding'>('listening')
   const heldRef            = useRef<HeldNote | null>(null)
   const silenceRef         = useRef<number | null>(null)
@@ -620,7 +621,20 @@ export default function PadVoice() {
     }
   }, [engine, commitNote, project.tempo])
 
-  useEffect(() => () => { detectorRef.current?.stop() }, [])
+  useEffect(() => () => { detectorRef.current?.stop(); previewDetectorRef.current?.stop() }, [])
+
+  // In PTR mode, run a preview detector so the tuner is live before the button is pressed
+  useEffect(() => {
+    if (!pushToRecord || isRecording) { previewDetectorRef.current?.stop(); previewDetectorRef.current = null; return }
+    let cancelled = false
+    const d = new LivePitchDetector()
+    previewDetectorRef.current = d
+    const trackInputSrc = project.tracks.find(t => t.id === trackIdRef.current)?.inputSource as AudioInputSource | undefined
+    captureAudioInput(trackInputSrc ?? 'mic')
+      .then(stream => { if (!cancelled) d.start(r => setResult(r), false, stream) })
+      .catch(() => {})
+    return () => { cancelled = true; d.stop(); if (previewDetectorRef.current === d) previewDetectorRef.current = null }
+  }, [pushToRecord, isRecording, project.tracks])
 
   // ── Derived display ──────────────────────────────────────────────────────────
   const conf      = result?.confidence ?? 0
@@ -919,6 +933,7 @@ export default function PadVoice() {
             disabled={!hasTarget}
             onPointerDown={e => {
               e.currentTarget.setPointerCapture(e.pointerId)
+              previewDetectorRef.current?.stop(); previewDetectorRef.current = null
               sensitivityRef.current = 0.45
               setPtrHolding(true)
               void startRecording()
