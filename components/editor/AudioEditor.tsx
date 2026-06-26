@@ -424,9 +424,11 @@ export default function AudioEditor(props: AudioEditorProps) {
     setPosition,
     metronome,
     setMetronome,
+    showPads,
+    setShowPads,
   }), [
     project, dispatch, view, editTarget, selectedTrackId, selectedClipId, selectedClipIds,
-    playing, recording, position, setPosition, metronome,
+    playing, recording, position, setPosition, metronome, showPads,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────

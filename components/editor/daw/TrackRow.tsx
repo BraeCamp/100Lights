@@ -116,7 +116,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
 export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const dragHRef  = useRef<{ startY: number; startH: number } | null>(null)
@@ -152,15 +152,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   }, [trackCtxMenu, track.id])
 
   function openDigitalMidi() {
-    const midiClips = clips.filter(c => isMidiClip(c))
-    if (midiClips.length > 0) {
-      const target = midiClips.find(c => c.id === selectedClipId) ?? midiClips[0]
-      setEditTarget({ type: 'midi-clip', clipId: target.id })
-    } else {
-      const newClip = makeMidiClip(track.id, 'MIDI', engine.currentBeat, 4)
-      dispatch({ type: 'ADD_CLIP', clip: newClip })
-      setEditTarget({ type: 'midi-clip', clipId: newClip.id })
-    }
+    setSelectedTrackId(track.id)
+    setShowPads(true)
   }
 
   function newMidiClip() {
