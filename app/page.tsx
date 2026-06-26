@@ -4,7 +4,7 @@ import { Zap, Film, Mic, FileText, Camera, Newspaper, AlignLeft, ArrowRight, Che
 import PricingSection from '@/components/PricingSection'
 
 export const metadata: Metadata = {
-  title: 'AI Content Repurposing — Turn Video into Articles, Blog Posts & More',
+  title: { absolute: '100Lights — AI Content Repurposing' },
   description: 'Upload any video, podcast, or recording. 100Lights transcribes and generates articles, blog posts, show notes, and clips automatically.',
   openGraph: {
     title: '100Lights — AI Content Repurposing',
