@@ -18,6 +18,7 @@ export type DawAction =
   // Tracks
   | { type: 'ADD_TRACK'; trackType: TrackType }
   | { type: 'REMOVE_TRACK'; trackId: string }
+  | { type: 'DUPLICATE_TRACK'; trackId: string }
   | { type: 'UPDATE_TRACK'; trackId: string; patch: Partial<DawTrack> }
   | { type: 'REORDER_TRACKS'; ids: string[] }
   // Clips (arrangement)
@@ -106,6 +107,37 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         t.id === action.trackId ? { ...t, ...action.patch } : t
       )
       return { ...project, tracks }
+    }
+
+    case 'DUPLICATE_TRACK': {
+      const source = project.tracks.find(t => t.id === action.trackId)
+      if (!source) return project
+      const newTrackId = crypto.randomUUID()
+      const newTrack: DawTrack = {
+        ...source,
+        id:      newTrackId,
+        name:    `${source.name} copy`,
+        effects: source.effects.map(e => ({ ...e, id: crypto.randomUUID() })),
+      }
+      const newClips = project.arrangementClips
+        .filter(c => c.trackId === source.id)
+        .map(c => ({ ...c, id: crypto.randomUUID(), trackId: newTrackId }))
+      const newLanes = project.automationLanes
+        .filter(l => l.trackId === source.id)
+        .map(l => ({ ...l, id: crypto.randomUUID(), trackId: newTrackId }))
+      const srcIdx = project.tracks.findIndex(t => t.id === source.id)
+      const tracks = [
+        ...project.tracks.slice(0, srcIdx + 1),
+        newTrack,
+        ...project.tracks.slice(srcIdx + 1),
+      ]
+      const grid = { ...project.sessionGrid, [newTrackId]: Array(project.scenes.length).fill(null) }
+      return {
+        ...project, tracks,
+        arrangementClips: [...project.arrangementClips, ...newClips],
+        automationLanes:  [...project.automationLanes,  ...newLanes],
+        sessionGrid: grid,
+      }
     }
 
     case 'REORDER_TRACKS': {

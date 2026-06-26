@@ -6,8 +6,9 @@ import { Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, AutomationLane } from '@/lib/daw-types'
-import { isAudioClip } from '@/lib/daw-types'
+import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
 import TrackInputCard from './TrackInputCard'
+// AudioInputSource and AUDIO_INPUT_LABELS removed — TrackInputCard handles device labels directly
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
@@ -126,6 +127,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   const [showFx,         setShowFx]         = useState(false)
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
+  const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
   const inputBtnRef = useRef<HTMLButtonElement>(null)
 
   // Escape exits crop mode
@@ -135,6 +137,31 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [croppingClipId])
+
+  // Close track context menu on outside click / Escape
+  useEffect(() => {
+    if (!trackCtxMenu) return
+    function onDown(e: MouseEvent) {
+      const menu = document.getElementById(`tcm-${track.id}`)
+      if (menu && !menu.contains(e.target as Node)) setTrackCtxMenu(null)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setTrackCtxMenu(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [trackCtxMenu, track.id])
+
+  function openMidi() {
+    const midiClips = clips.filter(c => isMidiClip(c))
+    if (midiClips.length > 0) {
+      const target = midiClips.find(c => c.id === selectedClipId) ?? midiClips[0]
+      setEditTarget({ type: 'midi-clip', clipId: target.id })
+    } else {
+      const newClip = makeMidiClip(track.id, 'MIDI', engine.currentBeat, 4)
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+      setEditTarget({ type: 'midi-clip', clipId: newClip.id })
+    }
+  }
 
   const viewStartBeat = scrollLeft / beatW
   const viewEndBeat   = (scrollLeft + viewWidth) / beatW
@@ -214,6 +241,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
         {/* Header */}
         <div
           onClick={e => { if (!(e.target as HTMLElement).closest('button,input,select')) setSelectedTrackId(track.id) }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
           style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: isSelected ? 'rgba(61,143,239,0.10)' : 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s' }}
         >
           {editing ? (
@@ -252,7 +280,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                   color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
                   cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap',
                 }}>
-                {track.inputSource === 'mic' ? 'MIC' : track.inputSource === 'system' ? 'SYS' : '·IN'}
+                {!track.inputSource ? '·IN' : track.inputSource === 'system' ? 'SYS' : 'MIC'}
               </button>
               {showInputCard && inputBtnRef.current && (
                 <TrackInputCard
@@ -272,13 +300,108 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
               onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
               style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
             >FX</button>
+            {track.type !== 'drum' && (
+              <button
+                title="Open MIDI editor"
+                onClick={e => { e.stopPropagation(); openMidi() }}
+                style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${clips.some(c => isMidiClip(c)) ? '#a78bfa' : 'var(--border)'}`, background: clips.some(c => isMidiClip(c)) ? 'rgba(167,139,250,0.12)' : 'var(--bg-surface)', color: clips.some(c => isMidiClip(c)) ? '#a78bfa' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
+              >♩</button>
+            )}
             <button
-              title="Open device panel"
+              title="Track settings (right-click for more)"
               onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
               style={{ fontSize: 9, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
             >⚙</button>
           </div>
         </div>
+
+        {/* Track header context menu */}
+        {trackCtxMenu && createPortal(
+          <div
+            id={`tcm-${track.id}`}
+            style={{
+              position: 'fixed',
+              top:  Math.min(trackCtxMenu.y, window.innerHeight - 320),
+              left: Math.min(trackCtxMenu.x, window.innerWidth  - 200),
+              zIndex: 9999, minWidth: 188,
+              background: '#161616', border: '1px solid #2e2e2e',
+              borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
+              padding: '4px 0', userSelect: 'none',
+            }}
+          >
+            {/* Track name header */}
+            <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid #222' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</div>
+              <div style={{ fontSize: 9, color: '#555', marginTop: 1, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{track.type} track</div>
+            </div>
+
+            {/* Actions */}
+            {[
+              { label: 'Rename',    action: () => { setEditing(true); setDraft(track.name) } },
+              { label: 'Duplicate', action: () => dispatch({ type: 'DUPLICATE_TRACK', trackId: track.id }) },
+              { label: 'Delete',    action: () => dispatch({ type: 'REMOVE_TRACK',    trackId: track.id }), danger: true },
+            ].map(({ label, action, danger }) => (
+              <button key={label} onClick={() => { action(); setTrackCtxMenu(null) }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: danger ? '#f87171' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.10)' : 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+              >{label}</button>
+            ))}
+
+            {/* MIDI section */}
+            {track.type !== 'drum' && (<>
+              <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+              <button onClick={() => { openMidi(); setTrackCtxMenu(null) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+              >
+                <span>♩</span>
+                <span>{clips.some(c => isMidiClip(c)) ? 'Open MIDI Editor' : 'New MIDI Clip'}</span>
+              </button>
+            </>)}
+
+            {/* Mute / Solo */}
+            <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+            {[
+              { label: track.mute ? 'Unmute'   : 'Mute',  action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }), active: track.mute },
+              { label: track.solo ? 'Unsolo'   : 'Solo',  action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }), active: track.solo },
+            ].map(({ label, action, active }) => (
+              <button key={label} onClick={() => { action(); setTrackCtxMenu(null) }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: active ? '#facc15' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+              >{label}</button>
+            ))}
+
+            {/* Color picker */}
+            <div style={{ borderTop: '1px solid #222', margin: '3px 0', padding: '6px 12px' }}>
+              <div style={{ fontSize: 9, color: '#555', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Color</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {TRACK_COLORS.map(c => (
+                  <button key={c} title={c}
+                    onClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { color: c } }); setTrackCtxMenu(null) }}
+                    style={{ width: 16, height: 16, borderRadius: '50%', background: c, border: track.color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', padding: 0, boxSizing: 'border-box' }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Height presets */}
+            <div style={{ borderTop: '1px solid #222', margin: '0', padding: '6px 12px 8px' }}>
+              <div style={{ fontSize: 9, color: '#555', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Height</div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[['Compact', 40], ['Normal', 64], ['Tall', 120]] .map(([label, h]) => (
+                  <button key={label}
+                    onClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { height: h as number } }); setTrackCtxMenu(null) }}
+                    style={{ flex: 1, fontSize: 9, padding: '3px 0', borderRadius: 4, cursor: 'pointer', border: `1px solid ${track.height === h ? 'var(--accent)' : '#2a2a2a'}`, background: track.height === h ? 'rgba(61,143,239,0.12)' : 'transparent', color: track.height === h ? 'var(--accent)' : '#666' }}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
         {/* Lane */}
         <div

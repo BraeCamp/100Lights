@@ -5,7 +5,8 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { LivePitchDetector, LivePitchResult } from '../../../lib/pitch-detector'
-import { captureAudioInput, AudioInputSource, AUDIO_INPUT_LABELS } from '../../../lib/audio-capture'
+import { captureAudioInput, listAudioInputDevices } from '../../../lib/audio-capture'
+import type { AudioDevice } from '../../../lib/audio-capture'
 import { useDaw } from '../../../lib/daw-state'
 import { isMidiClip, MidiNote } from '../../../lib/daw-types'
 
@@ -39,8 +40,6 @@ function tunerColor(cents: number, conf: number) {
 
 const NOTE_DUR_LABELS: Record<number, string> = { 0.25: '1/16', 0.5: '1/8', 1: '♩', 2: '𝅗𝅥' }
 
-const INPUT_SOURCES: AudioInputSource[] = ['mic', 'system']
-
 export default function PadTuner() {
   const { project, dispatch, engine, selectedClipId } = useDaw()
 
@@ -50,13 +49,22 @@ export default function PadTuner() {
   const [captured,    setCaptured]    = useState(false)
   const [capError,    setCapError]    = useState<string | null>(null)
   const [noteDur,     setNoteDur]     = useState(1)
-  const [inputSource, setInputSource] = useState<AudioInputSource>('mic')
+  const [inputSource, setInputSource] = useState<string>('mic')
+  const [devices,     setDevices]     = useState<AudioDevice[]>([])
+  const [loadingDevs, setLoadingDevs] = useState(true)
 
   const detectorRef  = useRef<LivePitchDetector | null>(null)
   const latestResult = useRef<LivePitchResult | null>(null)
   latestResult.current = result
 
   useEffect(() => () => { detectorRef.current?.stop() }, [])
+
+  useEffect(() => {
+    listAudioInputDevices(true).then(devs => {
+      setDevices(devs)
+      setLoadingDevs(false)
+    }).catch(() => setLoadingDevs(false))
+  }, [])
 
   async function startListening() {
     setMicError(null)
@@ -201,34 +209,61 @@ export default function PadTuner() {
       </svg>
 
       {/* ── Input source selector ── */}
-      {!listening && (
-        <div style={{ display: 'flex', gap: 4 }}>
-          {INPUT_SOURCES.map(src => (
-            <button key={src} onClick={() => setInputSource(src)} style={{
-              fontSize: 10, padding: '3px 10px', borderRadius: 4, cursor: 'pointer',
-              border: `1px solid ${inputSource === src ? C.accent : C.border}`,
-              background: inputSource === src ? `${C.accent}22` : 'transparent',
-              color: inputSource === src ? C.accent : C.muted,
-            }}>{AUDIO_INPUT_LABELS[src]}</button>
-          ))}
-        </div>
-      )}
+      {!listening && (() => {
+        // Build full list: real mic devices + Computer Audio
+        const allSources: Array<{ id: string; label: string }> = [
+          ...devices,
+          { id: 'system', label: 'Computer Audio' },
+        ]
+        const selectedLabel = allSources.find(s => s.id === inputSource)?.label ?? 'Microphone'
+        return (
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3, alignSelf: 'stretch' }}>
+            <div style={{ fontSize: 9, color: C.muted, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: 2 }}>Input</div>
+            {loadingDevs ? (
+              <div style={{ fontSize: 11, color: C.muted, opacity: 0.5 }}>Loading devices…</div>
+            ) : (
+              allSources.map(src => (
+                <button key={src.id} onClick={() => setInputSource(src.id)} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '5px 10px', borderRadius: 5, cursor: 'pointer', textAlign: 'left',
+                  border: `1px solid ${inputSource === src.id ? 'rgba(61,143,239,0.5)' : 'var(--border)'}`,
+                  background: inputSource === src.id ? 'rgba(61,143,239,0.10)' : 'transparent',
+                  color: inputSource === src.id ? '#a8d4ff' : C.muted,
+                }}>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    border: `1.5px solid ${inputSource === src.id ? '#3d8fef' : '#555'}`,
+                    background: inputSource === src.id ? '#3d8fef' : 'transparent',
+                  }} />
+                  <span style={{ fontSize: 11, fontWeight: inputSource === src.id ? 600 : 400 }}>{src.label}</span>
+                </button>
+              ))
+            )}
 
-      {/* ── Start / stop button ── */}
-      {micError && <div style={{ fontSize: 11, color: C.red, textAlign: 'center' }}>{micError}</div>}
-      <button onClick={listening ? stopListening : startListening} style={{
-        padding: '5px 18px', fontSize: 12, borderRadius: 6, cursor: 'pointer', fontWeight: 600,
-        border: `1px solid ${listening ? C.red : C.accent}`,
-        background: listening ? `${C.red}22` : `${C.accent}22`,
-        color: listening ? C.red : C.accent,
-      }}>{listening ? '⏹ Stop' : `Start ${AUDIO_INPUT_LABELS[inputSource]}`}</button>
+            {/* Start/stop */}
+            {micError && <div style={{ fontSize: 11, color: C.red, textAlign: 'center', marginTop: 2 }}>{micError}</div>}
+            <button onClick={startListening} disabled={loadingDevs} style={{
+              marginTop: 4, padding: '5px 18px', fontSize: 12, borderRadius: 6, cursor: loadingDevs ? 'not-allowed' : 'pointer', fontWeight: 600,
+              border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
+            }}>▶ Start {selectedLabel}</button>
+            <div style={{ fontSize: 10, color: C.muted, opacity: 0.6, textAlign: 'center' }}>
+              {inputSource === 'system'
+                ? 'Captures audio playing on this computer — works even with output muted'
+                : 'Sing or play into your mic — detected note appears above'}
+            </div>
+          </div>
+        )
+      })()}
 
-      {!listening && (
-        <div style={{ fontSize: 11, color: C.muted, textAlign: 'center', opacity: 0.7 }}>
-          {inputSource === 'system'
-            ? 'Captures audio playing on this computer — works even with output muted'
-            : 'Sing or play into your mic — detected note appears above'}
-        </div>
+      {/* ── Stop button (when listening) ── */}
+      {listening && (
+        <>
+          {micError && <div style={{ fontSize: 11, color: C.red, textAlign: 'center' }}>{micError}</div>}
+          <button onClick={stopListening} style={{
+            padding: '5px 18px', fontSize: 12, borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+            border: `1px solid ${C.red}`, background: `${C.red}22`, color: C.red,
+          }}>⏹ Stop</button>
+        </>
       )}
 
       {/* ── Controls (when listening) ── */}

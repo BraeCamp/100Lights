@@ -2,15 +2,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
-import { captureAudioInput, AUDIO_INPUT_LABELS } from '@/lib/audio-capture'
+import { captureAudioInput, listAudioInputDevices } from '@/lib/audio-capture'
+import type { AudioDevice } from '@/lib/audio-capture'
 import type { DawTrack } from '@/lib/daw-types'
-import type { AudioInputSource } from '@/lib/audio-capture'
-
-const SOURCES: Array<{ value: AudioInputSource | null; label: string; desc: string }> = [
-  { value: null,     label: 'None',           desc: 'No external input' },
-  { value: 'mic',    label: 'Microphone',     desc: 'Capture from microphone' },
-  { value: 'system', label: 'Computer Audio', desc: 'Internal audio — works even when output is muted' },
-]
 
 interface Props {
   track: DawTrack
@@ -22,17 +16,27 @@ type TestState = 'idle' | 'testing' | 'error'
 
 export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
   const { dispatch } = useDaw()
-  const [testState, setTestState]   = useState<TestState>('idle')
-  const [level,     setLevel]       = useState(0)
-  const [errMsg,    setErrMsg]      = useState('')
+  const [devices,     setDevices]    = useState<AudioDevice[]>([])
+  const [loadingDevs, setLoadingDevs] = useState(true)
+  const [testState,   setTestState]  = useState<TestState>('idle')
+  const [level,       setLevel]      = useState(0)
+  const [errMsg,      setErrMsg]     = useState('')
   const monitorRef = useRef<{ stream: MediaStream; ctx: AudioContext; raf: number } | null>(null)
 
+  // Enumerate devices on mount
+  useEffect(() => {
+    listAudioInputDevices(true).then(devs => {
+      setDevices(devs)
+      setLoadingDevs(false)
+    }).catch(() => setLoadingDevs(false))
+  }, [])
+
   // Position below (or above if near bottom) the anchor button
-  const rect   = anchorEl.getBoundingClientRect()
-  const cardW  = 240
-  const left   = Math.min(rect.left, window.innerWidth - cardW - 8)
+  const rect      = anchorEl.getBoundingClientRect()
+  const cardW     = 256
+  const left      = Math.min(rect.left, window.innerWidth - cardW - 8)
   const spaceBelow = window.innerHeight - rect.bottom
-  const top    = spaceBelow > 180 ? rect.bottom + 4 : rect.top - 4  // flip if cramped
+  const top       = spaceBelow > 220 ? rect.bottom + 4 : rect.top - 4
 
   // Close on outside click or Escape
   useEffect(() => {
@@ -49,16 +53,15 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
     }
   }, [anchorEl, onClose])
 
-  // Stop test monitor on unmount
   useEffect(() => () => { stopTest() }, [])
 
-  async function startTest(src: AudioInputSource) {
+  async function startTest(src: string) {
     stopTest()
     setErrMsg('')
     setTestState('testing')
     try {
-      const stream = await captureAudioInput(src)
-      const ctx    = new AudioContext()
+      const stream  = await captureAudioInput(src)
+      const ctx     = new AudioContext()
       const srcNode = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 512
@@ -92,12 +95,19 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
     setLevel(0)
   }
 
-  function selectSource(src: AudioInputSource | null) {
+  function selectSource(src: string | null) {
     dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { inputSource: src } })
     if (!src) stopTest()
   }
 
   const cur = track.inputSource ?? null
+
+  // All selectable options: None, then real mic devices, then Computer Audio
+  const allOptions: Array<{ id: string | null; label: string; desc?: string }> = [
+    { id: null, label: 'None', desc: 'No external input' },
+    ...devices.map(d => ({ id: d.id, label: d.label })),
+    { id: 'system', label: 'Computer Audio', desc: 'Internal audio — works even when output is muted' },
+  ]
 
   const card = (
     <div
@@ -106,49 +116,50 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
         position: 'fixed', top, left, width: cardW, zIndex: 9999,
         background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
         padding: '10px 12px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
-        transformOrigin: spaceBelow > 180 ? 'top left' : 'bottom left',
       }}
     >
-      {/* Header */}
       <div style={{ fontSize: 9, fontWeight: 700, color: '#666', letterSpacing: '0.08em', marginBottom: 8 }}>
         INPUT — {track.name.toUpperCase()}
       </div>
 
-      {/* Source options */}
-      {SOURCES.map(({ value, label, desc }) => {
-        const active = cur === value
-        return (
-          <button
-            key={String(value)}
-            onClick={() => selectSource(value)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-              padding: '6px 8px', marginBottom: 3, borderRadius: 5, cursor: 'pointer',
-              border: `1px solid ${active ? 'rgba(61,143,239,0.5)' : '#222'}`,
-              background: active ? 'rgba(61,143,239,0.10)' : 'transparent',
-            }}
-          >
-            <div style={{
-              width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
-              border: `1.5px solid ${active ? '#3d8fef' : '#444'}`,
-              background: active ? '#3d8fef' : 'transparent',
-            }} />
-            <div>
-              <div style={{ fontSize: 11, color: active ? '#a8d4ff' : '#aaa', fontWeight: active ? 600 : 400 }}>
-                {label}
+      {loadingDevs ? (
+        <div style={{ padding: '10px 0', fontSize: 11, color: '#555', textAlign: 'center' }}>Loading devices…</div>
+      ) : (
+        allOptions.map(({ id, label, desc }) => {
+          const active = cur === id
+          return (
+            <button
+              key={String(id)}
+              onClick={() => selectSource(id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                padding: '6px 8px', marginBottom: 3, borderRadius: 5, cursor: 'pointer',
+                border: `1px solid ${active ? 'rgba(61,143,239,0.5)' : '#222'}`,
+                background: active ? 'rgba(61,143,239,0.10)' : 'transparent',
+              }}
+            >
+              <div style={{
+                width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
+                border: `1.5px solid ${active ? '#3d8fef' : '#444'}`,
+                background: active ? '#3d8fef' : 'transparent',
+              }} />
+              <div>
+                <div style={{ fontSize: 11, color: active ? '#a8d4ff' : '#aaa', fontWeight: active ? 600 : 400 }}>
+                  {label}
+                </div>
+                {desc && <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>{desc}</div>}
               </div>
-              <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>{desc}</div>
-            </div>
-          </button>
-        )
-      })}
+            </button>
+          )
+        })
+      )}
 
       {/* Test panel */}
       {cur && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #222' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
-              onClick={() => testState === 'testing' ? stopTest() : startTest(cur as AudioInputSource)}
+              onClick={() => testState === 'testing' ? stopTest() : startTest(cur)}
               style={{
                 fontSize: 10, padding: '3px 10px', borderRadius: 4, cursor: 'pointer', flexShrink: 0,
                 border: `1px solid ${testState === 'testing' ? '#ef4444' : '#3d8fef'}`,
@@ -162,18 +173,16 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
             {testState === 'testing' && (
               <div style={{ flex: 1, height: 8, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden', border: '1px solid #2a2a2a' }}>
                 <div style={{
-                  height: '100%',
-                  width: `${level * 100}%`,
+                  height: '100%', width: `${level * 100}%`,
                   background: level > 0.8 ? '#ef4444' : level > 0.5 ? '#eab308' : '#22c55e',
-                  transition: 'width 0.04s ease-out',
-                  borderRadius: 3,
+                  transition: 'width 0.04s ease-out', borderRadius: 3,
                 }} />
               </div>
             )}
 
-            {testState === 'idle' && (
+            {testState === 'idle' && cur && (
               <span style={{ fontSize: 9, color: '#444' }}>
-                {AUDIO_INPUT_LABELS[cur as AudioInputSource]}
+                {allOptions.find(o => o.id === cur)?.label ?? cur}
               </span>
             )}
           </div>
