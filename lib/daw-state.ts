@@ -83,6 +83,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         mute: false,
         solo: false,
         armed: false,
+        inputSource: null,
         height: DEFAULT_TRACK_HEIGHT,
         effects: [],
         instrument: defaultTrackInstrument(action.trackType),

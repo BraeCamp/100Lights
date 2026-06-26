@@ -209,6 +209,7 @@ export interface DawTrack {
   mute: boolean
   solo: boolean
   armed: boolean
+  inputSource?: string | null  // 'mic' | 'system' | null — audio input for recording
   height: number      // arrangement lane height in px
   effects: TrackEffect[]
   instrument: TrackInstrument

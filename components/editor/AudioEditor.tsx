@@ -9,6 +9,8 @@ import { DawContext, reducer, makeAudioClip, migrateProject } from '@/lib/daw-st
 import { DawEngine } from '@/lib/daw-engine'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
+import { captureAudioInput } from '@/lib/audio-capture'
+import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import SoundLibraryPanel from './SoundLibrary'
 import { seedDefaultSamples } from '@/lib/default-samples'
@@ -95,8 +97,13 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   // ── Undo history ────────────────────────────────────────────────────────────
   const historyRef = useRef<DawProject[]>([])
-  const projectRef        = useRef(project)
+  const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
+
+  // ── Per-track external input recording ──────────────────────────────────────
+  type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
+  const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
+  const inputStreamsRef = useRef<Map<string, MediaStream>>(new Map())
   // Seed default samples once per browser (no-op if already done)
   useEffect(() => { seedDefaultSamples().catch(() => {}) }, [])
 
@@ -131,7 +138,84 @@ export default function AudioEditor(props: AudioEditorProps) {
       setPlaying((e as CustomEvent<{ playing: boolean }>).detail.playing)
     }
     const onRecording = (e: Event) => {
-      setRecording((e as CustomEvent<{ recording: boolean }>).detail.recording)
+      const rec = (e as CustomEvent<{ recording: boolean }>).detail.recording
+      setRecording(rec)
+
+      if (rec) {
+        // Start a MediaRecorder for every armed audio track that has an inputSource set.
+        // Tracks sharing the same source reuse one MediaStream (avoid double permission prompt).
+        ;(async () => {
+          const armed = projectRef.current.tracks.filter(
+            t => t.type === 'audio' && t.armed && t.inputSource
+          )
+          for (const track of armed) {
+            const src = track.inputSource as AudioInputSource
+            try {
+              let stream = inputStreamsRef.current.get(src)
+              if (!stream) {
+                stream = await captureAudioInput(src)
+                inputStreamsRef.current.set(src, stream)
+              }
+              const chunks: Blob[] = []
+              const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus' : 'audio/webm'
+              const recorder = new MediaRecorder(stream, { mimeType: mime })
+              recorder.ondataavailable = (ev: BlobEvent) => {
+                if (ev.data.size > 0) chunks.push(ev.data)
+              }
+              recorder.start(100)
+              inputRecsRef.current.set(track.id, {
+                recorder,
+                startBeat: engineRef.current!.currentBeat,
+                chunks,
+              })
+            } catch (err) {
+              console.warn(`Input capture failed for "${track.name}":`, err)
+            }
+          }
+        })()
+      } else {
+        // Stop all active input recorders; dispatch a clip for each when its data arrives.
+        const endBeat = engineRef.current!.currentBeat
+        let pending = 0
+
+        for (const { recorder } of inputRecsRef.current.values()) {
+          if (recorder.state !== 'inactive') pending++
+        }
+
+        const cleanup = () => {
+          inputRecsRef.current.clear()
+          for (const stream of inputStreamsRef.current.values()) {
+            stream.getTracks().forEach(t => t.stop())
+          }
+          inputStreamsRef.current.clear()
+        }
+
+        if (pending === 0) { cleanup(); return }
+
+        for (const [trackId, { recorder, startBeat, chunks }] of inputRecsRef.current) {
+          if (recorder.state === 'inactive') continue
+          recorder.onstop = () => {
+            const mime = recorder.mimeType || 'audio/webm'
+            const blob = new Blob(chunks, { type: mime })
+            if (blob.size > 0) {
+              const url = URL.createObjectURL(blob)
+              const dur = Math.max(0.25, endBeat - startBeat)
+              const track = projectRef.current.tracks.find(t => t.id === trackId)
+              const clip  = makeAudioClip(
+                trackId,
+                `${track?.name ?? 'Input'} Recording`,
+                startBeat, dur,
+                { audioUrl: url },
+              )
+              dispatch({ type: 'ADD_CLIP', clip })
+            }
+            pending--
+            if (pending === 0) cleanup()
+          }
+          recorder.stop()
+        }
+      }
     }
 
     const onRecordingComplete = (e: Event) => {
@@ -156,6 +240,12 @@ export default function AudioEditor(props: AudioEditorProps) {
       engine.removeEventListener('transport', onTransport)
       engine.removeEventListener('recording', onRecording)
       engine.removeEventListener('recording-complete', onRecordingComplete)
+      // Release any open input streams
+      for (const stream of inputStreamsRef.current.values()) {
+        stream.getTracks().forEach(t => t.stop())
+      }
+      inputStreamsRef.current.clear()
+      inputRecsRef.current.clear()
     }
   }, [])
 
