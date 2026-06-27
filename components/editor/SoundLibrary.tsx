@@ -7,6 +7,7 @@ import {
   initLibrary,
   getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
+  TYPE_TAGS, CHARACTER_TAGS, CATEGORY_TO_TYPE_TAG, CATEGORY_CHAR_TAGS,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
@@ -833,6 +834,21 @@ export function AddToLibraryModal({
   )
 }
 
+// ── Tag helpers ───────────────────────────────────────────────────────────────
+
+function getTypeTag(entry: LibraryEntry): string {
+  // Entries tagged 'Percussion' explicitly override category mapping
+  if (entry.tags?.includes('Percussion')) return 'Percussion'
+  if (entry.tags?.includes('FX')) return 'FX'
+  return CATEGORY_TO_TYPE_TAG[entry.category] ?? 'Other'
+}
+
+function getCharTags(entry: LibraryEntry): string[] {
+  const catTags = CATEGORY_CHAR_TAGS[entry.category] ?? []
+  const entryTags = (entry.tags ?? []).filter(t => CHARACTER_TAGS.includes(t as typeof CHARACTER_TAGS[number]))
+  return [...new Set([...catTags, ...entryTags])]
+}
+
 // ── Main SoundLibrary panel ───────────────────────────────────────────────────
 const FOLDERS_KEY = 'sound-library-folders'
 
@@ -846,11 +862,13 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   const [downloading,      setDownloading]      = useState<Set<string>>(new Set())
   const [dragOverFolder,   setDragOverFolder]   = useState<string | null>(null)
   const [draggingFolder,   setDraggingFolder]   = useState<string | null>(null)
-  const [folderDropTarget, setFolderDropTarget] = useState<string | null>(null)   // folder reorder target
+  const [folderDropTarget, setFolderDropTarget] = useState<string | null>(null)
   const [dragOverUnfiled,  setDragOverUnfiled]  = useState(false)
   const [anyEntryDragging, setAnyEntryDragging] = useState(false)
   const [showAdd,          setShowAdd]          = useState(false)
   const [searchQuery,      setSearchQuery]      = useState('')
+  const [activeTypeTag,    setActiveTypeTag]    = useState<string | null>(null)
+  const [activeCharTags,   setActiveCharTags]   = useState<Set<string>>(new Set())
   const [addingFolder,     setAddingFolder]     = useState(false)
   const [newFolderDraft,   setNewFolderDraft]   = useState('')
   const newFolderRef = useRef<HTMLInputElement>(null)
@@ -1033,10 +1051,30 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     return [...arr].sort((a, b) => (noteNameMidi(a.name) ?? 0) - (noteNameMidi(b.name) ?? 0))
   }
 
-  // Group entries (filtered by search query)
+  // Derived: which type tags actually have entries
+  const availableTypeTags = useMemo(() => {
+    const present = new Set(entries.map(getTypeTag))
+    return TYPE_TAGS.filter(t => present.has(t))
+  }, [entries])
+
+  // Derived: which character tags actually have entries
+  const availableCharTags = useMemo(() => {
+    const present = new Set(entries.flatMap(getCharTags))
+    return CHARACTER_TAGS.filter(t => present.has(t))
+  }, [entries])
+
+  // Group entries (filtered by search query + tag filters)
   const { byFolder, unfiled, byParent } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    const filtered = q ? entries.filter(en => en.name.toLowerCase().includes(q)) : entries
+    const filtered = entries.filter(en => {
+      if (q && !en.name.toLowerCase().includes(q)) return false
+      if (activeTypeTag && getTypeTag(en) !== activeTypeTag) return false
+      if (activeCharTags.size > 0) {
+        const eTags = getCharTags(en)
+        if (!eTags.some(t => activeCharTags.has(t))) return false
+      }
+      return true
+    })
     // byParent: parentFolder → (subFolder → entries[])
     const byParent = new Map<string, Map<string, LibraryEntry[]>>()
     const byFolder = new Map<string, LibraryEntry[]>()
@@ -1055,7 +1093,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     }
     return { byFolder, unfiled, byParent }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, folders, searchQuery])
+  }, [entries, folders, searchQuery, activeTypeTag, activeCharTags])
 
   const entryRow = (entry: LibraryEntry) => (
     <EntryRow
@@ -1075,7 +1113,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     <>
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} sound{entries.length !== 1 ? 's' : ''}</span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
         <button
           onClick={() => setAddingFolder(true)}
           title="New folder"
@@ -1093,12 +1131,64 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       <div style={{ padding: '4px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <input
           type="search"
-          placeholder="Search sounds…"
+          placeholder="Search library…"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           style={{ width: '100%', fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 7px', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
         />
       </div>
+
+      {/* ── Filter chips ───────────────────────────────────────────────────── */}
+      {availableTypeTags.length > 0 && (
+        <div style={{ padding: '5px 8px 3px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          {/* Type row */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 4 }}>
+            {availableTypeTags.map(tag => {
+              const active = activeTypeTag === tag
+              return (
+                <button
+                  key={tag}
+                  onClick={() => setActiveTypeTag(active ? null : tag)}
+                  style={{
+                    fontSize: 9, padding: '2px 7px', borderRadius: 10,
+                    border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                    background: active ? 'var(--accent)' : 'var(--bg-card)',
+                    color: active ? '#fff' : 'var(--text-muted)',
+                    cursor: 'pointer', fontWeight: active ? 700 : 400,
+                    transition: 'all 0.1s',
+                  }}
+                >{tag}</button>
+              )
+            })}
+          </div>
+          {/* Character row */}
+          {availableCharTags.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, paddingBottom: 2 }}>
+              {availableCharTags.map(tag => {
+                const active = activeCharTags.has(tag)
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => setActiveCharTags(prev => {
+                      const next = new Set(prev)
+                      active ? next.delete(tag) : next.add(tag)
+                      return next
+                    })}
+                    style={{
+                      fontSize: 9, padding: '2px 7px', borderRadius: 10,
+                      border: `1px solid ${active ? 'rgba(167,139,250,0.7)' : 'var(--border)'}`,
+                      background: active ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
+                      color: active ? '#a78bfa' : 'var(--text-muted)',
+                      cursor: 'pointer', fontWeight: active ? 700 : 400,
+                      transition: 'all 0.1s',
+                    }}
+                  >{tag}</button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* New folder input */}
       {addingFolder && (
@@ -1122,7 +1212,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
         {entries.length === 0 ? (
           <div style={{ padding: '20px 14px', textAlign: 'center' }}>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-              No sounds yet.<br />Record or import a sample to build your library.
+              No items yet.<br />Record or import a sample to build your library.
             </p>
           </div>
         ) : (
@@ -1257,7 +1347,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ padding: '8px 12px 6px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Sounds &amp; Samples</span>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Library</span>
       </div>
       {content}
     </div>

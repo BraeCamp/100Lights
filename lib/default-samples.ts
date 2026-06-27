@@ -18,10 +18,13 @@ import { encodeWav }       from './wav-codec'
 import type { BeatType }   from './beat-analyzer'
 import type { LibraryCategory } from './sound-library'
 
-const SEEDED_KEY          = '100lights-audio-seeded-v4'
-const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
-const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
-const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v2'  // v2: switched from synth → soundfont
+const SEEDED_KEY          = '100lights-audio-seeded-v5'    // v5: added tags
+const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v5'    // v5: added tags
+const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v2' // v2: added tags
+const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v3'  // v3: added tags
+const PERCUSSION_SEEDED_KEY = '100lights-percussion-seeded-v1'
+const FX_SEEDED_KEY       = '100lights-fx-seeded-v1'
+const ARP_SEEDED_KEY      = '100lights-arp-seeded-v1'
 const DEDUP_KEY           = '100lights-dedup-v2'
 
 function sk(base: string) {
@@ -317,6 +320,52 @@ const KEYBOARD_PRESETS: KeyboardPreset[] = [
   { type: 'viola',          folder: 'Viola – All Notes',          minMidi: 48, maxMidi: 77, duration: 4.0, channels: 2 },
 ]
 
+// ── Additional catalogs ───────────────────────────────────────────────────────
+
+const PERCUSSION: Array<{ name: string; type: BeatType; dur: number }> = [
+  { name: 'Shaker',     type: 'hihat',       dur: 0.12 },
+  { name: 'Tambourine', type: 'open-hihat',  dur: 0.50 },
+  { name: 'Cowbell',    type: 'rim',         dur: 0.60 },
+  { name: 'Woodblock',  type: 'rim',         dur: 0.15 },
+  { name: 'Triangle',   type: 'crash',       dur: 1.10 },
+  { name: 'Clave',      type: 'rim',         dur: 0.10 },
+  { name: 'Bongo Hi',   type: 'tom',         dur: 0.22 },
+  { name: 'Bongo Lo',   type: 'tom',         dur: 0.38 },
+  { name: 'Conga Hi',   type: 'tom',         dur: 0.40 },
+  { name: 'Conga Lo',   type: 'tom',         dur: 0.60 },
+  { name: 'Cabasa',     type: 'hihat',       dur: 0.18 },
+  { name: 'Agogo Hi',   type: 'rim',         dur: 0.22 },
+  { name: 'Agogo Lo',   type: 'rim',         dur: 0.28 },
+]
+
+const FX_CATALOG: Array<{ name: string; type: BeatType; note: number; dur: number; tags: string[] }> = [
+  { name: 'Riser',        type: 'synth-dark',  note: 72, dur: 4.0, tags: ['FX', 'Bright'] },
+  { name: 'Dark Impact',  type: 'synth-dark',  note: 36, dur: 2.5, tags: ['FX', 'Dark', 'Hard'] },
+  { name: 'Atmosphere',   type: 'synth-drone', note: 60, dur: 6.0, tags: ['FX', 'Dark', 'Ambient'] },
+  { name: 'Deep Sweep',   type: 'synth-drone', note: 48, dur: 5.0, tags: ['FX', 'Ambient'] },
+  { name: 'Shimmer',      type: 'synth-pad',   note: 72, dur: 4.5, tags: ['FX', 'Bright', 'Ambient'] },
+  { name: 'Metallic Hit', type: 'synth-pluck', note: 60, dur: 0.8, tags: ['FX', 'Hard', 'Crunchy'] },
+  { name: 'Void Tone',    type: 'synth-drone', note: 43, dur: 6.5, tags: ['FX', 'Dark', 'Ambient'] },
+  { name: 'Whoosh',       type: 'synth-dark',  note: 80, dur: 2.0, tags: ['FX', 'Bright'] },
+  { name: 'Tension Rise', type: 'synth-dark',  note: 65, dur: 5.0, tags: ['FX', 'Dark', 'Hard'] },
+  { name: 'Glass Bell',   type: 'synth-pluck', note: 76, dur: 1.5, tags: ['FX', 'Bright', 'Soft'] },
+]
+
+const ARP_CATALOG: Array<{ name: string; type: BeatType; note: number; dur: number; tags: string[] }> = [
+  { name: 'Arp C4',   type: 'synth-arp', note: 60, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp D4',   type: 'synth-arp', note: 62, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp E4',   type: 'synth-arp', note: 64, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp F4',   type: 'synth-arp', note: 65, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp G4',   type: 'synth-arp', note: 67, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp A4',   type: 'synth-arp', note: 69, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp B4',   type: 'synth-arp', note: 71, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp C5',   type: 'synth-arp', note: 72, dur: 0.8, tags: ['Bright'] },
+  { name: 'Arp C3',   type: 'synth-arp', note: 48, dur: 1.0, tags: ['Dark'] },
+  { name: 'Arp E3',   type: 'synth-arp', note: 52, dur: 0.9, tags: ['Dark'] },
+  { name: 'Arp G3',   type: 'synth-arp', note: 55, dur: 0.9, tags: ['Dark'] },
+  { name: 'Arp A3',   type: 'synth-arp', note: 57, dur: 0.8, tags: ['Warm'] },
+]
+
 // ── Stub helpers ──────────────────────────────────────────────────────────────
 
 function makeStub(
@@ -325,6 +374,7 @@ function makeStub(
   renderSpec: RenderSpec,
   folder: string,
   now: string,
+  tags?: string[],
 ): LibraryEntry {
   return {
     id:           crypto.randomUUID(),
@@ -335,6 +385,7 @@ function makeStub(
     addedAt:      now,
     folder,
     parentFolder: PARENT,
+    ...(tags && tags.length > 0 ? { tags } : {}),
   }
 }
 
@@ -400,10 +451,13 @@ export async function seedDefaultSamples(): Promise<void> {
     seedKeyboardNotes().catch(() => {})
     seedDarkwave().catch(() => {})
     seedStrings().catch(() => {})
+    seedPercussion().catch(() => {})
+    seedFx().catch(() => {})
+    seedArp().catch(() => {})
     return
   }
 
-  // Migration: delete any old pre-rendered 100lights entries (v1/v2 blobs)
+  // Migration: delete any old pre-rendered 100lights entries (v1/v2/v3/v4 blobs)
   const existing = await libraryGetAll()
   const oldEntries = existing.filter(e => e.parentFolder === PARENT && !e.renderSpec)
   await Promise.all(oldEntries.map(e => libraryDelete(e.id)))
@@ -426,6 +480,45 @@ export async function seedDefaultSamples(): Promise<void> {
   seedKeyboardNotes().catch(() => {})
   seedDarkwave().catch(() => {})
   seedStrings().catch(() => {})
+  seedPercussion().catch(() => {})
+  seedFx().catch(() => {})
+  seedArp().catch(() => {})
+}
+
+export async function seedPercussion(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(sk(PERCUSSION_SEEDED_KEY))) return
+  const now = new Date().toISOString()
+  for (const d of PERCUSSION) {
+    await libraryAdd(makeStub(d.name, d.type as LibraryCategory, {
+      kind: 'drum', beatType: d.type, duration: d.dur, channels: 1,
+    }, 'Percussion', now, ['Percussion']))
+  }
+  localStorage.setItem(sk(PERCUSSION_SEEDED_KEY), '1')
+}
+
+export async function seedFx(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(sk(FX_SEEDED_KEY))) return
+  const now = new Date().toISOString()
+  for (const fx of FX_CATALOG) {
+    await libraryAdd(makeStub(fx.name, fx.type as LibraryCategory, {
+      kind: 'melodic', beatType: fx.type, midiNote: fx.note, duration: fx.dur, channels: 2,
+    }, 'FX', now, fx.tags))
+  }
+  localStorage.setItem(sk(FX_SEEDED_KEY), '1')
+}
+
+export async function seedArp(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(sk(ARP_SEEDED_KEY))) return
+  const now = new Date().toISOString()
+  for (const a of ARP_CATALOG) {
+    await libraryAdd(makeStub(a.name, a.type as LibraryCategory, {
+      kind: 'melodic', beatType: a.type, midiNote: a.note, duration: a.dur, channels: 1,
+    }, 'Arp', now, a.tags))
+  }
+  localStorage.setItem(sk(ARP_SEEDED_KEY), '1')
 }
 
 export async function seedStrings(): Promise<void> {
