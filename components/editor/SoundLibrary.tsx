@@ -4,10 +4,12 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
+  initLibrary,
   getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
+import { useUser } from '@clerk/nextjs'
 import { libraryFulfill } from '@/lib/default-samples'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
@@ -826,6 +828,9 @@ export function AddToLibraryModal({
 const FOLDERS_KEY = 'sound-library-folders'
 
 export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
+  const { user } = useUser()
+  initLibrary(user?.id ?? null)
+
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
   const [openFolders,      setOpenFolders]      = useState<Set<string>>(new Set())

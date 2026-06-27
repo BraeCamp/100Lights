@@ -35,15 +35,26 @@ export interface LibraryEntry {
   parentFolder?: string       // parent group (e.g. "100lights Audio") — read-only, set at creation
 }
 
+// ── User scoping ──────────────────────────────────────────────────────────────
+
+let _userId: string | null = null
+
+/** Call once when the authenticated user is known. Scopes the IndexedDB to that user. */
+export function initLibrary(userId: string | null) { _userId = userId }
+export function getLibraryUserId(): string | null { return _userId }
+
 // ── IndexedDB setup ───────────────────────────────────────────────────────────
 
-const DB_NAME    = 'contentforge-sound-library'
 const DB_VERSION = 1
 const STORE      = 'entries'
 
+function getDbName() {
+  return _userId ? `contentforge-sound-library-${_userId}` : 'contentforge-sound-library'
+}
+
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    const req = indexedDB.open(getDbName(), DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE)) {

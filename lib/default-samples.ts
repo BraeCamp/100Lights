@@ -10,7 +10,7 @@
  * the exact target MIDI note.
  */
 
-import { libraryAdd, libraryGetAll, libraryDelete, libraryGetById } from './sound-library'
+import { libraryAdd, libraryGetAll, libraryDelete, libraryGetById, getLibraryUserId } from './sound-library'
 import type { LibraryEntry, RenderSpec } from './sound-library'
 import { playDrumHit }     from './drum-samples'
 import { playMelodicNote } from './instrument-synth'
@@ -23,6 +23,11 @@ const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v4'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v1'
 const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v2'  // v2: switched from synth → soundfont
 const DEDUP_KEY           = '100lights-dedup-v2'
+
+function sk(base: string) {
+  const uid = getLibraryUserId()
+  return uid ? `${base}-u-${uid}` : base
+}
 const PARENT              = '100lights Audio'
 
 const VIOLIN_SF_URL = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/violin-mp3.js'
@@ -370,7 +375,7 @@ export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
 
 async function dedupLibrary(): Promise<void> {
   if (typeof window === 'undefined') return
-  if (localStorage.getItem(DEDUP_KEY)) return
+  if (localStorage.getItem(sk(DEDUP_KEY))) return
   const all = await libraryGetAll()
   // Group by folder+name; keep the most recent, delete the rest
   const seen = new Map<string, LibraryEntry>()
@@ -385,13 +390,13 @@ async function dedupLibrary(): Promise<void> {
     else { toDelete.push(e.id) }
   }
   await Promise.all(toDelete.map(id => libraryDelete(id)))
-  localStorage.setItem(DEDUP_KEY, '1')
+  localStorage.setItem(sk(DEDUP_KEY), '1')
 }
 
 export async function seedDefaultSamples(): Promise<void> {
   if (typeof window === 'undefined') return
   dedupLibrary().catch(() => {})
-  if (localStorage.getItem(SEEDED_KEY)) {
+  if (localStorage.getItem(sk(SEEDED_KEY))) {
     seedKeyboardNotes().catch(() => {})
     seedDarkwave().catch(() => {})
     seedStrings().catch(() => {})
@@ -417,7 +422,7 @@ export async function seedDefaultSamples(): Promise<void> {
     }, 'Keys', now))
   }
 
-  localStorage.setItem(SEEDED_KEY, '1')
+  localStorage.setItem(sk(SEEDED_KEY), '1')
   seedKeyboardNotes().catch(() => {})
   seedDarkwave().catch(() => {})
   seedStrings().catch(() => {})
@@ -425,7 +430,7 @@ export async function seedDefaultSamples(): Promise<void> {
 
 export async function seedStrings(): Promise<void> {
   if (typeof window === 'undefined') return
-  if (localStorage.getItem(STRINGS_SEEDED_KEY)) return
+  if (localStorage.getItem(sk(STRINGS_SEEDED_KEY))) return
 
   // Remove old synthesized violin/viola stubs (v1 — kind: 'melodic')
   const existing = await libraryGetAll()
@@ -467,12 +472,12 @@ export async function seedStrings(): Promise<void> {
     }
   }
 
-  localStorage.setItem(STRINGS_SEEDED_KEY, '1')
+  localStorage.setItem(sk(STRINGS_SEEDED_KEY), '1')
 }
 
 export async function seedDarkwave(): Promise<void> {
   if (typeof window === 'undefined') return
-  if (localStorage.getItem(DARKWAVE_SEEDED_KEY)) return
+  if (localStorage.getItem(sk(DARKWAVE_SEEDED_KEY))) return
 
   const now = new Date().toISOString()
   for (const k of DARKWAVE) {
@@ -480,12 +485,12 @@ export async function seedDarkwave(): Promise<void> {
       kind: 'melodic', beatType: k.type, midiNote: k.note, duration: k.dur, channels: 2,
     }, 'Darkwave', now))
   }
-  localStorage.setItem(DARKWAVE_SEEDED_KEY, '1')
+  localStorage.setItem(sk(DARKWAVE_SEEDED_KEY), '1')
 }
 
 export async function seedKeyboardNotes(): Promise<void> {
   if (typeof window === 'undefined') return
-  if (localStorage.getItem(NOTES_SEEDED_KEY)) return
+  if (localStorage.getItem(sk(NOTES_SEEDED_KEY))) return
 
   // Migration: delete any old pre-rendered keyboard notes
   const existing = await libraryGetAll()
@@ -508,5 +513,5 @@ export async function seedKeyboardNotes(): Promise<void> {
     }
   }
 
-  localStorage.setItem(NOTES_SEEDED_KEY, '1')
+  localStorage.setItem(sk(NOTES_SEEDED_KEY), '1')
 }

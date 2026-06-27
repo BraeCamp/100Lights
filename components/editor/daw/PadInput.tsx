@@ -34,6 +34,8 @@ interface Pad {
   sampleVibratoRate?: number   // LFO frequency in Hz (default 5)
   sampleTrimStart?: number     // 0–1 fraction of buffer (default 0)
   sampleTrimEnd?: number       // 0–1 fraction of buffer (default 1)
+  mode?: 'sample' | 'effect-toggle'
+  effectTarget?: { trackId: string; effectId: string }
 }
 
 interface ActiveSource {
@@ -224,6 +226,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
   onPadChange: (patch: Partial<Pad>) => void
   onClose: () => void
 }) {
+  const { project } = useDaw()
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [loading,          setLoading]          = useState(true)
   const [showLibrary,      setShowLibrary]      = useState(false)
@@ -439,8 +442,48 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
         </div>
       </div>
 
+      {/* MODE */}
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
+        <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mode</span>
+        <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+          {(['sample', 'effect-toggle'] as const).map(m => (
+            <button key={m} onClick={() => onPadChange({ mode: m, effectTarget: m === 'sample' ? undefined : pad.effectTarget })}
+              style={{ flex: 1, fontSize: 10, padding: '4px 0', borderRadius: 4, cursor: 'pointer', fontWeight: 600,
+                border: `1px solid ${(pad.mode ?? 'sample') === m ? C.accent : C.border}`,
+                background: (pad.mode ?? 'sample') === m ? `${C.accent}22` : 'transparent',
+                color: (pad.mode ?? 'sample') === m ? C.accent : C.muted }}>
+              {m === 'sample' ? 'Sample' : 'FX Toggle'}
+            </button>
+          ))}
+        </div>
+        {pad.mode === 'effect-toggle' && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {project.tracks.filter(t => t.effects.length > 0).map(t => (
+              <div key={t.id}>
+                <div style={{ fontSize: 9, color: '#555', fontWeight: 700, letterSpacing: '0.06em', marginBottom: 2, paddingLeft: 2 }}>{t.name}</div>
+                {t.effects.map(fx => {
+                  const isSelected = pad.effectTarget?.trackId === t.id && pad.effectTarget?.effectId === fx.id
+                  return (
+                    <button key={fx.id} onClick={() => onPadChange({ effectTarget: { trackId: t.id, effectId: fx.id } })}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', fontSize: 10, padding: '4px 8px', borderRadius: 3, cursor: 'pointer', marginBottom: 2,
+                        border: `1px solid ${isSelected ? C.accent : C.border}`,
+                        background: isSelected ? `${C.accent}22` : '#0e0e0e',
+                        color: isSelected ? C.accent : C.text }}>
+                      {fx.type.charAt(0).toUpperCase() + fx.type.slice(1)}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+            {project.tracks.every(t => t.effects.length === 0) && (
+              <div style={{ fontSize: 10, color: '#444' }}>No effects on any track yet</div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* SOUNDS */}
-      <div style={{ padding: '10px 12px', borderBottom: hasCustom ? `1px solid ${C.border}` : 'none' }}>
+      {(pad.mode ?? 'sample') === 'sample' && <div style={{ padding: '10px 12px', borderBottom: hasCustom ? `1px solid ${C.border}` : 'none' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sounds</span>
           {hasCustom && (
@@ -594,10 +637,10 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
-      {/* PERFORMANCE — shown when a custom sound is assigned */}
-      {hasCustom && (
+      {/* PERFORMANCE — shown when a custom sound is assigned in sample mode */}
+      {(pad.mode ?? 'sample') === 'sample' && hasCustom && (
         <div style={{ padding: '10px 12px' }}>
           <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 10 }}>Performance</span>
 
@@ -717,6 +760,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const padKeyMapRef  = useRef<Record<string, number>>({})
   const pianoKeyMapRef = useRef<Record<string, number>>({})
   useEffect(() => () => { if (countdownIvRef.current) clearInterval(countdownIvRef.current) }, [])
+  const projectRef = useRef(project)
+  useEffect(() => { projectRef.current = project }, [project])
   useEffect(() => { padsRef.current           = pads           }, [pads])
   useEffect(() => { tabRef.current            = tab            }, [tab])
   useEffect(() => { remapIdRef.current        = remapId        }, [remapId])
@@ -776,6 +821,20 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   const startNote = useCallback(async (pitch: number) => {
     const pad    = padsRef.current.find(p => p.pitch === pitch)
+
+    // Effect-toggle mode — press toggles a track effect on/off
+    if (pad?.mode === 'effect-toggle' && pad.effectTarget) {
+      const { trackId, effectId } = pad.effectTarget
+      const track = projectRef.current.tracks.find(t => t.id === trackId)
+      const effect = track?.effects.find(e => e.id === effectId)
+      if (effect) {
+        const newEnabled = !(effect.params as { enabled?: boolean }).enabled
+        dispatch({ type: 'UPDATE_EFFECT', trackId, effectId, patch: { params: { ...effect.params, enabled: newEnabled } } })
+        engine.getEffectHandle(trackId, effectId)?.setParam('enabled', newEnabled)
+      }
+      return
+    }
+
     const sounds = pad?.customSounds ?? []
 
     if (sounds.length > 0) {
@@ -1204,10 +1263,14 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             <div style={{ padding: 12 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                 {pads.map(pad => {
-                  const isAct       = pressing.has(pad.pitch)
-                  const isRemapping = remapId === pad.id
-                  const hasCustom   = (pad.customSounds?.length ?? 0) > 0
-                  const soundCount  = pad.customSounds?.length ?? 0
+                  const isAct        = pressing.has(pad.pitch)
+                  const isRemapping  = remapId === pad.id
+                  const hasCustom    = (pad.customSounds?.length ?? 0) > 0
+                  const soundCount   = pad.customSounds?.length ?? 0
+                  const isFxMode     = pad.mode === 'effect-toggle'
+                  const fxTrack      = isFxMode && pad.effectTarget ? project.tracks.find(t => t.id === pad.effectTarget!.trackId) : null
+                  const fxEffect     = fxTrack ? fxTrack.effects.find(e => e.id === pad.effectTarget!.effectId) : null
+                  const fxEnabled    = !!(fxEffect?.params as { enabled?: boolean } | undefined)?.enabled
                   return (
                     <button
                       key={pad.id}
@@ -1227,16 +1290,17 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       style={{
                         height: 76, display: 'flex', flexDirection: 'column', alignItems: 'center',
                         justifyContent: 'center', gap: 4, borderRadius: 6, position: 'relative',
-                        border: `1px solid ${isRemapping ? C.accent : isAct ? '#666' : hasCustom ? 'rgba(61,143,239,0.4)' : C.border}`,
-                        background: isRemapping ? `${C.accent}30` : isAct ? 'rgba(255,255,255,0.12)' : hasCustom ? 'rgba(61,143,239,0.07)' : C.bgCard,
+                        border: `1px solid ${isRemapping ? C.accent : isAct ? '#666' : isFxMode ? (fxEnabled ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.3)') : hasCustom ? 'rgba(61,143,239,0.4)' : C.border}`,
+                        background: isRemapping ? `${C.accent}30` : isAct ? 'rgba(255,255,255,0.12)' : isFxMode ? (fxEnabled ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.06)') : hasCustom ? 'rgba(61,143,239,0.07)' : C.bgCard,
                         color: isAct ? '#fff' : C.text, cursor: 'pointer',
                         transition: 'background 50ms, border-color 50ms',
                       }}
                     >
-                      {hasCustom && !isAct && <span style={{ position: 'absolute', top: 5, right: 6, width: 6, height: 6, borderRadius: '50%', background: C.accent }} />}
-                      {pad.sampleLoop    && <span style={{ position: 'absolute', top: 5, left: 6, fontSize: 9, color: C.green }}>↻</span>}
-                      {pad.sampleReverse && <span style={{ position: 'absolute', top: 5, left: pad.sampleLoop ? 18 : 6, fontSize: 9, color: C.accent }}>◁</span>}
-                      {(pad.sampleVibratoDepth ?? 0) > 0 && <span style={{ position: 'absolute', bottom: 5, right: 6, fontSize: 9, color: C.yellow }}>~</span>}
+                      {isFxMode && <span style={{ position: 'absolute', top: 5, right: 6, fontSize: 9, fontWeight: 800, color: fxEnabled ? C.green : '#ef4444' }}>{fxEnabled ? 'ON' : 'OFF'}</span>}
+                      {!isFxMode && hasCustom && !isAct && <span style={{ position: 'absolute', top: 5, right: 6, width: 6, height: 6, borderRadius: '50%', background: C.accent }} />}
+                      {!isFxMode && pad.sampleLoop    && <span style={{ position: 'absolute', top: 5, left: 6, fontSize: 9, color: C.green }}>↻</span>}
+                      {!isFxMode && pad.sampleReverse && <span style={{ position: 'absolute', top: 5, left: pad.sampleLoop ? 18 : 6, fontSize: 9, color: C.accent }}>◁</span>}
+                      {!isFxMode && (pad.sampleVibratoDepth ?? 0) > 0 && <span style={{ position: 'absolute', bottom: 5, right: 6, fontSize: 9, color: C.yellow }}>~</span>}
                       {editingLabelId === pad.id ? (
                         <input
                           autoFocus
@@ -1268,7 +1332,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                           {isRemapping ? '…press key' : pad.drumLabel}
                         </span>
                       )}
-                      {hasCustom && !isRemapping && (
+                      {isFxMode && fxEffect && !isRemapping && (
+                        <span style={{ fontSize: 9, color: '#888', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
+                          {fxTrack?.name} · {fxEffect.type}
+                        </span>
+                      )}
+                      {!isFxMode && hasCustom && !isRemapping && (
                         <span style={{ fontSize: 9, color: C.accent, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
                           {soundCount === 1 ? pad.customSounds![0].name : `${soundCount} sounds`}
                         </span>
