@@ -6,9 +6,9 @@ import { X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
-import { getPresets, type MidiPreset } from '@/lib/midi-presets'
+import { getPresets, addPreset, type MidiPreset } from '@/lib/midi-presets'
 import { libraryGetAll } from '@/lib/sound-library'
-import { libraryFulfill } from '@/lib/default-samples'
+import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
 
 const NOTE_H     = 10
 const PIANO_W    = 52
@@ -117,7 +117,7 @@ function VelocityLane({ clip, beatW, scrollLeft, trackColor, onVelocityChange }:
 // ── Piano Roll inner (receives guaranteed MidiClip) ───────────────────────────
 
 function PianoRollInner({ clip }: { clip: MidiClip }) {
-  const { project, dispatch, setEditTarget, engine } = useDaw()
+  const { project, dispatch, setEditTarget, setExpandedPianoRollClipId, engine } = useDaw()
 
   const track = project.tracks.find(t => t.id === clip.trackId)
   const color = track?.color ?? '#3d8fef'
@@ -134,6 +134,14 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [showPresetPicker, setShowPresetPicker] = useState(false)
   const [previewing, setPreviewing]     = useState(false)
   const presetPickerRef = useRef<HTMLDivElement>(null)
+  // New-preset form state
+  const [showNewPreset, setShowNewPreset] = useState(false)
+  const [npName,    setNpName]    = useState('')
+  const [npFolder,  setNpFolder]  = useState('')
+  const [npLo,      setNpLo]      = useState(36)
+  const [npHi,      setNpHi]      = useState(84)
+  const [npLoading, setNpLoading] = useState(false)
+  const [npSfText,  setNpSfText]  = useState<string | null>(null)
 
   useEffect(() => { setPresets(getPresets()) }, [])
 
@@ -182,8 +190,36 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   function snapBeat(b: number) { return Math.round(b / quant) * quant }
 
-  function playNote(pitch: number) {
+  async function playNote(pitch: number) {
     if (!engine.ctx) return
+    const preset = clip.presetId ? presets.find(p => p.id === clip.presetId) : null
+    if (preset) {
+      // Play the actual preset sample for this pitch
+      try {
+        const NOTE_NAMES_PR = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+        const pitchName = `${NOTE_NAMES_PR[pitch % 12]}${Math.floor(pitch / 12) - 1}`
+        const entries = await libraryGetAll()
+        const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
+        const exact = inFolder.find(e => e.name === pitchName)
+        const entry = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
+          if (!best) return e
+          return Math.abs((e.renderSpec?.midiNote ?? 60) - pitch) < Math.abs((best.renderSpec?.midiNote ?? 60) - pitch) ? e : best
+        }, null)
+        if (entry) {
+          const fulfilled = await libraryFulfill(entry.id)
+          if (fulfilled?.audioBlob && engine.ctx) {
+            const buf = await engine.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+            const src = engine.ctx.createBufferSource()
+            src.buffer = buf
+            src.connect(engine.masterGain)
+            src.start()
+            src.stop(engine.ctx.currentTime + 1.5)
+            return
+          }
+        }
+      } catch { /* fall through to oscillator */ }
+    }
+    // Fallback: sine oscillator
     const osc = engine.ctx.createOscillator()
     const g   = engine.ctx.createGain()
     osc.type = 'sine'
@@ -192,6 +228,36 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     g.gain.exponentialRampToValueAtTime(0.001, engine.ctx.currentTime + 0.5)
     osc.connect(g); g.connect(engine.masterGain)
     osc.start(); osc.stop(engine.ctx.currentTime + 0.5)
+  }
+
+  async function handleSoundfontFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    try {
+      parseSoundfontText(text)
+      setNpSfText(text)
+      if (!npName) setNpName(file.name.replace(/\.[^.]+$/, '').replace(/-/g, ' '))
+    } catch { alert('Could not parse soundfont file — make sure it\'s a midi-js-soundfonts .js file') }
+  }
+
+  async function handleCreatePreset() {
+    const name = npName.trim()
+    if (!name) return
+    setNpLoading(true)
+    try {
+      let lo = npLo, hi = npHi
+      const folder = npSfText ? name : (npFolder.trim() || name)
+      if (npSfText) {
+        const r = await importSoundfontToLibrary(npSfText, folder)
+        lo = r.loNote; hi = r.hiNote
+      }
+      const p = addPreset({ name, folder, loNote: lo, hiNote: hi, category: 'custom' })
+      setPresets(getPresets())
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } })
+      setShowNewPreset(false); setNpName(''); setNpFolder(''); setNpSfText(null); setShowPresetPicker(false)
+    } catch (err) { alert(`Failed: ${err instanceof Error ? err.message : err}`) }
+    finally { setNpLoading(false) }
   }
 
   // Close ctx menu on outside click
@@ -363,7 +429,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         height: TOOLBAR_H, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
         background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0,
       }}>
-        <button onClick={() => setEditTarget(null)} style={{ ...prBtn, width: 22, height: 22 }} title="Close piano roll"><X size={12} /></button>
+        <button onClick={() => { setEditTarget(null); setExpandedPianoRollClipId(null) }} style={{ ...prBtn, width: 22, height: 22 }} title="Close piano roll"><X size={12} /></button>
         <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 2, marginRight: 4 }}>{clip.name}</span>
 
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
@@ -423,10 +489,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               return (
                 <div style={{
                   position: 'fixed', top, right: window.innerWidth - btn.right,
-                  width: 210, zIndex: 9999,
+                  width: 220, zIndex: 9999,
                   background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
                   padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
-                  maxHeight: 260, overflowY: 'auto',
+                  maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
                 }}>
                   <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP PRESET</div>
                   {clip.presetId && (
@@ -446,6 +512,45 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       {p.name}
                     </button>
                   ))}
+                  <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
+                  {!showNewPreset ? (
+                    <button onClick={() => setShowNewPreset(true)}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
+                      + New Preset
+                    </button>
+                  ) : (
+                    <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
+                        style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
+                      <div style={{ fontSize: 9, color: '#666' }}>Upload soundfont (.js):</div>
+                      <input type="file" accept=".js" onChange={handleSoundfontFile}
+                        style={{ fontSize: 9, color: '#aaa', width: '100%' }} />
+                      {npSfText && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Soundfont loaded — note range auto-detected</div>}
+                      {!npSfText && (<>
+                        <div style={{ fontSize: 9, color: '#666' }}>Or: library folder name</div>
+                        <input placeholder="Folder" value={npFolder} onChange={e => setNpFolder(e.target.value)}
+                          style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: 9, color: '#666' }}>Lo</span>
+                          <input type="number" min={0} max={127} value={npLo} onChange={e => setNpLo(Number(e.target.value))}
+                            style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                          <span style={{ fontSize: 9, color: '#666' }}>Hi</span>
+                          <input type="number" min={0} max={127} value={npHi} onChange={e => setNpHi(Number(e.target.value))}
+                            style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                        </div>
+                      </>)}
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button onClick={handleCreatePreset} disabled={npLoading || !npName.trim()}
+                          style={{ flex: 1, padding: '4px 0', fontSize: 10, background: '#7c3aed', border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>
+                          {npLoading ? '…' : 'Create'}
+                        </button>
+                        <button onClick={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null) }}
+                          style={{ padding: '4px 6px', fontSize: 10, background: 'transparent', border: '1px solid #333', borderRadius: 3, color: '#666', cursor: 'pointer' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })(),
@@ -593,11 +698,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
 // ── Outer guard ───────────────────────────────────────────────────────────────
 
-export default function PianoRoll() {
-  const { project, editTarget } = useDaw()
-  const clip = editTarget?.type === 'midi-clip'
-    ? (project.arrangementClips.find(c => c.id === editTarget.clipId) ?? null)
-    : null
+export default function PianoRoll({ clipId: propClipId }: { clipId?: string }) {
+  const { project, editTarget, expandedPianoRollClipId } = useDaw()
+  const id = propClipId ?? expandedPianoRollClipId ?? (editTarget?.type === 'midi-clip' ? editTarget.clipId : undefined)
+  const clip = id ? (project.arrangementClips.find(c => c.id === id) ?? null) : null
   if (!clip || !isMidiClip(clip)) return null
   return <PianoRollInner clip={clip} />
 }

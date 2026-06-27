@@ -18,6 +18,7 @@ import ClipSettingsModal from './ClipSettingsModal'
 import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
+const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
 
 export const HDR_W = 200
 const AUTO_H = 60
@@ -116,7 +117,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
 export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const dragHRef  = useRef<{ startY: number; startH: number } | null>(null)
@@ -238,7 +239,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
     } else {
       const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4)
       dispatch({ type: 'ADD_CLIP', clip })
-      setEditTarget({ type: 'midi-clip', clipId: clip.id })
+      setExpandedPianoRollClipId(clip.id)
     }
   }
 
@@ -373,6 +374,21 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                 <span>🎹</span>
                 <span>Open Digital MIDI</span>
               </button>
+              {(() => {
+                const midiClip = clips.find(c => isMidiClip(c))
+                if (!midiClip) return null
+                const isExpanded = expandedPianoRollClipId === midiClip.id
+                return (
+                  <button onClick={() => { setExpandedPianoRollClipId(isExpanded ? null : midiClip.id); setTrackCtxMenu(null) }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                    onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
+                    onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+                  >
+                    <span>▦</span>
+                    <span>{isExpanded ? 'Close Piano Roll' : 'Open Piano Roll'}</span>
+                  </button>
+                )
+              })()}
             </>)}
 
             {/* Mute / Solo */}
@@ -455,7 +471,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     setSelectedClipId(clip.id)
                   }}
                   isCropping={croppingClipId === clip.id}
-                  onDoubleClick={() => setEditTarget({ type: 'midi-clip', clipId: clip.id })}
+                  onDoubleClick={() => setExpandedPianoRollClipId(expandedPianoRollClipId === clip.id ? null : clip.id)}
                   onSettings={() => { if (isAudioClip(clip)) setSettingsTarget(clip) }}
                   onMove={(sb, tid, alt) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })}
                   onResize={(db, alt) => {
@@ -586,6 +602,24 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           />
         </div>
       )}
+
+      {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded */}
+      {(() => {
+        const expandedClip = clips.find(c => isMidiClip(c) && c.id === expandedPianoRollClipId)
+        if (!expandedClip) return null
+        return (
+          <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
+            <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>ROLL</span>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expandedClip.name}</span>
+              <button onClick={() => setExpandedPianoRollClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close piano roll">✕</button>
+            </div>
+            <div style={{ flex: 1, height: 240, overflow: 'hidden' }}>
+              <PianoRoll clipId={expandedClip.id} />
+            </div>
+          </div>
+        )
+      })()}
 
       {settingsTarget && (
         <ClipSettingsModal

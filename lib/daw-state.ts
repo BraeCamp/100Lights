@@ -373,6 +373,9 @@ export interface DawContextValue {
   // Pad/voice MIDI card
   showPads: boolean
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void
+  // Piano roll (inline, under track)
+  expandedPianoRollClipId: string | null
+  setExpandedPianoRollClipId: (id: string | null) => void
   // Save
   onSave?: () => void
   isSaving: boolean

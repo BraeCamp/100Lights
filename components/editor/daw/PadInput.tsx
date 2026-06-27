@@ -10,6 +10,7 @@ import { libraryFulfill } from '@/lib/default-samples'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import dynamic from 'next/dynamic'
+import { getPadPresets, savePadPreset, deletePadPreset, type PadPreset } from '@/lib/pad-presets'
 
 const PadVoice = dynamic(() => import('./PadVoice'), { ssr: false })
 
@@ -682,6 +683,9 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [active,         setActive]         = useState(false)
   const [contextMenu,  setContextMenu]  = useState<{ pad: Pad; x: number; y: number } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showSaveMenu, setShowSaveMenu] = useState(false)
+  const [savedPresets, setSavedPresets] = useState<PadPreset[]>(() => getPadPresets())
+  const [saveName,     setSaveName]     = useState('')
   const [winSize,      setWinSize]      = useState<{ w: number; h: number | null }>({ w: 520, h: null })
   const [pos, setPos] = useState(() => ({
     x: typeof window !== 'undefined' ? Math.max(0, window.innerWidth  / 2 - 260) : 200,
@@ -720,6 +724,18 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   }, [pads])
   useEffect(() => { padKeyMapRef.current   = padKeyMap   }, [padKeyMap])
   useEffect(() => { pianoKeyMapRef.current = pianoKeyMap }, [pianoKeyMap])
+
+  const saveMenuRef = useRef<HTMLDivElement>(null)
+  // Close save menu on outside click
+  useEffect(() => {
+    if (!showSaveMenu) return
+    function onDown(e: MouseEvent) {
+      if (saveMenuRef.current && saveMenuRef.current.contains(e.target as Node)) return
+      setShowSaveMenu(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showSaveMenu])
 
   // ── MIDI clip tracking ────────────────────────────────────────────────────────
 
@@ -1073,6 +1089,49 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               {isFullscreen ? '⊡' : '⊞'}
             </button>
             {!isFullscreen && <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={e => { e.stopPropagation(); setSavedPresets(getPadPresets()); setSaveName(''); setShowSaveMenu(v => !v) }}
+                title="Save / Load pad layout"
+                style={{ background: showSaveMenu ? `${C.accent}22` : 'transparent', border: `1px solid ${showSaveMenu ? C.accent : C.border}`, color: showSaveMenu ? C.accent : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
+                PADS
+              </button>
+              {showSaveMenu && (
+                <div ref={saveMenuRef} onClick={e => e.stopPropagation()} style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 200, zIndex: 200,
+                  background: '#141414', border: `1px solid ${C.border}`, borderRadius: 6,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.7)', padding: '6px 0',
+                }}>
+                  <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#555', fontWeight: 700, letterSpacing: '0.07em', borderBottom: '1px solid #1e1e1e' }}>PAD LAYOUTS</div>
+                  {savedPresets.length === 0 && <div style={{ padding: '6px 10px', fontSize: 10, color: '#444' }}>No saved layouts</div>}
+                  {savedPresets.map(p => (
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
+                      <button onClick={() => { setPads(p.pads as Pad[]); setShowSaveMenu(false) }}
+                        style={{ flex: 1, textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#bbb', cursor: 'pointer' }}>
+                        {p.name}
+                      </button>
+                      <button onClick={() => { deletePadPreset(p.id); setSavedPresets(getPadPresets()) }}
+                        style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
+                  <div style={{ padding: '4px 10px', display: 'flex', gap: 4 }}>
+                    <input placeholder="Layout name" value={saveName} onChange={e => setSaveName(e.target.value)}
+                      style={{ flex: 1, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 5px' }} />
+                    <button
+                      onClick={() => {
+                        const name = saveName.trim() || `Layout ${savedPresets.length + 1}`
+                        savePadPreset(name, pads)
+                        setSavedPresets(getPadPresets())
+                        setSaveName('')
+                      }}
+                      style={{ padding: '3px 8px', fontSize: 10, background: C.accent, border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <button onClick={e => { e.stopPropagation(); onClose() }}
               style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>

@@ -68,6 +68,53 @@ function sfKeyToMidi(key: string): number {
 // In-memory cache so we only fetch each soundfont file once per page load
 const sfCache = new Map<string, Record<string, string>>()
 
+/** Parse a soundfont JS file's text content into { "C4": "data:audio/mp3;..." } map. */
+export function parseSoundfontText(text: string): Record<string, string> {
+  const assignIdx = text.lastIndexOf('= {')
+  const start = assignIdx >= 0 ? text.indexOf('{', assignIdx) : text.indexOf('{')
+  const end   = text.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) throw new Error('Could not parse soundfont JS')
+  const raw = text.slice(start, end + 1).replace(/,\s*}$/, '}')
+  return JSON.parse(raw) as Record<string, string>
+}
+
+const SF_NOTE_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+/**
+ * Import a soundfont JS file (text content) into the library as a named folder.
+ * Each key in the soundfont map becomes a LibraryEntry with the decoded audio blob.
+ * Returns the detected MIDI note range.
+ */
+export async function importSoundfontToLibrary(
+  text: string,
+  folderName: string,
+): Promise<{ count: number; loNote: number; hiNote: number }> {
+  const map = parseSoundfontText(text)
+  const now = new Date().toISOString()
+  const entries: LibraryEntry[] = []
+
+  for (const [key, dataUrl] of Object.entries(map)) {
+    const midi = sfKeyToMidi(key)
+    if (midi < 0 || !dataUrl.startsWith('data:')) continue
+    const name   = `${SF_NOTE_SHARP[midi % 12]}${Math.floor(midi / 12) - 1}`
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const binary = atob(base64)
+    const bytes  = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    const blob   = new Blob([bytes], { type: 'audio/mp3' })
+    entries.push({
+      id: crypto.randomUUID(), name, category: 'custom', audioBlob: blob,
+      duration: 2, addedAt: now, folder: folderName,
+      renderSpec: { kind: 'soundfont', beatType: 'custom', midiNote: midi, duration: 2, channels: 1 },
+    })
+  }
+
+  if (entries.length === 0) throw new Error('No valid notes found in soundfont')
+  const midis = entries.map(e => e.renderSpec!.midiNote!)
+  await Promise.all(entries.map(e => libraryAdd(e)))
+  return { count: entries.length, loNote: Math.min(...midis), hiNote: Math.max(...midis) }
+}
+
 async function fetchSoundfont(url: string): Promise<Record<string, string>> {
   if (sfCache.has(url)) return sfCache.get(url)!
   const resp = await fetch(url)

@@ -180,7 +180,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, selectedTrackId, editTarget, setEditTarget, onSave, isSaving } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, onSave, isSaving } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -202,7 +202,7 @@ export default function ArrangementView() {
   useEffect(() => {
     function frame() {
       const el = playheadRef.current
-      if (el) el.style.left = `${HDR_W + engine.currentBeat * beatW - scrollLeft}px`
+      if (el) el.style.left = `${engine.currentBeat * beatW - scrollLeft}px`
       rafRef.current = requestAnimationFrame(frame)
     }
     rafRef.current = requestAnimationFrame(frame)
@@ -241,26 +241,32 @@ export default function ArrangementView() {
   }
 
   function openPianoRoll() {
-    // If a MIDI clip is selected, open it
+    // If a MIDI clip is selected, toggle its inline piano roll
     if (selectedClipId) {
       const clip = project.arrangementClips.find(c => c.id === selectedClipId)
-      if (clip && isMidiClip(clip)) { setEditTarget({ type: 'midi-clip', clipId: clip.id }); return }
+      if (clip && isMidiClip(clip)) {
+        setExpandedPianoRollClipId(expandedPianoRollClipId === clip.id ? null : clip.id)
+        return
+      }
     }
     // Find any MIDI clip on selected track
     if (selectedTrackId) {
       const track = project.tracks.find(t => t.id === selectedTrackId)
       if (track && track.type !== 'drum') {
         const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
-        if (existing) { setEditTarget({ type: 'midi-clip', clipId: existing.id }); return }
-        // Create a new MIDI clip on the selected track
+        if (existing) {
+          setExpandedPianoRollClipId(expandedPianoRollClipId === existing.id ? null : existing.id)
+          return
+        }
+        // Create a new MIDI clip and immediately expand its piano roll
         const newClip = makeMidiClip(selectedTrackId, 'MIDI', engine.currentBeat, 4)
         dispatch({ type: 'ADD_CLIP', clip: newClip })
-        setEditTarget({ type: 'midi-clip', clipId: newClip.id })
+        setExpandedPianoRollClipId(newClip.id)
         return
       }
     }
     // Toggle off if already open
-    if (editTarget) { setEditTarget(null); return }
+    if (expandedPianoRollClipId) { setExpandedPianoRollClipId(null); return }
   }
 
   return (
@@ -283,9 +289,9 @@ export default function ArrangementView() {
         <div style={{ flex: 1 }} />
         <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
           ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-          border: `1px solid ${editTarget?.type === 'midi-clip' ? '#7c3aed' : 'var(--border)'}`,
-          background: editTarget?.type === 'midi-clip' ? 'rgba(124,58,237,0.18)' : 'transparent',
-          color: editTarget?.type === 'midi-clip' ? '#a78bfa' : 'var(--text-muted)',
+          border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
+          background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
+          color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
           letterSpacing: '0.04em',
         }}>PIANO ROLL</button>
         {onSave && (
@@ -337,11 +343,10 @@ export default function ArrangementView() {
         </div>
       </div>
 
-      {/* Global playhead overlay */}
-      <div
-        ref={playheadRef}
-        style={{ position: 'absolute', top: 30 + RULER_H, bottom: 0, width: 1, background: '#ef4444', pointerEvents: 'none', zIndex: 10 }}
-      />
+      {/* Global playhead overlay — clipped to track content area so it stays behind the header */}
+      <div style={{ position: 'absolute', left: HDR_W, right: 0, top: 30 + RULER_H, bottom: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 10 }}>
+        <div ref={playheadRef} style={{ position: 'absolute', top: 0, bottom: 0, width: 1, background: '#ef4444' }} />
+      </div>
 
       {/* Time signature popover */}
       {tsPopover && createPortal(

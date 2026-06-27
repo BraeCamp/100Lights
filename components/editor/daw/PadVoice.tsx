@@ -7,8 +7,8 @@ import { useDaw, makeMidiClip, makeAudioClip } from '../../../lib/daw-state'
 import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
 import { libraryGetAll } from '../../../lib/sound-library'
-import { libraryFulfill } from '../../../lib/default-samples'
-import { getPresets, clampToPreset, presetDisplayName } from '../../../lib/midi-presets'
+import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '../../../lib/default-samples'
+import { getPresets, addPreset, clampToPreset, presetDisplayName } from '../../../lib/midi-presets'
 import { captureAudioInput } from '../../../lib/audio-capture'
 import type { AudioInputSource } from '../../../lib/audio-capture'
 import type { MidiNote } from '../../../lib/daw-types'
@@ -269,6 +269,14 @@ export default function PadVoice() {
   const [presets,         setPresets]         = useState<MidiPreset[]>([])
   const [selectedPreset,  setSelectedPreset]  = useState<MidiPreset | null>(null)
   const [showPresetPicker, setShowPresetPicker] = useState(false)
+  // New-preset form
+  const [showNewPreset, setShowNewPreset] = useState(false)
+  const [npName,    setNpName]    = useState('')
+  const [npFolder,  setNpFolder]  = useState('')
+  const [npLo,      setNpLo]      = useState(36)
+  const [npHi,      setNpHi]      = useState(84)
+  const [npLoading, setNpLoading] = useState(false)
+  const [npSfText,  setNpSfText]  = useState<string | null>(null)
 
   // Sample mode (single sample + pitch-shift fallback)
   const [sampleEntries,    setSampleEntries]    = useState<LibraryEntry[]>([])
@@ -282,6 +290,38 @@ export default function PadVoice() {
     setOpenPickerFolders(prev => {
       const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s
     })
+  }
+
+  async function handleNpSoundfontFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    try {
+      parseSoundfontText(text)
+      setNpSfText(text)
+      if (!npName) setNpName(file.name.replace(/\.[^.]+$/, '').replace(/-/g, ' '))
+    } catch { alert('Could not parse soundfont file — use a midi-js-soundfonts .js file') }
+  }
+
+  async function handleCreatePreset() {
+    const name = npName.trim()
+    if (!name) return
+    setNpLoading(true)
+    try {
+      let lo = npLo, hi = npHi
+      const folder = npSfText ? name : (npFolder.trim() || name)
+      if (npSfText) {
+        const r = await importSoundfontToLibrary(npSfText, folder)
+        lo = r.loNote; hi = r.hiNote
+      }
+      const p = addPreset({ name, folder, loNote: lo, hiNote: hi, category: 'custom' })
+      const updated = getPresets()
+      setPresets(updated)
+      setSelectedPreset(p)
+      setSelectedSample(null)
+      setShowNewPreset(false); setNpName(''); setNpFolder(''); setNpSfText(null); setShowPresetPicker(false)
+    } catch (err) { alert(`Failed: ${err instanceof Error ? err.message : err}`) }
+    finally { setNpLoading(false) }
   }
 
   // Push-to-record mode
@@ -759,8 +799,44 @@ export default function PadVoice() {
               </button>
             ))}
           </div>
-          <div style={{ padding: '5px 8px', borderTop: '1px solid #1e1e1e', display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={() => setShowPresetPicker(false)} style={{ fontSize: 10, color: '#555', background: 'none', border: 'none', cursor: 'pointer' }}>Close</button>
+          <div style={{ borderTop: '1px solid #1e1e1e' }}>
+            {!showNewPreset ? (
+              <div style={{ padding: '5px 8px', display: 'flex', justifyContent: 'space-between' }}>
+                <button onClick={() => setShowNewPreset(true)} style={{ fontSize: 10, color: '#7c3aed', background: 'none', border: 'none', cursor: 'pointer' }}>+ New Preset</button>
+                <button onClick={() => setShowPresetPicker(false)} style={{ fontSize: 10, color: '#555', background: 'none', border: 'none', cursor: 'pointer' }}>Close</button>
+              </div>
+            ) : (
+              <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
+                  style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 11, padding: '4px 6px', boxSizing: 'border-box' }} />
+                <div style={{ fontSize: 9, color: '#666' }}>Upload soundfont (.js):</div>
+                <input type="file" accept=".js" onChange={handleNpSoundfontFile} style={{ fontSize: 9, color: '#aaa', width: '100%' }} />
+                {npSfText && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Soundfont loaded — note range auto-detected</div>}
+                {!npSfText && (<>
+                  <div style={{ fontSize: 9, color: '#666' }}>Or: library folder name</div>
+                  <input placeholder="Folder" value={npFolder} onChange={e => setNpFolder(e.target.value)}
+                    style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 11, padding: '4px 6px', boxSizing: 'border-box' }} />
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <span style={{ fontSize: 9, color: '#666' }}>Lo</span>
+                    <input type="number" min={0} max={127} value={npLo} onChange={e => setNpLo(Number(e.target.value))}
+                      style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                    <span style={{ fontSize: 9, color: '#666' }}>Hi</span>
+                    <input type="number" min={0} max={127} value={npHi} onChange={e => setNpHi(Number(e.target.value))}
+                      style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                  </div>
+                </>)}
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button onClick={handleCreatePreset} disabled={npLoading || !npName.trim()}
+                    style={{ flex: 1, padding: '5px 0', fontSize: 10, background: '#7c3aed', border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>
+                    {npLoading ? '…' : 'Create'}
+                  </button>
+                  <button onClick={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null) }}
+                    style={{ padding: '5px 8px', fontSize: 10, background: 'transparent', border: '1px solid #333', borderRadius: 3, color: '#666', cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

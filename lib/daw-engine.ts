@@ -1,6 +1,6 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -754,8 +754,10 @@ export class DawEngine extends EventTarget {
     const allExtraNodes: AudioNode[] = []
     const allExtraOscs: OscillatorNode[] = []
     for (const eff of insertEffects) {
-      const effContextStart = startAt + Math.max(0, this.beatsToSeconds(eff.startBeat - clip.startBeat))
-      const r = this._buildClipEffect(eff, lastNode, startAt, effContextStart)
+      // When seeking mid-clip, use now-relative timing so already-active effects start immediately
+      const effContextStart   = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
+      const effSeekOffsetSec  = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
+      const r = this._buildClipEffect(eff, lastNode, startAt, effContextStart, effSeekOffsetSec)
       lastNode = r.output
       allExtraNodes.push(...r.extraNodes)
       allExtraOscs.push(...r.extraOscs)
@@ -764,8 +766,9 @@ export class DawEngine extends EventTarget {
 
     // Pitch effects modify source.detune (added on top of effectiveDetune)
     for (const eff of pitchEffects) {
-      const effContextStart = startAt + Math.max(0, this.beatsToSeconds(eff.startBeat - clip.startBeat))
-      this._applyPitchEffect(eff, source, effContextStart, effectiveDetune)
+      const effContextStart   = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
+      const effSeekOffsetSec  = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
+      this._applyPitchEffect(eff, source, effContextStart, effectiveDetune, effSeekOffsetSec)
     }
 
     if (clip.fadeIn > 0) {
@@ -812,11 +815,28 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  private _slicedCurve(
+    points: AutoPoint[],
+    durationBeats: number,
+    seekOffsetSec: number,
+    mapper: (v: number) => number,
+  ): { curve: Float32Array; durSec: number } {
+    const fullSec   = this.beatsToSeconds(durationBeats)
+    const remainSec = Math.max(0.001, fullSec - seekOffsetSec)
+    const N         = Math.max(4, Math.ceil(fullSec * 60))
+    const all       = sampleAutomation(points, durationBeats, N)
+    const idx       = seekOffsetSec > 0 ? Math.min(N - 2, Math.floor((seekOffsetSec / fullSec) * N)) : 0
+    const slice     = all.slice(idx)
+    const arr       = slice.length >= 2 ? slice : [all[N - 1], all[N - 1]]
+    return { curve: new Float32Array(arr.map(mapper)), durSec: remainSec }
+  }
+
   private _buildClipEffect(
     eff: ClipEffect,
     input: AudioNode,
     startAt: number,
     effContextStart: number,
+    effSeekOffsetSec = 0,
   ): { output: AudioNode; extraNodes: AudioNode[]; extraOscs: OscillatorNode[] } {
     const extraNodes: AudioNode[] = []
     const extraOscs: OscillatorNode[] = []
@@ -828,19 +848,18 @@ export class DawEngine extends EventTarget {
         const g = n(ctx.createGain())
         const meta = CLIP_EFFECT_PARAM_META.volume
         if (eff.automation?.points.length) {
-          const effDurSec = this.beatsToSeconds(eff.durationBeats)
-          const N = Math.max(2, Math.ceil(effDurSec * 60))
-          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-          const curve = new Float32Array(vals.map(v => normToParam(v, meta)))
-          g.gain.setValueCurveAtTime(curve, effContextStart, effDurSec)
+          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
+          g.gain.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
           const env = eff.params.shapeEnvelope
           if (env && env.length > 0) {
             const baseGain = eff.params.gain ?? 1
             const sr       = eff.params.shapeSampleRate ?? 30
-            g.gain.setValueAtTime(Math.max(0, env[0] * baseGain), effContextStart)
-            for (let i = 1; i < env.length; i++) {
-              const t = effContextStart + i / sr
+            const skip     = Math.floor(effSeekOffsetSec * sr)
+            const startVal = skip < env.length ? env[skip] : env[env.length - 1]
+            g.gain.setValueAtTime(Math.max(0, startVal * baseGain), effContextStart)
+            for (let i = skip + 1; i < env.length; i++) {
+              const t = effContextStart + (i - skip) / sr
               if (t > ctx.currentTime) g.gain.linearRampToValueAtTime(Math.max(0, env[i] * baseGain), t)
             }
           } else {
@@ -859,11 +878,8 @@ export class DawEngine extends EventTarget {
         f.Q.value = eff.params.filterQ ?? 1
         if (eff.automation?.points.length) {
           const meta = CLIP_EFFECT_PARAM_META.filter
-          const effDurSec = this.beatsToSeconds(eff.durationBeats)
-          const N = Math.max(2, Math.ceil(effDurSec * 60))
-          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-          const curve = new Float32Array(vals.map(v => normToParam(v, meta)))
-          f.frequency.setValueCurveAtTime(curve, effContextStart, effDurSec)
+          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
+          f.frequency.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
           f.frequency.value = eff.params.frequency ?? 1000
         }
@@ -878,16 +894,14 @@ export class DawEngine extends EventTarget {
         lfo.type = 'sine'
         if (eff.automation?.points.length) {
           const meta = CLIP_EFFECT_PARAM_META.tremolo
-          const effDurSec = this.beatsToSeconds(eff.durationBeats)
-          const N = Math.max(2, Math.ceil(effDurSec * 60))
-          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-          const curve = new Float32Array(vals.map(v => normToParam(v, meta)))
-          lfo.frequency.setValueCurveAtTime(curve, effContextStart, effDurSec)
+          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
+          lfo.frequency.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
           lfo.frequency.value = eff.params.tremoloRate ?? 4
         }
         lfo.connect(lfoG); lfoG.connect(outG.gain)
-        input.connect(outG); lfo.start(startAt)
+        // Start LFO offset by seek so its phase matches mid-effect position
+        input.connect(outG); lfo.start(startAt - effSeekOffsetSec)
         return { output: outG, extraNodes, extraOscs }
       }
       case 'reverb': {
@@ -897,13 +911,10 @@ export class DawEngine extends EventTarget {
         const conv = n(ctx.createConvolver()); conv.buffer = this._makeIR(eff.params.reverbDecay ?? 2)
         const mix  = n(ctx.createGain()); mix.gain.value = 1
         if (eff.automation?.points.length) {
-          const effDurSec = this.beatsToSeconds(eff.durationBeats)
-          const N = Math.max(2, Math.ceil(effDurSec * 60))
-          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-          const wetCurve = new Float32Array(vals)
-          const dryCurve = new Float32Array(vals.map(v => 1 - v))
-          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, effDurSec)
-          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, effDurSec)
+          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
+          const dryCurve = new Float32Array(wetCurve.map(v => 1 - v))
+          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, durSec)
+          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, durSec)
         } else {
           wetG.gain.value = staticWet; dry.gain.value = 1 - staticWet
         }
@@ -919,13 +930,10 @@ export class DawEngine extends EventTarget {
         const wetG  = n(ctx.createGain())
         const mix   = n(ctx.createGain()); mix.gain.value = 1
         if (eff.automation?.points.length) {
-          const effDurSec = this.beatsToSeconds(eff.durationBeats)
-          const N = Math.max(2, Math.ceil(effDurSec * 60))
-          const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-          const wetCurve = new Float32Array(vals)
-          const dryCurve = new Float32Array(vals.map(v => 1 - v))
-          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, effDurSec)
-          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, effDurSec)
+          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
+          const dryCurve = new Float32Array(wetCurve.map(v => 1 - v))
+          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, durSec)
+          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, durSec)
         } else {
           wetG.gain.value = staticWet; dry.gain.value = 1 - staticWet
         }
@@ -951,31 +959,34 @@ export class DawEngine extends EventTarget {
     source: AudioBufferSourceNode,
     effContextStart: number,
     clipDetuneOffset = 0,
+    effSeekOffsetSec = 0,
   ) {
-    const effDurSec = this.beatsToSeconds(eff.durationBeats)
+    const meta      = CLIP_EFFECT_PARAM_META.pitch
     const baseCents = (eff.params.semitones ?? 0) * 100 + clipDetuneOffset
 
     if (eff.automation?.points.length) {
-      const meta = CLIP_EFFECT_PARAM_META.pitch
-      const N = Math.max(2, Math.ceil(effDurSec * 60))
-      const vals = sampleAutomation(eff.automation.points, eff.durationBeats, N)
-      const detuneArr = vals.map(v => normToParam(v, meta) * 100 + clipDetuneOffset)
-      source.detune.setValueCurveAtTime(new Float32Array(detuneArr), effContextStart, effDurSec)
-      source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
+      const { curve, durSec } = this._slicedCurve(
+        eff.automation.points, eff.durationBeats, effSeekOffsetSec,
+        v => normToParam(v, meta) * 100 + clipDetuneOffset,
+      )
+      source.detune.setValueCurveAtTime(curve, effContextStart, durSec)
+      source.detune.setValueAtTime(clipDetuneOffset, effContextStart + durSec)
     } else {
       const env = eff.params.shapeEnvelope
       if (env && env.length > 0) {
-        const sr = eff.params.shapeSampleRate ?? 30
-        source.detune.setValueAtTime(baseCents + env[0] * 100, effContextStart)
-        for (let i = 1; i < env.length; i++) {
-          const t = effContextStart + i / sr
+        const sr    = eff.params.shapeSampleRate ?? 30
+        const skip  = Math.floor(effSeekOffsetSec * sr)
+        const start = skip < env.length ? env[skip] : env[env.length - 1]
+        source.detune.setValueAtTime(baseCents + start * 100, effContextStart)
+        for (let i = skip + 1; i < env.length; i++) {
+          const t = effContextStart + (i - skip) / sr
           if (t > this.ctx.currentTime)
             source.detune.linearRampToValueAtTime(baseCents + env[i] * 100, t)
         }
-        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + env.length / sr)
+        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + (env.length - skip) / sr)
       } else {
         source.detune.setValueAtTime(baseCents, effContextStart)
-        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + effDurSec)
+        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + this.beatsToSeconds(eff.durationBeats) - effSeekOffsetSec)
       }
     }
   }

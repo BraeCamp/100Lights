@@ -287,6 +287,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
+  const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
 
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
   useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
@@ -434,11 +435,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     setMetronome,
     showPads,
     setShowPads,
+    expandedPianoRollClipId,
+    setExpandedPianoRollClipId,
     onSave: onSave ? () => { void handleSaveRef.current() } : undefined,
     isSaving,
   }), [
     project, dispatch, view, editTarget, selectedTrackId, selectedClipId, selectedClipIds,
-    playing, recording, position, setPosition, metronome, showPads, onSave, isSaving,
+    playing, recording, position, setPosition, metronome, showPads,
+    expandedPianoRollClipId, onSave, isSaving,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -512,12 +516,7 @@ export default function AudioEditor(props: AudioEditorProps) {
               {view === 'mixer' && <Mixer />}
             </div>
 
-            {/* Piano roll panel — shown when a clip is open for editing */}
-            {editTarget !== null && (
-              <div style={{ height: 220, flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
-                <PianoRoll />
-              </div>
-            )}
+            {/* Piano roll is now rendered inline under each track in TrackRow */}
 
             {/* Device chain / instrument panel — shown when a track is selected */}
             {selectedTrackId !== null && (
