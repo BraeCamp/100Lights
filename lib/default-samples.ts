@@ -106,8 +106,11 @@ export async function importSoundfontToLibrary(
   const hiNote    = available[available.length - 1]
   const total     = hiNote - loNote + 1
 
-  // Decode each source note once and cache
-  const decodedSrc = new Map<number, AudioBuffer>()
+  // One shared AudioContext for all decoding (avoids repeated context creation overhead)
+  const decodingCtx = new AudioContext()
+  // Cache decoded AudioBuffers keyed by source MIDI (reused when pitch-shifting fills gaps)
+  const decodedSrc  = new Map<number, AudioBuffer>()
+
   const decodeSource = async (srcMidi: number): Promise<AudioBuffer> => {
     if (decodedSrc.has(srcMidi)) return decodedSrc.get(srcMidi)!
     const dataUrl = sfNoteMap.get(srcMidi)!
@@ -115,9 +118,8 @@ export async function importSoundfontToLibrary(
     const binary  = atob(base64)
     const bytes   = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    const tmpCtx  = new AudioContext()
-    const buf     = await tmpCtx.decodeAudioData(bytes.buffer)
-    tmpCtx.close()
+    // slice() so decodeAudioData detaching the buffer doesn't affect other uses
+    const buf = await decodingCtx.decodeAudioData(bytes.buffer.slice(0))
     decodedSrc.set(srcMidi, buf)
     return buf
   }
@@ -133,40 +135,57 @@ export async function importSoundfontToLibrary(
   for (let midi = loNote; midi <= hiNote; midi++) {
     const nearestMidi = findNearest(midi)
     const semitones   = midi - nearestMidi
-    const srcBuf      = await decodeSource(nearestMidi)
+    const name        = `${SF_NOTE_SHARP[midi % 12]}${Math.floor(midi / 12) - 1}`
 
-    let finalBuf: AudioBuffer
     if (semitones === 0) {
-      finalBuf = srcBuf
+      // Exact note present in the soundfont — keep the original MP3 blob (10× smaller
+      // than WAV) and decode once only to read its natural duration.
+      const srcBuf  = await decodeSource(midi)
+      const dataUrl = sfNoteMap.get(midi)!
+      const base64  = dataUrl.slice(dataUrl.indexOf(',') + 1)
+      const binary  = atob(base64)
+      const mp3Bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) mp3Bytes[i] = binary.charCodeAt(i)
+      entries.push({
+        id:         crypto.randomUUID(),
+        name,
+        category:   'custom',
+        audioBlob:  new Blob([mp3Bytes], { type: 'audio/mp3' }),
+        duration:   srcBuf.duration,
+        addedAt:    now,
+        folder:     folderName,
+        renderSpec: { kind: 'soundfont', beatType: 'custom', midiNote: midi, duration: srcBuf.duration, channels: 2 },
+      })
     } else {
-      // Adjust OfflineAudioContext length for the pitch-shift rate so the full
-      // decay is captured (faster rate → shorter audio; slower → longer)
-      const rate        = Math.pow(2, semitones / 12)
-      const shiftedDur  = srcBuf.duration / rate
-      const ctx         = new OfflineAudioContext(2, Math.ceil(shiftedDur * SR), SR)
-      const src         = ctx.createBufferSource()
-      src.buffer        = srcBuf
-      src.detune.value  = semitones * 100
+      // Gap note — pitch-shift from nearest and render to WAV so the full decay
+      // is captured. Adjust the OfflineAudioContext length for the rate change:
+      // faster playback (pitch up) → shorter duration, slower → longer.
+      const srcBuf     = await decodeSource(nearestMidi)
+      const rate       = Math.pow(2, semitones / 12)
+      const shiftedDur = srcBuf.duration / rate
+      const ctx        = new OfflineAudioContext(2, Math.ceil(shiftedDur * SR), SR)
+      const src        = ctx.createBufferSource()
+      src.buffer       = srcBuf
+      src.detune.value = semitones * 100
       src.connect(ctx.destination)
       src.start(0)
-      finalBuf = await ctx.startRendering()
+      const finalBuf   = await ctx.startRendering()
+      entries.push({
+        id:         crypto.randomUUID(),
+        name,
+        category:   'custom',
+        audioBlob:  toWavBlob(finalBuf),
+        duration:   finalBuf.duration,
+        addedAt:    now,
+        folder:     folderName,
+        renderSpec: { kind: 'soundfont', beatType: 'custom', midiNote: midi, duration: finalBuf.duration, channels: 2 },
+      })
     }
-
-    const name = `${SF_NOTE_SHARP[midi % 12]}${Math.floor(midi / 12) - 1}`
-    entries.push({
-      id:         crypto.randomUUID(),
-      name,
-      category:   'custom',
-      audioBlob:  toWavBlob(finalBuf),
-      duration:   finalBuf.duration,
-      addedAt:    now,
-      folder:     folderName,
-      renderSpec: { kind: 'soundfont', beatType: 'custom', midiNote: midi, duration: finalBuf.duration, channels: 2 },
-    })
 
     onProgress?.(midi - loNote + 1, total)
   }
 
+  decodingCtx.close()
   // Persist sequentially to avoid IDB write contention
   for (const e of entries) await libraryAdd(e)
   return { count: entries.length, loNote, hiNote }

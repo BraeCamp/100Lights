@@ -148,7 +148,7 @@ export default async function AdminPage() {
         {/* ── Potential Samples ─────────────────────────────────────────────── */}
         <SectionHeader
           title="Potential Samples and Packs"
-          description="Preview and add new instrument sample packs. Each instrument is sourced from the FluidR3 GM soundfont. Click Preview to hear middle C, then Add to Library to import all notes and create a MIDI preset."
+          description="Preview and add new instrument sample packs from the FluidR3 GM soundfont. Every instrument covers the full 88-key range (A0–C8, MIDI 21–108) — all notes are individually sampled, no pitch-shifting. Click Preview to hear a sample note, then Add to Library to import all 88 notes and create a MIDI preset."
         />
         <PotentialSamplesPanel />
 
