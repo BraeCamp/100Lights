@@ -19,6 +19,7 @@ import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
 const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
+const SoundLibrary = dynamic(() => import('../SoundLibrary'), { ssr: false })
 
 export const HDR_W = 200
 const AUTO_H = 60
@@ -131,7 +132,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
   const inputBtnRef        = useRef<HTMLButtonElement>(null)
   const multiDragOrigins   = useRef<Record<string, number>>({})
-  const replaceFileRef     = useRef<HTMLInputElement>(null)
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false)
 
   // Escape exits crop mode
   useEffect(() => {
@@ -164,27 +165,23 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
     dispatch({ type: 'ADD_CLIP', clip: newClip })
   }
 
-  function handleReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    e.target.value = ''
-    const audioUrl = URL.createObjectURL(file)
-    const reader = new FileReader()
-    reader.onload = async ev => {
-      const buf = ev.target?.result as ArrayBuffer
-      let peaks: number[] | undefined
-      try {
-        const decoded = await engine.ctx.decodeAudioData(buf.slice(0))
-        peaks = extractPeaks(decoded, 200)
-      } catch { /* leave peaks undefined */ }
-      const targets = selectedClipIds.size > 0
-        ? project.arrangementClips.filter(c => selectedClipIds.has(c.id) && isAudioClip(c))
-        : clips.filter(c => selectedClipId === c.id && isAudioClip(c))
-      for (const c of targets) {
-        dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { audioUrl, waveformPeaks: peaks, bufferDuration: undefined } })
-      }
+  async function handlePickFromLibrary(entry: import('@/lib/sound-library').LibraryEntry) {
+    setShowLibraryPicker(false)
+    const fulfilled = entry.audioBlob ? entry : await libraryFulfill(entry.id)
+    if (!fulfilled?.audioBlob) return
+    const audioUrl = URL.createObjectURL(fulfilled.audioBlob)
+    let peaks: number[] | undefined
+    try {
+      const ab = await fulfilled.audioBlob.arrayBuffer()
+      const decoded = await engine.ctx.decodeAudioData(ab)
+      peaks = extractPeaks(decoded, 200)
+    } catch { /* leave peaks undefined */ }
+    const targets = selectedClipIds.size > 0
+      ? project.arrangementClips.filter(c => selectedClipIds.has(c.id) && isAudioClip(c))
+      : clips.filter(c => selectedClipId === c.id && isAudioClip(c))
+    for (const c of targets) {
+      dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { audioUrl, waveformPeaks: peaks, bufferDuration: undefined } })
     }
-    reader.readAsArrayBuffer(file)
   }
 
   // Auto-load waveform peaks for any audio clips that don't have them yet
@@ -511,7 +508,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     setSelectedClipIds(new Set())
                     setSelectedClipId(null)
                   }}
-                  onReplaceSample={() => replaceFileRef.current?.click()}
+                  onReplaceSample={() => setShowLibraryPicker(true)}
                   onMove={(sb, tid, alt) => {
                     if (selectedClipIds.has(clip.id) && selectedClipIds.size > 1) {
                       const origin = multiDragOrigins.current[clip.id] ?? clip.startBeat
@@ -675,7 +672,22 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
         )
       })()}
 
-      <input ref={replaceFileRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleReplaceFile} />
+      {showLibraryPicker && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowLibraryPicker(false) }}>
+          <div style={{ width: 480, height: 620, background: '#1e1e1e', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Replace Sample</span>
+              <button onClick={() => setShowLibraryPicker(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <SoundLibrary embedded onPick={handlePickFromLibrary} />
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {settingsTarget && (
         <ClipSettingsModal

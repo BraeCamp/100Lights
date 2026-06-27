@@ -36,7 +36,7 @@ function colorFor(cat: string) { return CAT_COLORS[cat] ?? '#94a3b8' }
 
 // ── Entry row ─────────────────────────────────────────────────────────────────
 function EntryRow({
-  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange, onFulfilled,
+  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange, onFulfilled, onPick,
 }: {
   entry: LibraryEntry
   folders: string[]
@@ -45,6 +45,7 @@ function EntryRow({
   onCategoryChange: (id: string, cat: LibraryCategory) => void
   onFolderChange: (id: string, folder: string | undefined) => void
   onFulfilled?: (e: LibraryEntry) => void
+  onPick?: (e: LibraryEntry) => void
 }) {
   const [editing, setEditing]         = useState(false)
   const [draft, setDraft]             = useState(entry.name)
@@ -320,9 +321,17 @@ function EntryRow({
         {playing ? <Square size={7} fill="currentColor" /> : <Play size={7} fill="currentColor" style={{ marginLeft: 1 }} />}
       </button>
 
-      <button onClick={() => onDelete(entry.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
-        <Trash2 size={10} />
-      </button>
+      {onPick && (
+        <button onClick={() => onPick(entry)}
+          style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 3, border: '1px solid var(--accent)', background: 'rgba(61,143,239,0.12)', color: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}>
+          Use
+        </button>
+      )}
+      {!onPick && (
+        <button onClick={() => onDelete(entry.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
+          <Trash2 size={10} />
+        </button>
+      )}
     </div>
   )
 }
@@ -827,7 +836,7 @@ export function AddToLibraryModal({
 // ── Main SoundLibrary panel ───────────────────────────────────────────────────
 const FOLDERS_KEY = 'sound-library-folders'
 
-export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
+export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean; onPick?: (entry: LibraryEntry) => void }) {
   const { user } = useUser()
   initLibrary(user?.id ?? null)
 
@@ -1058,6 +1067,7 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
       onCategoryChange={handleCategoryChange}
       onFolderChange={handleFolderChange}
       onFulfilled={fulfilled => setEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))}
+      onPick={onPick}
     />
   )
 
