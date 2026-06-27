@@ -23,6 +23,9 @@ interface ScheduledSource {
   source: AudioBufferSourceNode
   gainNode: GainNode
   clipId: string
+  tailNodes?: AudioNode[]
+  tailOscs?: OscillatorNode[]
+  tailTimerId?: ReturnType<typeof setTimeout>
 }
 
 interface SessionSlot {
@@ -779,15 +782,33 @@ export class DawEngine extends EventTarget {
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
     }
 
+    // Reverb tails need to ring out after the source stops — find the longest decay
+    const maxReverbTailSec = insertEffects
+      .filter(e => e.type === 'reverb')
+      .reduce((max, e) => Math.max(max, e.params.reverbDecay ?? 2), 0)
+
     const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id }
     this.scheduledSources.push(entry)
     source.onended = () => {
       const idx = this.scheduledSources.indexOf(entry)
       if (idx !== -1) this.scheduledSources.splice(idx, 1)
       source.disconnect()
-      fadeGain.disconnect()
-      for (const n of allExtraNodes) { try { n.disconnect() } catch { /* ok */ } }
-      for (const o of allExtraOscs) { try { o.stop(); o.disconnect() } catch { /* ok */ } }
+
+      const cleanupTail = () => {
+        fadeGain.disconnect()
+        for (const n of allExtraNodes) { try { n.disconnect() } catch { /* ok */ } }
+        for (const o of allExtraOscs) { try { o.stop(); o.disconnect() } catch { /* ok */ } }
+        entry.tailTimerId = undefined
+      }
+
+      if (maxReverbTailSec > 0) {
+        // Keep effect nodes connected so the convolver can ring out naturally
+        entry.tailNodes   = allExtraNodes
+        entry.tailOscs    = allExtraOscs
+        entry.tailTimerId = setTimeout(cleanupTail, maxReverbTailSec * 1000 + 300)
+      } else {
+        cleanupTail()
+      }
     }
   }
 
@@ -983,8 +1004,11 @@ export class DawEngine extends EventTarget {
   }
 
   private _killAllSources() {
-    for (const { source, gainNode } of this.scheduledSources) {
+    for (const { source, gainNode, tailNodes, tailOscs, tailTimerId } of this.scheduledSources) {
       try { source.stop(); source.disconnect(); gainNode.disconnect() } catch { /* ok */ }
+      if (tailTimerId !== undefined) clearTimeout(tailTimerId)
+      if (tailNodes) for (const n of tailNodes) { try { n.disconnect() } catch { /* ok */ } }
+      if (tailOscs)  for (const o of tailOscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
     }
     this.scheduledSources = []
   }
