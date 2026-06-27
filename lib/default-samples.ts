@@ -88,31 +88,88 @@ const SF_NOTE_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 export async function importSoundfontToLibrary(
   text: string,
   folderName: string,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<{ count: number; loNote: number; hiNote: number }> {
   const map = parseSoundfontText(text)
   const now = new Date().toISOString()
-  const entries: LibraryEntry[] = []
 
+  // Build midi → dataUrl map from the soundfont's available notes
+  const sfNoteMap = new Map<number, string>()
   for (const [key, dataUrl] of Object.entries(map)) {
     const midi = sfKeyToMidi(key)
-    if (midi < 0 || !dataUrl.startsWith('data:')) continue
-    const name   = `${SF_NOTE_SHARP[midi % 12]}${Math.floor(midi / 12) - 1}`
-    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
-    const binary = atob(base64)
-    const bytes  = new Uint8Array(binary.length)
+    if (midi >= 0 && dataUrl.startsWith('data:')) sfNoteMap.set(midi, dataUrl)
+  }
+  if (sfNoteMap.size === 0) throw new Error('No valid notes found in soundfont')
+
+  const available = [...sfNoteMap.keys()].sort((a, b) => a - b)
+  const loNote    = available[0]
+  const hiNote    = available[available.length - 1]
+  const total     = hiNote - loNote + 1
+
+  // Decode each source note once and cache
+  const decodedSrc = new Map<number, AudioBuffer>()
+  const decodeSource = async (srcMidi: number): Promise<AudioBuffer> => {
+    if (decodedSrc.has(srcMidi)) return decodedSrc.get(srcMidi)!
+    const dataUrl = sfNoteMap.get(srcMidi)!
+    const base64  = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const binary  = atob(base64)
+    const bytes   = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    const blob   = new Blob([bytes], { type: 'audio/mp3' })
-    entries.push({
-      id: crypto.randomUUID(), name, category: 'custom', audioBlob: blob,
-      duration: 2, addedAt: now, folder: folderName,
-      renderSpec: { kind: 'soundfont', beatType: 'custom', midiNote: midi, duration: 2, channels: 1 },
-    })
+    const tmpCtx  = new AudioContext()
+    const buf     = await tmpCtx.decodeAudioData(bytes.buffer)
+    tmpCtx.close()
+    decodedSrc.set(srcMidi, buf)
+    return buf
   }
 
-  if (entries.length === 0) throw new Error('No valid notes found in soundfont')
-  const midis = entries.map(e => e.renderSpec!.midiNote!)
-  await Promise.all(entries.map(e => libraryAdd(e)))
-  return { count: entries.length, loNote: Math.min(...midis), hiNote: Math.max(...midis) }
+  const findNearest = (target: number): number =>
+    available.reduce((best, m) =>
+      Math.abs(m - target) < Math.abs(best - target) ? m : best
+    )
+
+  const SR      = 44100
+  const entries: LibraryEntry[] = []
+
+  for (let midi = loNote; midi <= hiNote; midi++) {
+    const nearestMidi = findNearest(midi)
+    const semitones   = midi - nearestMidi
+    const srcBuf      = await decodeSource(nearestMidi)
+
+    let finalBuf: AudioBuffer
+    if (semitones === 0) {
+      finalBuf = srcBuf
+    } else {
+      // Adjust OfflineAudioContext length for the pitch-shift rate so the full
+      // decay is captured (faster rate → shorter audio; slower → longer)
+      const rate        = Math.pow(2, semitones / 12)
+      const shiftedDur  = srcBuf.duration / rate
+      const ctx         = new OfflineAudioContext(2, Math.ceil(shiftedDur * SR), SR)
+      const src         = ctx.createBufferSource()
+      src.buffer        = srcBuf
+      src.detune.value  = semitones * 100
+      src.connect(ctx.destination)
+      src.start(0)
+      finalBuf = await ctx.startRendering()
+    }
+
+    const name = `${SF_NOTE_SHARP[midi % 12]}${Math.floor(midi / 12) - 1}`
+    entries.push({
+      id:         crypto.randomUUID(),
+      name,
+      category:   'custom',
+      audioBlob:  toWavBlob(finalBuf),
+      duration:   finalBuf.duration,
+      addedAt:    now,
+      folder:     folderName,
+      renderSpec: { kind: 'soundfont', beatType: 'custom', midiNote: midi, duration: finalBuf.duration, channels: 2 },
+    })
+
+    onProgress?.(midi - loNote + 1, total)
+  }
+
+  // Persist sequentially to avoid IDB write contention
+  for (const e of entries) await libraryAdd(e)
+  return { count: entries.length, loNote, hiNote }
 }
 
 async function fetchSoundfont(url: string): Promise<Record<string, string>> {

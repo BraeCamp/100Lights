@@ -355,9 +355,11 @@ export default function PadVoice() {
   const lastResultRef      = useRef<{ r: LivePitchResult; ts: number } | null>(null)
   // Controls the confidence threshold in processFrame: 0.72 normal, 0.45 high sensitivity
   const sensitivityRef     = useRef(0.72)
+  const tempoRef           = useRef(project.tempo ?? 120)
   const canvasRef          = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => { quantizeEnabledRef.current = quantizeEnabled }, [quantizeEnabled])
+  useEffect(() => { tempoRef.current = project.tempo ?? 120 }, [project.tempo])
   useEffect(() => { quantizeGridRef.current    = quantizeGrid    }, [quantizeGrid])
 
   useEffect(() => { clipIdRef.current = selectedClipId },       [selectedClipId])
@@ -453,10 +455,11 @@ export default function PadVoice() {
           blob = fulfilled.audioBlob
           sampleEntriesRef.current = sampleEntriesRef.current.map(e => e.id === fulfilled.id ? fulfilled : e)
         }
-        const audioUrl     = URL.createObjectURL(blob)
-        const absStart     = recStartRef.current + startBeat
-        const noteDurBeats = Math.max(0.125, durationBeats)
-        const clip         = makeAudioClip(trackId, `${preset.name} ${noteName}`, absStart, noteDurBeats, { audioUrl })
+        const audioUrl       = URL.createObjectURL(blob)
+        const absStart       = recStartRef.current + startBeat
+        const sampleDurBeats = entry.duration ? entry.duration * tempoRef.current / 60 : durationBeats
+        const noteDurBeats   = Math.max(durationBeats, sampleDurBeats, 0.125)
+        const clip           = makeAudioClip(trackId, `${preset.name} ${noteName}`, absStart, noteDurBeats, { audioUrl })
         dispatch({ type: 'ADD_CLIP', clip })
         setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: noteDurBeats }])
         setRenderStatus(null)
@@ -483,12 +486,13 @@ export default function PadVoice() {
           sampleBlob = fulfilled.audioBlob
           setSelectedSample(fulfilled)
         }
-        const pitched      = await renderPitchedBuffer(sampleBlob, semitones)
-        const wavBlob      = bufferToWavBlob(pitched)
-        const audioUrl     = URL.createObjectURL(wavBlob)
-        const absStart     = recStartRef.current + startBeat
-        const noteDurBeats = Math.max(0.125, durationBeats)
-        const clip         = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, noteDurBeats, { audioUrl })
+        const pitched        = await renderPitchedBuffer(sampleBlob, semitones)
+        const wavBlob        = bufferToWavBlob(pitched)
+        const audioUrl       = URL.createObjectURL(wavBlob)
+        const absStart       = recStartRef.current + startBeat
+        const sampleDurBeats = pitched.duration * tempoRef.current / 60
+        const noteDurBeats   = Math.max(durationBeats, sampleDurBeats, 0.125)
+        const clip           = makeAudioClip(trackId, `${sample.name} → ${midiNoteName(midi)}`, absStart, noteDurBeats, { audioUrl })
         dispatch({ type: 'ADD_CLIP', clip })
         setTranscribed(prev => [...prev, { id: clip.id, midi, startBeat, durationBeats: noteDurBeats }])
         setRenderStatus(null)

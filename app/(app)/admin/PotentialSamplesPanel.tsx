@@ -262,8 +262,14 @@ export default function PotentialSamplesPanel() {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         sfText = await resp.text()
       }
-      setMessages(m => ({ ...m, [key]: 'Importing notes…' }))
-      const { count, loNote, hiNote } = await importSoundfontToLibrary(sfText, inst.folder)
+      setMessages(m => ({ ...m, [key]: 'Rendering notes…' }))
+      const { count, loNote, hiNote } = await importSoundfontToLibrary(
+        sfText,
+        inst.folder,
+        (done, total) => {
+          setMessages(m => ({ ...m, [key]: `Rendering ${done}/${total} notes…` }))
+        },
+      )
       addPreset({ name: inst.name, folder: inst.folder, loNote, hiNote, category: 'custom', group: inst.presetGroup })
       setAddedFolders(s => new Set([...s, inst.folder]))
       setStatuses(s => ({ ...s, [key]: 'added' }))
