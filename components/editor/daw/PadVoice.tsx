@@ -301,6 +301,7 @@ export default function PadVoice() {
   const selectedPresetRef  = useRef<MidiPreset | null>(null)
   const sampleEntriesRef   = useRef<LibraryEntry[]>([])
   const processFrameRef    = useRef<(r: LivePitchResult | null) => void>(() => {})
+  const lastResultRef      = useRef<{ r: LivePitchResult; ts: number } | null>(null)
   // Controls the confidence threshold in processFrame: 0.72 normal, 0.45 high sensitivity
   const sensitivityRef     = useRef(0.72)
   const canvasRef          = useRef<HTMLCanvasElement>(null)
@@ -507,6 +508,10 @@ export default function PadVoice() {
 
   // ── Start / Stop ─────────────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
+    // Stop the listening preview so we don't have two detectors briefly overlapping
+    previewDetectorRef.current?.stop()
+    previewDetectorRef.current = null
+
     const preset  = selectedPresetRef.current
     const sample  = selectedSampleRef.current
     const trackId = trackIdRef.current
@@ -552,8 +557,13 @@ export default function PadVoice() {
       if (trackInputSrc) {
         stream = await captureAudioInput(trackInputSrc)
       }
-      await d.start(r => { setResult(r); processFrameRef.current(r) }, true, stream)
+      await d.start(r => { lastResultRef.current = r ? { r, ts: Date.now() } : null; setResult(r); processFrameRef.current(r) }, true, stream)
       setIsRecording(true)
+      // Immediately seed from the last preview pitch so the note appears on screen right away
+      const last = lastResultRef.current
+      if (last && Date.now() - last.ts < 500 && last.r.confidence >= sensitivityRef.current) {
+        processFrameRef.current(last.r)
+      }
     } catch (e) {
       setMicError(e instanceof Error ? e.message : 'Microphone access denied')
       detectorRef.current = null
@@ -625,18 +635,24 @@ export default function PadVoice() {
 
   useEffect(() => () => { detectorRef.current?.stop(); previewDetectorRef.current?.stop() }, [])
 
-  // In PTR mode, run a preview detector so the tuner is live before the button is pressed
+  // Run a preview (listening) detector whenever NOT actively recording so the tuner is live
+  // and the first frame can be seeded immediately when recording starts
   useEffect(() => {
-    if (!pushToRecord || isRecording) { previewDetectorRef.current?.stop(); previewDetectorRef.current = null; return }
+    if (isRecording) { previewDetectorRef.current?.stop(); previewDetectorRef.current = null; return }
     let cancelled = false
     const d = new LivePitchDetector()
     previewDetectorRef.current = d
     const trackInputSrc = project.tracks.find(t => t.id === trackIdRef.current)?.inputSource as AudioInputSource | undefined
     captureAudioInput(trackInputSrc ?? 'mic')
-      .then(stream => { if (!cancelled) d.start(r => setResult(r), false, stream) })
+      .then(stream => {
+        if (!cancelled) d.start(r => {
+          lastResultRef.current = r ? { r, ts: Date.now() } : null
+          setResult(r)
+        }, false, stream)
+      })
       .catch(() => {})
     return () => { cancelled = true; d.stop(); if (previewDetectorRef.current === d) previewDetectorRef.current = null }
-  }, [pushToRecord, isRecording, project.tracks])
+  }, [isRecording, project.tracks])
 
   // ── Derived display ──────────────────────────────────────────────────────────
   const conf      = result?.confidence ?? 0
@@ -935,7 +951,6 @@ export default function PadVoice() {
             disabled={!hasTarget}
             onPointerDown={e => {
               e.currentTarget.setPointerCapture(e.pointerId)
-              previewDetectorRef.current?.stop(); previewDetectorRef.current = null
               sensitivityRef.current = 0.45
               setPtrHolding(true)
               void startRecording()
