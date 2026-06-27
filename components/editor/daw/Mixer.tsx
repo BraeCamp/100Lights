@@ -3,7 +3,8 @@
 import { useState, useRef } from 'react'
 import { Circle } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
-import type { DawTrack } from '@/lib/daw-types'
+import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
+import { TRACK_COLORS } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
 import Knob from './Knob'
 
@@ -182,7 +183,111 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         </button>
       )}
 
+      {/* Send levels — one knob per return track */}
+      {!isMaster && track && project.returnTracks.length > 0 && (
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+          <div style={{ fontSize: 7, color: '#444', letterSpacing: '0.06em', textTransform: 'uppercase', textAlign: 'center' }}>Sends</div>
+          {project.returnTracks.map((rt, idx) => {
+            const sendVal = track.sendAmounts?.[rt.id] ?? 0
+            const rtLabel = String.fromCharCode(65 + idx)
+            return (
+              <div key={rt.id} style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
+                <span style={{ fontSize: 7, color: '#666', width: 8, textAlign: 'right', flexShrink: 0 }}>{rtLabel}</span>
+                <Knob
+                  value={sendVal} min={0} max={1} defaultValue={0} size={18} color={rt.color}
+                  label={rtLabel}
+                  onChange={v => dispatch({
+                    type: 'UPDATE_TRACK', trackId: track.id,
+                    patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } },
+                  })}
+                  format={v => `${Math.round(v * 100)}%`}
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {typeLabel && <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', fontFamily: 'monospace' }}>{typeLabel}</span>}
+    </div>
+  )
+}
+
+// ── Return channel strip ────────────────────────────────────────────────────
+
+function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
+  const { dispatch } = useDaw()
+  const [editing, setEditing] = useState(false)
+  const [nameDraft, setNameDraft] = useState(rt.name)
+  const label = String.fromCharCode(65 + idx)
+  const db = rt.volume > 0.0001 ? (20 * Math.log10(rt.volume)).toFixed(1) : '-∞'
+
+  return (
+    <div style={{
+      width: 72, flexShrink: 0,
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      gap: 4, padding: '8px 4px 6px',
+      background: 'rgba(80,40,120,0.25)',
+      borderRight: '1px solid #383838',
+      position: 'relative',
+    }}>
+      {/* Color bar */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: rt.color, borderRadius: '2px 2px 0 0' }} />
+
+      {/* Return label */}
+      <div style={{ fontSize: 8, color: '#a78bfa', fontWeight: 700, letterSpacing: '0.06em', marginTop: 4 }}>{label}</div>
+
+      {/* Name */}
+      {editing ? (
+        <input
+          autoFocus value={nameDraft}
+          onChange={e => setNameDraft(e.target.value)}
+          onBlur={() => { dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { name: nameDraft } }); setEditing(false) }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { name: nameDraft } }); setEditing(false) }
+            e.stopPropagation()
+          }}
+          style={{ width: '100%', fontSize: 9, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, textAlign: 'center', padding: '1px 2px', outline: 'none' }}
+        />
+      ) : (
+        <div
+          onDoubleClick={() => { setEditing(true); setNameDraft(rt.name) }}
+          style={{ fontSize: 9, color: '#c4b5fd', textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default', userSelect: 'none' }}
+          title={rt.name}
+        >
+          {rt.name}
+        </div>
+      )}
+
+      {/* Volume fader */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1, justifyContent: 'flex-end' }}>
+        <VerticalFader
+          value={rt.volume}
+          onChange={v => dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { volume: v } })}
+        />
+        <span style={{ fontSize: 8, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{db}dB</span>
+      </div>
+
+      {/* Mute button */}
+      <button
+        onClick={() => dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { mute: !rt.mute } })}
+        style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: rt.mute ? '#d97706' : 'var(--bg-surface)', color: rt.mute ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
+        title="Mute return"
+      >M</button>
+
+      {/* +FX button stub */}
+      <button
+        onClick={() => alert(`FX chain for ${rt.name}: not yet implemented`)}
+        style={{ fontSize: 8, padding: '2px 4px', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: '#a78bfa', cursor: 'pointer', fontWeight: 700 }}
+        title="Add effect to return"
+      >+FX</button>
+
+      {/* Remove button */}
+      <button
+        onClick={() => dispatch({ type: 'REMOVE_RETURN_TRACK', trackId: rt.id })}
+        style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: '#666', cursor: 'pointer', padding: 0 }}
+        title="Remove return track"
+      >×</button>
     </div>
   )
 }
@@ -191,6 +296,20 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
 
 export default function Mixer() {
   const { project, dispatch } = useDaw()
+
+  function addReturnTrack() {
+    const idx = project.returnTracks.length
+    const rt: ReturnTrack = {
+      id: crypto.randomUUID(),
+      name: `Return ${String.fromCharCode(65 + idx)}`,
+      color: TRACK_COLORS[(idx + 6) % TRACK_COLORS.length],
+      volume: 0.8,
+      pan: 0,
+      mute: false,
+      effects: [],
+    }
+    dispatch({ type: 'ADD_RETURN_TRACK', track: rt })
+  }
 
   return (
     <div data-testid="mixer" style={{ display: 'flex', flex: 1, minHeight: 0, background: 'var(--bg-base)', overflow: 'hidden' }}>
@@ -208,6 +327,29 @@ export default function Mixer() {
               + {type.charAt(0).toUpperCase() + type.slice(1)}
             </button>
           ))}
+        </div>
+
+        {/* Returns section */}
+        {project.returnTracks.length > 0 && (
+          <>
+            <div style={{ width: 1, background: '#555', alignSelf: 'stretch', flexShrink: 0 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '6px 4px 0', gap: 2, minWidth: 0 }}>
+              <span style={{ fontSize: 7, color: '#7c5fa8', letterSpacing: '0.07em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>RETURNS</span>
+            </div>
+            {project.returnTracks.map((rt, idx) => (
+              <ReturnChannelStrip key={rt.id} rt={rt} idx={idx} />
+            ))}
+          </>
+        )}
+
+        {/* Add return track button */}
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '8px 6px' }}>
+          <button
+            onClick={addReturnTrack}
+            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid #7c5fa8', background: 'rgba(80,40,120,0.18)', color: '#a78bfa', cursor: 'pointer', letterSpacing: '0.03em' }}
+          >
+            + Return
+          </button>
         </div>
       </div>
       <div style={{ flexShrink: 0, borderLeft: '2px solid #444' }}>

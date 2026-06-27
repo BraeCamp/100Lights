@@ -11,6 +11,7 @@ interface WaveformProps {
   playhead?: number
   trimStart?: number
   trimEnd?: number
+  verticalZoom?: number
   style?: React.CSSProperties
   className?: string
 }
@@ -24,6 +25,7 @@ export default function Waveform({
   playhead,
   trimStart,
   trimEnd,
+  verticalZoom = 1,
   style,
   className,
 }: WaveformProps) {
@@ -54,7 +56,7 @@ export default function Waveform({
 
     ctx.fillStyle = color
     for (let i = 0; i < peaks.length; i++) {
-      const barH = Math.max(1, peaks[i] * mid * 0.95)
+      const barH = Math.min(mid, Math.max(1, peaks[i] * mid * 0.95 * verticalZoom))
       ctx.fillRect(i * step, mid - barH, Math.max(1, step - 0.5), barH * 2)
     }
 
@@ -77,7 +79,7 @@ export default function Waveform({
       ctx.lineTo(playhead * width, height)
       ctx.stroke()
     }
-  }, [peaks, color, bgColor, width, height, playhead, trimStart, trimEnd])
+  }, [peaks, color, bgColor, width, height, playhead, trimStart, trimEnd, verticalZoom])
 
   return <canvas ref={canvasRef} style={style} className={className} />
 }

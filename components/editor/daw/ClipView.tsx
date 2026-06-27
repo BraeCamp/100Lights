@@ -3,9 +3,10 @@
 import { useState, useRef, useEffect } from 'react'
 import type { DawTrack, DawClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
+import { useDaw } from '@/lib/daw-state'
 import Waveform from './Waveform'
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onScrollBy }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onScrollBy, waveformZoom, onFadeChange }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -20,7 +21,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onDeleteAll?(): void
   onReplaceSample?(): void
   onScrollBy?(delta: number): void
+  waveformZoom?: number
+  onFadeChange?(fadeIn: number, fadeOut: number): void
 }) {
+  const { engine, project } = useDaw()
   const clipDivRef = useRef<HTMLDivElement>(null)
   const menuRef    = useRef<HTMLDivElement>(null)
   const dragRef    = useRef<{ startX: number; startBeat: number } | null>(null)
@@ -50,6 +54,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const outFrac = bufDur && bufDur > 0 ? (bufDur - trimE) / bufDur : 1
   const inPx    = inFrac * width
   const outPx   = outFrac * width
+
+  // Fade pixel widths — audio clips only
+  const secPerBeat = 60 / project.tempo
+  const fadeInPx  = audioClip && audioClip.fadeIn  > 0 ? Math.min(width, (audioClip.fadeIn  / secPerBeat) * beatW) : 0
+  const fadeOutPx = audioClip && audioClip.fadeOut > 0 ? Math.min(width, (audioClip.fadeOut / secPerBeat) * beatW) : 0
 
   function onMouseDownBody(e: React.MouseEvent) {
     if (e.button !== 0) return
@@ -160,12 +169,52 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
+  // Fade handle drag — fade-in (drag right = more fade)
+  function onMouseDownFadeIn(e: React.MouseEvent) {
+    if (!audioClip || !onFadeChange) return
+    e.stopPropagation()
+    const startX = e.clientX
+    const startFade = audioClip.fadeIn
+    const maxFadeSec = engine.beatsToSeconds(clip.durationBeats)
+    const currentFadeOut = audioClip.fadeOut
+
+    function mm(ev: MouseEvent) {
+      const dx = ev.clientX - startX
+      const dSec = (dx / beatW) * secPerBeat
+      const newFadeIn = Math.max(0, Math.min(maxFadeSec, startFade + dSec))
+      onFadeChange!(newFadeIn, currentFadeOut)
+    }
+    function mu() { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+  }
+
+  // Fade-out handle drag — drag left = more fade
+  function onMouseDownFadeOut(e: React.MouseEvent) {
+    if (!audioClip || !onFadeChange) return
+    e.stopPropagation()
+    const startX = e.clientX
+    const startFade = audioClip.fadeOut
+    const maxFadeSec = engine.beatsToSeconds(clip.durationBeats)
+    const currentFadeIn = audioClip.fadeIn
+
+    function mm(ev: MouseEvent) {
+      const dx = ev.clientX - startX
+      // Dragging left (negative dx) increases fade-out
+      const dSec = (-dx / beatW) * secPerBeat
+      const newFadeOut = Math.max(0, Math.min(maxFadeSec, startFade + dSec))
+      onFadeChange!(currentFadeIn, newFadeOut)
+    }
+    function mu() { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+  }
+
   const isMulti = multiSelected && !!onDeleteAll
   const menuItems = [
     isMulti
       ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
       : { label: 'Delete', fn: onDelete },
     { label: 'Splice at Playhead', fn: () => onSplice?.() },
+    { label: 'Bounce to New Track', fn: () => alert('Bounce: not yet implemented') },
     ...(isAudioClip(clip) ? [
       { label: 'Clip Settings', fn: () => onSettings?.() },
       { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
@@ -201,11 +250,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                     {i > 0 && (
                       <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.3)', zIndex: 1 }} />
                     )}
-                    <Waveform peaks={clip.waveformPeaks!} color={color} width={loopPx} height={56} />
+                    <Waveform peaks={clip.waveformPeaks!} color={color} width={loopPx} height={56} verticalZoom={waveformZoom} />
                   </div>
                 ))
               ) : (
-                <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={56} />
+                <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={56} verticalZoom={waveformZoom} />
               )}
             </div>
           )
@@ -219,6 +268,27 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
               return <div key={n.id} style={{ position: 'absolute', left: nx, top: ny + 2, width: nw, height: 2, background: color, borderRadius: 1 }} />
             })}
           </div>
+        )}
+
+        {/* Fade-in gradient overlay */}
+        {fadeInPx > 0 && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, bottom: 0,
+            width: fadeInPx,
+            background: 'linear-gradient(to right, rgba(0,0,0,0.55), transparent)',
+            pointerEvents: 'none',
+            zIndex: 3,
+          }} />
+        )}
+        {/* Fade-out gradient overlay */}
+        {fadeOutPx > 0 && (
+          <div style={{
+            position: 'absolute', top: 0, right: 0, bottom: 0,
+            width: fadeOutPx,
+            background: 'linear-gradient(to left, rgba(0,0,0,0.55), transparent)',
+            pointerEvents: 'none',
+            zIndex: 3,
+          }} />
         )}
 
         {/* Trimmed region overlays — only visible in crop mode */}
@@ -249,8 +319,39 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           </>
         )}
 
+        {/* Fade-in handle — top-left corner triangle, always visible on audio clips */}
+        {isAudioClip(clip) && (
+          <div
+            onMouseDown={onMouseDownFadeIn}
+            title={`Fade In: ${audioClip?.fadeIn?.toFixed(2) ?? 0}s — drag right to increase`}
+            style={{
+              position: 'absolute', top: 0, left: 0,
+              width: 10, height: 10,
+              background: 'rgba(255,255,255,0.45)',
+              clipPath: 'polygon(0 0, 100% 0, 0 100%)',
+              cursor: 'ew-resize',
+              zIndex: 8,
+            }}
+          />
+        )}
+        {/* Fade-out handle — top-right corner triangle, always visible on audio clips */}
+        {isAudioClip(clip) && (
+          <div
+            onMouseDown={onMouseDownFadeOut}
+            title={`Fade Out: ${audioClip?.fadeOut?.toFixed(2) ?? 0}s — drag left to increase`}
+            style={{
+              position: 'absolute', top: 0, right: 0,
+              width: 10, height: 10,
+              background: 'rgba(255,255,255,0.45)',
+              clipPath: 'polygon(0 0, 100% 0, 100% 100%)',
+              cursor: 'ew-resize',
+              zIndex: 8,
+            }}
+          />
+        )}
+
         {/* Clip label */}
-        <div style={{ position: 'absolute', top: 2, left: 4, right: 8, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 5 }}>
+        <div style={{ position: 'absolute', top: 2, left: 12, right: 12, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 5 }}>
           {clip.name}
           {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
         </div>

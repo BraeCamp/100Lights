@@ -4,7 +4,8 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useDaw, makeMidiClip } from '@/lib/daw-state'
-import { isMidiClip } from '@/lib/daw-types'
+import { isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
+import type { ReturnTrack } from '@/lib/daw-types'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 
 const SEC_H   = 24
@@ -177,6 +178,36 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
   )
 }
 
+// ── Return Track Row ──────────────────────────────────────────────────────────
+
+function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; dispatch: (a: import('@/lib/daw-state').DawAction) => void }) {
+  const label = String.fromCharCode(65 + idx) // A, B, C...
+  return (
+    <div style={{ display: 'flex', height: 36, flexShrink: 0 }}>
+      {/* Header */}
+      <div style={{
+        width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px',
+        background: 'rgba(100,60,150,0.12)',
+        borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+        borderLeft: `3px solid ${rt.color}`,
+        boxSizing: 'border-box',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#a78bfa', letterSpacing: '0.05em', flexShrink: 0 }}>{label}</span>
+        <span style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rt.name}</span>
+        <button
+          onClick={() => dispatch({ type: 'REMOVE_RETURN_TRACK', trackId: rt.id })}
+          title="Remove return track"
+          style={{ fontSize: 10, width: 14, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0, lineHeight: 1 }}
+        >×</button>
+      </div>
+      {/* Empty lane — returns have no clip lane in arrangement */}
+      <div style={{ flex: 1, height: 36, background: 'rgba(100,60,150,0.05)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
+        <span style={{ fontSize: 9, color: '#5a4070', letterSpacing: '0.04em' }}>Return Bus — {rt.name}</span>
+      </div>
+    </div>
+  )
+}
+
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
@@ -187,6 +218,10 @@ export default function ArrangementView() {
   const [tsPopover, setTsPopover]   = useState<{ x: number; y: number } | null>(null)
   const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
+  // Group track fold state: set of group track IDs that are folded
+  const [foldedGroups, setFoldedGroups] = useState<Set<string>>(new Set())
+  // Multi-track selection for grouping
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set())
   const outerRef    = useRef<HTMLDivElement>(null)
   const laneRef     = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
@@ -270,6 +305,57 @@ export default function ArrangementView() {
     if (expandedPianoRollClipId) { setExpandedPianoRollClipId(null); return }
   }
 
+  function handleSelectTrack(trackId: string, ctrl: boolean) {
+    if (ctrl) {
+      setSelectedTrackIds(prev => {
+        const next = new Set(prev)
+        if (next.has(trackId)) next.delete(trackId)
+        else next.add(trackId)
+        return next
+      })
+    } else {
+      setSelectedTrackIds(new Set([trackId]))
+    }
+  }
+
+  function handleGroupTracks() {
+    if (selectedTrackIds.size < 2) return
+    const groupTrackId = crypto.randomUUID()
+    const orderedIds = project.tracks.map(t => t.id)
+    const selectedArr = [...selectedTrackIds]
+    const firstIdx = orderedIds.findIndex(id => selectedArr.includes(id))
+    if (firstIdx < 0) return
+
+    // Add the group track (will appear at end initially)
+    dispatch({ type: 'ADD_TRACK', trackType: 'audio', id: groupTrackId, name: 'Group' })
+    // Reorder: insert group track before the first selected track
+    const newOrder = [
+      ...orderedIds.slice(0, firstIdx),
+      groupTrackId,
+      ...orderedIds.slice(firstIdx),
+    ]
+    dispatch({ type: 'REORDER_TRACKS', ids: newOrder })
+    // Set groupId on all selected tracks
+    for (const trackId of selectedTrackIds) {
+      dispatch({ type: 'UPDATE_TRACK', trackId, patch: { groupId: groupTrackId } })
+    }
+    setSelectedTrackIds(new Set())
+  }
+
+  function addReturnTrack() {
+    const idx = project.returnTracks.length
+    const returnTrack: ReturnTrack = {
+      id: crypto.randomUUID(),
+      name: `Return ${String.fromCharCode(65 + idx)}`,
+      color: TRACK_COLORS[(idx + 6) % TRACK_COLORS.length],
+      volume: 0.8,
+      pan: 0,
+      mute: false,
+      effects: [],
+    }
+    dispatch({ type: 'ADD_RETURN_TRACK', track: returnTrack })
+  }
+
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
     const laneEl = laneRef.current
@@ -328,6 +414,12 @@ export default function ArrangementView() {
     document.addEventListener('mouseup', onUp)
   }
 
+  // Visible tracks: filter out children of folded group parents
+  const visibleTracks = project.tracks.filter(track => {
+    if (!track.groupId) return true
+    return !foldedGroups.has(track.groupId)
+  })
+
   return (
     <div ref={outerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative' }}>
 
@@ -345,6 +437,20 @@ export default function ArrangementView() {
           </button>
         ))}
         <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 2 }} title="Hold ⌥ Option while dragging to bypass snap">⌥=free</span>
+        <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
+        {/* Waveform zoom control */}
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }} title="Waveform vertical zoom">WF</span>
+        <button
+          onClick={() => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.max(1, project.waveformZoom - 1) })}
+          style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}
+          title="Decrease waveform zoom"
+        >−</button>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 10, textAlign: 'center', fontFamily: 'monospace' }}>{project.waveformZoom}</span>
+        <button
+          onClick={() => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.min(8, project.waveformZoom + 1) })}
+          style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}
+          title="Increase waveform zoom"
+        >+</button>
         <div style={{ flex: 1 }} />
         <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
           ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
@@ -379,7 +485,7 @@ export default function ArrangementView() {
         onWheel={handleWheel}
         onMouseDown={onLaneMouseDown}
       >
-        {project.tracks.map(track => (
+        {visibleTracks.map(track => (
           <TrackRow
             key={track.id}
             track={track}
@@ -388,8 +494,34 @@ export default function ArrangementView() {
             viewWidth={viewWidth}
             snap={snap}
             onScrollBy={delta => setScrollLeft(s => Math.max(0, s + delta))}
+            waveformZoom={project.waveformZoom}
+            selectedTrackIds={selectedTrackIds}
+            onSelectTrack={ctrl => handleSelectTrack(track.id, ctrl)}
+            foldedGroups={foldedGroups}
+            onToggleFold={() => setFoldedGroups(prev => {
+              const next = new Set(prev)
+              if (next.has(track.id)) next.delete(track.id)
+              else next.add(track.id)
+              return next
+            })}
+            onGroupTracks={handleGroupTracks}
           />
         ))}
+
+        {/* Return track rows — non-editable, appear above add buttons */}
+        {project.returnTracks.length > 0 && (
+          <>
+            <div style={{ display: 'flex', height: 20, alignItems: 'center', background: 'rgba(100,60,150,0.08)', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ width: HDR_W, flexShrink: 0, paddingLeft: 8, borderRight: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: '#7c5fa8', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Returns</span>
+              </div>
+              <div style={{ flex: 1 }} />
+            </div>
+            {project.returnTracks.map((rt, idx) => (
+              <ReturnTrackRow key={rt.id} rt={rt} idx={idx} dispatch={dispatch} />
+            ))}
+          </>
+        )}
 
         {/* Add track buttons */}
         <div style={{ display: 'flex', height: 36 }}>
@@ -400,6 +532,11 @@ export default function ArrangementView() {
                 {type === 'audio' ? '+Track' : '+Drum'}
               </button>
             ))}
+            <button
+              onClick={addReturnTrack}
+              title="Add return track"
+              style={{ padding: '3px 6px', fontSize: 9, borderRadius: 3, border: '1px solid #7c5fa8', background: 'rgba(100,60,150,0.12)', color: '#a78bfa', cursor: 'pointer', flexShrink: 0 }}
+            >+Ret</button>
           </div>
         </div>
       </div>
