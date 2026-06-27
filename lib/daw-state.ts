@@ -16,7 +16,7 @@ import { DawEngine } from './daw-engine'
 
 export type DawAction =
   // Tracks
-  | { type: 'ADD_TRACK'; trackType: TrackType }
+  | { type: 'ADD_TRACK'; trackType: TrackType; id?: string; name?: string }
   | { type: 'REMOVE_TRACK'; trackId: string }
   | { type: 'DUPLICATE_TRACK'; trackId: string }
   | { type: 'UPDATE_TRACK'; trackId: string; patch: Partial<DawTrack> }
@@ -75,8 +75,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const num = project.tracks.filter(t => t.type === action.trackType).length + 1
       const labels: Record<TrackType, string> = { audio: 'Audio', midi: 'MIDI', drum: 'Drum' }
       const track: DawTrack = {
-        id: crypto.randomUUID(),
-        name: `${labels[action.trackType]} ${num}`,
+        id: action.id ?? crypto.randomUUID(),
+        name: action.name ?? `${labels[action.trackType]} ${num}`,
         type: action.trackType,
         color: TRACK_COLORS[colorIdx],
         volume: 0.8,

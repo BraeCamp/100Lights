@@ -2,13 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useDaw, makeMidiClip } from '@/lib/daw-state'
+import { useDaw, makeAudioClip } from '@/lib/daw-state'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import type { LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
-import type { MidiClip, MidiNote } from '@/lib/daw-types'
-import { isMidiClip } from '@/lib/daw-types'
 import dynamic from 'next/dynamic'
 import { getPadPresets, savePadPreset, deletePadPreset, type PadPreset } from '@/lib/pad-presets'
 
@@ -673,7 +671,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
-  const { project, dispatch, engine, recording, metronome, setMetronome } = useDaw()
+  const { project, dispatch, engine, metronome, setMetronome } = useDaw()
 
   const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'voice'>('pads')
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
@@ -685,9 +683,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [active,         setActive]         = useState(false)
   const [contextMenu,  setContextMenu]  = useState<{ pad: Pad; x: number; y: number } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [showSaveMenu, setShowSaveMenu] = useState(false)
-  const [savedPresets, setSavedPresets] = useState<PadPreset[]>(() => getPadPresets())
-  const [saveName,     setSaveName]     = useState('')
+  const [showSaveMenu,  setShowSaveMenu]  = useState(false)
+  const [savedPresets,  setSavedPresets]  = useState<PadPreset[]>(() => getPadPresets())
+  const [saveName,      setSaveName]      = useState('')
+  const [padRecording,  setPadRecording]  = useState(false)
   const [winSize,      setWinSize]      = useState<{ w: number; h: number | null }>({ w: 520, h: null })
   const [pos, setPos] = useState(() => ({
     x: typeof window !== 'undefined' ? Math.max(0, window.innerWidth  / 2 - 260) : 200,
@@ -695,8 +694,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   }))
 
   const containerRef  = useRef<HTMLDivElement>(null)
-  const noteStarts    = useRef<Map<number, { beat: number; clipId: string }>>(new Map())
-  const activeClipId  = useRef<string | null>(null)
+  const noteStarts    = useRef<Map<number, { beat: number; sounds: PadSound[] }>>(new Map())
+  const padTrackMap   = useRef<Map<number, string>>(new Map())
   const soundBuffers  = useRef<Map<string, AudioBuffer>>(new Map())
   const reversedBufs  = useRef<Map<string, AudioBuffer>>(new Map())
   // pitch is now per-sound via playbackRate — no pre-computation cache needed
@@ -705,6 +704,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const resizing      = useRef<{ dir: string; sx: number; sy: number; ow: number; oh: number } | null>(null)
 
   // Live refs so capture handler always reads fresh values without re-registering
+  const entriesRef    = useRef<LibraryEntry[]>([])
   const padsRef       = useRef(pads)
   const tabRef        = useRef(tab)
   const remapIdRef    = useRef(remapId)
@@ -739,24 +739,29 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     return () => document.removeEventListener('mousedown', onDown)
   }, [showSaveMenu])
 
-  // ── MIDI clip tracking ────────────────────────────────────────────────────────
+  // Load library entries so endNote can look up blobs for audio clips
+  useEffect(() => { libraryGetAll().then(all => { entriesRef.current = all }) }, [])
 
-  const getOrCreateClip = useCallback((): string => {
-    const now = engine.currentBeat
-    if (activeClipId.current && project.arrangementClips.some(c => c.id === activeClipId.current)) {
-      return activeClipId.current
+  // Stop pad recording when transport stops
+  useEffect(() => {
+    function onTransport(e: Event) {
+      const playing = (e as CustomEvent<{ playing: boolean }>).detail.playing
+      if (!playing) setPadRecording(false)
     }
-    const spanning = project.arrangementClips.find(c =>
-      isMidiClip(c) && c.trackId === trackId && now >= c.startBeat && now < c.startBeat + c.durationBeats
-    )
-    if (spanning) { activeClipId.current = spanning.id; return spanning.id }
-    const startBeat = Math.floor(now / project.timeSignatureNum) * project.timeSignatureNum
-    const clip = makeMidiClip(trackId, 'Beat', startBeat, 8 * project.timeSignatureNum)
-    ;(clip as MidiClip).isDrumClip = isDrum
-    dispatch({ type: 'ADD_CLIP', clip })
-    activeClipId.current = clip.id
-    return clip.id
-  }, [engine, project, trackId, dispatch, isDrum])
+    engine.addEventListener('transport', onTransport)
+    return () => engine.removeEventListener('transport', onTransport)
+  }, [engine])
+
+  // ── Per-pad audio track management ───────────────────────────────────────────
+
+  const getOrCreatePadTrack = useCallback((pitch: number, drumLabel: string): string => {
+    const existing = padTrackMap.current.get(pitch)
+    if (existing && project.tracks.some(t => t.id === existing)) return existing
+    const id = crypto.randomUUID()
+    dispatch({ type: 'ADD_TRACK', trackType: 'audio', id, name: drumLabel })
+    padTrackMap.current.set(pitch, id)
+    return id
+  }, [project.tracks, dispatch])
 
   // ── Audio playback ────────────────────────────────────────────────────────────
 
@@ -860,11 +865,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     }
 
     setPressing(prev => new Set([...prev, pitch]))
-    if (engine.isRecording && engine.isPlaying) {
-      const clipId = getOrCreateClip()
-      noteStarts.current.set(pitch, { beat: engine.currentBeat, clipId })
+    if (padRecording && engine.isPlaying) {
+      const pad = padsRef.current.find(p => p.pitch === pitch)
+      noteStarts.current.set(pitch, { beat: engine.currentBeat, sounds: pad?.customSounds ?? [] })
     }
-  }, [instrument, engine, getOrCreateClip])
+  }, [instrument, engine, padRecording])
 
   const endNote = useCallback((pitch: number) => {
     const sources = activeSources.current.get(pitch)
@@ -895,17 +900,26 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     const started = noteStarts.current.get(pitch)
     if (!started) return
     noteStarts.current.delete(pitch)
-    const clip = project.arrangementClips.find(c => c.id === started.clipId)
-    if (clip && isMidiClip(clip)) {
-      const note: MidiNote = {
-        id: crypto.randomUUID(), pitch,
-        startBeat: Math.max(0, started.beat - clip.startBeat),
-        durationBeats: Math.max(0.0625, engine.currentBeat - started.beat),
-        velocity: 100,
-      }
-      dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note })
+
+    const pad     = padsRef.current.find(p => p.pitch === pitch)
+    const sounds  = started.sounds
+    if (sounds.length === 0) return
+
+    const padTrackId = getOrCreatePadTrack(pitch, pad?.drumLabel ?? `Pad ${pitch}`)
+
+    for (const sound of sounds) {
+      const buf   = soundBuffers.current.get(sound.id)
+      const entry = entriesRef.current.find(e => e.id === sound.id)
+      if (!entry) continue
+      const blob  = entry.audioBlob
+      if (!blob && !buf) continue
+      const audioUrl = URL.createObjectURL(blob ?? new Blob())
+      const durationSec  = buf?.duration ?? 1
+      const durationBeats = Math.max(0.0625, engine.secondsToBeats(durationSec))
+      const clip = makeAudioClip(padTrackId, `${pad?.drumLabel ?? 'Pad'} – ${entry.folder ? `${entry.folder} – ${entry.name}` : entry.name}`, started.beat, durationBeats, { audioUrl })
+      dispatch({ type: 'ADD_CLIP', clip })
     }
-  }, [project, engine, dispatch])
+  }, [engine, dispatch, getOrCreatePadTrack])
 
   // ── Click-outside deactivation ────────────────────────────────────────────────
 
@@ -1065,11 +1079,15 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
             {/* Record toggle */}
             <button
-              onClick={e => { e.stopPropagation(); if (recording) { if (engine.isPlaying) engine.stop(); engine.stopRecording() } else { if (!engine.isPlaying) engine.play(); engine.startRecording() } }}
-              title={recording ? 'Stop recording' : 'Start recording'}
-              style={{ display: 'flex', alignItems: 'center', gap: 3, background: recording ? 'rgba(239,68,68,0.14)' : 'transparent', border: `1px solid ${recording ? C.red : C.border}`, color: recording ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: recording ? 800 : 400 }}>
+              onClick={e => {
+                e.stopPropagation()
+                if (padRecording) { engine.stop(); setPadRecording(false) }
+                else { if (!engine.isPlaying) engine.play(); setPadRecording(true) }
+              }}
+              title={padRecording ? 'Stop recording' : 'Start recording'}
+              style={{ display: 'flex', alignItems: 'center', gap: 3, background: padRecording ? 'rgba(239,68,68,0.14)' : 'transparent', border: `1px solid ${padRecording ? C.red : C.border}`, color: padRecording ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: padRecording ? 800 : 400 }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', display: 'inline-block', flexShrink: 0 }} />
-              {recording ? 'REC' : 'REC'}
+              {padRecording ? 'REC' : 'REC'}
             </button>
             {/* BPM */}
             <button
