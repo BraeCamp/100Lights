@@ -62,6 +62,8 @@ export type DawAction =
   | { type: 'ADD_CLIP_EFFECT'; effect: ClipEffect }
   | { type: 'REMOVE_CLIP_EFFECT'; effectId: string }
   | { type: 'UPDATE_CLIP_EFFECT'; effectId: string; patch: Partial<ClipEffect> }
+  // Crossfader
+  | { type: 'SET_CROSSFADER'; value: number }
   // Full replace (load from saved)
   | { type: 'LOAD_PROJECT'; project: DawProject }
 
@@ -357,6 +359,9 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'LOAD_PROJECT':
       return action.project
+
+    case 'SET_CROSSFADER':
+      return { ...project, crossfaderValue: Math.max(0, Math.min(1, action.value)) }
 
     default:
       return project

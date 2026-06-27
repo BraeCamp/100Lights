@@ -2,6 +2,10 @@
 
 export type TrackType = 'audio' | 'midi' | 'drum'
 
+export type CrossfaderSide = 'A' | 'B' | 'none'
+
+export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last' | 'random' | 'none'
+
 // ── Effects ───────────────────────────────────────────────────────────────────
 
 export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter'
@@ -213,6 +217,7 @@ export interface DawTrack {
   height: number      // arrangement lane height in px
   effects: TrackEffect[]
   instrument: TrackInstrument
+  crossfader?: CrossfaderSide
 }
 
 // ── Clips ─────────────────────────────────────────────────────────────────────
@@ -239,6 +244,10 @@ export interface AudioClip {
   warpMode?: 'repitch' | 'stretch'
   pitchSemitones?: number
   pitchCents?: number
+  color?: string
+  launchQuantization?: LaunchQuantization
+  followAction?: FollowAction
+  followActionTime?: number  // bars
 }
 
 export interface MidiNote {
@@ -260,6 +269,10 @@ export interface MidiClip {
   notes: MidiNote[]
   isDrumClip: boolean
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
+  color?: string
+  launchQuantization?: LaunchQuantization
+  followAction?: FollowAction
+  followActionTime?: number  // bars
 }
 
 export type DawClip = AudioClip | MidiClip
@@ -273,6 +286,9 @@ export interface Scene {
   id: string
   name: string
   tempo?: number
+  timeSignatureNum?: number
+  timeSignatureDen?: number
+  color?: string
 }
 
 export type SessionGrid = Record<string, (DawClip | null)[]>
@@ -295,6 +311,7 @@ export interface DawProject {
   masterVolume: number
   automationLanes: AutomationLane[]
   clipEffects: ClipEffect[]
+  crossfaderValue: number   // 0–1 (0=A, 0.5=center, 1=B)
 }
 
 // ── UI state ──────────────────────────────────────────────────────────────────
@@ -341,5 +358,6 @@ export function defaultProject(): DawProject {
     masterVolume: 0.85,
     automationLanes: [],
     clipEffects: [],
+    crossfaderValue: 0.5,
   }
 }
