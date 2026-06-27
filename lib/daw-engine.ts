@@ -85,9 +85,14 @@ export class DawEngine extends EventTarget {
   private metronomeHandle: ReturnType<typeof setInterval> | null = null
 
   // Session launch
-  private _sessionQueue  = new Map<string, { clip: AudioClip; launchBeat: number }>()
+  private _sessionQueue  = new Map<string, { clip: AudioClip; launchCtxTime: number }>()
   private _sessionSlots  = new Map<string, SessionSlot>()
   launchQuantization: LaunchQuantization = 'bar'
+
+  // Session-only clock (runs independent of arrangement transport)
+  private _sessionClockStartCtxTime = 0
+  private _sessionClockRunning      = false
+  private _sessionTickHandle: ReturnType<typeof setInterval> | null = null
 
   // MIDI scheduling
   private _scheduledNoteKeys = new Set<NoteKey>()
@@ -442,6 +447,55 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  // Beat position within the session clock (independent of arrangement transport)
+  private _sessionBeat(): number {
+    if (!this._sessionClockRunning) return 0
+    return (this.ctx.currentTime - this._sessionClockStartCtxTime) * (this.tempo / 60)
+  }
+
+  // Next quantized beat on the session clock, returns ctx time
+  private _nextSessionQuantCtxTime(q: LaunchQuantization): number {
+    if (!this._sessionClockRunning) return this.ctx.currentTime  // immediate
+    const now    = this._sessionBeat()
+    const bpb    = this._beatsPerBar
+    let nextBeat: number
+    switch (q) {
+      case 'none':  nextBeat = now; break
+      case 'beat':  nextBeat = Math.ceil(now); break
+      case '2bar':  nextBeat = Math.ceil(now / (bpb * 2)) * (bpb * 2); break
+      case '4bar':  nextBeat = Math.ceil(now / (bpb * 4)) * (bpb * 4); break
+      case 'bar':
+      default:      nextBeat = Math.ceil(now / bpb) * bpb; break
+    }
+    return this._sessionClockStartCtxTime + nextBeat * (60 / this.tempo)
+  }
+
+  private _ensureSessionTicker() {
+    if (this._sessionTickHandle !== null) return
+    this._sessionTickHandle = setInterval(() => this._sessionTick(), SCHEDULER_INTERVAL)
+  }
+
+  private _stopSessionTicker() {
+    if (this._sessionTickHandle !== null) {
+      clearInterval(this._sessionTickHandle)
+      this._sessionTickHandle = null
+    }
+  }
+
+  private _sessionTick() {
+    const now = this.ctx.currentTime
+    for (const [trackId, queued] of this._sessionQueue.entries()) {
+      if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
+        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime)
+        this._sessionQueue.delete(trackId)
+      }
+    }
+    if (this._sessionQueue.size === 0 && this._sessionSlots.size === 0) {
+      this._stopSessionTicker()
+      this._sessionClockRunning = false
+    }
+  }
+
   async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization) {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
@@ -455,11 +509,28 @@ export class DawEngine extends EventTarget {
     // Preload buffer
     await this.loadClipBuffer(clip)
 
-    const savedQ = quantOverride ? this.launchQuantization : undefined
-    if (quantOverride) this.launchQuantization = quantOverride
-    const launchBeat = this.isPlaying ? this._nextQuantBeat() : 0
-    if (savedQ !== undefined) this.launchQuantization = savedQ
-    this._sessionQueue.set(trackId, { clip, launchBeat })
+    const q = quantOverride ?? this.launchQuantization
+    let launchCtxTime: number
+
+    if (this.isPlaying) {
+      // Quantize against the running arrangement transport
+      const savedQ = quantOverride ? this.launchQuantization : undefined
+      if (quantOverride) this.launchQuantization = quantOverride
+      const launchBeat = this._nextQuantBeat()
+      if (savedQ !== undefined) this.launchQuantization = savedQ
+      launchCtxTime = this.ctx.currentTime + this.beatsToSeconds(launchBeat - this.currentBeat)
+    } else if (this._sessionClockRunning) {
+      // Quantize against the running session clock
+      launchCtxTime = this._nextSessionQuantCtxTime(q)
+    } else {
+      // First clip — start session clock now and launch immediately
+      this._sessionClockStartCtxTime = this.ctx.currentTime
+      this._sessionClockRunning      = true
+      launchCtxTime                  = this.ctx.currentTime
+    }
+
+    this._sessionQueue.set(trackId, { clip, launchCtxTime })
+    this._ensureSessionTicker()
 
     this.dispatchEvent(new CustomEvent('session-state', {
       detail: { trackId, clipId: clip.id, state: 'queued' },
@@ -489,7 +560,7 @@ export class DawEngine extends EventTarget {
     this._sessionQueue.delete(trackId)
   }
 
-  private _launchSessionSlot(trackId: string, clip: AudioClip, launchBeat: number) {
+  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number) {
     const buf = this.bufferCache.get(clip.id)
     if (!buf) return
 
@@ -517,15 +588,14 @@ export class DawEngine extends EventTarget {
     gainNode.connect(nodes.effectsInput)
 
     const contextNow = this.ctx.currentTime
-    const offset     = this.currentBeat > launchBeat
-      ? this.beatsToSeconds(this.currentBeat - launchBeat) + clip.trimStart
-      : clip.trimStart
-    const startAt = this.currentBeat > launchBeat
-      ? contextNow
-      : contextNow + this.beatsToSeconds(launchBeat - this.currentBeat)
+    const duration   = buf.duration - clip.trimStart - clip.trimEnd
+    // If we're past the launch time (scheduled ahead), offset into the clip so the
+    // first loop boundary stays aligned with the session clock
+    const elapsed = Math.max(0, contextNow - launchCtxTime)
+    const offset  = clip.trimStart + (elapsed % duration)
+    const startAt = Math.max(contextNow, launchCtxTime)
 
-    const duration = buf.duration - clip.trimStart - clip.trimEnd
-    source.start(startAt, offset, clip.loopEnabled ? undefined : duration)
+    source.start(startAt, offset, clip.loopEnabled ? undefined : duration - (elapsed % duration))
 
     const slot: SessionSlot = {
       clip, source, gainNode,
@@ -555,6 +625,8 @@ export class DawEngine extends EventTarget {
       this._stopSessionTrack(trackId)
     }
     this._sessionQueue.clear()
+    this._stopSessionTicker()
+    this._sessionClockRunning = false
   }
 
   // Returns current state of a session slot
@@ -641,14 +713,6 @@ export class DawEngine extends EventTarget {
     const now          = this.currentBeat
     const contextNow   = this.ctx.currentTime
     const aheadBeats   = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
-
-    // ── Session queue: launch clips that have reached their launch beat ──
-    for (const [trackId, queued] of this._sessionQueue.entries()) {
-      if (now + aheadBeats >= queued.launchBeat) {
-        this._launchSessionSlot(trackId, queued.clip, queued.launchBeat)
-        this._sessionQueue.delete(trackId)
-      }
-    }
 
     // ── Arrangement audio clips ──────────────────────────────────────────
     for (const clip of this._clips) {
