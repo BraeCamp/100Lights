@@ -286,17 +286,45 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [showPads,  setShowPads]  = useState(false)
+  const [isSaving,  setIsSaving]  = useState(false)
 
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
   useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  // ── Save ─────────────────────────────────────────────────────────────────────
   const onSaveRef        = useRef(onSave)
   const selectedClipIdRef  = useRef(selectedClipId)
   const selectedClipIdsRef = useRef(selectedClipIds)
   useEffect(() => { onSaveRef.current        = onSave },          [onSave])
   useEffect(() => { selectedClipIdRef.current  = selectedClipId },  [selectedClipId])
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds }, [selectedClipIds])
+
+  const handleSaveRef = useRef(async () => {})
+  useEffect(() => {
+    handleSaveRef.current = async () => {
+      if (!onSaveRef.current) return
+      setIsSaving(true)
+      try {
+        const p = projectRef.current
+        const tracks: AudioTrack[] = p.tracks
+          .filter(t => t.type === 'audio')
+          .map(t => {
+            const clip = p.arrangementClips.find(c => c.trackId === t.id && c.kind === 'audio')
+            const audioClip = clip?.kind === 'audio' ? clip : undefined
+            return {
+              id: t.id,
+              name: t.name,
+              url: audioClip?.audioUrl ?? '',
+              duration: audioClip ? audioClip.durationBeats * (60 / p.tempo) : 0,
+              r2Key: audioClip?.r2Key,
+            } satisfies AudioTrack
+          })
+        await onSaveRef.current(tracks)
+      } finally {
+        setIsSaving(false)
+      }
+    }
+  })
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -375,27 +403,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') {
         e.preventDefault()
-        if (onSaveRef.current) {
-          const p = projectRef.current
-          const tracks: AudioTrack[] = p.tracks
-            .filter(t => t.type === 'audio')
-            .map(t => {
-              const clip = p.arrangementClips.find(
-                c => c.trackId === t.id && c.kind === 'audio'
-              )
-              const audioClip = clip?.kind === 'audio' ? clip : undefined
-              return {
-                id: t.id,
-                name: t.name,
-                url: audioClip?.audioUrl ?? '',
-                duration: audioClip
-                  ? audioClip.durationBeats * (60 / p.tempo)
-                  : 0,
-                r2Key: audioClip?.r2Key,
-              } satisfies AudioTrack
-            })
-          onSaveRef.current(tracks)
-        }
+        handleSaveRef.current()
       }
     }
 
@@ -426,9 +434,11 @@ export default function AudioEditor(props: AudioEditorProps) {
     setMetronome,
     showPads,
     setShowPads,
+    onSave: onSave ? () => { void handleSaveRef.current() } : undefined,
+    isSaving,
   }), [
     project, dispatch, view, editTarget, selectedTrackId, selectedClipId, selectedClipIds,
-    playing, recording, position, setPosition, metronome, showPads,
+    playing, recording, position, setPosition, metronome, showPads, onSave, isSaving,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────

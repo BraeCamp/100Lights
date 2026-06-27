@@ -180,7 +180,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, selectedTrackId, editTarget, setEditTarget } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, selectedTrackId, editTarget, setEditTarget, onSave, isSaving } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -288,6 +288,15 @@ export default function ArrangementView() {
           color: editTarget?.type === 'midi-clip' ? '#a78bfa' : 'var(--text-muted)',
           letterSpacing: '0.04em',
         }}>PIANO ROLL</button>
+        {onSave && (
+          <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" style={{
+            ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
+            border: '1px solid var(--border)',
+            background: isSaving ? 'rgba(34,197,94,0.15)' : 'transparent',
+            color: isSaving ? '#4ade80' : 'var(--text-muted)',
+            letterSpacing: '0.04em', marginLeft: 4,
+          }}>{isSaving ? 'SAVING…' : 'SAVE'}</button>
+        )}
       </div>
 
       {/* Ruler row */}

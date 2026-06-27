@@ -373,6 +373,9 @@ export interface DawContextValue {
   // Pad/voice MIDI card
   showPads: boolean
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void
+  // Save
+  onSave?: () => void
+  isSaving: boolean
   // Transport (live)
   playing: boolean
   recording: boolean
