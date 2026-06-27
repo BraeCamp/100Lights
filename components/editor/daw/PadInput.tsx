@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw, makeAudioClip } from '@/lib/daw-state'
+import { defaultReverb, defaultDelay, defaultFilter, defaultEq3, defaultCompressor, type EffectType } from '@/lib/daw-types'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import type { LibraryEntry } from '@/lib/sound-library'
@@ -218,6 +219,137 @@ function PadWaveformCrop({ blob, trimStart, trimEnd, onTrimChange }: {
 }
 
 // ── Pad right-click popover ───────────────────────────────────────────────────
+
+// ── FX Toggle configuration ───────────────────────────────────────────────────
+
+const FX_TYPES: Array<{ type: EffectType; label: string }> = [
+  { type: 'reverb',     label: 'Reverb'     },
+  { type: 'delay',      label: 'Delay'      },
+  { type: 'filter',     label: 'Filter'     },
+  { type: 'eq3',        label: 'EQ'         },
+  { type: 'compressor', label: 'Compressor' },
+]
+
+function defaultParamsForType(type: EffectType) {
+  if (type === 'reverb')     return defaultReverb()
+  if (type === 'delay')      return defaultDelay()
+  if (type === 'filter')     return defaultFilter()
+  if (type === 'eq3')        return defaultEq3()
+  if (type === 'compressor') return defaultCompressor()
+  return defaultReverb()
+}
+
+function FxToggleConfig({ pad, onPadChange }: {
+  pad: Pad
+  onPadChange: (patch: Partial<Pad>) => void
+}) {
+  const { project, dispatch, engine } = useDaw()
+  const [selTrackId, setSelTrackId] = useState<string>(
+    pad.effectTarget?.trackId ?? project.tracks[0]?.id ?? ''
+  )
+  const [selFxType, setSelFxType] = useState<EffectType>('reverb')
+
+  const C = { accent: '#7c3aed', border: '#333', text: '#ccc', muted: '#555', bgCard: '#0e0e0e' }
+
+  // Current assignment (if any)
+  const assignedTrack  = pad.effectTarget ? project.tracks.find(t => t.id === pad.effectTarget!.trackId) : null
+  const assignedEffect = assignedTrack?.effects.find(e => e.id === pad.effectTarget?.effectId)
+
+  function assign() {
+    if (!selTrackId) return
+    const track = project.tracks.find(t => t.id === selTrackId)
+    if (!track) return
+
+    // Check if this effect type already exists on the track
+    const existing = track.effects.find(e => e.type === selFxType)
+    if (existing) {
+      onPadChange({ effectTarget: { trackId: selTrackId, effectId: existing.id } })
+      return
+    }
+
+    // Create a new effect of the chosen type on the track, start enabled=false
+    const params = { ...defaultParamsForType(selFxType), enabled: false }
+    const effect = { id: crypto.randomUUID(), type: selFxType, params }
+    dispatch({ type: 'ADD_EFFECT', trackId: selTrackId, effect })
+    // Rebuild the effects chain so the engine knows about it immediately
+    engine.ensureTrack(selTrackId, [...track.effects, effect])
+    onPadChange({ effectTarget: { trackId: selTrackId, effectId: effect.id } })
+  }
+
+  return (
+    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Current assignment */}
+      {assignedEffect ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 4, background: '#0e0e0e', border: `1px solid ${C.accent}55` }}>
+          <span style={{ flex: 1, fontSize: 10, color: C.accent }}>
+            {assignedEffect.type.charAt(0).toUpperCase() + assignedEffect.type.slice(1)} on {assignedTrack?.name}
+          </span>
+          <button
+            onClick={() => onPadChange({ effectTarget: undefined })}
+            style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, cursor: 'pointer' }}
+          >Clear</button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, color: C.muted }}>No effect assigned</div>
+      )}
+
+      {/* Track picker */}
+      <div>
+        <div style={{ fontSize: 9, color: C.muted, marginBottom: 3, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Track</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 80, overflowY: 'auto' }}>
+          {project.tracks.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setSelTrackId(t.id)}
+              style={{
+                textAlign: 'left', fontSize: 10, padding: '3px 7px', borderRadius: 3, cursor: 'pointer',
+                border: `1px solid ${selTrackId === t.id ? C.accent : C.border}`,
+                background: selTrackId === t.id ? `${C.accent}22` : C.bgCard,
+                color: selTrackId === t.id ? '#a78bfa' : C.text,
+                borderLeft: `3px solid ${t.color}`,
+              }}
+            >{t.name}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Effect type picker */}
+      <div>
+        <div style={{ fontSize: 9, color: C.muted, marginBottom: 3, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Effect</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+          {FX_TYPES.map(fx => (
+            <button
+              key={fx.type}
+              onClick={() => setSelFxType(fx.type)}
+              style={{
+                fontSize: 10, padding: '3px 8px', borderRadius: 3, cursor: 'pointer',
+                border: `1px solid ${selFxType === fx.type ? C.accent : C.border}`,
+                background: selFxType === fx.type ? `${C.accent}22` : C.bgCard,
+                color: selFxType === fx.type ? '#a78bfa' : C.text,
+              }}
+            >{fx.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Assign button */}
+      <button
+        onClick={assign}
+        disabled={!selTrackId}
+        style={{
+          padding: '5px 0', borderRadius: 4, border: 'none', cursor: selTrackId ? 'pointer' : 'not-allowed',
+          background: selTrackId ? C.accent : '#222', color: '#fff', fontSize: 10, fontWeight: 700,
+        }}
+      >
+        {(() => {
+          const track = project.tracks.find(t => t.id === selTrackId)
+          const exists = track?.effects.find(e => e.type === selFxType)
+          return exists ? `Use Existing ${selFxType}` : `Add ${selFxType} to track`
+        })()}
+      </button>
+    </div>
+  )
+}
 
 function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
   pad: Pad
@@ -457,28 +589,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
           ))}
         </div>
         {pad.mode === 'effect-toggle' && (
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {project.tracks.filter(t => t.effects.length > 0).map(t => (
-              <div key={t.id}>
-                <div style={{ fontSize: 9, color: '#555', fontWeight: 700, letterSpacing: '0.06em', marginBottom: 2, paddingLeft: 2 }}>{t.name}</div>
-                {t.effects.map(fx => {
-                  const isSelected = pad.effectTarget?.trackId === t.id && pad.effectTarget?.effectId === fx.id
-                  return (
-                    <button key={fx.id} onClick={() => onPadChange({ effectTarget: { trackId: t.id, effectId: fx.id } })}
-                      style={{ display: 'block', width: '100%', textAlign: 'left', fontSize: 10, padding: '4px 8px', borderRadius: 3, cursor: 'pointer', marginBottom: 2,
-                        border: `1px solid ${isSelected ? C.accent : C.border}`,
-                        background: isSelected ? `${C.accent}22` : '#0e0e0e',
-                        color: isSelected ? C.accent : C.text }}>
-                      {fx.type.charAt(0).toUpperCase() + fx.type.slice(1)}
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
-            {project.tracks.every(t => t.effects.length === 0) && (
-              <div style={{ fontSize: 10, color: '#444' }}>No effects on any track yet</div>
-            )}
-          </div>
+          <FxToggleConfig pad={pad} onPadChange={onPadChange} />
         )}
       </div>
 
