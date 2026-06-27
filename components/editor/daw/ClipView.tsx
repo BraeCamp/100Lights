@@ -5,7 +5,7 @@ import type { DawTrack, DawClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import Waveform from './Waveform'
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onScrollBy }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -19,6 +19,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onDragStart?(): void
   onDeleteAll?(): void
   onReplaceSample?(): void
+  onScrollBy?(delta: number): void
 }) {
   const clipDivRef = useRef<HTMLDivElement>(null)
   const menuRef    = useRef<HTMLDivElement>(null)
@@ -59,17 +60,39 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     onDragStart?.()
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     let dragged = false
+    let lastMX = e.clientX
+    let lastTrackId = track.id
+    let edgeRaf = 0
+
+    function tickEdge() {
+      if (!dragRef.current) return
+      const ZONE = 80
+      const MAX_PX = 14
+      let delta = 0
+      if (lastMX < ZONE) delta = -Math.round(MAX_PX * (1 - lastMX / ZONE))
+      else if (lastMX > window.innerWidth - ZONE) delta = Math.round(MAX_PX * (1 - (window.innerWidth - lastMX) / ZONE))
+      if (delta !== 0 && onScrollBy) {
+        onScrollBy(delta)
+        dragRef.current.startX -= delta
+        onMove(Math.max(0, dragRef.current.startBeat + (lastMX - dragRef.current.startX) / beatW), lastTrackId, false)
+      }
+      edgeRaf = requestAnimationFrame(tickEdge)
+    }
+    edgeRaf = requestAnimationFrame(tickEdge)
+
     function mm(ev: MouseEvent) {
       if (!dragRef.current) return
       dragged = true
+      lastMX = ev.clientX
       const div = clipDivRef.current
       if (div) div.style.pointerEvents = 'none'
       const el = document.elementFromPoint(ev.clientX, ev.clientY)
       if (div) div.style.pointerEvents = ''
-      const targetTrackId = el?.closest('[data-track-id]')?.getAttribute('data-track-id') ?? track.id
-      onMove(Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW), targetTrackId, ev.altKey)
+      lastTrackId = el?.closest('[data-track-id]')?.getAttribute('data-track-id') ?? track.id
+      onMove(Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW), lastTrackId, ev.altKey)
     }
     function mu() {
+      cancelAnimationFrame(edgeRaf)
       dragRef.current = null
       document.removeEventListener('mousemove', mm)
       document.removeEventListener('mouseup', mu)

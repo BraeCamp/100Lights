@@ -115,8 +115,9 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
+  onScrollBy?: (delta: number) => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
@@ -568,6 +569,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     }
                   }}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
+                  onScrollBy={onScrollBy}
                 />
               )
             })}

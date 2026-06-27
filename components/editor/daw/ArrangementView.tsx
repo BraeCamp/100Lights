@@ -387,6 +387,7 @@ export default function ArrangementView() {
             scrollLeft={scrollLeft}
             viewWidth={viewWidth}
             snap={snap}
+            onScrollBy={delta => setScrollLeft(s => Math.max(0, s + delta))}
           />
         ))}
 
