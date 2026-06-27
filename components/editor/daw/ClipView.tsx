@@ -51,7 +51,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     if (e.button !== 0) return
     e.stopPropagation()
     if (isCropping) return  // don't drag while cropping
-    if (e.shiftKey) { onShiftSelect() } else { onSelect() }
+    if (e.altKey) { onShiftSelect() } else { onSelect() }
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     function mm(ev: MouseEvent) {
       if (!dragRef.current) return

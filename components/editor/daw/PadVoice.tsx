@@ -257,7 +257,12 @@ function bufferToWavBlob(buf: AudioBuffer): Blob {
 
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function PadVoice() {
+export default function PadVoice({ quantizeEnabled: quantizeEnabledProp, quantizeGrid: quantizeGridProp, setQuantizeEnabled: setQuantizeEnabledProp, setQuantizeGrid: setQuantizeGridProp }: {
+  quantizeEnabled?: boolean
+  quantizeGrid?: QuantizeGrid
+  setQuantizeEnabled?: (v: boolean) => void
+  setQuantizeGrid?: (g: QuantizeGrid) => void
+}) {
   const { project, dispatch, engine, selectedClipId, setSelectedClipId, selectedTrackId, playing } = useDaw()
 
   const [result,         setResult]         = useState<LivePitchResult | null>(null)
@@ -330,9 +335,13 @@ export default function PadVoice() {
   const [pushToRecord,    setPushToRecord]    = useState(false)
   const [ptrHolding,      setPtrHolding]      = useState(false)
 
-  // Quantize
-  const [quantizeEnabled, setQuantizeEnabled] = useState(false)
-  const [quantizeGrid,    setQuantizeGrid]    = useState<QuantizeGrid>('1/8')
+  // Quantize — controlled by parent (PadInput) if props provided, else local state
+  const [quantizeEnabledLocal, setQuantizeEnabledLocal] = useState(false)
+  const [quantizeGridLocal,    setQuantizeGridLocal]    = useState<QuantizeGrid>('1/8')
+  const quantizeEnabled    = quantizeEnabledProp    ?? quantizeEnabledLocal
+  const quantizeGrid       = quantizeGridProp       ?? quantizeGridLocal
+  const setQuantizeEnabled = setQuantizeEnabledProp ?? setQuantizeEnabledLocal
+  const setQuantizeGrid    = (setQuantizeGridProp ?? setQuantizeGridLocal) as (g: QuantizeGrid) => void
   const quantizeEnabledRef = useRef(false)
   const quantizeGridRef    = useRef<QuantizeGrid>('1/8')
 
@@ -1133,37 +1142,39 @@ export default function PadVoice() {
           <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700, letterSpacing: '0.06em' }}>● REC</span>
         )}
 
-        {/* Quantize */}
-        <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-          <button
-            onClick={() => setQuantizeEnabled(v => !v)}
-            title="Quantize note starts and ends when recording"
-            style={{
-              padding: '4px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800,
-              border: `1px solid ${quantizeEnabled ? '#7c3aed' : '#2a2a2a'}`,
-              background: quantizeEnabled ? 'rgba(124,58,237,0.12)' : 'transparent',
-              color: quantizeEnabled ? '#a78bfa' : '#444',
-              cursor: 'pointer', letterSpacing: '0.04em',
-            }}>
-            Q
-          </button>
-          {quantizeEnabled && (
-            <div style={{ display: 'flex', gap: 2 }}>
-              {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
-                <button key={g} onClick={() => setQuantizeGrid(g)}
-                  style={{
-                    padding: '3px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700,
-                    border: `1px solid ${quantizeGrid === g ? '#7c3aed' : '#222'}`,
-                    background: quantizeGrid === g ? 'rgba(124,58,237,0.15)' : '#111',
-                    color: quantizeGrid === g ? '#a78bfa' : '#555',
-                    cursor: 'pointer',
-                  }}>
-                  {g}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Quantize — hidden when controlled by PadInput (shows in its header) */}
+        {!setQuantizeEnabledProp && (
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            <button
+              onClick={() => setQuantizeEnabled(!quantizeEnabled)}
+              title="Quantize note starts and ends when recording"
+              style={{
+                padding: '4px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800,
+                border: `1px solid ${quantizeEnabled ? '#7c3aed' : '#2a2a2a'}`,
+                background: quantizeEnabled ? 'rgba(124,58,237,0.12)' : 'transparent',
+                color: quantizeEnabled ? '#a78bfa' : '#444',
+                cursor: 'pointer', letterSpacing: '0.04em',
+              }}>
+              Q
+            </button>
+            {quantizeEnabled && (
+              <div style={{ display: 'flex', gap: 2 }}>
+                {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
+                  <button key={g} onClick={() => setQuantizeGrid(g)}
+                    style={{
+                      padding: '3px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700,
+                      border: `1px solid ${quantizeGrid === g ? '#7c3aed' : '#222'}`,
+                      background: quantizeGrid === g ? 'rgba(124,58,237,0.15)' : '#111',
+                      color: quantizeGrid === g ? '#a78bfa' : '#555',
+                      cursor: 'pointer',
+                    }}>
+                    {g}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {renderStatus && (
           <span style={{ fontSize: 10, color: '#eab308' }}>{renderStatus}</span>

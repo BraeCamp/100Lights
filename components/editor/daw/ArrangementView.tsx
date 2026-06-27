@@ -180,7 +180,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, onSave, isSaving } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, setSelectedClipIds, onSave, isSaving } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -192,6 +192,7 @@ export default function ArrangementView() {
   const playheadRef = useRef<HTMLDivElement>(null)
   const rafRef      = useRef<number | undefined>(undefined)
   const [viewWidth, setViewWidth] = useState(800)
+  const [rubberBand, setRubberBand] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
 
   useEffect(() => {
     const ro = new ResizeObserver(entries => setViewWidth(entries[0].contentRect.width - HDR_W))
@@ -269,6 +270,64 @@ export default function ArrangementView() {
     if (expandedPianoRollClipId) { setExpandedPianoRollClipId(null); return }
   }
 
+  function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    const laneEl = laneRef.current
+    if (!laneEl) return
+    const laneRect = laneEl.getBoundingClientRect()
+    // Ignore clicks in the track header column
+    if (e.clientX < laneRect.left + HDR_W) return
+
+    const sx = e.clientX
+    const sy = e.clientY
+    setRubberBand({ x1: sx, y1: sy, x2: sx, y2: sy })
+
+    function onMove(ev: MouseEvent) {
+      setRubberBand({ x1: sx, y1: sy, x2: ev.clientX, y2: ev.clientY })
+    }
+
+    function onUp(ev: MouseEvent) {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      setRubberBand(null)
+
+      const dx = Math.abs(ev.clientX - sx)
+      const dy = Math.abs(ev.clientY - sy)
+      if (dx < 5 && dy < 5) return // treat as plain click — TrackRow already cleared selection
+
+      const selL = Math.min(sx, ev.clientX)
+      const selR = Math.max(sx, ev.clientX)
+      const selT = Math.min(sy, ev.clientY)
+      const selB = Math.max(sy, ev.clientY)
+
+      const newIds = new Set<string>()
+      if (!laneEl) return
+      const trackEls = laneEl.querySelectorAll('[data-track-id]')
+      for (const el of Array.from(trackEls)) {
+        const trackId = (el as HTMLElement).dataset.trackId!
+        const tr = el.getBoundingClientRect()
+        if (tr.bottom < selT || tr.top > selB) continue
+        for (const clip of project.arrangementClips) {
+          if (clip.trackId !== trackId) continue
+          const clipL = laneRect.left + HDR_W + clip.startBeat * beatW - scrollLeft
+          const clipR = clipL + clip.durationBeats * beatW
+          if (clipR < selL || clipL > selR) continue
+          newIds.add(clip.id)
+        }
+      }
+
+      if (ev.altKey) {
+        setSelectedClipIds(prev => new Set([...prev, ...newIds]))
+      } else {
+        setSelectedClipIds(newIds)
+        setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
+      }
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
   return (
     <div ref={outerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative' }}>
 
@@ -318,6 +377,7 @@ export default function ArrangementView() {
         ref={laneRef}
         style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}
         onWheel={handleWheel}
+        onMouseDown={onLaneMouseDown}
       >
         {project.tracks.map(track => (
           <TrackRow
@@ -342,6 +402,21 @@ export default function ArrangementView() {
           </div>
         </div>
       </div>
+
+      {/* Rubber-band selection rect */}
+      {rubberBand && (
+        <div style={{
+          position: 'fixed',
+          left: Math.min(rubberBand.x1, rubberBand.x2),
+          top:  Math.min(rubberBand.y1, rubberBand.y2),
+          width:  Math.abs(rubberBand.x2 - rubberBand.x1),
+          height: Math.abs(rubberBand.y2 - rubberBand.y1),
+          border: '1px solid rgba(61,143,239,0.7)',
+          background: 'rgba(61,143,239,0.08)',
+          pointerEvents: 'none',
+          zIndex: 200,
+        }} />
+      )}
 
       {/* Global playhead overlay — clipped to track content area so it stays behind the header */}
       <div style={{ position: 'absolute', left: HDR_W, right: 0, top: 30 + RULER_H, bottom: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 10 }}>

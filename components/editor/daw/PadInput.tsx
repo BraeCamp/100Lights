@@ -687,6 +687,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [savedPresets,  setSavedPresets]  = useState<PadPreset[]>(() => getPadPresets())
   const [saveName,      setSaveName]      = useState('')
   const [padRecording,  setPadRecording]  = useState(false)
+  const [countdown,     setCountdown]     = useState<number | null>(null)
+  const countdownIvRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [quantizeEnabled, setQuantizeEnabled] = useState(false)
+  const [quantizeGrid,    setQuantizeGrid]    = useState<'1/1'|'1/2'|'1/4'|'1/8'|'1/16'>('1/8')
+  const quantizeEnabledRef = useRef(false)
+  const quantizeGridRef    = useRef<'1/1'|'1/2'|'1/4'|'1/8'|'1/16'>('1/8')
   const [winSize,      setWinSize]      = useState<{ w: number; h: number | null }>({ w: 520, h: null })
   const [pos, setPos] = useState(() => ({
     x: typeof window !== 'undefined' ? Math.max(0, window.innerWidth  / 2 - 260) : 200,
@@ -710,9 +716,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const remapIdRef    = useRef(remapId)
   const padKeyMapRef  = useRef<Record<string, number>>({})
   const pianoKeyMapRef = useRef<Record<string, number>>({})
-  useEffect(() => { padsRef.current    = pads    }, [pads])
-  useEffect(() => { tabRef.current     = tab     }, [tab])
-  useEffect(() => { remapIdRef.current = remapId }, [remapId])
+  useEffect(() => () => { if (countdownIvRef.current) clearInterval(countdownIvRef.current) }, [])
+  useEffect(() => { padsRef.current           = pads           }, [pads])
+  useEffect(() => { tabRef.current            = tab            }, [tab])
+  useEffect(() => { remapIdRef.current        = remapId        }, [remapId])
+  useEffect(() => { quantizeEnabledRef.current = quantizeEnabled }, [quantizeEnabled])
+  useEffect(() => { quantizeGridRef.current    = quantizeGrid    }, [quantizeGrid])
 
   const track      = project.tracks.find(t => t.id === trackId)
   const instrument = track?.instrument
@@ -867,7 +876,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     setPressing(prev => new Set([...prev, pitch]))
     if (padRecording && engine.isPlaying) {
       const pad = padsRef.current.find(p => p.pitch === pitch)
-      noteStarts.current.set(pitch, { beat: engine.currentBeat, sounds: pad?.customSounds ?? [] })
+      const QBEATS: Record<string, number> = { '1/1': 4, '1/2': 2, '1/4': 1, '1/8': 0.5, '1/16': 0.25 }
+      const rawBeat = engine.currentBeat
+      const g = QBEATS[quantizeGridRef.current] ?? 1
+      const beat = quantizeEnabledRef.current ? Math.round(rawBeat / g) * g : rawBeat
+      noteStarts.current.set(pitch, { beat, sounds: pad?.customSounds ?? [] })
     }
   }, [instrument, engine, padRecording])
 
@@ -941,6 +954,9 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     if (!active) return
 
     function onCapture(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return
+
       if (e.key !== 'Escape') e.stopPropagation()
 
       if (e.type === 'keydown') {
@@ -1077,17 +1093,70 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             : <span style={{ fontSize: 10, color: C.muted }}>click to activate</span>
           }
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
-            {/* Record toggle */}
+            {/* Quantize */}
+            <div style={{ display: 'flex', gap: 2, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => setQuantizeEnabled(v => !v)}
+                title="Quantize note starts to grid"
+                style={{ padding: '2px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800, border: `1px solid ${quantizeEnabled ? '#7c3aed' : C.border}`, background: quantizeEnabled ? 'rgba(124,58,237,0.12)' : 'transparent', color: quantizeEnabled ? '#a78bfa' : C.muted, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                Q
+              </button>
+              {quantizeEnabled && (
+                <div style={{ display: 'flex', gap: 2 }}>
+                  {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
+                    <button key={g} onClick={() => setQuantizeGrid(g)}
+                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${quantizeGrid === g ? '#7c3aed' : '#222'}`, background: quantizeGrid === g ? 'rgba(124,58,237,0.15)' : '#111', color: quantizeGrid === g ? '#a78bfa' : '#555', cursor: 'pointer' }}>
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Record toggle — right-click for countdown */}
             <button
               onClick={e => {
                 e.stopPropagation()
                 if (padRecording) { engine.stop(); setPadRecording(false) }
-                else { if (!engine.isPlaying) engine.play(); setPadRecording(true) }
+                else if (countdown !== null) {
+                  if (countdownIvRef.current) clearInterval(countdownIvRef.current)
+                  countdownIvRef.current = null
+                  setCountdown(null)
+                } else {
+                  if (!engine.isPlaying) engine.play()
+                  setPadRecording(true)
+                }
               }}
-              title={padRecording ? 'Stop recording' : 'Start recording'}
-              style={{ display: 'flex', alignItems: 'center', gap: 3, background: padRecording ? 'rgba(239,68,68,0.14)' : 'transparent', border: `1px solid ${padRecording ? C.red : C.border}`, color: padRecording ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: padRecording ? 800 : 400 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', display: 'inline-block', flexShrink: 0 }} />
-              {padRecording ? 'STOP' : 'REC'}
+              onContextMenu={e => {
+                e.preventDefault(); e.stopPropagation()
+                if (padRecording || countdown !== null) return
+                const beatsPerBar = project.timeSignatureNum ?? 4
+                const beatMs = 60000 / (project.tempo ?? 120)
+                let remaining = beatsPerBar
+                setCountdown(remaining)
+                if (!engine.isPlaying) engine.play()
+                if (countdownIvRef.current) clearInterval(countdownIvRef.current)
+                countdownIvRef.current = setInterval(() => {
+                  remaining--
+                  if (remaining <= 0) {
+                    clearInterval(countdownIvRef.current!)
+                    countdownIvRef.current = null
+                    setCountdown(null)
+                    setPadRecording(true)
+                  } else {
+                    setCountdown(remaining)
+                  }
+                }, beatMs)
+              }}
+              title={padRecording ? 'Stop recording' : countdown !== null ? 'Cancel countdown' : 'Click to record · Right-click for countdown'}
+              style={{ display: 'flex', alignItems: 'center', gap: 3, background: padRecording ? 'rgba(239,68,68,0.14)' : countdown !== null ? 'rgba(239,68,68,0.07)' : 'transparent', border: `1px solid ${padRecording || countdown !== null ? C.red : C.border}`, color: padRecording || countdown !== null ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: padRecording || countdown !== null ? 800 : 400, minWidth: 42, justifyContent: 'center' }}>
+              {countdown !== null ? (
+                <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 11 }}>{countdown}</span>
+              ) : (
+                <>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', display: 'inline-block', flexShrink: 0 }} />
+                  {padRecording ? 'STOP' : 'REC'}
+                </>
+              )}
             </button>
             {/* BPM */}
             <button
@@ -1109,49 +1178,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               {isFullscreen ? '⊡' : '⊞'}
             </button>
             {!isFullscreen && <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>}
-            <div style={{ position: 'relative' }}>
-              <button
-                onClick={e => { e.stopPropagation(); setSavedPresets(getPadPresets()); setSaveName(''); setShowSaveMenu(v => !v) }}
-                title="Save / Load pad layout"
-                style={{ background: showSaveMenu ? `${C.accent}22` : 'transparent', border: `1px solid ${showSaveMenu ? C.accent : C.border}`, color: showSaveMenu ? C.accent : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
-                PADS
-              </button>
-              {showSaveMenu && (
-                <div ref={saveMenuRef} onClick={e => e.stopPropagation()} style={{
-                  position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 200, zIndex: 200,
-                  background: '#141414', border: `1px solid ${C.border}`, borderRadius: 6,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.7)', padding: '6px 0',
-                }}>
-                  <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#555', fontWeight: 700, letterSpacing: '0.07em', borderBottom: '1px solid #1e1e1e' }}>PAD LAYOUTS</div>
-                  {savedPresets.length === 0 && <div style={{ padding: '6px 10px', fontSize: 10, color: '#444' }}>No saved layouts</div>}
-                  {savedPresets.map(p => (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
-                      <button onClick={() => { setPads(p.pads as Pad[]); setShowSaveMenu(false) }}
-                        style={{ flex: 1, textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#bbb', cursor: 'pointer' }}>
-                        {p.name}
-                      </button>
-                      <button onClick={() => { deletePadPreset(p.id); setSavedPresets(getPadPresets()) }}
-                        style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 11 }}>✕</button>
-                    </div>
-                  ))}
-                  <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
-                  <div style={{ padding: '4px 10px', display: 'flex', gap: 4 }}>
-                    <input placeholder="Layout name" value={saveName} onChange={e => setSaveName(e.target.value)}
-                      style={{ flex: 1, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 5px' }} />
-                    <button
-                      onClick={() => {
-                        const name = saveName.trim() || `Layout ${savedPresets.length + 1}`
-                        savePadPreset(name, pads)
-                        setSavedPresets(getPadPresets())
-                        setSaveName('')
-                      }}
-                      style={{ padding: '3px 8px', fontSize: 10, background: C.accent, border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
-                      Save
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
             <button onClick={e => { e.stopPropagation(); onClose() }}
               style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>
@@ -1271,6 +1297,49 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                   </button>
                 )}
                 <span style={{ fontSize: 10, color: '#444', marginLeft: 'auto' }}>Right-click a pad to edit</span>
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => { setSavedPresets(getPadPresets()); setSaveName(''); setShowSaveMenu(v => !v) }}
+                    title="Save / Load pad layout"
+                    style={{ background: showSaveMenu ? `${C.accent}22` : 'transparent', border: `1px solid ${showSaveMenu ? C.accent : C.border}`, color: showSaveMenu ? C.accent : C.muted, cursor: 'pointer', fontSize: 10, padding: '3px 10px', borderRadius: 4, fontWeight: 700 }}>
+                    Layouts
+                  </button>
+                  {showSaveMenu && (
+                    <div ref={saveMenuRef} style={{
+                      position: 'absolute', bottom: 'calc(100% + 4px)', right: 0, width: 200, zIndex: 200,
+                      background: '#141414', border: `1px solid ${C.border}`, borderRadius: 6,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.7)', padding: '6px 0',
+                    }}>
+                      <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#555', fontWeight: 700, letterSpacing: '0.07em', borderBottom: '1px solid #1e1e1e' }}>PAD LAYOUTS</div>
+                      {savedPresets.length === 0 && <div style={{ padding: '6px 10px', fontSize: 10, color: '#444' }}>No saved layouts</div>}
+                      {savedPresets.map(p => (
+                        <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
+                          <button onClick={() => { setPads(p.pads as Pad[]); setShowSaveMenu(false) }}
+                            style={{ flex: 1, textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#bbb', cursor: 'pointer' }}>
+                            {p.name}
+                          </button>
+                          <button onClick={() => { deletePadPreset(p.id); setSavedPresets(getPadPresets()) }}
+                            style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
+                      <div style={{ padding: '4px 10px', display: 'flex', gap: 4 }}>
+                        <input placeholder="Layout name" value={saveName} onChange={e => setSaveName(e.target.value)}
+                          style={{ flex: 1, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 5px' }} />
+                        <button
+                          onClick={() => {
+                            const name = saveName.trim() || `Layout ${savedPresets.length + 1}`
+                            savePadPreset(name, pads)
+                            setSavedPresets(getPadPresets())
+                            setSaveName('')
+                          }}
+                          style={{ padding: '3px 8px', fontSize: 10, background: C.accent, border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1338,7 +1407,12 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
           )}
 
           {tab === 'voice' && (
-            <PadVoice />
+            <PadVoice
+              quantizeEnabled={quantizeEnabled}
+              quantizeGrid={quantizeGrid}
+              setQuantizeEnabled={setQuantizeEnabled}
+              setQuantizeGrid={setQuantizeGrid}
+            />
           )}
         </div>
 

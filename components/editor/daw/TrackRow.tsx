@@ -439,7 +439,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           data-track-id={track.id}
           data-track-type={track.type}
           style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgba(61,143,239,0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
-          onMouseDown={() => { setSelectedClipIds(new Set()); setSelectedClipId(null); setCroppingClipId(null) }}
+          onMouseDown={e => { if (!e.altKey) { setSelectedClipIds(new Set()); setSelectedClipId(null) }; setCroppingClipId(null) }}
           onDoubleClick={handleDoubleClick}
           onDragOver={e => e.preventDefault()}
           onDrop={handleDrop}
