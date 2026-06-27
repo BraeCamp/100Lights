@@ -207,7 +207,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   }
 
   function newMidiClip() {
-    const newClip = makeMidiClip(track.id, 'MIDI Clip', engine.currentBeat, 4, { isDrumClip: track.type === 'drum' })
+    const newClip = makeMidiClip(track.id, 'MIDI Clip', engine.currentBeat, 4, { isDrumClip: track.instrument.type === 'drum' })
     dispatch({ type: 'ADD_CLIP', clip: newClip })
   }
 
@@ -275,7 +275,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     if (frozen) return
     const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
-    if (track.type === 'audio') {
+    if (track.instrument.type === 'none') {
       const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*'
       input.onchange = async () => {
         const file = input.files?.[0]; if (!file) return
@@ -306,7 +306,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       }
       input.click()
     } else {
-      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4, { isDrumClip: track.type === 'drum' })
+      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4, { isDrumClip: track.instrument.type === 'drum' })
       dispatch({ type: 'ADD_CLIP', clip })
       setExpandedPianoRollClipId(clip.id)
     }
@@ -386,7 +386,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>M</button>
             <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } })}
               style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>S</button>
-            {track.type !== 'drum' && (<>
+            {track.instrument.type !== 'drum' && (<>
               {/* Arm button */}
               <button
                 title={track.armed ? 'Disarm track' : 'Arm for recording'}
@@ -459,7 +459,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {/* Track name header */}
             <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid #222' }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</div>
-              <div style={{ fontSize: 9, color: '#555', marginTop: 1, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{track.type} track</div>
+              <div style={{ fontSize: 9, color: '#555', marginTop: 1, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{track.instrument.type === 'drum' ? 'drum' : track.instrument.type === 'none' ? 'audio' : 'midi'} track</div>
             </div>
 
             {/* Actions */}
@@ -510,7 +510,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             )}
 
             {/* MIDI section */}
-            {track.type !== 'drum' && (<>
+            {track.instrument.type !== 'drum' && (<>
               <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
               <button onClick={() => { newMidiClip(); setTrackCtxMenu(null) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}

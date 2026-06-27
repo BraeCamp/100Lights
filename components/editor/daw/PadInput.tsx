@@ -812,7 +812,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     const existing = padTrackMap.current.get(pitch)
     if (existing && project.tracks.some(t => t.id === existing)) return existing
     const id = crypto.randomUUID()
-    dispatch({ type: 'ADD_TRACK', trackType: 'audio', id, name: drumLabel })
+    dispatch({ type: 'ADD_TRACK', id, name: drumLabel })
     padTrackMap.current.set(pitch, id)
     return id
   }, [project.tracks, dispatch])

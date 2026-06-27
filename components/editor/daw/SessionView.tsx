@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Square, Circle, ChevronRight, Music2 } from 'lucide-react'
+import { Plus, Square, Circle, ChevronRight } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
-import { isAudioClip } from '@/lib/daw-types'
+import { isAudioClip, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
@@ -120,7 +120,7 @@ function TrackHeader({ track }: { track: DawTrack }) {
           >{track.name}</span>
         )}
         <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', flexShrink: 0 }}>
-          {track.type === 'audio' ? 'A' : track.type === 'midi' ? 'M' : 'D'}
+          {track.instrument.type === 'drum' ? 'DR' : track.instrument.type === 'none' ? 'AU' : 'MI'}
         </span>
       </div>
 
@@ -323,7 +323,6 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
   }
 
   async function handleAddAudio() {
-    if (track.type !== 'audio') return
     const input = document.createElement('input')
     input.type   = 'file'
     input.accept = 'audio/*'
@@ -543,8 +542,8 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
                 <Square size={10} fill="currentColor" />
                 <span style={{ fontSize: 9 }}>Stop</span>
               </div>
-            ) : hovered && track.type === 'audio' ? (
-              /* Hover empty audio slot — show + Add button */
+            ) : hovered ? (
+              /* Hover empty slot — show + Add button */
               <button
                 onClick={e => { e.stopPropagation(); handleAddAudio() }}
                 style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '3px 7px', fontSize: 10, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}
@@ -553,7 +552,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
               </button>
             ) : (
               <div style={{ color: 'var(--text-muted)', opacity: 0.3 }}>
-                {track.type === 'audio' ? <Plus size={14} /> : <Music2 size={14} />}
+                <Plus size={14} />
               </div>
             )}
           </div>
@@ -953,14 +952,21 @@ export default function SessionView() {
 
           {/* Add track buttons */}
           <div style={{ display: 'flex', gap: 4, padding: '8px', width: HDR_W, borderRight: '1px solid var(--border)' }}>
-            {(['audio', 'midi', 'drum'] as const).map(type => (
-              <button
-                key={type}
-                onClick={() => dispatch({ type: 'ADD_TRACK', trackType: type })}
-                style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
-                title={`Add ${type} track`}
-              >+{type[0].toUpperCase()}</button>
-            ))}
+            <button
+              onClick={() => dispatch({ type: 'ADD_TRACK' })}
+              style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
+              title="Add track"
+            >+Track</button>
+            <button
+              onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultDrumInstrument() })}
+              style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
+              title="Add drum track"
+            >+Drums</button>
+            <button
+              onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultFmInstrument() })}
+              style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
+              title="Add synth track"
+            >+Synth</button>
           </div>
         </div>
 

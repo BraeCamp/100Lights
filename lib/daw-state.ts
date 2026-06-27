@@ -3,7 +3,7 @@
 import React, { createContext, useContext, type Dispatch } from 'react'
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
-  Scene, DawView, EditTarget, TrackType,
+  Scene, DawView, EditTarget,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
   ReturnTrack, TakeLane,
 } from './daw-types'
@@ -17,7 +17,7 @@ import { DawEngine } from './daw-engine'
 
 export type DawAction =
   // Tracks
-  | { type: 'ADD_TRACK'; trackType: TrackType; id?: string; name?: string }
+  | { type: 'ADD_TRACK'; instrument?: DawTrack['instrument']; id?: string; name?: string }
   | { type: 'REMOVE_TRACK'; trackId: string }
   | { type: 'DUPLICATE_TRACK'; trackId: string }
   | { type: 'UPDATE_TRACK'; trackId: string; patch: Partial<DawTrack> }
@@ -84,12 +84,11 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'ADD_TRACK': {
       const colorIdx = project.tracks.length % TRACK_COLORS.length
-      const num = project.tracks.filter(t => t.type === action.trackType).length + 1
-      const labels: Record<TrackType, string> = { audio: 'Audio', midi: 'MIDI', drum: 'Drum' }
+      const num = project.tracks.length + 1
       const track: DawTrack = {
         id: action.id ?? crypto.randomUUID(),
-        name: action.name ?? `${labels[action.trackType]} ${num}`,
-        type: action.trackType,
+        name: action.name ?? `Track ${num}`,
+        type: 'audio',
         color: TRACK_COLORS[colorIdx],
         volume: 0.8,
         pan: 0,
@@ -99,7 +98,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         inputSource: null,
         height: DEFAULT_TRACK_HEIGHT,
         effects: [],
-        instrument: defaultTrackInstrument(action.trackType),
+        instrument: action.instrument ?? defaultTrackInstrument(),
       }
       const grid = { ...project.sessionGrid, [track.id]: Array(project.scenes.length).fill(null) }
       return { ...project, tracks: [...project.tracks, track], sessionGrid: grid }

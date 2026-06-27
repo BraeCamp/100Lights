@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useDaw, makeMidiClip } from '@/lib/daw-state'
-import { isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
+import { isMidiClip, TRACK_COLORS, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
 import type { ReturnTrack } from '@/lib/daw-types'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 
@@ -288,7 +288,7 @@ export default function ArrangementView() {
     // Find any MIDI clip on selected track
     if (selectedTrackId) {
       const track = project.tracks.find(t => t.id === selectedTrackId)
-      if (track && track.type !== 'drum') {
+      if (track && track.instrument.type !== 'drum') {
         const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
         if (existing) {
           setExpandedPianoRollClipId(expandedPianoRollClipId === existing.id ? null : existing.id)
@@ -327,7 +327,7 @@ export default function ArrangementView() {
     if (firstIdx < 0) return
 
     // Add the group track (will appear at end initially)
-    dispatch({ type: 'ADD_TRACK', trackType: 'audio', id: groupTrackId, name: 'Group' })
+    dispatch({ type: 'ADD_TRACK', id: groupTrackId, name: 'Group' })
     // Reorder: insert group track before the first selected track
     const newOrder = [
       ...orderedIds.slice(0, firstIdx),
@@ -526,12 +526,18 @@ export default function ArrangementView() {
         {/* Add track buttons */}
         <div style={{ display: 'flex', height: 36 }}>
           <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
-            {(['audio', 'drum'] as const).map(type => (
-              <button key={type} onClick={() => dispatch({ type: 'ADD_TRACK', trackType: type })}
-                style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                {type === 'audio' ? '+Track' : '+Drum'}
-              </button>
-            ))}
+            <button onClick={() => dispatch({ type: 'ADD_TRACK' })}
+              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              +Track
+            </button>
+            <button onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultDrumInstrument() })}
+              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              +Drums
+            </button>
+            <button onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultFmInstrument() })}
+              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              +Synth
+            </button>
             <button
               onClick={addReturnTrack}
               title="Add return track"

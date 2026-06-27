@@ -272,7 +272,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
   const { project, dispatch, engine } = useDaw()
 
   const track = project.tracks.find(t => t.id === trackId)
-  if (!track || track.type === 'audio') return null
+  if (!track) return null
 
   const instrument = track.instrument
   const instrType  = instrument.type

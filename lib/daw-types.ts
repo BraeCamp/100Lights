@@ -1,6 +1,6 @@
 // Core DAW types shared across engine and UI
 
-export type TrackType = 'audio' | 'midi' | 'drum'
+export type TrackType = 'audio'
 
 export type CrossfaderSide = 'A' | 'B' | 'none'
 
@@ -357,9 +357,7 @@ export const TRACK_COLORS = [
 
 export const DEFAULT_TRACK_HEIGHT = 64
 
-export function defaultTrackInstrument(type: TrackType): TrackInstrument {
-  if (type === 'drum') return defaultDrumInstrument()
-  if (type === 'midi') return defaultFmInstrument()
+export function defaultTrackInstrument(_type?: TrackType): TrackInstrument {
   return { type: 'none', params: {} }
 }
 

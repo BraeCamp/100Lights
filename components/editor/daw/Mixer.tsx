@@ -4,7 +4,7 @@ import { useState, useRef } from 'react'
 import { Circle } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
-import { TRACK_COLORS } from '@/lib/daw-types'
+import { TRACK_COLORS, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
 import Knob from './Knob'
 
@@ -87,7 +87,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
   const isSelected = !isMaster && track?.id === selectedTrackId
   const color      = track?.color ?? '#3d8fef'
   const typeLabel = track
-    ? (track.type === 'audio' ? 'A' : track.type === 'midi' ? 'M' : 'D')
+    ? (track.instrument.type === 'drum' ? 'DR' : track.instrument.type === 'none' ? 'AU' : 'MI')
     : ''
   const panLabel = pan === 0 ? 'C' : pan < 0 ? `L${Math.round(-pan * 100)}` : `R${Math.round(pan * 100)}`
 
@@ -318,15 +318,24 @@ export default function Mixer() {
           <ChannelStrip key={track.id} track={track} />
         ))}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 6px', justifyContent: 'flex-end' }}>
-          {(['audio', 'midi', 'drum'] as const).map(type => (
-            <button
-              key={type}
-              onClick={() => dispatch({ type: 'ADD_TRACK', trackType: type })}
-              style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
-            >
-              + {type.charAt(0).toUpperCase() + type.slice(1)}
-            </button>
-          ))}
+          <button
+            onClick={() => dispatch({ type: 'ADD_TRACK' })}
+            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
+          >
+            + Track
+          </button>
+          <button
+            onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultDrumInstrument() })}
+            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
+          >
+            + Drums
+          </button>
+          <button
+            onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultFmInstrument() })}
+            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
+          >
+            + Synth
+          </button>
         </div>
 
         {/* Returns section */}
