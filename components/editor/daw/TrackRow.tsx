@@ -129,7 +129,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
-  const inputBtnRef = useRef<HTMLButtonElement>(null)
+  const inputBtnRef        = useRef<HTMLButtonElement>(null)
+  const multiDragOrigins   = useRef<Record<string, number>>({})
+  const replaceFileRef     = useRef<HTMLInputElement>(null)
 
   // Escape exits crop mode
   useEffect(() => {
@@ -160,6 +162,29 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   function newMidiClip() {
     const newClip = makeMidiClip(track.id, 'MIDI Clip', engine.currentBeat, 4, { isDrumClip: track.type === 'drum' })
     dispatch({ type: 'ADD_CLIP', clip: newClip })
+  }
+
+  function handleReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const audioUrl = URL.createObjectURL(file)
+    const reader = new FileReader()
+    reader.onload = async ev => {
+      const buf = ev.target?.result as ArrayBuffer
+      let peaks: number[] | undefined
+      try {
+        const decoded = await engine.ctx.decodeAudioData(buf.slice(0))
+        peaks = extractPeaks(decoded, 200)
+      } catch { /* leave peaks undefined */ }
+      const targets = selectedClipIds.size > 0
+        ? project.arrangementClips.filter(c => selectedClipIds.has(c.id) && isAudioClip(c))
+        : clips.filter(c => selectedClipId === c.id && isAudioClip(c))
+      for (const c of targets) {
+        dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { audioUrl, waveformPeaks: peaks, bufferDuration: undefined } })
+      }
+    }
+    reader.readAsArrayBuffer(file)
   }
 
   // Auto-load waveform peaks for any audio clips that don't have them yet
@@ -470,10 +495,38 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
                     })
                     setSelectedClipId(clip.id)
                   }}
+                  onDragStart={() => {
+                    const origins: Record<string, number> = {}
+                    for (const c of project.arrangementClips) {
+                      if (selectedClipIds.has(c.id)) origins[c.id] = c.startBeat
+                    }
+                    multiDragOrigins.current = origins
+                  }}
                   isCropping={croppingClipId === clip.id}
                   onDoubleClick={() => setExpandedPianoRollClipId(expandedPianoRollClipId === clip.id ? null : clip.id)}
                   onSettings={() => { if (isAudioClip(clip)) setSettingsTarget(clip) }}
-                  onMove={(sb, tid, alt) => dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })}
+                  onDeleteAll={() => {
+                    const toDelete = selectedClipIds.size > 0 ? [...selectedClipIds] : [clip.id]
+                    for (const id of toDelete) dispatch({ type: 'REMOVE_CLIP', clipId: id })
+                    setSelectedClipIds(new Set())
+                    setSelectedClipId(null)
+                  }}
+                  onReplaceSample={() => replaceFileRef.current?.click()}
+                  onMove={(sb, tid, alt) => {
+                    if (selectedClipIds.has(clip.id) && selectedClipIds.size > 1) {
+                      const origin = multiDragOrigins.current[clip.id] ?? clip.startBeat
+                      const delta  = sb - origin
+                      const snappedNew = snapBeat(Math.max(0, origin + delta), alt ? 'off' : snap, project.timeSignatureNum)
+                      const snappedDelta = snappedNew - origin
+                      for (const c of project.arrangementClips) {
+                        if (!selectedClipIds.has(c.id)) continue
+                        const cOrigin = multiDragOrigins.current[c.id] ?? c.startBeat
+                        dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOrigin + snappedDelta), trackId: c.trackId })
+                      }
+                    } else {
+                      dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })
+                    }
+                  }}
                   onResize={(db, alt) => {
                     const endBeat     = clip.startBeat + db
                     const snappedEnd  = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
@@ -621,6 +674,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           </div>
         )
       })()}
+
+      <input ref={replaceFileRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleReplaceFile} />
 
       {settingsTarget && (
         <ClipSettingsModal

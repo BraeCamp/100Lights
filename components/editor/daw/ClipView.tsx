@@ -5,7 +5,7 @@ import type { DawTrack, DawClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import Waveform from './Waveform'
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -16,6 +16,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onCropChange?(trimStart: number, trimEnd: number): void
   onCropSnap?(beat: number): number
   onIsolate(beat: number): void; onSplice?(): void; onDelete(): void
+  onDragStart?(): void
+  onDeleteAll?(): void
+  onReplaceSample?(): void
 }) {
   const clipDivRef = useRef<HTMLDivElement>(null)
   const menuRef    = useRef<HTMLDivElement>(null)
@@ -51,10 +54,14 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     if (e.button !== 0) return
     e.stopPropagation()
     if (isCropping) return  // don't drag while cropping
-    if (e.altKey) { onShiftSelect() } else { onSelect() }
+    const wasMultiSelected = multiSelected && !e.altKey
+    if (e.altKey) { onShiftSelect() } else if (!wasMultiSelected) { onSelect() }
+    onDragStart?.()
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
+    let dragged = false
     function mm(ev: MouseEvent) {
       if (!dragRef.current) return
+      dragged = true
       const div = clipDivRef.current
       if (div) div.style.pointerEvents = 'none'
       const el = document.elementFromPoint(ev.clientX, ev.clientY)
@@ -62,7 +69,12 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       const targetTrackId = el?.closest('[data-track-id]')?.getAttribute('data-track-id') ?? track.id
       onMove(Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW), targetTrackId, ev.altKey)
     }
-    function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    function mu() {
+      dragRef.current = null
+      document.removeEventListener('mousemove', mm)
+      document.removeEventListener('mouseup', mu)
+      if (!dragged && wasMultiSelected) onSelect()  // click without drag → collapse to single
+    }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
@@ -125,13 +137,17 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
+  const isMulti = multiSelected && !!onDeleteAll
   const menuItems = [
-    { label: 'Delete', fn: onDelete },
+    isMulti
+      ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
+      : { label: 'Delete', fn: onDelete },
     { label: 'Splice at Playhead', fn: () => onSplice?.() },
     ...(isAudioClip(clip) ? [
       { label: 'Clip Settings', fn: () => onSettings?.() },
       { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
       { label: 'Isolate on Playhead', fn: () => onIsolate(ctxPos?.beat ?? clip.startBeat) },
+      { label: isMulti ? 'Replace Sample (All Selected)' : 'Replace Sample', fn: () => onReplaceSample?.() },
     ] : [
       { label: 'Open Piano Roll', fn: onDoubleClick },
     ]),

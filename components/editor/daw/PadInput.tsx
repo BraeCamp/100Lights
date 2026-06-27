@@ -927,9 +927,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       const blob  = entry.audioBlob
       if (!blob && !buf) continue
       const audioUrl = URL.createObjectURL(blob ?? new Blob())
-      const durationSec  = buf?.duration ?? 1
-      const durationBeats = Math.max(0.0625, engine.secondsToBeats(durationSec))
-      const clip = makeAudioClip(padTrackId, `${pad?.drumLabel ?? 'Pad'} – ${entry.folder ? `${entry.folder} – ${entry.name}` : entry.name}`, started.beat, durationBeats, { audioUrl })
+      const pressDuration = engine.currentBeat - started.beat
+      const sustainBeats  = engine.secondsToBeats(pad?.sampleSustain ?? 0)
+      const durationBeats = Math.max(0.0625, pressDuration + sustainBeats)
+      const clip = makeAudioClip(padTrackId, `${pad?.drumLabel ?? 'Pad'} – ${entry.folder ? `${entry.folder} – ${entry.name}` : entry.name}`, started.beat, durationBeats, { audioUrl, bufferDuration: buf?.duration })
       dispatch({ type: 'ADD_CLIP', clip })
     }
   }, [engine, dispatch, getOrCreatePadTrack])
@@ -1133,7 +1134,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                 const beatMs = 60000 / (project.tempo ?? 120)
                 let remaining = beatsPerBar
                 setCountdown(remaining)
-                if (!engine.isPlaying) engine.play()
                 if (countdownIvRef.current) clearInterval(countdownIvRef.current)
                 countdownIvRef.current = setInterval(() => {
                   remaining--
@@ -1141,6 +1141,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                     clearInterval(countdownIvRef.current!)
                     countdownIvRef.current = null
                     setCountdown(null)
+                    if (!engine.isPlaying) engine.play()
                     setPadRecording(true)
                   } else {
                     setCountdown(remaining)
