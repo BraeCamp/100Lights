@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
-import type { DawTrack, AudioClip, AutomationLane } from '@/lib/daw-types'
+import type { DawTrack, AudioClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
 import TrackInputCard from './TrackInputCard'
 // AudioInputSource and AUDIO_INPUT_LABELS removed — TrackInputCard handles device labels directly
@@ -23,6 +23,7 @@ const SoundLibrary = dynamic(() => import('../SoundLibrary'), { ssr: false })
 
 export const HDR_W = 200
 const AUTO_H = 60
+const TAKE_H = 32
 
 export type SnapMode = 'off' | '1/16' | '1/8' | 'beat' | 'bar'
 
@@ -115,13 +116,20 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
+  waveformZoom?: number
+  selectedTrackIds?: Set<string>
+  onSelectTrack?: (ctrl: boolean) => void
+  foldedGroups?: Set<string>
+  onToggleFold?: () => void
+  onGroupTracks?: () => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
+  const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
   const dragHRef  = useRef<{ startY: number; startH: number } | null>(null)
   const [editing,    setEditing]    = useState(false)
   const [draft,      setDraft]      = useState(track.name)
@@ -131,9 +139,22 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
+  const [frozen,         setFrozen]         = useState(false)
+  const [takesExpanded,  setTakesExpanded]  = useState(false)
+  const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
   const inputBtnRef        = useRef<HTMLButtonElement>(null)
   const multiDragOrigins   = useRef<Record<string, number>>({})
   const [showLibraryPicker, setShowLibraryPicker] = useState(false)
+
+  // Keep a ref to project for stable closures in event listeners
+  const projectRef = useRef(project)
+  useEffect(() => { projectRef.current = project }, [project])
+
+  // Check if this track is a group parent
+  const isGroupParent = project.tracks.some(t => t.groupId === track.id)
+  const isFolded = foldedGroups?.has(track.id) ?? false
+  const isMultiSelected = selectedTrackIds?.has(track.id) ?? false
+  const isIndented = !!track.groupId
 
   // Escape exits crop mode
   useEffect(() => {
@@ -155,6 +176,30 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [trackCtxMenu, track.id])
+
+  // Close take lane context menu on outside click
+  useEffect(() => {
+    if (!takeLaneCtx) return
+    function onDown() { setTakeLaneCtx(null) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [takeLaneCtx])
+
+  // Listen for recording-complete to auto-create take lanes
+  useEffect(() => {
+    function onDone(e: Event) {
+      const { blob, startBeat, durationBeats } = (e as CustomEvent).detail as { blob: Blob; startBeat: number; durationBeats: number }
+      const currentTrack = projectRef.current.tracks.find(t => t.id === track.id)
+      if (!currentTrack?.armed) return
+      const audioUrl = URL.createObjectURL(blob)
+      const clip = makeAudioClip(track.id, 'Recording', startBeat, durationBeats, { audioUrl })
+      const laneNum = projectRef.current.takeLanes.filter(l => l.trackId === track.id).length + 1
+      dispatch({ type: 'ADD_TAKE_LANE', lane: { id: crypto.randomUUID(), trackId: track.id, name: `Take ${laneNum}`, clips: [clip] } })
+      setTakesExpanded(true)
+    }
+    engine.addEventListener('recording-complete', onDone)
+    return () => engine.removeEventListener('recording-complete', onDone)
+  }, [track.id, engine, dispatch]) // eslint-disable-line
 
   function openDigitalMidi() {
     setSelectedTrackId(track.id)
@@ -227,6 +272,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   }
 
   async function handleDoubleClick(e: React.MouseEvent) {
+    if (frozen) return
     const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
     if (track.type === 'audio') {
@@ -266,7 +312,27 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     }
   }
 
+  function promoteTakeClip(lane: TakeLane, takeClip: AudioClip) {
+    // Remove overlapping clips on main track
+    const overlapping = project.arrangementClips.filter(c =>
+      c.trackId === track.id &&
+      c.startBeat < takeClip.startBeat + takeClip.durationBeats &&
+      c.startBeat + c.durationBeats > takeClip.startBeat
+    )
+    for (const c of overlapping) dispatch({ type: 'REMOVE_CLIP', clipId: c.id })
+    // Add take clip to main arrangement
+    dispatch({ type: 'ADD_CLIP', clip: { ...takeClip, id: crypto.randomUUID(), trackId: track.id } })
+    // Remove clip from take lane (or remove lane if empty)
+    const newClips = lane.clips.filter(c => c.id !== takeClip.id)
+    if (newClips.length === 0) {
+      dispatch({ type: 'REMOVE_TAKE_LANE', laneId: lane.id })
+    } else {
+      dispatch({ type: 'UPDATE_TAKE_LANE', laneId: lane.id, patch: { clips: newClips } })
+    }
+  }
+
   const isSelected = selectedTrackId === track.id
+  const leftPad = isIndented ? 24 : 8  // 16px extra indent for grouped tracks
 
   return (
     <div style={{ boxShadow: isSelected ? `inset 2px 0 0 var(--accent)` : 'none' }}>
@@ -274,12 +340,35 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       <div style={{ display: 'flex', height: track.height, flexShrink: 0 }}>
         {/* Header */}
         <div
-          onClick={e => { if (!(e.target as HTMLElement).closest('button,input,select')) setSelectedTrackId(track.id) }}
+          onClick={e => {
+            if (!(e.target as HTMLElement).closest('button,input,select')) {
+              setSelectedTrackId(track.id)
+              onSelectTrack?.(e.ctrlKey || e.metaKey)
+            }
+          }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
-          style={{ width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: '4px 8px', background: isSelected ? 'rgba(61,143,239,0.10)' : 'var(--bg-card)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s' }}
+          style={{
+            width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: `4px ${isIndented ? 8 : 8}px`,
+            paddingLeft: leftPad,
+            background: isSelected ? 'rgba(61,143,239,0.10)' : isMultiSelected ? 'rgba(61,143,239,0.06)' : 'var(--bg-card)',
+            borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+            borderLeft: isIndented ? `3px solid ${track.color}88` : `3px solid ${track.color}`,
+            boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s',
+          }}
         >
           {/* Name row */}
-          <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 2 }}>
+            {/* Group fold toggle */}
+            {isGroupParent && (
+              <button
+                onClick={e => { e.stopPropagation(); onToggleFold?.() }}
+                title={isFolded ? 'Expand group' : 'Fold group'}
+                style={{ fontSize: 8, width: 12, height: 12, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, lineHeight: 1 }}
+              >
+                {isFolded ? '▶' : '▼'}
+              </button>
+            )}
+            {frozen && <span title="Frozen" style={{ fontSize: 10, flexShrink: 0 }}>❄</span>}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
                 onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) }}
@@ -337,6 +426,14 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
               style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
             >FX</button>
+            {/* Takes expand button — visible when take lanes exist */}
+            {takeLanes.length > 0 && (
+              <button
+                title={takesExpanded ? 'Hide takes' : 'Show takes'}
+                onClick={e => { e.stopPropagation(); setTakesExpanded(v => !v) }}
+                style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${takesExpanded ? '#f59e0b' : 'var(--border)'}`, background: takesExpanded ? 'rgba(245,158,11,0.2)' : 'var(--bg-surface)', color: takesExpanded ? '#f59e0b' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
+              >T{takeLanes.length}</button>
+            )}
             <button
               title="Track settings (right-click for more)"
               onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
@@ -351,7 +448,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             id={`tcm-${track.id}`}
             style={{
               position: 'fixed',
-              top:  Math.min(trackCtxMenu.y, window.innerHeight - 320),
+              top:  Math.min(trackCtxMenu.y, window.innerHeight - 380),
               left: Math.min(trackCtxMenu.x, window.innerWidth  - 200),
               zIndex: 9999, minWidth: 188,
               background: '#161616', border: '1px solid #2e2e2e',
@@ -377,6 +474,40 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >{label}</button>
             ))}
+
+            {/* Freeze / Bounce */}
+            <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+            <button onClick={() => { setFrozen(v => !v); setTrackCtxMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+            >
+              <span>❄</span>
+              <span>{frozen ? 'Unfreeze Track' : 'Freeze Track'}</span>
+            </button>
+            <button onClick={() => { setTrackCtxMenu(null); alert('Bounce: not yet implemented') }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+            >
+              <span>⬇</span>
+              <span>Bounce to New Track</span>
+            </button>
+
+            {/* Group selected tracks — show only when multiple tracks selected and this track is one of them */}
+            {selectedTrackIds && selectedTrackIds.size > 1 && selectedTrackIds.has(track.id) && onGroupTracks && (
+              <>
+                <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+                <button onClick={() => { onGroupTracks(); setTrackCtxMenu(null) }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#60a5fa', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                  onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(96,165,250,0.10)' }}
+                  onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+                >
+                  <span>⊞</span>
+                  <span>Group Selected Tracks ({selectedTrackIds.size})</span>
+                </button>
+              </>
+            )}
 
             {/* MIDI section */}
             {track.type !== 'drum' && (<>
@@ -484,6 +615,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   track={track} beatW={beatW}
                   selected={isClipSelected}
                   multiSelected={isMultiSelected}
+                  waveformZoom={waveformZoom}
+                  onFadeChange={isAudioClip(clip) ? (fadeIn, fadeOut) => {
+                    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fadeIn, fadeOut } })
+                  } : undefined}
                   onSelect={() => { setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])) }}
                   onShiftSelect={() => {
                     setSelectedClipIds(prev => {
@@ -511,6 +646,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   }}
                   onReplaceSample={() => setShowLibraryPicker(true)}
                   onMove={(sb, tid, alt) => {
+                    if (frozen) return
                     if (selectedClipIds.has(clip.id) && selectedClipIds.size > 1) {
                       const origin = multiDragOrigins.current[clip.id] ?? clip.startBeat
                       const delta  = sb - origin
@@ -526,6 +662,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     }
                   }}
                   onResize={(db, alt) => {
+                    if (frozen) return
                     const endBeat     = clip.startBeat + db
                     const snappedEnd  = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
@@ -546,6 +683,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onCropSnap={(b) => snapBeat(b, snap, project.timeSignatureNum)}
                   onIsolate={beat => setIsolateTgt(beat)}
                   onSplice={() => {
+                    if (frozen) return
                     const playhead = engine.currentBeat
                     if (playhead <= clip.startBeat || playhead >= clip.startBeat + clip.durationBeats) return
                     const beatOffset = playhead - clip.startBeat
@@ -608,6 +746,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               )
             })()}
           </div>
+          {/* Frozen overlay — blocks clip interactions */}
+          {frozen && (
+            <div style={{
+              position: 'absolute', inset: 0,
+              background: 'rgba(100,150,220,0.06)',
+              backdropFilter: 'none',
+              cursor: 'not-allowed',
+              zIndex: 20,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <span style={{ fontSize: 16, opacity: 0.3 }}>❄</span>
+            </div>
+          )}
           {/* Height resize handle */}
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, cursor: 'ns-resize', zIndex: 2 }}
             onMouseDown={e => {
@@ -620,6 +771,95 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           />
         </div>
       </div>
+
+      {/* Take lane rows — shown when takes exist and expanded */}
+      {takesExpanded && takeLanes.map(lane => (
+        <div key={lane.id} style={{ display: 'flex', height: TAKE_H, flexShrink: 0 }}>
+          {/* Take lane header */}
+          <div style={{
+            width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
+            background: '#181818',
+            borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+            borderLeft: `3px solid ${track.color}55`,
+            boxSizing: 'border-box',
+          }}>
+            <span style={{ fontSize: 9, color: '#a78bfa', fontWeight: 600, letterSpacing: '0.03em' }}>TAKE</span>
+            <span style={{ flex: 1, fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lane.name}</span>
+            <button
+              onClick={() => dispatch({ type: 'REMOVE_TAKE_LANE', laneId: lane.id })}
+              title="Delete take"
+              style={{ width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}
+            >×</button>
+          </div>
+          {/* Take lane clip area */}
+          <div style={{ flex: 1, height: TAKE_H, position: 'relative', background: 'rgba(120,80,160,0.06)', borderBottom: '1px solid var(--border)', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
+              {lane.clips.map(takeClip => {
+                const clipLeft  = takeClip.startBeat * beatW
+                const clipWidth = Math.max(4, takeClip.durationBeats * beatW)
+                return (
+                  <div
+                    key={takeClip.id}
+                    title={`${lane.name}: ${takeClip.name} — right-click for options`}
+                    style={{
+                      position: 'absolute', left: clipLeft, width: clipWidth,
+                      top: 4, bottom: 4,
+                      background: `${track.color}60`,
+                      border: `1px solid ${track.color}`,
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                      overflow: 'hidden',
+                    }}
+                    onContextMenu={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setTakeLaneCtx({ x: e.clientX, y: e.clientY, lane, clip: takeClip })
+                    }}
+                  >
+                    <div style={{ position: 'absolute', top: 1, left: 3, right: 3, fontSize: 8, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+                      {takeClip.name}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Take lane context menu */}
+      {takeLaneCtx && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: Math.min(takeLaneCtx.y, window.innerHeight - 120),
+            left: Math.min(takeLaneCtx.x, window.innerWidth - 180),
+            zIndex: 9999, minWidth: 160,
+            background: '#161616', border: '1px solid #2e2e2e',
+            borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
+            padding: '4px 0',
+          }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid #222' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#ccc' }}>{takeLaneCtx.lane.name}</div>
+            <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>{takeLaneCtx.clip.name}</div>
+          </div>
+          <button
+            onClick={() => { promoteTakeClip(takeLaneCtx.lane, takeLaneCtx.clip); setTakeLaneCtx(null) }}
+            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#4ade80', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(74,222,128,0.10)' }}
+            onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+          >Promote to Main</button>
+          <button
+            onClick={() => { dispatch({ type: 'REMOVE_TAKE_LANE', laneId: takeLaneCtx.lane.id }); setTakeLaneCtx(null) }}
+            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#f87171', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(239,68,68,0.10)' }}
+            onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+          >Delete Take</button>
+        </div>,
+        document.body
+      )}
 
       {/* Automation lane rows */}
       {autoLanes.map(lane => (

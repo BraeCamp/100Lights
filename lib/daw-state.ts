@@ -557,5 +557,9 @@ export function migrateProject(raw: Partial<DawProject>): DawProject {
     ...raw,
     tracks,
     automationLanes: raw.automationLanes ?? [],
+    returnTracks:    raw.returnTracks    ?? [],
+    takeLanes:       raw.takeLanes       ?? [],
+    crossfaderValue: raw.crossfaderValue ?? 0.5,
+    waveformZoom:    raw.waveformZoom    ?? 1,
   }
 }
