@@ -92,7 +92,7 @@ export default function PadTuner() {
     if (!clip || !isMidiClip(clip)) { setCapError('Selected clip must be a MIDI clip'); return }
     const note: MidiNote = {
       id: crypto.randomUUID(),
-      pitch: r.midi,
+      pitch: Math.round(r.midi),
       startBeat: Math.max(0, engine.currentBeat - clip.startBeat),
       durationBeats: noteDur,
       velocity: 100,

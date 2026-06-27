@@ -52,6 +52,7 @@ export default function Transport() {
   }
 
   function handleRewind() {
+    engine.seek(0)
     setPosition(0)
   }
 

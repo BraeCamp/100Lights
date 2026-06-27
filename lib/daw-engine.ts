@@ -97,6 +97,7 @@ export class DawEngine extends EventTarget {
   loopEnabled = false
   loopStart = 0
   loopEnd = 16
+  private _beatsPerBar = 4
 
   private _startCtxTime = 0
   private _startBeat    = 0
@@ -303,21 +304,23 @@ export class DawEngine extends EventTarget {
 
   updateProject(project: DawProject) {
     if (this.ctx.state === 'closed') return
-    this.tempo       = project.tempo
-    this.loopEnabled = project.loopEnabled
-    this.loopStart   = project.loopStart
-    this.loopEnd     = project.loopEnd
-    this._clips      = project.arrangementClips.filter(isAudioClip)
-    this._midiClips  = project.arrangementClips.filter(isMidiClip)
-    this._tracks     = project.tracks
+    this.tempo        = project.tempo
+    this.loopEnabled  = project.loopEnabled
+    this.loopStart    = project.loopStart
+    this.loopEnd      = project.loopEnd
+    this._beatsPerBar = project.timeSignatureNum ?? 4
+    this._clips       = project.arrangementClips.filter(isAudioClip)
+    this._midiClips   = project.arrangementClips.filter(isMidiClip)
+    this._tracks      = project.tracks
     this._automationLanes = project.automationLanes ?? []
     this._clipEffects     = project.clipEffects ?? []
     this.setMasterVolume(project.masterVolume)
 
+    const anySoloed = project.tracks.some(t => t.solo)
     for (const t of project.tracks) {
       this.ensureTrack(t.id, t.effects)
-      const effective = t.mute ? 0 : t.volume
-      this.setTrackVolume(t.id, effective)
+      const silenced = t.mute || (anySoloed && !t.solo)
+      this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
     }
     for (const id of this.trackNodes.keys()) {
@@ -329,13 +332,14 @@ export class DawEngine extends EventTarget {
 
   private _nextQuantBeat(): number {
     const now = this.currentBeat
+    const bpb = this._beatsPerBar
     switch (this.launchQuantization) {
       case 'none':  return now
       case 'beat':  return Math.ceil(now)
-      case '2bar':  return Math.ceil(now / 8) * 8
-      case '4bar':  return Math.ceil(now / 16) * 16
+      case '2bar':  return Math.ceil(now / (bpb * 2)) * (bpb * 2)
+      case '4bar':  return Math.ceil(now / (bpb * 4)) * (bpb * 4)
       case 'bar':
-      default:      return Math.ceil(now / 4) * 4
+      default:      return Math.ceil(now / bpb) * bpb
     }
   }
 
@@ -487,7 +491,12 @@ export class DawEngine extends EventTarget {
       const noteName = `${NOTE_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
       const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
       const exact    = inFolder.find(e => e.name === noteName)
-      const entry    = exact ?? inFolder[0]
+      const entry    = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
+        if (!best) return e
+        const eMidi  = e.renderSpec?.midiNote ?? 60
+        const bMidi  = best.renderSpec?.midiNote ?? 60
+        return Math.abs(eMidi - pitch) < Math.abs(bMidi - pitch) ? e : best
+      }, null)
       if (!entry) { this._presetBufCache.set(key, null); return }
 
       const fulfilled = await libraryFulfill(entry.id)
@@ -573,8 +582,9 @@ export class DawEngine extends EventTarget {
         if (noteEnd < now) continue
         if (noteAbsBeat > now + aheadBeats) continue
 
-        const startAt = contextNow + this.beatsToSeconds(Math.max(0, noteAbsBeat - now))
-        const dur     = this.beatsToSeconds(note.durationBeats)
+        const startAt      = contextNow + this.beatsToSeconds(Math.max(0, noteAbsBeat - now))
+        const alreadyBeats = Math.max(0, now - noteAbsBeat)
+        const remaining    = this.beatsToSeconds(note.durationBeats - alreadyBeats)
 
         // Use clip-level preset if set, otherwise fall back to track instrument
         if (clip.presetId) {
@@ -586,19 +596,23 @@ export class DawEngine extends EventTarget {
             continue
           }
           if (buf !== null) {
+            const velGain = this.ctx.createGain()
+            velGain.gain.value = (note.velocity ?? 100) / 127
             const src = this.ctx.createBufferSource()
             src.buffer = buf
-            src.connect(nodes.effectsInput)
+            src.connect(velGain)
+            velGain.connect(nodes.effectsInput)
             src.start(startAt)
-            if (dur > 0) src.stop(startAt + dur)
+            if (remaining > 0) src.stop(startAt + remaining)
+            src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, startAt, dur)
+          playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, startAt, remaining)
         }
 
         this._scheduledNoteKeys.add(noteKey)
         // Expire key after note ends — capture version so a loop-reset clear() doesn't invalidate a fresh schedule
-        const expireMs = (startAt - contextNow + dur + 0.1) * 1000
+        const expireMs = (startAt - contextNow + remaining + 0.1) * 1000
         const keyVer   = this._noteKeyVersion
         setTimeout(() => { if (this._noteKeyVersion === keyVer) this._scheduledNoteKeys.delete(noteKey) }, Math.max(0, expireMs))
       }
@@ -606,6 +620,7 @@ export class DawEngine extends EventTarget {
 
     // ── Automation ───────────────────────────────────────────────────────
     for (const lane of this._automationLanes) {
+      if (lane.points.length === 0) continue
       const norm  = interpolateAutomation(lane, now)
       const value = lane.min + norm * (lane.max - lane.min)
       this._applyAutomation(lane.trackId, lane.parameter, value)
@@ -1099,7 +1114,7 @@ export class DawEngine extends EventTarget {
     while (this._nextMetronomeBeat <= currentBeat + ahead) {
       const beatOffset = this._nextMetronomeBeat - currentBeat
       const when       = now + this.beatsToSeconds(Math.max(0, beatOffset))
-      const isDownbeat = (this._nextMetronomeBeat % 4) === 0
+      const isDownbeat = (this._nextMetronomeBeat % this._beatsPerBar) === 0
       const buf        = isDownbeat ? this._tickBuf : this._tockBuf
       if (buf) {
         const src = this.ctx.createBufferSource()
@@ -1181,6 +1196,7 @@ export class DawEngine extends EventTarget {
   dispose() {
     this.stop()
     this.setMetronome(false)
+    void this.stopRecording()
     this.ctx.close()
   }
 }

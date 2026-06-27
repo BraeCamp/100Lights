@@ -280,7 +280,7 @@ function ClipSlot({ track, sceneIndex, clip }: {
       { label: 'Rename', action: () => { setRenameDraft(clip.name); setRenaming(true); setCtxMenu(null) } },
       {
         label: 'Send to Arrangement',
-        action: () => { dispatch({ type: 'ADD_CLIP', clip: { ...clip, startBeat: 0 } }); setCtxMenu(null) },
+        action: () => { dispatch({ type: 'ADD_CLIP', clip: { ...clip, startBeat: engine.currentBeat } }); setCtxMenu(null) },
       },
     ]
 
@@ -398,12 +398,10 @@ export default function SessionView() {
   }, [quantize, engine])
 
   async function launchScene(sceneIndex: number) {
-    for (const track of project.tracks) {
+    await Promise.all(project.tracks.map(track => {
       const clip = project.sessionGrid[track.id]?.[sceneIndex]
-      if (clip && isAudioClip(clip)) {
-        await engine.queueSession(track.id, clip)
-      }
-    }
+      return clip && isAudioClip(clip) ? engine.queueSession(track.id, clip) : Promise.resolve()
+    }))
   }
 
   const quantOptions: { val: LaunchQuantization; label: string }[] = [

@@ -574,7 +574,12 @@ export function AddToLibraryModal({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       chunksRef.current = []
-      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : ''
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       mr.start(100)
       recorderRef.current = mr
@@ -652,7 +657,11 @@ export function AddToLibraryModal({
     setPreviewing(true)
   }
 
-  useEffect(() => () => stopPreview(), [])
+  useEffect(() => () => {
+    stopPreview()
+    const mr = recorderRef.current
+    if (mr) { try { mr.stop(); mr.stream.getTracks().forEach(t => t.stop()) } catch { /* ok */ } }
+  }, []) // eslint-disable-line
 
   async function save() {
     if (!srcBuf) return
@@ -907,17 +916,15 @@ export default function SoundLibrary({ embedded }: { embedded?: boolean }) {
     setOpenFolders(prev => { const s = new Set(prev); s.add(name); return s })
   }
 
-  function renameFolder(oldName: string, newName: string) {
+  async function renameFolder(oldName: string, newName: string) {
     if (!newName || newName === oldName || folders.includes(newName)) return
     saveFolders(folders.map(f => f === oldName ? newName : f))
-    // Update entries that were in the old folder
-    entries.filter(e => e.folder === oldName).forEach(e => handleFolderChange(e.id, newName))
+    await Promise.all(entries.filter(e => e.folder === oldName).map(e => handleFolderChange(e.id, newName)))
   }
 
-  function deleteFolder(name: string) {
+  async function deleteFolder(name: string) {
     saveFolders(folders.filter(f => f !== name))
-    // Remove folder from entries (move to root)
-    entries.filter(e => e.folder === name).forEach(e => handleFolderChange(e.id, undefined))
+    await Promise.all(entries.filter(e => e.folder === name).map(e => handleFolderChange(e.id, undefined)))
   }
 
   function toggleFolderCollapse(name: string) {

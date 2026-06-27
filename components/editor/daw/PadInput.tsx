@@ -1087,7 +1087,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               title={padRecording ? 'Stop recording' : 'Start recording'}
               style={{ display: 'flex', alignItems: 'center', gap: 3, background: padRecording ? 'rgba(239,68,68,0.14)' : 'transparent', border: `1px solid ${padRecording ? C.red : C.border}`, color: padRecording ? C.red : C.muted, cursor: 'pointer', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: padRecording ? 800 : 400 }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', display: 'inline-block', flexShrink: 0 }} />
-              {padRecording ? 'REC' : 'REC'}
+              {padRecording ? 'STOP' : 'REC'}
             </button>
             {/* BPM */}
             <button

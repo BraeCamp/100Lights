@@ -99,7 +99,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const grid   = { ...project.sessionGrid }
       delete grid[action.trackId]
       const automationLanes = project.automationLanes.filter(l => l.trackId !== action.trackId)
-      return { ...project, tracks, arrangementClips: clips, sessionGrid: grid, automationLanes }
+      const clipEffects     = (project.clipEffects ?? []).filter(e => e.trackId !== action.trackId)
+      return { ...project, tracks, arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects }
     }
 
     case 'UPDATE_TRACK': {
@@ -160,12 +161,21 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     }
 
     case 'MOVE_CLIP': {
+      const moved = project.arrangementClips.find(c => c.id === action.clipId)
       const clips = project.arrangementClips.map(c =>
         c.id === action.clipId
           ? { ...c, startBeat: action.startBeat, ...(action.trackId ? { trackId: action.trackId } : {}) } as DawClip
           : c
       )
-      return { ...project, arrangementClips: clips }
+      // Keep clip effects in sync when moving to a different track
+      const clipEffects = (moved && action.trackId && action.trackId !== moved.trackId)
+        ? (project.clipEffects ?? []).map(e =>
+            e.trackId === moved.trackId && e.startBeat === moved.startBeat
+              ? { ...e, trackId: action.trackId! }
+              : e
+          )
+        : (project.clipEffects ?? [])
+      return { ...project, arrangementClips: clips, clipEffects }
     }
 
     case 'SET_SESSION_SLOT': {

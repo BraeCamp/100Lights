@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type { AudioClip } from '@/lib/daw-types'
@@ -82,6 +82,9 @@ export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; 
   }, [onClose])
 
   const [nameVal, setNameVal] = useState(clip.name)
+  // Sync nameVal when the clip prop changes identity (user switches to different clip)
+  const prevClipIdRef = useRef(clip.id)
+  if (prevClipIdRef.current !== clip.id) { prevClipIdRef.current = clip.id; setNameVal(clip.name) }
 
   return createPortal(
     <div

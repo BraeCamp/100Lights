@@ -118,11 +118,10 @@ export function buildReverb(ctx: AudioContext, params: ReverbParams): EffectHand
     input,
     output,
     setParam(key, value) {
-      if (key === 'enabled')  wetGain.gain.value = (value as boolean) ? params.wet : 0
-      if (key === 'wet')      wetGain.gain.value = params.enabled ? value as number : 0
-      if (key === 'decay' || key === 'preDelay') {
-        convolver.buffer = buildIR(ctx, params.decay, params.preDelay)
-      }
+      if (key === 'enabled')  { params = { ...params, enabled: value as boolean }; wetGain.gain.value = (value as boolean) ? params.wet : 0 }
+      if (key === 'wet')      { params = { ...params, wet: value as number };      wetGain.gain.value = params.enabled ? value as number : 0 }
+      if (key === 'decay')    { params = { ...params, decay: value as number };    convolver.buffer = buildIR(ctx, params.decay, params.preDelay) }
+      if (key === 'preDelay') { params = { ...params, preDelay: value as number }; convolver.buffer = buildIR(ctx, params.decay, params.preDelay) }
     },
     dispose() { convolver.disconnect(); dryGain.disconnect(); wetGain.disconnect(); input.disconnect(); output.disconnect() },
   }
@@ -165,17 +164,17 @@ export function buildDelay(ctx: AudioContext, params: DelayParams, tempo: number
 
 export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHandle {
   const filter = ctx.createBiquadFilter()
-  filter.type = params.type
-  filter.frequency.value = params.enabled ? params.frequency : 20000
+  filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType)
+  filter.frequency.value = params.frequency
   filter.Q.value = params.q
 
   return {
     input: filter,
     output: filter,
     setParam(key, value) {
-      if (key === 'enabled')   filter.frequency.value = (value as boolean) ? params.frequency : 20000
-      if (key === 'type')      filter.type = value as BiquadFilterType
-      if (key === 'frequency') filter.frequency.value = params.enabled ? value as number : 20000
+      if (key === 'enabled')   { params = { ...params, enabled: value as boolean }; filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType) }
+      if (key === 'type')      { params = { ...params, type: value as FilterParams['type'] }; if (params.enabled) filter.type = params.type }
+      if (key === 'frequency') { params = { ...params, frequency: value as number }; filter.frequency.value = value as number }
       if (key === 'q')         filter.Q.value = value as number
     },
     dispose() { filter.disconnect() },

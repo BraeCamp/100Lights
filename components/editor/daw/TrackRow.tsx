@@ -158,7 +158,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
   }
 
   function newMidiClip() {
-    const newClip = makeMidiClip(track.id, 'MIDI Clip', engine.currentBeat, 4)
+    const newClip = makeMidiClip(track.id, 'MIDI Clip', engine.currentBeat, 4, { isDrumClip: track.type === 'drum' })
     dispatch({ type: 'ADD_CLIP', clip: newClip })
   }
 
@@ -237,7 +237,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
       }
       input.click()
     } else {
-      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4)
+      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4, { isDrumClip: track.type === 'drum' })
       dispatch({ type: 'ADD_CLIP', clip })
       setExpandedPianoRollClipId(clip.id)
     }
@@ -444,8 +444,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           onDragOver={e => e.preventDefault()}
           onDrop={handleDrop}
         >
-          {Array.from({ length: Math.ceil(viewWidth / beatW / 4) + 1 }, (_, i) => {
-            const x = i * 4 * beatW - scrollLeft
+          {Array.from({ length: Math.ceil(viewWidth / beatW / project.timeSignatureNum) + 1 }, (_, i) => {
+            const x = i * project.timeSignatureNum * beatW - scrollLeft
             return x >= 0 && x <= viewWidth + 4 ? (
               <div key={i} style={{ position: 'absolute', left: x, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
             ) : null
@@ -559,6 +559,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap }: 
           {/* Height resize handle */}
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, cursor: 'ns-resize', zIndex: 2 }}
             onMouseDown={e => {
+              e.stopPropagation()
               dragHRef.current = { startY: e.clientY, startH: track.height }
               function mm(ev: MouseEvent) { if (!dragHRef.current) return; dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { height: Math.max(32, dragHRef.current.startH + ev.clientY - dragHRef.current.startY) } }) }
               function mu() { dragHRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }

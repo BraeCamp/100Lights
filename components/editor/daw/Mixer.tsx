@@ -165,7 +165,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
           value={volume}
           onChange={v => {
             if (isMaster) { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }
-            else if (track) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } })
+            else if (track) { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }
           }}
         />
         <LevelMeter trackId={isMaster ? undefined : track?.id} width={6} height={110} />

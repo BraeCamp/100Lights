@@ -56,8 +56,10 @@ export default function AutomationLaneView({
       const ctx = canvas.getContext('2d')
       if (!ctx) return
 
-      const w = canvas.width
-      const h = canvas.height
+      const dpr = window.devicePixelRatio || 1
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      const w = canvas.width / dpr
+      const h = canvas.height / dpr
 
       // Background
       ctx.fillStyle = '#1a1a1a'
@@ -178,13 +180,18 @@ export default function AutomationLaneView({
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const dpr = window.devicePixelRatio || 1
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const newW = Math.round(entry.contentRect.width)
-        const newH = Math.round(entry.contentRect.height)
+        const cssW = Math.round(entry.contentRect.width)
+        const cssH = Math.round(entry.contentRect.height)
+        const newW = (cssW || 1) * dpr
+        const newH = (cssH || 1) * dpr
         if (canvas.width !== newW || canvas.height !== newH) {
-          canvas.width = newW || 1
-          canvas.height = newH || 1
+          canvas.width  = newW
+          canvas.height = newH
+          canvas.style.width  = `${cssW}px`
+          canvas.style.height = `${cssH}px`
           drawRef.current()
         }
       }
@@ -197,7 +204,8 @@ export default function AutomationLaneView({
   function findNearbyPoint(x: number, y: number): AutomationPoint | null {
     const canvas = canvasRef.current
     if (!canvas) return null
-    const h = canvas.height
+    const dpr = window.devicePixelRatio || 1
+    const h = canvas.height / dpr
     for (const pt of lane.points) {
       const px = (pt.beat - viewStartBeat) * beatWidth
       const py = h - pt.value * h
@@ -213,44 +221,42 @@ export default function AutomationLaneView({
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
     const nearby = findNearbyPoint(x, y)
     if (nearby) {
-      setDraggingPointId(nearby.id)
+      const ptId = nearby.id
+      setDraggingPointId(ptId)
+      function onMove(ev: MouseEvent) {
+        const r = canvas!.getBoundingClientRect()
+        dispatch({
+          type: 'UPDATE_AUTOMATION_POINT',
+          laneId: lane.id,
+          pointId: ptId,
+          patch: {
+            beat:  Math.max(0, xToBeat(ev.clientX - r.left)),
+            value: yToValue(ev.clientY - r.top, canvas!.height / dpr),
+          },
+        })
+      }
+      function onUp() {
+        setDraggingPointId(null)
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
       return
     }
 
     const newPoint: AutomationPoint = {
       id: crypto.randomUUID(),
       beat: xToBeat(x),
-      value: yToValue(y, canvas.height),
+      value: yToValue(y, canvas.height / dpr),
     }
     dispatch({ type: 'ADD_AUTOMATION_POINT', laneId: lane.id, point: newPoint })
-  }
-
-  function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>): void {
-    if (!draggingPointId) return
-    e.preventDefault()
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    dispatch({
-      type: 'UPDATE_AUTOMATION_POINT',
-      laneId: lane.id,
-      pointId: draggingPointId,
-      patch: {
-        beat: Math.max(0, xToBeat(x)),
-        value: yToValue(y, canvas.height),
-      },
-    })
-  }
-
-  function handleMouseUp(): void {
-    setDraggingPointId(null)
   }
 
   function handleContextMenu(e: React.MouseEvent<HTMLCanvasElement>): void {
@@ -277,9 +283,6 @@ export default function AutomationLaneView({
       ref={canvasRef}
       height={height}
       onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
       onContextMenu={handleContextMenu}
       style={{
         display: 'block',
