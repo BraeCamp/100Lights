@@ -465,7 +465,9 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                 onClick={() => setExpandedId(isExp ? null : sound.id)}
               >
                 <span style={{ fontSize: 12, flexShrink: 0 }}>🔊</span>
-                <span style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.text }}>{sound.name}</span>
+                <span style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.text }}>
+                  {(() => { const e = entries.find(x => x.id === sound.id); return e?.folder ? `${e.folder} – ${sound.name}` : sound.name })()}
+                </span>
                 {pitchVal !== 0 && (
                   <span style={{ fontSize: 9, color: C.accent, fontFamily: 'monospace', flexShrink: 0 }}>
                     {pitchVal > 0 ? `+${pitchVal}st` : `${pitchVal}st`}
