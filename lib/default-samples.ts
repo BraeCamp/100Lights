@@ -79,7 +79,9 @@ async function fetchSoundfont(url: string): Promise<Record<string, string>> {
   const start = assignIdx >= 0 ? text.indexOf('{', assignIdx) : text.indexOf('{')
   const end   = text.lastIndexOf('}')
   if (start === -1 || end === -1 || end <= start) throw new Error('Could not parse soundfont JS')
-  const map = JSON.parse(text.slice(start, end + 1)) as Record<string, string>
+  // The file has a trailing comma before the closing brace which JSON.parse rejects
+  const raw = text.slice(start, end + 1).replace(/,\s*}$/, '}')
+  const map = JSON.parse(raw) as Record<string, string>
   sfCache.set(url, map)
   return map
 }
