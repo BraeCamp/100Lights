@@ -16,25 +16,29 @@ export interface MidiPreset {
   loNote:    number   // lowest MIDI note covered
   hiNote:    number   // highest MIDI note covered
   category:  string   // BeatType string for color/icon hints
+  group:     string   // display group, e.g. "Piano", "Synth", "Strings"
   builtIn:   boolean  // true = seeded; cannot be deleted
   createdAt: string
 }
 
+export const PRESET_GROUPS = ['Piano', 'Synth', 'Strings', 'Custom'] as const
+export type PresetGroup = typeof PRESET_GROUPS[number]
+
 // ── Built-in presets (mirrors KEYBOARD_PRESETS in default-samples.ts) ─────────
 
 const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
-  { name: 'Piano',          folder: 'Piano – All Notes',          loNote: 36, hiNote: 84, category: 'piano-grand'    },
-  { name: 'Electric Piano', folder: 'Elec. Piano – All Notes',    loNote: 36, hiNote: 84, category: 'piano-electric'  },
-  { name: 'Rhodes',         folder: 'Rhodes – All Notes',         loNote: 36, hiNote: 84, category: 'piano-rhodes'   },
-  { name: 'Synth Lead',     folder: 'Synth Lead – All Notes',     loNote: 48, hiNote: 72, category: 'synth-lead'     },
-  { name: 'Strings',        folder: 'Strings – All Notes',        loNote: 36, hiNote: 84, category: 'synth-strings'  },
-  { name: 'Organ',          folder: 'Organ – All Notes',          loNote: 36, hiNote: 84, category: 'synth-organ'    },
-  { name: 'Choir',          folder: 'Choir – All Notes',          loNote: 36, hiNote: 84, category: 'synth-choir'    },
-  { name: 'Bass',           folder: 'Bass – All Notes',           loNote: 24, hiNote: 48, category: 'synth-bass'     },
-  { name: 'Dark Synth',     folder: 'Dark Synth – All Notes',     loNote: 36, hiNote: 72, category: 'synth-dark'     },
-  { name: 'Metallic Pluck', folder: 'Metallic Pluck – All Notes', loNote: 36, hiNote: 72, category: 'synth-pluck'    },
-  { name: 'Violin',         folder: 'Violin – All Notes',         loNote: 55, hiNote: 88, category: 'violin'         },
-  { name: 'Viola',          folder: 'Viola – All Notes',          loNote: 48, hiNote: 77, category: 'viola'          },
+  { name: 'Piano',          folder: 'Piano – All Notes',          loNote: 36, hiNote: 84, category: 'piano-grand',    group: 'Piano'   },
+  { name: 'Electric Piano', folder: 'Elec. Piano – All Notes',    loNote: 36, hiNote: 84, category: 'piano-electric', group: 'Piano'   },
+  { name: 'Rhodes',         folder: 'Rhodes – All Notes',         loNote: 36, hiNote: 84, category: 'piano-rhodes',   group: 'Piano'   },
+  { name: 'Synth Lead',     folder: 'Synth Lead – All Notes',     loNote: 48, hiNote: 72, category: 'synth-lead',     group: 'Synth'   },
+  { name: 'Bass',           folder: 'Bass – All Notes',           loNote: 24, hiNote: 48, category: 'synth-bass',     group: 'Synth'   },
+  { name: 'Organ',          folder: 'Organ – All Notes',          loNote: 36, hiNote: 84, category: 'synth-organ',    group: 'Synth'   },
+  { name: 'Choir',          folder: 'Choir – All Notes',          loNote: 36, hiNote: 84, category: 'synth-choir',    group: 'Synth'   },
+  { name: 'Dark Synth',     folder: 'Dark Synth – All Notes',     loNote: 36, hiNote: 72, category: 'synth-dark',     group: 'Synth'   },
+  { name: 'Metallic Pluck', folder: 'Metallic Pluck – All Notes', loNote: 36, hiNote: 72, category: 'synth-pluck',    group: 'Synth'   },
+  { name: 'Strings',        folder: 'Strings – All Notes',        loNote: 36, hiNote: 84, category: 'synth-strings',  group: 'Strings' },
+  { name: 'Violin',         folder: 'Violin – All Notes',         loNote: 55, hiNote: 88, category: 'violin',         group: 'Strings' },
+  { name: 'Viola',          folder: 'Viola – All Notes',          loNote: 48, hiNote: 77, category: 'viola',          group: 'Strings' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -101,9 +105,30 @@ export function getPresets(): MidiPreset[] {
   return [...builtIns, ...userPresets]
 }
 
-export function addPreset(preset: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>): MidiPreset {
+/** Returns presets grouped in canonical display order. Groups with no presets are omitted. */
+export function getGroupedPresets(presets: MidiPreset[]): { group: string; presets: MidiPreset[] }[] {
+  const order = [...PRESET_GROUPS]
+  const map = new Map<string, MidiPreset[]>()
+  for (const p of presets) {
+    const g = p.group || 'Custom'
+    if (!map.has(g)) map.set(g, [])
+    map.get(g)!.push(p)
+  }
+  const result: { group: string; presets: MidiPreset[] }[] = []
+  for (const g of order) {
+    const list = map.get(g)
+    if (list?.length) result.push({ group: g, presets: list })
+  }
+  // any unknown groups
+  for (const [g, list] of map) {
+    if (!order.includes(g as PresetGroup)) result.push({ group: g, presets: list })
+  }
+  return result
+}
+
+export function addPreset(preset: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt' | 'group'> & { group?: string }): MidiPreset {
   const stored = load()
-  const p: MidiPreset = { ...preset, id: crypto.randomUUID(), builtIn: false, createdAt: new Date().toISOString() }
+  const p: MidiPreset = { ...preset, group: preset.group ?? 'Custom', id: crypto.randomUUID(), builtIn: false, createdAt: new Date().toISOString() }
   save([...stored, p])
   return p
 }

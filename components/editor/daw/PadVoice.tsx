@@ -8,7 +8,7 @@ import { isMidiClip } from '../../../lib/daw-types'
 import { encodeWav } from '../../../lib/wav-codec'
 import { libraryGetAll } from '../../../lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '../../../lib/default-samples'
-import { getPresets, addPreset, clampToPreset, presetDisplayName } from '../../../lib/midi-presets'
+import { getPresets, addPreset, getGroupedPresets, clampToPreset, presetDisplayName } from '../../../lib/midi-presets'
 import { captureAudioInput } from '../../../lib/audio-capture'
 import type { AudioInputSource } from '../../../lib/audio-capture'
 import type { MidiNote } from '../../../lib/daw-types'
@@ -786,17 +786,22 @@ export default function PadVoice() {
           boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden',
         }}>
           <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-            {presets.map(p => (
-              <button key={p.id}
-                onClick={() => { setSelectedPreset(p); setSelectedSample(null); setShowPresetPicker(false) }}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px',
-                  background: selectedPreset?.id === p.id ? 'rgba(61,143,239,0.10)' : 'transparent',
-                  borderBottom: '1px solid #1a1a1a', border: 'none', cursor: 'pointer',
-                }}>
-                <span style={{ fontSize: 11, color: selectedPreset?.id === p.id ? '#3d8fef' : '#bbb', fontWeight: 600 }}>{p.name}</span>
-                <span style={{ fontSize: 10, color: '#555', marginLeft: 8 }}>{`${NOTE_PC_NAMES[p.loNote % 12]}${Math.floor(p.loNote / 12) - 1}→${NOTE_PC_NAMES[p.hiNote % 12]}${Math.floor(p.hiNote / 12) - 1}`}</span>
-              </button>
+            {getGroupedPresets(presets).map(({ group, presets: gp }) => (
+              <div key={group}>
+                <div style={{ padding: '5px 12px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', position: 'sticky', top: 0, background: '#141414' }}>{group}</div>
+                {gp.map(p => (
+                  <button key={p.id}
+                    onClick={() => { setSelectedPreset(p); setSelectedSample(null); setShowPresetPicker(false) }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px 5px 20px',
+                      background: selectedPreset?.id === p.id ? 'rgba(61,143,239,0.10)' : 'transparent',
+                      border: 'none', cursor: 'pointer',
+                    }}>
+                    <span style={{ fontSize: 11, color: selectedPreset?.id === p.id ? '#3d8fef' : '#bbb', fontWeight: 600 }}>{p.name}</span>
+                    <span style={{ fontSize: 10, color: '#555', marginLeft: 8 }}>{`${NOTE_PC_NAMES[p.loNote % 12]}${Math.floor(p.loNote / 12) - 1}→${NOTE_PC_NAMES[p.hiNote % 12]}${Math.floor(p.hiNote / 12) - 1}`}</span>
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
           <div style={{ borderTop: '1px solid #1e1e1e' }}>

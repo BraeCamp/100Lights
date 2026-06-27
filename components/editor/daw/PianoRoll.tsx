@@ -6,7 +6,7 @@ import { X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
-import { getPresets, addPreset, type MidiPreset } from '@/lib/midi-presets'
+import { getPresets, addPreset, getGroupedPresets, type MidiPreset } from '@/lib/midi-presets'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
 
@@ -501,16 +501,21 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       ✕ Remove preset
                     </button>
                   )}
-                  {presets.map(p => (
-                    <button key={p.id}
-                      onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); setShowPresetPicker(false) }}
-                      style={{
-                        display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, cursor: 'pointer', border: 'none',
-                        background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
-                        color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
-                      }}>
-                      {p.name}
-                    </button>
+                  {getGroupedPresets(presets).map(({ group, presets: gp }) => (
+                    <div key={group}>
+                      <div style={{ padding: '5px 10px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
+                      {gp.map(p => (
+                        <button key={p.id}
+                          onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); setShowPresetPicker(false) }}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left', padding: '4px 10px 4px 16px', fontSize: 10, cursor: 'pointer', border: 'none',
+                            background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
+                            color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
+                          }}>
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
                   ))}
                   <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
                   {!showNewPreset ? (
