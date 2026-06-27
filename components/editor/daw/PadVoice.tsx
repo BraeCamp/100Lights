@@ -371,6 +371,7 @@ export default function PadVoice() {
           entry = fresh.find(e => e.folder === preset.folder && e.name === noteName)
         }
         if (!entry) {
+          console.warn('[PadVoice] no entry for', preset.folder, noteName, 'db size:', sampleEntriesRef.current.length)
           setRenderStatus(`No sample for ${noteName} in "${preset.name}"`)
           setTimeout(() => setRenderStatus(null), 2500)
           return
@@ -379,6 +380,7 @@ export default function PadVoice() {
         if (!blob) {
           const fulfilled = await libraryFulfill(entry.id)
           if (!fulfilled?.audioBlob) {
+            console.warn('[PadVoice] libraryFulfill returned null for', entry.id, entry.name)
             setRenderStatus(`Could not load ${noteName}`)
             setTimeout(() => setRenderStatus(null), 2500)
             return

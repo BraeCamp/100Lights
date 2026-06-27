@@ -231,9 +231,10 @@ export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
       buf = await renderMelodic(spec.beatType as BeatType, spec.midiNote ?? 60, spec.duration, spec.channels)
     }
     const fulfilled: LibraryEntry = { ...entry, audioBlob: toWavBlob(buf), duration: buf.duration }
-    await libraryAdd(fulfilled)  // put() replaces the stub
+    libraryAdd(fulfilled).catch(() => {})  // best-effort cache; don't fail if storage quota exceeded
     return fulfilled
-  } catch {
+  } catch (err) {
+    console.error('[libraryFulfill] render failed for', id, err)
     return null
   }
 }
