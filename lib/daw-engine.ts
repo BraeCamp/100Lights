@@ -343,7 +343,7 @@ export class DawEngine extends EventTarget {
     }
   }
 
-  async queueSession(trackId: string, clip: AudioClip) {
+  async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization) {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
     // Toggle off if this clip is already playing
@@ -356,7 +356,10 @@ export class DawEngine extends EventTarget {
     // Preload buffer
     await this.loadClipBuffer(clip)
 
+    const savedQ = quantOverride ? this.launchQuantization : undefined
+    if (quantOverride) this.launchQuantization = quantOverride
     const launchBeat = this.isPlaying ? this._nextQuantBeat() : 0
+    if (savedQ !== undefined) this.launchQuantization = savedQ
     this._sessionQueue.set(trackId, { clip, launchBeat })
 
     this.dispatchEvent(new CustomEvent('session-state', {

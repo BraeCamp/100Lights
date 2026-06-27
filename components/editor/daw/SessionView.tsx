@@ -271,10 +271,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
 
   async function handleTrigger() {
     if (!audioClip) return
-    const prevQ = engine.launchQuantization
-    if (audioClip.launchQuantization) engine.launchQuantization = audioClip.launchQuantization
-    await engine.queueSession(track.id, audioClip)
-    if (audioClip.launchQuantization) engine.launchQuantization = prevQ
+    await engine.queueSession(track.id, audioClip, audioClip.launchQuantization)
   }
 
   async function handleFileDrop(e: React.DragEvent) {
@@ -759,6 +756,13 @@ export default function SessionView() {
 
   useEffect(() => { engine.launchQuantization = quantize }, [quantize, engine])
 
+  // Auto-reset slotRecording when engine fires recording-complete
+  useEffect(() => {
+    function onDone() { setSlotRecording(null) }
+    engine.addEventListener('recording-complete', onDone)
+    return () => engine.removeEventListener('recording-complete', onDone)
+  }, [engine])
+
   // Poll for any playing/queued session clips — drives "Back to Arr" button
   useEffect(() => {
     function check() {
@@ -796,7 +800,6 @@ export default function SessionView() {
 
   function stopAll() {
     for (const t of project.tracks) engine.stopSessionTrack(t.id)
-    engine.stop()
     setAnyPlaying(false)
     setSessionRecording(false)
   }
@@ -935,7 +938,7 @@ export default function SessionView() {
       </div>
 
       {/* ── Scrollable body ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'auto' }}>
+      <div style={{ display: 'flex', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
 
         {/* Track headers column */}
         <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
@@ -971,7 +974,7 @@ export default function SessionView() {
         </div>
 
         {/* Clip grid */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowX: 'auto' }}>
           {/* Scene name header row */}
           <div style={{ display: 'flex', height: 28, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             {project.scenes.map(scene => (
