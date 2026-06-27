@@ -19,6 +19,8 @@ import type { MidiPreset } from '../../../lib/midi-presets'
 const MIN_NOTE_MS    = 100
 const SILENCE_GAP_MS = 80
 const PITCH_CHANGE_ST = 0.6
+const QUANTIZE_BEATS: Record<string, number> = { '1/1': 4, '1/2': 2, '1/4': 1, '1/8': 0.5, '1/16': 0.25 }
+type QuantizeGrid = '1/1' | '1/2' | '1/4' | '1/8' | '1/16'
 
 const NOTE_PC_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 function midiNoteName(midi: number) { return NOTE_PC_NAMES[midi % 12] + (Math.floor(midi / 12) - 1) }
@@ -328,13 +330,22 @@ export default function PadVoice() {
   const [pushToRecord,    setPushToRecord]    = useState(false)
   const [ptrHolding,      setPtrHolding]      = useState(false)
 
+  // Quantize
+  const [quantizeEnabled, setQuantizeEnabled] = useState(false)
+  const [quantizeGrid,    setQuantizeGrid]    = useState<QuantizeGrid>('1/8')
+  const quantizeEnabledRef = useRef(false)
+  const quantizeGridRef    = useRef<QuantizeGrid>('1/8')
+
   const detectorRef        = useRef<LivePitchDetector | null>(null)
   const previewDetectorRef = useRef<LivePitchDetector | null>(null)
   const phaseRef           = useRef<'listening' | 'holding'>('listening')
   const heldRef            = useRef<HeldNote | null>(null)
   const silenceRef         = useRef<number | null>(null)
+  const silenceStartBeat   = useRef<number>(0)
   const transcribedRef     = useRef<TranscribedNote[]>([])
   const recStartRef        = useRef(0)
+  const prevRecEndBeatRef  = useRef<number | null>(null)
+  const ptrModeRef         = useRef(false)
   const clipIdRef          = useRef<string | null>(null)
   const trackIdRef         = useRef<string | null>(null)
   const selectedSampleRef  = useRef<LibraryEntry | null>(null)
@@ -345,6 +356,9 @@ export default function PadVoice() {
   // Controls the confidence threshold in processFrame: 0.72 normal, 0.45 high sensitivity
   const sensitivityRef     = useRef(0.72)
   const canvasRef          = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => { quantizeEnabledRef.current = quantizeEnabled }, [quantizeEnabled])
+  useEffect(() => { quantizeGridRef.current    = quantizeGrid    }, [quantizeGrid])
 
   useEffect(() => { clipIdRef.current = selectedClipId },       [selectedClipId])
   useEffect(() => { trackIdRef.current = selectedTrackId },     [selectedTrackId])
@@ -392,6 +406,16 @@ export default function PadVoice() {
   // looked up the clip in a stale snapshot and found nothing after the first ADD_MIDI_NOTE
   // caused a re-render). Using only stable refs / dispatch fixes this.
   const commitNote = useCallback(async (midi: number, startBeat: number, durationBeats: number) => {
+    // Apply quantize
+    if (quantizeEnabledRef.current) {
+      const g    = QUANTIZE_BEATS[quantizeGridRef.current] ?? 1
+      const abs  = recStartRef.current + startBeat
+      const qAbs = Math.round(abs / g) * g
+      const qEnd = Math.max(qAbs + g, Math.round((abs + durationBeats) / g) * g)
+      startBeat     = Math.max(0, qAbs - recStartRef.current)
+      durationBeats = qEnd - qAbs
+    }
+
     const preset  = selectedPresetRef.current
     const sample  = selectedSampleRef.current
     const trackId = trackIdRef.current
@@ -528,11 +552,13 @@ export default function PadVoice() {
     } else {
       if (phaseRef.current === 'holding' && heldRef.current) {
         if (silenceRef.current === null) {
-          silenceRef.current = now
+          silenceRef.current   = now
+          silenceStartBeat.current = elapsed  // beat at which signal dropped
         } else if (now - silenceRef.current > SILENCE_GAP_MS) {
           const prev = heldRef.current
           if (now - prev.startTime >= MIN_NOTE_MS) {
-            void commitNote(medianOf(prev.midiSamples), prev.startBeat, Math.max(0.125, elapsed - prev.startBeat))
+            // End note at the beat silence started, not when silence was confirmed
+            void commitNote(medianOf(prev.midiSamples), prev.startBeat, Math.max(0.125, silenceStartBeat.current - prev.startBeat))
           }
           heldRef.current    = null
           phaseRef.current   = 'listening'
@@ -584,7 +610,9 @@ export default function PadVoice() {
     phaseRef.current    = 'listening'
     heldRef.current     = null
     silenceRef.current  = null
-    recStartRef.current = engine.currentBeat
+    // Anchor to previous session's end so PTR sessions abut with no gap
+    recStartRef.current = prevRecEndBeatRef.current ?? engine.currentBeat
+    prevRecEndBeatRef.current = null
     setTranscribed([])
     setHeld(null)
 
@@ -599,10 +627,20 @@ export default function PadVoice() {
       }
       await d.start(r => { lastResultRef.current = r ? { r, ts: Date.now() } : null; setResult(r); processFrameRef.current(r) }, true, stream)
       setIsRecording(true)
-      // Immediately seed from the last preview pitch so the note appears on screen right away
+      // Seed from last preview pitch. In PTR mode the user is already holding the note,
+      // so force startBeat=0 regardless of how much time passed during await d.start().
       const last = lastResultRef.current
       if (last && Date.now() - last.ts < 500 && last.r.confidence >= sensitivityRef.current) {
-        processFrameRef.current(last.r)
+        if (ptrModeRef.current) {
+          // Fix any startBeat that arrived via processFrame during the async await
+          const midi = Math.round(last.r.midi)
+          const h: HeldNote = { midi, startBeat: 0, startTime: Date.now(), midiSamples: [midi] }
+          phaseRef.current = 'holding'
+          heldRef.current  = h
+          setHeld(h)
+        } else {
+          processFrameRef.current(last.r)
+        }
       }
     } catch (e) {
       setMicError(e instanceof Error ? e.message : 'Microphone access denied')
@@ -611,6 +649,8 @@ export default function PadVoice() {
   }, [engine, playing, project.arrangementClips, project.tracks, dispatch, setSelectedClipId])
 
   const stopRecording = useCallback(async () => {
+    // Store end beat for next PTR session to anchor from
+    prevRecEndBeatRef.current = engine.currentBeat
     // Flush any currently-held note
     if (phaseRef.current === 'holding' && heldRef.current) {
       const prev    = heldRef.current
@@ -1033,11 +1073,13 @@ export default function PadVoice() {
             onPointerDown={e => {
               e.currentTarget.setPointerCapture(e.pointerId)
               sensitivityRef.current = 0.45
+              ptrModeRef.current = true
               setPtrHolding(true)
               void startRecording()
             }}
             onPointerUp={async () => {
               sensitivityRef.current = 0.72
+              ptrModeRef.current = false
               setPtrHolding(false)
               await stopRecording()
               engine.stop()
@@ -1045,6 +1087,7 @@ export default function PadVoice() {
             onPointerLeave={async () => {
               if (!ptrHolding) return
               sensitivityRef.current = 0.72
+              ptrModeRef.current = false
               setPtrHolding(false)
               await stopRecording()
               engine.stop()
@@ -1085,6 +1128,38 @@ export default function PadVoice() {
         {isRecording && !ptrHolding && (
           <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700, letterSpacing: '0.06em' }}>● REC</span>
         )}
+
+        {/* Quantize */}
+        <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+          <button
+            onClick={() => setQuantizeEnabled(v => !v)}
+            title="Quantize note starts and ends when recording"
+            style={{
+              padding: '4px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800,
+              border: `1px solid ${quantizeEnabled ? '#7c3aed' : '#2a2a2a'}`,
+              background: quantizeEnabled ? 'rgba(124,58,237,0.12)' : 'transparent',
+              color: quantizeEnabled ? '#a78bfa' : '#444',
+              cursor: 'pointer', letterSpacing: '0.04em',
+            }}>
+            Q
+          </button>
+          {quantizeEnabled && (
+            <div style={{ display: 'flex', gap: 2 }}>
+              {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
+                <button key={g} onClick={() => setQuantizeGrid(g)}
+                  style={{
+                    padding: '3px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700,
+                    border: `1px solid ${quantizeGrid === g ? '#7c3aed' : '#222'}`,
+                    background: quantizeGrid === g ? 'rgba(124,58,237,0.15)' : '#111',
+                    color: quantizeGrid === g ? '#a78bfa' : '#555',
+                    cursor: 'pointer',
+                  }}>
+                  {g}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {renderStatus && (
           <span style={{ fontSize: 10, color: '#eab308' }}>{renderStatus}</span>
