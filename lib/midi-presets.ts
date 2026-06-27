@@ -21,7 +21,7 @@ export interface MidiPreset {
   createdAt: string
 }
 
-export const PRESET_GROUPS = ['Piano', 'Synth', 'Strings', 'Custom'] as const
+export const PRESET_GROUPS = ['Piano', 'Mallets', 'Organ', 'Guitar', 'Bass', 'Strings', 'Brass', 'Woodwinds', 'World', 'Synth', 'Custom'] as const
 export type PresetGroup = typeof PRESET_GROUPS[number]
 
 // ── Built-in presets (mirrors KEYBOARD_PRESETS in default-samples.ts) ─────────

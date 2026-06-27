@@ -4,6 +4,7 @@ import CorrectionsPanel from './CorrectionsPanel'
 import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
+import PotentialSamplesPanel from './PotentialSamplesPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -143,6 +144,13 @@ export default async function AdminPage() {
           Presets map an instrument name to a sound library folder of per-note samples (e.g. &ldquo;Violin — G3→E7&rdquo;). When selected in Voice MIDI, each detected note plays the exact matching sample — no pitch shifting. Built-in presets cover all seeded keyboard note folders. Add custom presets by pointing to any library folder with note-named entries.
         </p>
         <MidiPresetsPanel />
+
+        {/* ── Potential Samples ─────────────────────────────────────────────── */}
+        <SectionHeader
+          title="Potential Samples and Packs"
+          description="Preview and add new instrument sample packs. Each instrument is sourced from the FluidR3 GM soundfont. Click Preview to hear middle C, then Add to Library to import all notes and create a MIDI preset."
+        />
+        <PotentialSamplesPanel />
 
         {/* ── Machine Learning ──────────────────────────────────────────────── */}
         <SectionHeader
