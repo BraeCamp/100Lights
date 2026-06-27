@@ -196,10 +196,10 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
                 <Knob
                   value={sendVal} min={0} max={1} defaultValue={0} size={18} color={rt.color}
                   label={rtLabel}
-                  onChange={v => dispatch({
-                    type: 'UPDATE_TRACK', trackId: track.id,
-                    patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } },
-                  })}
+                  onChange={v => {
+                    dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } } })
+                    engine.setSendAmount(track.id, rt.id, v)
+                  }}
                   format={v => `${Math.round(v * 100)}%`}
                 />
               </div>
@@ -216,7 +216,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
 // ── Return channel strip ────────────────────────────────────────────────────
 
 function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
-  const { dispatch } = useDaw()
+  const { dispatch, engine } = useDaw()
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(rt.name)
   const label = String.fromCharCode(65 + idx)
@@ -263,14 +263,18 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1, justifyContent: 'flex-end' }}>
         <VerticalFader
           value={rt.volume}
-          onChange={v => dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { volume: v } })}
+          onChange={v => { dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { volume: v } }); engine.setReturnVolume(rt.id, v) }}
         />
         <span style={{ fontSize: 8, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{db}dB</span>
       </div>
 
       {/* Mute button */}
       <button
-        onClick={() => dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { mute: !rt.mute } })}
+        onClick={() => {
+          const next = !rt.mute
+          dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { mute: next } })
+          engine.setReturnVolume(rt.id, next ? 0 : rt.volume)
+        }}
         style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: rt.mute ? '#d97706' : 'var(--bg-surface)', color: rt.mute ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
         title="Mute return"
       >M</button>

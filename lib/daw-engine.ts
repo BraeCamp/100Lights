@@ -17,6 +17,15 @@ interface TrackNodes {
   analyser: AnalyserNode
   effectsInput: GainNode    // sources connect here
   effectsOutput: GainNode   // routes into panner
+  sendGains: Map<string, GainNode>  // returnTrackId → send gain (post-fader tap)
+}
+
+// Return track (FX bus) routing nodes
+interface ReturnBus {
+  input: GainNode         // receives from all send gains
+  effectsOutput: GainNode // pass-through (effects chain can be added later)
+  gain: GainNode
+  panner: StereoPannerNode
 }
 
 interface ScheduledSource {
@@ -65,6 +74,7 @@ export class DawEngine extends EventTarget {
   masterCompressor: DynamicsCompressorNode
 
   private trackNodes = new Map<string, TrackNodes>()
+  private returnBuses = new Map<string, ReturnBus>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
@@ -154,7 +164,17 @@ export class DawEngine extends EventTarget {
       panner.connect(analyser)
       analyser.connect(this.masterGain)
 
-      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, effectsOutput })
+      // Create a send gain for every existing return bus (start at 0)
+      const sendGains = new Map<string, GainNode>()
+      for (const [returnId, bus] of this.returnBuses) {
+        const sendGain = this.ctx.createGain()
+        sendGain.gain.value = 0
+        analyser.connect(sendGain)
+        sendGain.connect(bus.input)
+        sendGains.set(returnId, sendGain)
+      }
+
+      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, effectsOutput, sendGains })
     }
 
     // (Re)build effects chain when effects array is provided
@@ -195,12 +215,79 @@ export class DawEngine extends EventTarget {
     if (!nodes) return
     const chain = this.effectsChains.get(id)
     if (chain) { chain.dispose(); this.effectsChains.delete(id) }
+    for (const sendGain of nodes.sendGains.values()) {
+      try { sendGain.disconnect() } catch { /* ok */ }
+    }
     nodes.gain.disconnect()
     nodes.panner.disconnect()
     nodes.analyser.disconnect()
     nodes.effectsInput.disconnect()
     nodes.effectsOutput.disconnect()
     this.trackNodes.delete(id)
+  }
+
+  ensureReturnTrack(id: string, volume: number, pan: number, mute: boolean) {
+    if (this.ctx.state === 'closed') return
+    if (this.returnBuses.has(id)) {
+      const bus = this.returnBuses.get(id)!
+      bus.gain.gain.setTargetAtTime(mute ? 0 : volume, this.ctx.currentTime, 0.01)
+      bus.panner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.01)
+      return
+    }
+    const input         = this.ctx.createGain()
+    const effectsOutput = this.ctx.createGain()
+    const gain          = this.ctx.createGain()
+    const panner        = this.ctx.createStereoPanner()
+    input.connect(effectsOutput)
+    effectsOutput.connect(gain)
+    gain.connect(panner)
+    panner.connect(this.masterGain)
+    gain.gain.value  = mute ? 0 : volume
+    panner.pan.value = pan
+    this.returnBuses.set(id, { input, effectsOutput, gain, panner })
+
+    // Wire every existing track's post-fader analyser into this return bus
+    for (const [, nodes] of this.trackNodes) {
+      const sendGain = this.ctx.createGain()
+      sendGain.gain.value = 0
+      nodes.analyser.connect(sendGain)
+      sendGain.connect(input)
+      nodes.sendGains.set(id, sendGain)
+    }
+  }
+
+  removeReturnTrack(id: string) {
+    const bus = this.returnBuses.get(id)
+    if (!bus) return
+    for (const nodes of this.trackNodes.values()) {
+      const sendGain = nodes.sendGains.get(id)
+      if (sendGain) {
+        try { sendGain.disconnect() } catch { /* ok */ }
+        nodes.sendGains.delete(id)
+      }
+    }
+    try { bus.input.disconnect() } catch { /* ok */ }
+    try { bus.effectsOutput.disconnect() } catch { /* ok */ }
+    try { bus.gain.disconnect() } catch { /* ok */ }
+    try { bus.panner.disconnect() } catch { /* ok */ }
+    this.returnBuses.delete(id)
+  }
+
+  setSendAmount(trackId: string, returnId: string, amount: number) {
+    const nodes = this.trackNodes.get(trackId)
+    if (!nodes) return
+    const sendGain = nodes.sendGains.get(returnId)
+    if (sendGain) sendGain.gain.setTargetAtTime(amount, this.ctx.currentTime, 0.01)
+  }
+
+  setReturnVolume(id: string, volume: number) {
+    const bus = this.returnBuses.get(id)
+    if (bus) bus.gain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.01)
+  }
+
+  setReturnPan(id: string, pan: number) {
+    const bus = this.returnBuses.get(id)
+    if (bus) bus.panner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.01)
   }
 
   setTrackVolume(id: string, volume: number) {
@@ -316,12 +403,24 @@ export class DawEngine extends EventTarget {
     this._clipEffects     = project.clipEffects ?? []
     this.setMasterVolume(project.masterVolume)
 
+    // Sync return buses first so send gains can connect on new track creation
+    for (const rt of project.returnTracks ?? []) {
+      this.ensureReturnTrack(rt.id, rt.volume, rt.pan, rt.mute)
+    }
+    for (const id of this.returnBuses.keys()) {
+      if (!(project.returnTracks ?? []).find(rt => rt.id === id)) this.removeReturnTrack(id)
+    }
+
     const anySoloed = project.tracks.some(t => t.solo)
     for (const t of project.tracks) {
       this.ensureTrack(t.id, t.effects)
       const silenced = t.mute || (anySoloed && !t.solo)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
+      // Sync send amounts
+      for (const rt of project.returnTracks ?? []) {
+        this.setSendAmount(t.id, rt.id, t.sendAmounts?.[rt.id] ?? 0)
+      }
     }
     for (const id of this.trackNodes.keys()) {
       if (!project.tracks.find(t => t.id === id)) this.removeTrack(id)
