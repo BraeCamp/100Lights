@@ -5,6 +5,7 @@ import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget, TrackType,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
+  ReturnTrack, TakeLane,
 } from './daw-types'
 import {
   defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT,
@@ -62,6 +63,17 @@ export type DawAction =
   | { type: 'ADD_CLIP_EFFECT'; effect: ClipEffect }
   | { type: 'REMOVE_CLIP_EFFECT'; effectId: string }
   | { type: 'UPDATE_CLIP_EFFECT'; effectId: string; patch: Partial<ClipEffect> }
+  // Return tracks
+  | { type: 'ADD_RETURN_TRACK'; track: ReturnTrack }
+  | { type: 'REMOVE_RETURN_TRACK'; trackId: string }
+  | { type: 'UPDATE_RETURN_TRACK'; trackId: string; patch: Partial<ReturnTrack> }
+  // Take lanes
+  | { type: 'ADD_TAKE_LANE'; lane: TakeLane }
+  | { type: 'REMOVE_TAKE_LANE'; laneId: string }
+  | { type: 'UPDATE_TAKE_LANE'; laneId: string; patch: Partial<TakeLane> }
+  // Crossfader / waveform zoom
+  | { type: 'SET_CROSSFADER'; value: number }
+  | { type: 'SET_WAVEFORM_ZOOM'; zoom: number }
   // Full replace (load from saved)
   | { type: 'LOAD_PROJECT'; project: DawProject }
 
@@ -355,8 +367,48 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, clipEffects }
     }
 
-    case 'LOAD_PROJECT':
-      return action.project
+    case 'LOAD_PROJECT': {
+      const p = action.project
+      return {
+        ...p,
+        returnTracks:    p.returnTracks    ?? [],
+        takeLanes:       p.takeLanes       ?? [],
+        crossfaderValue: p.crossfaderValue ?? 0.5,
+        waveformZoom:    p.waveformZoom    ?? 1,
+      }
+    }
+
+    case 'ADD_RETURN_TRACK':
+      return { ...project, returnTracks: [...(project.returnTracks ?? []), action.track] }
+
+    case 'REMOVE_RETURN_TRACK':
+      return { ...project, returnTracks: (project.returnTracks ?? []).filter(t => t.id !== action.trackId) }
+
+    case 'UPDATE_RETURN_TRACK': {
+      const returnTracks = (project.returnTracks ?? []).map(t =>
+        t.id === action.trackId ? { ...t, ...action.patch } : t
+      )
+      return { ...project, returnTracks }
+    }
+
+    case 'ADD_TAKE_LANE':
+      return { ...project, takeLanes: [...(project.takeLanes ?? []), action.lane] }
+
+    case 'REMOVE_TAKE_LANE':
+      return { ...project, takeLanes: (project.takeLanes ?? []).filter(l => l.id !== action.laneId) }
+
+    case 'UPDATE_TAKE_LANE': {
+      const takeLanes = (project.takeLanes ?? []).map(l =>
+        l.id === action.laneId ? { ...l, ...action.patch } : l
+      )
+      return { ...project, takeLanes }
+    }
+
+    case 'SET_CROSSFADER':
+      return { ...project, crossfaderValue: Math.max(0, Math.min(1, action.value)) }
+
+    case 'SET_WAVEFORM_ZOOM':
+      return { ...project, waveformZoom: Math.max(1, Math.min(8, action.zoom)) }
 
     default:
       return project
