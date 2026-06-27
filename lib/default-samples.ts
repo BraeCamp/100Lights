@@ -73,10 +73,12 @@ async function fetchSoundfont(url: string): Promise<Record<string, string>> {
   const resp = await fetch(url)
   if (!resp.ok) throw new Error(`Soundfont fetch failed: ${resp.status}`)
   const text  = await resp.text()
-  // The file format is: if(_MIDIAPP.sf2){var violin={"A0":"data:audio/mp3;base64,...",...};}
-  const start = text.indexOf('{')
+  // Format: MIDI.Soundfont.viola = { "A0": "data:audio/mp3;base64,...", ... };
+  // Find the last '= {' to skip preamble variable declarations like 'var MIDI = {}'
+  const assignIdx = text.lastIndexOf('= {')
+  const start = assignIdx >= 0 ? text.indexOf('{', assignIdx) : text.indexOf('{')
   const end   = text.lastIndexOf('}')
-  if (start === -1 || end === -1) throw new Error('Could not parse soundfont JS')
+  if (start === -1 || end === -1 || end <= start) throw new Error('Could not parse soundfont JS')
   const map = JSON.parse(text.slice(start, end + 1)) as Record<string, string>
   sfCache.set(url, map)
   return map
