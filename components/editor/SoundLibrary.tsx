@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react'
+import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
   initLibrary,
@@ -871,6 +871,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   const [searchQuery,      setSearchQuery]      = useState('')
   const [activeTypeTag,    setActiveTypeTag]    = useState<string | null>(null)
   const [activeCharTags,   setActiveCharTags]   = useState<Set<string>>(new Set())
+  const [showFilters,      setShowFilters]      = useState(false)
   const [addingFolder,     setAddingFolder]     = useState(false)
   const [newFolderDraft,   setNewFolderDraft]   = useState('')
   const newFolderRef = useRef<HTMLInputElement>(null)
@@ -1129,20 +1130,42 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
         </button>
       </div>
 
-      {/* Search */}
-      <div style={{ padding: '4px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <input
-          type="search"
-          placeholder="Search library…"
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          style={{ width: '100%', fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 7px', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
-        />
-      </div>
+      {/* Search + filter toggle */}
+      {(() => {
+        const filtersActive = activeTypeTag !== null || activeCharTags.size > 0
+        return (
+          <div style={{ padding: '4px 8px', borderBottom: `1px solid var(--border)`, flexShrink: 0, display: 'flex', gap: 5, alignItems: 'center' }}>
+            <input
+              type="search"
+              placeholder="Search library…"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{ flex: 1, fontSize: 10, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 7px', color: 'var(--text-primary)', outline: 'none', minWidth: 0 }}
+            />
+            <button
+              onClick={() => setShowFilters(v => !v)}
+              title="Filters"
+              style={{
+                flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3,
+                fontSize: 9, padding: '3px 7px', borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${showFilters || filtersActive ? 'var(--accent)' : 'var(--border)'}`,
+                background: showFilters ? `var(--accent)` : filtersActive ? 'rgba(99,102,241,0.15)' : 'var(--bg-card)',
+                color: showFilters ? '#fff' : filtersActive ? 'var(--accent)' : 'var(--text-muted)',
+                position: 'relative',
+              }}
+            >
+              <SlidersHorizontal size={10} />
+              {filtersActive && !showFilters && (
+                <span style={{ position: 'absolute', top: 2, right: 2, width: 4, height: 4, borderRadius: '50%', background: 'var(--accent)' }} />
+              )}
+            </button>
+          </div>
+        )
+      })()}
 
-      {/* ── Filter chips ───────────────────────────────────────────────────── */}
-      {availableTypeTags.length > 0 && (
-        <div style={{ padding: '5px 8px 3px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      {/* ── Filter chips (collapsed until toggled) ─────────────────────────── */}
+      {showFilters && availableTypeTags.length > 0 && (
+        <div style={{ padding: '5px 8px 4px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           {/* Type row */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 4 }}>
             {availableTypeTags.map(tag => {
