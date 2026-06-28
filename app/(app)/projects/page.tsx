@@ -52,7 +52,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <main className="flex-1 overflow-y-auto">
       <div className="p-8 max-w-4xl">
         <div className="flex items-start justify-between mb-8">
           <div>
@@ -155,6 +155,6 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   )
 }

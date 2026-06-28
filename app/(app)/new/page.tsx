@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { UserButton } from '@clerk/nextjs'
 import { Film, AudioLines, FileText, Newspaper, PanelsTopBottom, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
@@ -19,16 +20,16 @@ const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: stri
 export default function NewProjectPage() {
   const searchParams = useSearchParams()
   const moduleParam = searchParams.get('modules')
-  const initModules: ModuleKey[] = moduleParam
-    ? (moduleParam.split(',').filter(k => MODULE_DEFS.some(m => m.key === k)) as ModuleKey[])
-    : []
-  const [phase, setPhase] = useState<'pick' | 'edit'>(initModules.length > 0 ? 'edit' : 'pick')
+  const initModule: ModuleKey | null = moduleParam
+    ? (MODULE_DEFS.some(m => m.key === moduleParam.split(',')[0]) ? moduleParam.split(',')[0] as ModuleKey : null)
+    : null
+  const [phase, setPhase] = useState<'pick' | 'edit'>(initModule !== null ? 'edit' : 'pick')
   const [projectName, setProjectName] = useState('')
-  const [selected, setSelected] = useState<ModuleKey[]>(initModules)
+  const [selected, setSelected] = useState<ModuleKey | null>(initModule)
   const nameRef = useRef<HTMLInputElement>(null)
 
   function toggle(key: ModuleKey) {
-    setSelected(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+    setSelected(prev => prev === key ? null : key)
   }
 
   if (phase === 'edit') {
@@ -36,7 +37,7 @@ export default function NewProjectPage() {
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <ProjectEditor
           projectName={projectName.trim() || 'New Project'}
-          modules={selected}
+          modules={selected ? [selected] : []}
           allowImport
         />
       </div>
@@ -46,15 +47,20 @@ export default function NewProjectPage() {
   return (
     <div style={{ minHeight: '100%', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', gap: 12, flexShrink: 0 }}>
-        <Link
-          href="/dashboard"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12, textDecoration: 'none' }}
-        >
-          <ArrowLeft size={13} /> Dashboard
-        </Link>
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>New Project</span>
+      <div style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', gap: 12, flexShrink: 0, justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Link
+            href="/dashboard"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12, textDecoration: 'none' }}
+          >
+            <ArrowLeft size={13} /> Dashboard
+          </Link>
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>New Project</span>
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          <UserButton appearance={{ elements: { avatarBox: { width: 28, height: 28 } } }} />
+        </div>
       </div>
 
       {/* Content */}
@@ -63,20 +69,25 @@ export default function NewProjectPage() {
 
           {/* Project name */}
           <div style={{ marginBottom: 44 }}>
-            <label style={{
-              display: 'block', fontSize: 10, fontWeight: 700,
-              letterSpacing: '0.12em', textTransform: 'uppercase',
-              color: 'var(--text-muted)', marginBottom: 10,
-            }}>
+            <label
+              id="project-name-label"
+              style={{
+                display: 'block', fontSize: 10, fontWeight: 700,
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+                color: 'var(--text-muted)', marginBottom: 10,
+              }}
+            >
               Project name
             </label>
             <input
               ref={nameRef}
               value={projectName}
               onChange={e => setProjectName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && selected.length > 0) setPhase('edit') }}
+              onKeyDown={e => { if (e.key === 'Enter' && selected !== null) setPhase('edit') }}
               placeholder="Untitled"
               autoFocus
+              aria-label="Project name"
+              aria-labelledby="project-name-label"
               style={{
                 width: '100%', maxWidth: 440,
                 background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -91,20 +102,30 @@ export default function NewProjectPage() {
 
           {/* Module picker */}
           <div style={{ marginBottom: 44 }}>
-            <label style={{
-              display: 'block', fontSize: 10, fontWeight: 700,
-              letterSpacing: '0.12em', textTransform: 'uppercase',
-              color: 'var(--text-muted)', marginBottom: 16,
-            }}>
+            <label
+              id="module-picker-label"
+              style={{
+                display: 'block', fontSize: 10, fontWeight: 700,
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+                color: 'var(--text-muted)', marginBottom: 16,
+              }}
+            >
               Modules
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: 10 }}>
+            <div
+              role="radiogroup"
+              aria-label="Project type"
+              aria-labelledby="module-picker-label"
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: 10 }}
+            >
               {MODULE_DEFS.map(mod => {
                 const Icon = ICONS[mod.key]
-                const active = selected.includes(mod.key)
+                const active = selected === mod.key
                 return (
                   <button
                     key={mod.key}
+                    role="radio"
+                    aria-checked={active}
                     onClick={() => toggle(mod.key)}
                     style={{
                       textAlign: 'left', padding: 0, cursor: 'pointer',
@@ -171,33 +192,34 @@ export default function NewProjectPage() {
           }}>
             <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--text-muted)', flexShrink: 0 }}>
-                {selected.length === 0 ? 'nothing selected' : 'load:'}
+                {selected === null ? 'nothing selected' : 'load:'}
               </span>
-              {selected.map(key => {
-                const def = MODULE_DEFS.find(m => m.key === key)!
+              {selected !== null && (() => {
+                const def = MODULE_DEFS.find(m => m.key === selected)!
                 return (
-                  <span key={key} style={{
+                  <span style={{
                     fontSize: 10, fontFamily: 'monospace', fontWeight: 600,
                     padding: '2px 8px', borderRadius: 4,
                     background: `color-mix(in srgb, ${def.color} 12%, transparent)`,
                     color: def.color,
                     border: `1px solid color-mix(in srgb, ${def.color} 30%, transparent)`,
                   }}>
-                    {key}
+                    {selected}
                   </span>
                 )
-              })}
+              })()}
             </div>
             <button
-              onClick={() => { if (selected.length > 0) setPhase('edit') }}
-              disabled={selected.length === 0}
+              aria-label="Load project"
+              onClick={() => { if (selected !== null) setPhase('edit') }}
+              disabled={selected === null}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-                padding: '10px 22px', borderRadius: 8, border: 'none', cursor: selected.length === 0 ? 'not-allowed' : 'pointer',
-                background: selected.length === 0 ? 'var(--bg-card)' : 'var(--accent)',
-                color: selected.length === 0 ? 'var(--text-muted)' : '#fff',
+                padding: '10px 22px', borderRadius: 8, border: 'none', cursor: selected === null ? 'not-allowed' : 'pointer',
+                background: selected === null ? 'var(--bg-card)' : 'var(--accent)',
+                color: selected === null ? 'var(--text-muted)' : '#fff',
                 fontSize: 13, fontWeight: 600, transition: 'opacity 0.12s',
-                opacity: selected.length === 0 ? 0.5 : 1,
+                opacity: selected === null ? 0.5 : 1,
               }}
             >
               Load <ArrowRight size={14} />

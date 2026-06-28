@@ -134,3 +134,29 @@ input[type="range"].cf-slider::-moz-range-thumb {
   from { opacity: 0; transform-origin: center; scale: 0.92; }
   to   { opacity: 1; scale: 1; }
 }
+
+/* Skip link for keyboard/screen reader navigation */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  z-index: 9999;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.1s;
+  border-radius: 0 0 4px 0;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* Focus ring for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 2px;
+  border-radius: 2px;
+}

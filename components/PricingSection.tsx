@@ -32,9 +32,9 @@ export default function PricingSection() {
   const annualSavings = monthlyPrice * 12 - annualTotal
 
   return (
-    <section id="pricing" className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
+    <section id="pricing" aria-labelledby="pricing-heading" className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
       <div className="text-center mb-10 sm:mb-14">
-        <h2 className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Simple, transparent pricing</h2>
+        <h2 id="pricing-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Simple, transparent pricing</h2>
         <p className="text-base mb-6" style={{ color: 'var(--text-secondary)' }}>Start free. Upgrade when you need more.</p>
 
         {/* Billing toggle */}

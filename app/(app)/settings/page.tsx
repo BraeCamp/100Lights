@@ -57,7 +57,7 @@ export default function SettingsPage() {
   const isPro = billing?.plan === 'pro' && billing.status === 'active'
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <main className="flex-1 overflow-y-auto">
       <div className="p-8 max-w-xl">
         <div className="mb-10">
           <h1 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Settings</h1>
@@ -176,6 +176,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   )
 }

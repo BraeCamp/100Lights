@@ -35,7 +35,7 @@ function UpgradeBanner() {
           <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>You now have 30 transcriptions and 100 AI generations per month.</p>
         </div>
       </div>
-      <button onClick={() => setVisible(false)} style={{ color: 'var(--text-muted)' }}><X size={16} /></button>
+      <button onClick={() => setVisible(false)} aria-label="Dismiss" style={{ color: 'var(--text-muted)' }}><X size={16} /></button>
     </div>
   )
 }
@@ -95,7 +95,7 @@ export default function DashboardPage() {
 
   return (
     <>
-    <div className="flex-1 overflow-y-auto">
+    <main className="flex-1 overflow-y-auto">
       <div className="p-8 max-w-5xl">
         <Suspense fallback={null}><UpgradeBanner /></Suspense>
         <div className="flex items-start justify-between mb-10">
@@ -241,7 +241,7 @@ export default function DashboardPage() {
         </div>
 
       </div>
-    </div>
+    </main>
 
     {/* Right-click context menu */}
     {ctxMenu && (

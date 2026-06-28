@@ -12,19 +12,19 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://100lights.com'),
-  title: { template: '%s | 100Lights', default: '100Lights — AI Content Repurposing' },
-  description: "Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.",
+  title: { template: '%s | 100Lights', default: '100Lights — Professional Audio & Video Editing' },
+  description: 'A full digital audio workstation and live multi-camera video session editor, built for the browser.',
   openGraph: {
     type: 'website',
     siteName: '100Lights',
-    title: '100Lights — AI Content Repurposing',
-    description: 'Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.',
+    title: '100Lights — Professional Audio & Video Editing',
+    description: 'A full DAW and multi-camera live session editor built for the browser. No downloads, no plugins.',
     url: 'https://100lights.com',
   },
   twitter: {
     card: 'summary_large_image',
-    title: '100Lights — AI Content Repurposing',
-    description: 'Turn hours of video, audio, and recordings into articles, blog posts, and show notes in minutes.',
+    title: '100Lights — Professional Audio & Video Editing',
+    description: 'A full DAW and multi-camera live session editor built for the browser.',
   },
   robots: { index: true, follow: true },
 }
@@ -56,6 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
         <body className="h-full">
+          <a href="#main" className="skip-link">Skip to main content</a>
           <ZoomBlock />
           <Suspense>
             <PostHogProvider>{children}</PostHogProvider>

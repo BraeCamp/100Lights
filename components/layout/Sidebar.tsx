@@ -36,6 +36,11 @@ function UsageMeter({ used, limit, label }: { used: number; limit: number; label
       <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
         <div
           className="h-full rounded-full transition-all"
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={label + ' usage'}
           style={{ width: `${pct}%`, background: color }}
         />
       </div>
@@ -69,6 +74,7 @@ export default function Sidebar() {
   return (
     <aside
       className="flex flex-col w-60 shrink-0 h-screen sticky top-0"
+      aria-label="Application sidebar"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
     >
       <div className="flex items-center gap-2.5 px-5 py-5" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -80,13 +86,14 @@ export default function Sidebar() {
         </span>
       </div>
 
-      <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5">
+      <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5" aria-label="Main navigation">
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
             <Link
               key={href}
               href={href}
+              aria-current={active ? 'page' : undefined}
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
               style={{
                 background: active ? 'var(--accent-subtle)' : 'transparent',
@@ -153,7 +160,7 @@ export default function Sidebar() {
           Trash
         </Link>
         {user && (
-          <div className="flex items-center gap-3 px-3 py-2">
+          <div className="flex items-center gap-3 px-3 py-2" aria-label="User menu">
             <UserButton appearance={{ elements: { avatarBox: 'w-6 h-6' } }} />
             <span className="text-xs truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }}>
               {user.firstName ?? user.emailAddresses[0]?.emailAddress}
