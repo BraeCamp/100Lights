@@ -75,11 +75,12 @@ function NumCtrl({ value, min, max, step = 1, onChange }: {
 
 // ── EQ3 controls ───────────────────────────────────────────────────────────────
 
-function Eq3Controls({ effect, trackId }: { effect: TrackEffect; trackId: string }) {
+function Eq3Controls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const p = effect.params as Eq3Params
-  const up = (changes: Partial<Eq3Params>) =>
-    dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const up = (changes: Partial<Eq3Params>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
   return (
     <>
@@ -107,11 +108,12 @@ function Eq3Controls({ effect, trackId }: { effect: TrackEffect; trackId: string
 
 // ── Compressor controls ────────────────────────────────────────────────────────
 
-function CompressorControls({ effect, trackId }: { effect: TrackEffect; trackId: string }) {
+function CompressorControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const p = effect.params as CompressorParams
-  const up = (changes: Partial<CompressorParams>) =>
-    dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const up = (changes: Partial<CompressorParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
   return (
     <>
@@ -136,11 +138,12 @@ function CompressorControls({ effect, trackId }: { effect: TrackEffect; trackId:
 
 // ── Reverb controls ────────────────────────────────────────────────────────────
 
-function ReverbControls({ effect, trackId }: { effect: TrackEffect; trackId: string }) {
+function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const p = effect.params as ReverbParams
-  const up = (changes: Partial<ReverbParams>) =>
-    dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const up = (changes: Partial<ReverbParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
   return (
     <>
@@ -159,11 +162,12 @@ function ReverbControls({ effect, trackId }: { effect: TrackEffect; trackId: str
 
 // ── Delay controls ─────────────────────────────────────────────────────────────
 
-function DelayControls({ effect, trackId }: { effect: TrackEffect; trackId: string }) {
+function DelayControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const p = effect.params as DelayParams
-  const up = (changes: Partial<DelayParams>) =>
-    dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const up = (changes: Partial<DelayParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
   return (
     <>
@@ -192,11 +196,12 @@ function DelayControls({ effect, trackId }: { effect: TrackEffect; trackId: stri
 
 // ── Filter controls ────────────────────────────────────────────────────────────
 
-function FilterControls({ effect, trackId }: { effect: TrackEffect; trackId: string }) {
+function FilterControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const p = effect.params as FilterParams
-  const up = (changes: Partial<FilterParams>) =>
-    dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const up = (changes: Partial<FilterParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
   return (
     <>
@@ -230,21 +235,20 @@ function FilterControls({ effect, trackId }: { effect: TrackEffect; trackId: str
 
 // ── Device card ────────────────────────────────────────────────────────────────
 
-function EffectDevice({ effect, trackId }: { effect: TrackEffect; trackId: string }) {
+function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const enabled = effect.params.enabled
 
   function toggleBypass() {
-    dispatch({
-      type: 'UPDATE_EFFECT',
-      trackId,
-      effectId: effect.id,
-      patch: { params: { ...effect.params, enabled: !enabled } as typeof effect.params },
-    })
+    returnId
+      ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...effect.params, enabled: !enabled } as typeof effect.params } })
+      : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...effect.params, enabled: !enabled } as typeof effect.params } })
   }
 
   function remove() {
-    dispatch({ type: 'REMOVE_EFFECT', trackId, effectId: effect.id })
+    returnId
+      ? dispatch({ type: 'REMOVE_RETURN_EFFECT', returnId, effectId: effect.id })
+      : dispatch({ type: 'REMOVE_EFFECT', trackId, effectId: effect.id })
   }
 
   return (
@@ -306,11 +310,11 @@ function EffectDevice({ effect, trackId }: { effect: TrackEffect; trackId: strin
       </div>
       {/* Controls */}
       <div style={{ padding: '8px 6px', flex: 1 }}>
-        {effect.type === 'eq3'        && <Eq3Controls        effect={effect} trackId={trackId} />}
-        {effect.type === 'compressor' && <CompressorControls effect={effect} trackId={trackId} />}
-        {effect.type === 'reverb'     && <ReverbControls     effect={effect} trackId={trackId} />}
-        {effect.type === 'delay'      && <DelayControls      effect={effect} trackId={trackId} />}
-        {effect.type === 'filter'     && <FilterControls     effect={effect} trackId={trackId} />}
+        {effect.type === 'eq3'        && <Eq3Controls        effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'compressor' && <CompressorControls effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'reverb'     && <ReverbControls     effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'delay'      && <DelayControls      effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'filter'     && <FilterControls     effect={effect} trackId={trackId} returnId={returnId} />}
       </div>
     </div>
   )
@@ -336,7 +340,7 @@ function makeDefaultParams(type: EffectType) {
   }
 }
 
-function AddDeviceButton({ trackId }: { trackId: string }) {
+function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const [open, setOpen] = useState(false)
   const [dropPos, setDropPos] = useState({ top: 0, left: 0 })
@@ -369,7 +373,9 @@ function AddDeviceButton({ trackId }: { trackId: string }) {
       type,
       params: makeDefaultParams(type),
     }
-    dispatch({ type: 'ADD_EFFECT', trackId, effect })
+    returnId
+      ? dispatch({ type: 'ADD_RETURN_EFFECT', returnId, effect })
+      : dispatch({ type: 'ADD_EFFECT', trackId, effect })
     setOpen(false)
   }
 
@@ -443,6 +449,28 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         <EffectDevice key={effect.id} effect={effect} trackId={trackId} />
       ))}
       <AddDeviceButton trackId={trackId} />
+    </div>
+  )
+}
+
+export function ReturnDeviceChain({ returnId }: { returnId: string }) {
+  const { project } = useDaw()
+  const rt = project.returnTracks.find(r => r.id === returnId)
+  if (!rt) return null
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'row',
+      gap: 8,
+      overflowX: 'auto',
+      padding: 8,
+      alignItems: 'flex-start',
+    }}>
+      {rt.effects.map(effect => (
+        <EffectDevice key={effect.id} effect={effect} trackId={returnId} returnId={returnId} />
+      ))}
+      <AddDeviceButton trackId={returnId} returnId={returnId} />
     </div>
   )
 }

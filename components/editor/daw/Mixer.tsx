@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Circle } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
 import { TRACK_COLORS, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
 import Knob from './Knob'
+import { ReturnDeviceChain } from './DeviceChain'
 
 // ── Vertical fader ─────────────────────────────────────────────────────────
 
@@ -219,6 +221,21 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
   const { dispatch, engine } = useDaw()
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(rt.name)
+  const [showFx, setShowFx] = useState(false)
+  const [fxPos, setFxPos] = useState({ bottom: 0, left: 0 })
+  const fxBtnRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!showFx) return
+    function onMouseDown(e: MouseEvent) {
+      const panel = document.getElementById(`return-fx-panel-${rt.id}`)
+      if (panel?.contains(e.target as Node)) return
+      if (fxBtnRef.current?.contains(e.target as Node)) return
+      setShowFx(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [showFx, rt.id])
   const label = String.fromCharCode(65 + idx)
   const db = rt.volume > 0.0001 ? (20 * Math.log10(rt.volume)).toFixed(1) : '-∞'
 
@@ -279,12 +296,24 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
         title="Mute return"
       >M</button>
 
-      {/* +FX button stub */}
+      {/* FX toggle */}
       <button
-        onClick={() => alert(`FX chain for ${rt.name}: not yet implemented`)}
-        style={{ fontSize: 8, padding: '2px 4px', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: '#a78bfa', cursor: 'pointer', fontWeight: 700 }}
-        title="Add effect to return"
-      >+FX</button>
+        ref={fxBtnRef}
+        onClick={() => {
+          if (!showFx && fxBtnRef.current) {
+            const r = fxBtnRef.current.getBoundingClientRect()
+            setFxPos({ bottom: window.innerHeight - r.top + 4, left: r.left })
+          }
+          setShowFx(v => !v)
+        }}
+        style={{
+          fontSize: 8, padding: '2px 4px', borderRadius: 3, fontWeight: 700, cursor: 'pointer',
+          border: `1px solid ${showFx ? '#a78bfa' : 'var(--border)'}`,
+          background: showFx ? 'rgba(167,139,250,0.18)' : 'var(--bg-surface)',
+          color: showFx ? '#a78bfa' : rt.effects.length > 0 ? '#a78bfa' : 'var(--text-muted)',
+        }}
+        title="Show FX chain"
+      >{rt.effects.length > 0 ? `FX (${rt.effects.length})` : 'FX'}</button>
 
       {/* Remove button */}
       <button
@@ -292,6 +321,29 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
         style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: '#666', cursor: 'pointer', padding: 0 }}
         title="Remove return track"
       >×</button>
+
+      {showFx && createPortal(
+        <div
+          id={`return-fx-panel-${rt.id}`}
+          style={{
+            position: 'fixed',
+            bottom: fxPos.bottom,
+            left: fxPos.left,
+            zIndex: 200,
+            background: 'var(--bg-surface)',
+            border: '1px solid #a78bfa44',
+            borderRadius: 6,
+            boxShadow: '0 -4px 20px rgba(0,0,0,0.6)',
+            minWidth: 220,
+          }}
+        >
+          <div style={{ padding: '5px 8px 3px', fontSize: 9, color: '#a78bfa', fontWeight: 700, letterSpacing: '0.06em', borderBottom: '1px solid var(--border)' }}>
+            {rt.name} — FX Chain
+          </div>
+          <ReturnDeviceChain returnId={rt.id} />
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

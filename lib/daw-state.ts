@@ -67,6 +67,9 @@ export type DawAction =
   | { type: 'ADD_RETURN_TRACK'; track: ReturnTrack }
   | { type: 'REMOVE_RETURN_TRACK'; trackId: string }
   | { type: 'UPDATE_RETURN_TRACK'; trackId: string; patch: Partial<ReturnTrack> }
+  | { type: 'ADD_RETURN_EFFECT'; returnId: string; effect: TrackEffect }
+  | { type: 'REMOVE_RETURN_EFFECT'; returnId: string; effectId: string }
+  | { type: 'UPDATE_RETURN_EFFECT'; returnId: string; effectId: string; patch: Partial<TrackEffect> }
   // Take lanes
   | { type: 'ADD_TAKE_LANE'; lane: TakeLane }
   | { type: 'REMOVE_TAKE_LANE'; laneId: string }
@@ -388,6 +391,34 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         t.id === action.trackId ? { ...t, ...action.patch } : t
       )
       return { ...project, returnTracks }
+    }
+
+    case 'ADD_RETURN_EFFECT': {
+      return {
+        ...project,
+        returnTracks: (project.returnTracks ?? []).map(rt =>
+          rt.id === action.returnId ? { ...rt, effects: [...rt.effects, action.effect] } : rt
+        ),
+      }
+    }
+
+    case 'REMOVE_RETURN_EFFECT': {
+      return {
+        ...project,
+        returnTracks: (project.returnTracks ?? []).map(rt =>
+          rt.id === action.returnId ? { ...rt, effects: rt.effects.filter(e => e.id !== action.effectId) } : rt
+        ),
+      }
+    }
+
+    case 'UPDATE_RETURN_EFFECT': {
+      return {
+        ...project,
+        returnTracks: (project.returnTracks ?? []).map(rt => {
+          if (rt.id !== action.returnId) return rt
+          return { ...rt, effects: rt.effects.map(e => e.id === action.effectId ? { ...e, ...action.patch } : e) }
+        }),
+      }
     }
 
     case 'ADD_TAKE_LANE':

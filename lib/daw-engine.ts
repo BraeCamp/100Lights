@@ -1,6 +1,6 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -76,6 +76,7 @@ export class DawEngine extends EventTarget {
   private trackNodes = new Map<string, TrackNodes>()
   private returnBuses = new Map<string, ReturnBus>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
+  private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
   private pitchShiftCache      = new Map<string, AudioBuffer>()
@@ -231,12 +232,13 @@ export class DawEngine extends EventTarget {
     this.trackNodes.delete(id)
   }
 
-  ensureReturnTrack(id: string, volume: number, pan: number, mute: boolean) {
+  ensureReturnTrack(id: string, volume: number, pan: number, mute: boolean, effects?: ReturnTrack['effects']) {
     if (this.ctx.state === 'closed') return
     if (this.returnBuses.has(id)) {
       const bus = this.returnBuses.get(id)!
       bus.gain.gain.setTargetAtTime(mute ? 0 : volume, this.ctx.currentTime, 0.01)
       bus.panner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.01)
+      if (effects !== undefined) this._rebuildReturnEffectsChain(id, effects)
       return
     }
     const input         = this.ctx.createGain()
@@ -259,9 +261,36 @@ export class DawEngine extends EventTarget {
       sendGain.connect(input)
       nodes.sendGains.set(id, sendGain)
     }
+
+    if (effects !== undefined) this._rebuildReturnEffectsChain(id, effects)
+  }
+
+  private _rebuildReturnEffectsChain(returnId: string, effects: ReturnTrack['effects']) {
+    const bus = this.returnBuses.get(returnId)
+    if (!bus) return
+
+    const old = this.returnEffectsChains.get(returnId)
+    try { bus.input.disconnect() } catch { /* ok */ }
+    if (old) { old.dispose(); this.returnEffectsChains.delete(returnId) }
+
+    if (effects.length === 0) {
+      bus.input.connect(bus.effectsOutput)
+      return
+    }
+
+    const chain = buildEffectsChain(this.ctx, effects, this.tempo)
+    bus.input.connect(chain.input)
+    chain.output.connect(bus.effectsOutput)
+    this.returnEffectsChains.set(returnId, chain)
+  }
+
+  getReturnEffectHandle(returnId: string, effectId: string): EffectHandle | undefined {
+    return this.returnEffectsChains.get(returnId)?.handles.get(effectId)
   }
 
   removeReturnTrack(id: string) {
+    const chain = this.returnEffectsChains.get(id)
+    if (chain) { chain.dispose(); this.returnEffectsChains.delete(id) }
     const bus = this.returnBuses.get(id)
     if (!bus) return
     for (const nodes of this.trackNodes.values()) {
@@ -410,7 +439,7 @@ export class DawEngine extends EventTarget {
 
     // Sync return buses first so send gains can connect on new track creation
     for (const rt of project.returnTracks ?? []) {
-      this.ensureReturnTrack(rt.id, rt.volume, rt.pan, rt.mute)
+      this.ensureReturnTrack(rt.id, rt.volume, rt.pan, rt.mute, rt.effects)
     }
     for (const id of this.returnBuses.keys()) {
       if (!(project.returnTracks ?? []).find(rt => rt.id === id)) this.removeReturnTrack(id)
