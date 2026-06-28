@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Circle } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
-import { TRACK_COLORS, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
+import { TRACK_COLORS } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
 import Knob from './Knob'
 import { ReturnDeviceChain } from './DeviceChain'
@@ -379,18 +379,6 @@ export default function Mixer() {
             style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
           >
             + Track
-          </button>
-          <button
-            onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultDrumInstrument() })}
-            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
-          >
-            + Drums
-          </button>
-          <button
-            onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultFmInstrument() })}
-            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', letterSpacing: '0.03em' }}
-          >
-            + Synth
           </button>
         </div>
 

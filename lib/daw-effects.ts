@@ -1,11 +1,13 @@
 'use client'
 
 import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams } from './daw-types'
+import { createSidechainProcessor } from './sidechain'
 
 // Live Web Audio node handle for a single effect
 export interface EffectHandle {
   input: AudioNode
   output: AudioNode
+  keyInput?: AudioNode  // present on sidechain compressor — connect source track's tap here
   setParam(key: string, value: number | string | boolean): void
   dispose(): void
 }
@@ -69,6 +71,24 @@ export function buildEq3(ctx: AudioContext, params: Eq3Params): EffectHandle {
 }
 
 export function buildCompressor(ctx: AudioContext, params: CompressorParams): EffectHandle {
+  // Sidechain mode: VCA envelope-follower ducking
+  if (params.sidechainTrackId) {
+    const sc = createSidechainProcessor(ctx, params)
+    const bypass = ctx.createGain()
+    bypass.gain.value = params.enabled ? 1 : 0
+    bypass.connect(sc.signalIn)
+    return {
+      input: bypass,
+      output: sc.signalOut as AudioNode,
+      keyInput: sc.keyInput as AudioNode,
+      setParam(key, value) {
+        if (key === 'enabled') bypass.gain.value = (value as boolean) ? 1 : 0
+      },
+      dispose() { bypass.disconnect() },
+    }
+  }
+
+  // Normal compressor mode
   const comp   = ctx.createDynamicsCompressor()
   const makeup = ctx.createGain()
 

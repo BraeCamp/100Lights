@@ -43,6 +43,7 @@ const ArrangementView = dynamic(() => import('./daw/ArrangementView'), { ssr: fa
 const Mixer = dynamic(() => import('./daw/Mixer'), { ssr: false })
 const PianoRoll = dynamic(() => import('./daw/PianoRoll'), { ssr: false })
 const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
+const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 
@@ -280,8 +281,13 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── UI state ────────────────────────────────────────────────────────────────
   const [view, setView] = useState<DawView>('arrangement')
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null)
-  useEffect(() => { selectedTrackIdRef.current = selectedTrackId }, [selectedTrackId])
+  const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
+  const [selectedReturnId_, setSelectedReturnId_] = useState<string | null>(null)
+  useEffect(() => { selectedTrackIdRef.current = selectedTrackId_ }, [selectedTrackId_])
+  const selectedTrackId  = selectedTrackId_
+  const selectedReturnId = selectedReturnId_
+  const setSelectedTrackId  = useCallback((id: string | null) => { setSelectedTrackId_(id);  if (id) setSelectedReturnId_(null) }, [])
+  const setSelectedReturnId = useCallback((id: string | null) => { setSelectedReturnId_(id); if (id) setSelectedTrackId_(null)  }, [])
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
@@ -423,6 +429,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setEditTarget,
     selectedTrackId,
     setSelectedTrackId,
+    selectedReturnId,
+    setSelectedReturnId,
     selectedClipId,
     setSelectedClipId,
     selectedClipIds,
@@ -440,7 +448,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     onSave: onSave ? () => { void handleSaveRef.current() } : undefined,
     isSaving,
   }), [
-    project, dispatch, view, editTarget, selectedTrackId, selectedClipId, selectedClipIds,
+    project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     playing, recording, position, setPosition, metronome, showPads,
     expandedPianoRollClipId, onSave, isSaving,
   ])
@@ -518,12 +526,12 @@ export default function AudioEditor(props: AudioEditorProps) {
 
             {/* Piano roll is now rendered inline under each track in TrackRow */}
 
-            {/* Device chain / instrument panel — shown when a track is selected */}
-            {selectedTrackId !== null && (
+            {/* Device chain / instrument panel — shown when a track or return is selected */}
+            {(selectedTrackId !== null || selectedReturnId !== null) && (
               <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-base)' }}>
                 {/* Tab bar */}
                 <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 1, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                  {(['devices', 'instrument'] as const).map(tab => (
+                  {selectedTrackId && (['devices', 'instrument'] as const).map(tab => (
                     <button
                       key={tab}
                       onClick={() => setBottomTab(tab)}
@@ -532,13 +540,20 @@ export default function AudioEditor(props: AudioEditorProps) {
                       {tab === 'devices' ? 'Devices' : 'Instrument'}
                     </button>
                   ))}
-                  {/* Track name label */}
+                  {/* Name label */}
                   {(() => {
-                    const t = project.tracks.find(tr => tr.id === selectedTrackId)
-                    return t ? <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, borderLeft: `2px solid ${t.color}`, paddingLeft: 6 }}>{t.name}</span> : null
+                    if (selectedTrackId) {
+                      const t = project.tracks.find(tr => tr.id === selectedTrackId)
+                      return t ? <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, borderLeft: `2px solid ${t.color}`, paddingLeft: 6 }}>{t.name}</span> : null
+                    }
+                    if (selectedReturnId) {
+                      const rt = project.returnTracks.find(r => r.id === selectedReturnId)
+                      return rt ? <span style={{ fontSize: 10, color: '#a78bfa', marginLeft: 8, borderLeft: `2px solid ${rt.color}`, paddingLeft: 6 }}>{rt.name} — FX</span> : null
+                    }
+                    return null
                   })()}
                   {/* Pad Input toggle — only for MIDI / drum tracks */}
-                  {(() => {
+                  {selectedTrackId && (() => {
                     const t = project.tracks.find(tr => tr.id === selectedTrackId)
                     return t && t.type !== 'audio' ? (
                       <button
@@ -549,15 +564,16 @@ export default function AudioEditor(props: AudioEditorProps) {
                     ) : null
                   })()}
                   <button
-                    onClick={() => setSelectedTrackId(null)}
+                    onClick={() => { setSelectedTrackId(null); setSelectedReturnId(null) }}
                     style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
                     title="Close panel"
                   >×</button>
                 </div>
                 {/* Panel content */}
                 <div style={{ maxHeight: 180, overflowY: 'auto', overflowX: 'auto' }}>
-                  {bottomTab === 'devices' && <DeviceChain trackId={selectedTrackId} />}
-                  {bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
+                  {selectedTrackId && bottomTab === 'devices'    && <DeviceChain trackId={selectedTrackId} />}
+                  {selectedTrackId && bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
+                  {selectedReturnId && <ReturnDeviceChain returnId={selectedReturnId} />}
                 </div>
               </div>
             )}

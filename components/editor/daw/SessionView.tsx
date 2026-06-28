@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
-import { isAudioClip, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
+import { isAudioClip } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
@@ -150,7 +150,7 @@ function TrackHeader({ track }: { track: DawTrack }) {
         <PanDrag value={track.pan} onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }} />
       </div>
 
-      {/* Row 3: crossfader A/none/B */}
+      {/* Row 3: crossfader A/none/B + FX */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <span style={{ fontSize: 8, color: 'var(--text-muted)', marginRight: 1 }}>CF:</span>
         {(['A', 'none', 'B'] as CrossfaderSide[]).map(side => (
@@ -168,8 +168,28 @@ function TrackHeader({ track }: { track: DawTrack }) {
             }}
           >{side}</button>
         ))}
+        <FxButton trackId={track.id} />
       </div>
     </div>
+  )
+}
+
+function FxButton({ trackId }: { trackId: string }) {
+  const { selectedTrackId, setSelectedTrackId, project } = useDaw()
+  const active = selectedTrackId === trackId
+  const track = project.tracks.find(t => t.id === trackId)
+  const count = track?.effects.length ?? 0
+  return (
+    <button
+      onClick={() => setSelectedTrackId(active ? null : trackId)}
+      title="Show FX chain"
+      style={{
+        marginLeft: 2, fontSize: 8, padding: '1px 4px', borderRadius: 2, cursor: 'pointer', fontWeight: 700,
+        border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+        background: active ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)',
+        color: active ? 'var(--accent)' : count > 0 ? 'var(--accent)' : 'var(--text-muted)',
+      }}
+    >{count > 0 ? `FX(${count})` : 'FX'}</button>
   )
 }
 
@@ -960,16 +980,6 @@ export default function SessionView() {
               style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
               title="Add track"
             >+Track</button>
-            <button
-              onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultDrumInstrument() })}
-              style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
-              title="Add drum track"
-            >+Drums</button>
-            <button
-              onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultFmInstrument() })}
-              style={{ flex: 1, padding: '4px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.04em' }}
-              title="Add synth track"
-            >+Synth</button>
           </div>
         </div>
 

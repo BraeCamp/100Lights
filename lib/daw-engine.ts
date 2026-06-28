@@ -210,6 +210,21 @@ export class DawEngine extends EventTarget {
     nodes.effectsInput.connect(chain.input)
     chain.output.connect(nodes.effectsOutput)
     this.effectsChains.set(trackId, chain)
+    this._wireSidechains(trackId, effects)
+  }
+
+  private _wireSidechains(trackId: string, effects: DawTrack['effects']) {
+    const chain = this.effectsChains.get(trackId)
+    if (!chain) return
+    for (const effect of effects) {
+      if (effect.type !== 'compressor') continue
+      const p = effect.params as import('./daw-types').CompressorParams
+      if (!p.sidechainTrackId) continue
+      const handle = chain.handles.get(effect.id)
+      if (!handle?.keyInput) continue
+      const srcNodes = this.trackNodes.get(p.sidechainTrackId)
+      if (srcNodes) srcNodes.analyser.connect(handle.keyInput)
+    }
   }
 
   getEffectHandle(trackId: string, effectId: string): EffectHandle | undefined {

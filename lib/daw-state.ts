@@ -458,6 +458,8 @@ export interface DawContextValue {
   setEditTarget: (t: EditTarget) => void
   selectedTrackId: string | null
   setSelectedTrackId: (id: string | null) => void
+  selectedReturnId: string | null
+  setSelectedReturnId: (id: string | null) => void
   selectedClipId: string | null
   setSelectedClipId: (id: string | null) => void
   selectedClipIds: Set<string>

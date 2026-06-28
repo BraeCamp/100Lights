@@ -109,7 +109,7 @@ function Eq3Controls({ effect, trackId, returnId }: { effect: TrackEffect; track
 // ── Compressor controls ────────────────────────────────────────────────────────
 
 function CompressorControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
-  const { dispatch } = useDaw()
+  const { dispatch, project } = useDaw()
   const p = effect.params as CompressorParams
   const up = (changes: Partial<CompressorParams>) => returnId
     ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
@@ -131,6 +131,20 @@ function CompressorControls({ effect, trackId, returnId }: { effect: TrackEffect
       </CtrlRow>
       <CtrlRow label="Makeup">
         <RangeCtrl value={p.makeupGain} min={0} max={24} step={0.1} onChange={v => up({ makeupGain: v })} />
+      </CtrlRow>
+      <CtrlRow label="Sidechain">
+        <select
+          value={p.sidechainTrackId ?? ''}
+          style={{ width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2, outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
+          onChange={e => { e.stopPropagation(); up({ sidechainTrackId: e.target.value || null }) }}
+          onKeyDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
+        >
+          <option value="">Off</option>
+          {project.tracks.filter(t => t.id !== trackId).map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
       </CtrlRow>
     </>
   )

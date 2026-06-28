@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useDaw, makeMidiClip } from '@/lib/daw-state'
-import { isMidiClip, TRACK_COLORS, defaultDrumInstrument, defaultFmInstrument } from '@/lib/daw-types'
+import { isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
 import type { ReturnTrack } from '@/lib/daw-types'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 
@@ -181,12 +181,14 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
 // ── Return Track Row ──────────────────────────────────────────────────────────
 
 function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; dispatch: (a: import('@/lib/daw-state').DawAction) => void }) {
+  const { setSelectedReturnId, selectedReturnId } = useDaw()
   const label = String.fromCharCode(65 + idx) // A, B, C...
+  const fxActive = selectedReturnId === rt.id
   return (
     <div style={{ display: 'flex', height: 36, flexShrink: 0 }}>
       {/* Header */}
       <div style={{
-        width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px',
+        width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px',
         background: 'rgba(100,60,150,0.12)',
         borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
         borderLeft: `3px solid ${rt.color}`,
@@ -194,6 +196,15 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
       }}>
         <span style={{ fontSize: 9, fontWeight: 700, color: '#a78bfa', letterSpacing: '0.05em', flexShrink: 0 }}>{label}</span>
         <span style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rt.name}</span>
+        <button
+          onClick={() => setSelectedReturnId(fxActive ? null : rt.id)}
+          title="Show FX chain"
+          style={{ fontSize: 8, padding: '1px 4px', borderRadius: 2, flexShrink: 0, cursor: 'pointer', fontWeight: 700,
+            border: `1px solid ${fxActive ? '#a78bfa' : 'var(--border)'}`,
+            background: fxActive ? 'rgba(167,139,250,0.18)' : 'var(--bg-surface)',
+            color: fxActive ? '#a78bfa' : rt.effects.length > 0 ? '#a78bfa' : 'var(--text-muted)',
+          }}
+        >{rt.effects.length > 0 ? `FX(${rt.effects.length})` : 'FX'}</button>
         <button
           onClick={() => dispatch({ type: 'REMOVE_RETURN_TRACK', trackId: rt.id })}
           title="Remove return track"
@@ -529,14 +540,6 @@ export default function ArrangementView() {
             <button onClick={() => dispatch({ type: 'ADD_TRACK' })}
               style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
               +Track
-            </button>
-            <button onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultDrumInstrument() })}
-              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-              +Drums
-            </button>
-            <button onClick={() => dispatch({ type: 'ADD_TRACK', instrument: defaultFmInstrument() })}
-              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-              +Synth
             </button>
             <button
               onClick={addReturnTrack}

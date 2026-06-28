@@ -28,6 +28,7 @@ export interface CompressorParams {
   release: number    // s 0..1
   knee: number       // dB 0..40
   makeupGain: number // dB 0..24
+  sidechainTrackId?: string | null
 }
 
 export interface ReverbParams {
