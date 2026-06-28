@@ -11,8 +11,8 @@ import PricingSection from '@/components/PricingSection'
 
 export const metadata: Metadata = {
   title: { absolute: '100Lights — Professional Audio & Video Editing' },
-  description: 'A full digital audio workstation and live multi-camera video session editor, built for the browser. Compose, mix, record, and edit — no downloads required.',
-  keywords: ['audio editor', 'video editor', 'DAW', 'digital audio workstation', 'browser DAW', 'online audio editor', 'multi-camera editor', 'live session editor'],
+  description: 'A full digital audio workstation and live multi-camera video session editor. Available in the browser now — native apps for Mac, Windows, and mobile coming soon.',
+  keywords: ['audio editor', 'video editor', 'DAW', 'digital audio workstation', 'browser DAW', 'online audio editor', 'multi-camera editor', 'live session editor', 'Mac audio editor', 'Windows DAW', 'mobile video editor'],
   openGraph: {
     title: '100Lights — Professional Audio & Video Editing',
     description: 'A full DAW and multi-camera live session editor built for the browser. No downloads, no plugins.',
@@ -102,7 +102,7 @@ const jsonLd = {
   '@type': 'SoftwareApplication',
   name: '100Lights',
   applicationCategory: 'MultimediaApplication',
-  operatingSystem: 'Web browser',
+  operatingSystem: 'Web, macOS, Windows, iOS, Android',
   description: 'Professional audio and video editing suite for the browser. Includes a full digital audio workstation and a live multi-camera video session editor.',
   url: 'https://100lights.com',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
@@ -183,7 +183,7 @@ export default async function LandingPage() {
               style={{ background: 'var(--accent-subtle)', color: 'var(--accent-light)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
             >
               <Zap size={11} aria-hidden="true" />
-              Professional editing in the browser
+              Professional audio &amp; video editing
             </div>
 
             <h1
@@ -193,12 +193,12 @@ export default async function LandingPage() {
             >
               Audio and video editing —{' '}
               <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                built for the browser
+                anywhere you create
               </span>
             </h1>
 
             <p className="text-base sm:text-lg max-w-2xl mx-auto mb-10" style={{ color: 'var(--text-secondary)' }}>
-              100Lights is a professional creative suite — a full digital audio workstation and a live multi-camera session editor, all running in your browser. No downloads. No plugins. Open it and create.
+              100Lights is a professional creative suite — a full digital audio workstation and a live multi-camera session editor. Start in the browser today. Native apps for Mac, Windows, and mobile coming soon.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -222,7 +222,7 @@ export default async function LandingPage() {
               className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 mt-10"
               role="list"
             >
-              {['No credit card required', 'Free tier available', 'Cancel anytime'].map((item) => (
+              {['Browser · Mac · Windows · Mobile', 'Free tier available', 'Cancel anytime'].map((item) => (
                 <div key={item} className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }} role="listitem">
                   <Check size={12} color="var(--success)" aria-hidden="true" />
                   {item}
