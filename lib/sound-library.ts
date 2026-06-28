@@ -180,7 +180,7 @@ export const LIBRARY_CATEGORIES: LibraryCategory[] = CATEGORY_GROUPS.flatMap(g =
 // ── Filter tag system ─────────────────────────────────────────────────────────
 
 /** Ordered list of type tags shown in the filter bar */
-export const TYPE_TAGS = ['Drums', 'Percussion', 'Bass', 'Lead', 'Keys', 'Pad', 'Guitar', 'Strings', 'Arp', 'Voice', 'FX'] as const
+export const TYPE_TAGS = ['Drums', 'Percussion', 'Bass', 'Lead', 'Keys', 'Pad', 'Guitar', 'Strings', 'Arp', 'Brass', 'Wind', 'Voice', 'FX'] as const
 export type TypeTag = typeof TYPE_TAGS[number]
 
 /** Ordered list of character tags shown in the filter bar */

@@ -837,9 +837,11 @@ export function AddToLibraryModal({
 // ── Tag helpers ───────────────────────────────────────────────────────────────
 
 function getTypeTag(entry: LibraryEntry): string {
-  // Entries tagged 'Percussion' explicitly override category mapping
-  if (entry.tags?.includes('Percussion')) return 'Percussion'
-  if (entry.tags?.includes('FX')) return 'FX'
+  // Explicit type tags in the tags array take priority over category inference
+  const tagsSet = new Set(entry.tags ?? [])
+  for (const t of TYPE_TAGS) {
+    if (tagsSet.has(t)) return t
+  }
   return CATEGORY_TO_TYPE_TAG[entry.category] ?? 'Other'
 }
 
