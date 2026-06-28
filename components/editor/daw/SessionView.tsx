@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
-import { isAudioClip } from '@/lib/daw-types'
+import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
@@ -220,6 +220,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
   const prevState = useRef<SlotDisplayState>('idle')
 
   const audioClip = clip && isAudioClip(clip) ? clip : null
+  const midiClip  = clip && isMidiClip(clip)  ? clip : null
   const clipColor = clip?.color ?? track.color
   const isRecordingHere = slotRecording?.trackId === track.id && slotRecording?.sceneIndex === sceneIndex
 
@@ -290,8 +291,11 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   async function handleTrigger() {
-    if (!audioClip) return
-    await engine.queueSession(track.id, audioClip, audioClip.launchQuantization)
+    if (audioClip) {
+      await engine.queueSession(track.id, audioClip, audioClip.launchQuantization)
+    } else if (midiClip) {
+      await engine.queueSessionMidi(track.id, midiClip, midiClip.launchQuantization)
+    }
   }
 
   async function handleFileDrop(e: React.DragEvent) {

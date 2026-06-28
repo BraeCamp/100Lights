@@ -1,6 +1,6 @@
 'use client'
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams } from './daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams } from './daw-types'
 import { createSidechainProcessor } from './sidechain'
 
 // Live Web Audio node handle for a single effect
@@ -201,6 +201,202 @@ export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHand
   }
 }
 
+export function buildSaturator(ctx: AudioContext, params: SaturatorParams): EffectHandle {
+  const preGain  = ctx.createGain()
+  const shaper   = ctx.createWaveShaper()
+  const lowShelf = ctx.createBiquadFilter()
+  const postGain = ctx.createGain()
+
+  lowShelf.type = 'lowshelf'
+  lowShelf.frequency.value = 300
+
+  function applyParams(p: SaturatorParams) {
+    const n = 512
+    const curve = new Float32Array(n)
+    const k = p.enabled ? (1 + p.drive * 15) : 1  // drive 0→1 maps to soft-clip factor 1→16
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2 / (n - 1)) - 1
+      curve[i] = Math.tanh(k * x) / Math.tanh(k)
+    }
+    shaper.curve = curve
+    lowShelf.gain.value = p.enabled ? p.color * 8 : 0  // up to +8dB warm low-shelf
+    postGain.gain.value = p.enabled ? Math.pow(10, p.output / 20) : 1
+  }
+
+  applyParams(params)
+  preGain.connect(lowShelf); lowShelf.connect(shaper); shaper.connect(postGain)
+
+  return {
+    input: preGain, output: postGain,
+    setParam(key, value) {
+      params = { ...params, [key]: value }
+      applyParams(params)
+    },
+    dispose() { preGain.disconnect(); lowShelf.disconnect(); shaper.disconnect(); postGain.disconnect() },
+  }
+}
+
+export function buildRedux(ctx: AudioContext, params: ReduxParams): EffectHandle {
+  const input    = ctx.createGain()
+  const output   = ctx.createGain()
+  const proc     = ctx.createScriptProcessor(256, 1, 1)
+
+  let _p = { ...params }
+
+  proc.onaudioprocess = (e) => {
+    const inBuf  = e.inputBuffer.getChannelData(0)
+    const outBuf = e.outputBuffer.getChannelData(0)
+    if (!_p.enabled) { outBuf.set(inBuf); return }
+    const steps     = Math.pow(2, Math.max(1, _p.bitDepth))
+    const srcRate   = e.inputBuffer.sampleRate
+    const stepRatio = Math.max(1, Math.round(srcRate / Math.max(100, _p.sampleRate)))
+    let held = 0
+    for (let i = 0; i < inBuf.length; i++) {
+      if (i % stepRatio === 0) held = Math.round(inBuf[i] * steps) / steps
+      outBuf[i] = held
+    }
+  }
+
+  input.connect(proc); proc.connect(output)
+
+  return {
+    input, output,
+    setParam(key, value) { _p = { ..._p, [key]: value } },
+    dispose() { input.disconnect(); proc.disconnect(); proc.onaudioprocess = null as never; output.disconnect() },
+  }
+}
+
+export function buildAutoPan(ctx: AudioContext, params: AutoPanParams): EffectHandle {
+  const input   = ctx.createGain()
+  const panner  = ctx.createStereoPanner()
+  const lfo     = ctx.createOscillator()
+  const lfoGain = ctx.createGain()
+
+  lfo.type = params.waveform as OscillatorType
+  lfo.frequency.value = params.rate
+  lfoGain.gain.value  = params.enabled ? params.depth : 0
+  lfo.connect(lfoGain); lfoGain.connect(panner.pan)
+  lfo.start()
+  input.connect(panner)
+
+  return {
+    input, output: panner,
+    setParam(key, value) {
+      if (key === 'enabled')  lfoGain.gain.setTargetAtTime((value as boolean) ? params.depth : 0, ctx.currentTime, 0.01)
+      if (key === 'rate')     { params = { ...params, rate: value as number };     lfo.frequency.setTargetAtTime(value as number, ctx.currentTime, 0.01) }
+      if (key === 'depth')    { params = { ...params, depth: value as number };    if (params.enabled) lfoGain.gain.setTargetAtTime(value as number, ctx.currentTime, 0.01) }
+      if (key === 'waveform') { params = { ...params, waveform: value as AutoPanParams['waveform'] }; lfo.type = value as OscillatorType }
+    },
+    dispose() { try { lfo.stop() } catch { /* ok */ } lfo.disconnect(); lfoGain.disconnect(); input.disconnect(); panner.disconnect() },
+  }
+}
+
+export function buildUtility(ctx: AudioContext, params: UtilityParams): EffectHandle {
+  const input   = ctx.createGain()
+  const gainL   = ctx.createGain()
+  const gainR   = ctx.createGain()
+  const splitter = ctx.createChannelSplitter(2)
+  const merger   = ctx.createChannelMerger(2)
+  const output  = ctx.createGain()
+
+  function applyGain(p: UtilityParams) {
+    const g = p.enabled ? Math.pow(10, p.gain / 20) : 1
+    gainL.gain.value = p.enabled && p.muteL ? 0 : g
+    gainR.gain.value = p.enabled && p.muteR ? 0 : g
+    output.gain.value = 1
+  }
+
+  input.connect(splitter)
+  if (params.mono) {
+    // Both channels get both L+R averaged
+    splitter.connect(gainL, 0); splitter.connect(gainL, 1)
+    splitter.connect(gainR, 0); splitter.connect(gainR, 1)
+  } else {
+    splitter.connect(gainL, 0)
+    splitter.connect(gainR, 1)
+  }
+  gainL.connect(merger, 0, 0)
+  gainR.connect(merger, 0, 1)
+  merger.connect(output)
+  applyGain(params)
+
+  return {
+    input, output,
+    setParam(key, value) {
+      params = { ...params, [key]: value }
+      applyGain(params)
+    },
+    dispose() { input.disconnect(); splitter.disconnect(); gainL.disconnect(); gainR.disconnect(); merger.disconnect(); output.disconnect() },
+  }
+}
+
+export function buildLfo(ctx: AudioContext, params: LfoParams): EffectHandle {
+  const input   = ctx.createGain()
+  const output  = ctx.createGain()
+
+  // Panner for pan target
+  const panner  = ctx.createStereoPanner()
+  // Volume gain for volume target
+  const volGain = ctx.createGain()
+  // Filter for filter target
+  const filter  = ctx.createBiquadFilter()
+  filter.type   = 'lowpass'
+  filter.frequency.value = params.filterFreqMax
+
+  const lfo     = ctx.createOscillator()
+  const lfoGain = ctx.createGain()
+  lfo.type = params.waveform as OscillatorType
+  lfo.frequency.value = params.rate
+  lfoGain.gain.value  = params.enabled ? params.depth : 0
+  lfo.start()
+
+  function wire(p: LfoParams) {
+    try { lfoGain.disconnect() } catch { /* ok */ }
+    try { input.disconnect() } catch { /* ok */ }
+    try { panner.disconnect() } catch { /* ok */ }
+    try { volGain.disconnect() } catch { /* ok */ }
+    try { filter.disconnect() } catch { /* ok */ }
+    if (p.target === 'pan') {
+      lfoGain.connect(panner.pan)
+      input.connect(panner); panner.connect(output)
+    } else if (p.target === 'volume') {
+      // Add constant 1 offset so LFO oscillates around 1
+      const offsetGain = ctx.createGain(); offsetGain.gain.value = 1
+      const constantSrc = ctx.createConstantSource(); constantSrc.offset.value = 1; constantSrc.start()
+      lfoGain.connect(volGain.gain)
+      constantSrc.connect(volGain.gain)
+      input.connect(volGain); volGain.connect(output)
+    } else {
+      // Filter: LFO modulates cutoff around midpoint
+      const mid = (p.filterFreqMin + p.filterFreqMax) / 2
+      const range = (p.filterFreqMax - p.filterFreqMin) / 2
+      filter.frequency.value = mid
+      const freqGain = ctx.createGain(); freqGain.gain.value = range
+      lfoGain.connect(freqGain); freqGain.connect(filter.frequency)
+      input.connect(filter); filter.connect(output)
+    }
+  }
+
+  wire(params)
+  lfo.connect(lfoGain)
+
+  return {
+    input, output,
+    setParam(key, value) {
+      params = { ...params, [key]: value }
+      lfo.frequency.value = params.rate
+      lfoGain.gain.value  = params.enabled ? params.depth : 0
+      lfo.type = params.waveform as OscillatorType
+      if (key === 'target') wire(params)
+    },
+    dispose() {
+      try { lfo.stop() } catch { /* ok */ }
+      lfo.disconnect(); lfoGain.disconnect(); input.disconnect(); output.disconnect()
+      panner.disconnect(); volGain.disconnect(); filter.disconnect()
+    },
+  }
+}
+
 // ── Build a full effects chain for one track ──────────────────────────────────
 
 export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tempo: number): {
@@ -223,6 +419,11 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
       case 'reverb':     handle = buildReverb(ctx, effect.params as ReverbParams); break
       case 'delay':      handle = buildDelay(ctx, effect.params as DelayParams, tempo); break
       case 'filter':     handle = buildFilter(ctx, effect.params as FilterParams); break
+      case 'saturator':  handle = buildSaturator(ctx, effect.params as SaturatorParams); break
+      case 'redux':      handle = buildRedux(ctx, effect.params as ReduxParams); break
+      case 'autopan':    handle = buildAutoPan(ctx, effect.params as AutoPanParams); break
+      case 'utility':    handle = buildUtility(ctx, effect.params as UtilityParams); break
+      case 'lfo':        handle = buildLfo(ctx, effect.params as LfoParams); break
       default: continue
     }
     prev.connect(handle.input)

@@ -2,9 +2,10 @@
 
 import { memo, useCallback } from 'react'
 import { useDaw } from '@/lib/daw-state'
+import { useState } from 'react'
 import type {
   TrackInstrument, InstrumentType,
-  FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams,
+  FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, DrumPadSettings,
 } from '@/lib/daw-types'
 import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument } from '@/lib/daw-types'
 import { previewNote } from '@/lib/daw-instruments'
@@ -99,35 +100,74 @@ const DRUM_HITS: DrumHit[] = [
   { label: 'Crash', pitch: 49 }, { label: 'Tom', pitch: 45 },
 ]
 
-const DrumPanel = memo(function DrumPanel({ instrument, onPack }: {
+const DRUM_PAD_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6']
+
+const DrumPanel = memo(function DrumPanel({ instrument, onSet }: {
   instrument: TrackInstrument
-  onPack: (pack: DrumInstrumentParams['pack']) => void
+  onSet: (changes: Partial<DrumInstrumentParams>) => void
 }) {
   const { engine } = useDaw()
   const p = instrument.params as DrumInstrumentParams
+  const [selectedPad, setSelectedPad] = useState<number | null>(null)
+  const pads = p.pads ?? {}
+
+  function getPad(pitch: number): DrumPadSettings {
+    return pads[pitch] ?? { volume: 0.8, pitch: 0, pan: 0, mute: false }
+  }
+  function updatePad(pitch: number, changes: Partial<DrumPadSettings>) {
+    const current = getPad(pitch)
+    onSet({ pads: { ...pads, [pitch]: { ...current, ...changes } } })
+  }
+
+  const sel = selectedPad !== null ? getPad(selectedPad) : null
+  const selHit = DRUM_HITS.find(h => h.pitch === selectedPad)
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <Section title="Pack">
-        <label onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-          <input type="radio" name="pack" value="synth" checked={p.pack === 'synth'}
-            onChange={e => { e.stopPropagation(); onPack('synth') }}
-            onClick={e => e.stopPropagation()} style={{ accentColor: C.accent }} />
-          <span style={{ fontSize: 13, color: C.textPrimary }}>Acoustic</span>
-        </label>
-      </Section>
-      <Section title="Pads">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-          {DRUM_HITS.map(hit => (
-            <button key={hit.pitch}
-              onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, hit.pitch) }}
-              onMouseDown={e => { e.stopPropagation(); (e.currentTarget as HTMLButtonElement).style.background = `${C.accent}33` }}
-              onMouseUp={e => { e.stopPropagation(); (e.currentTarget as HTMLButtonElement).style.background = C.bgCard }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = C.bgCard }}
-              style={{ padding: '10px 4px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.textPrimary, fontSize: 11, cursor: 'pointer', textAlign: 'center', transition: 'background 80ms' }}
-            >{hit.label}</button>
-          ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Pack selector */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        {(['synth', '808'] as const).map(pack => (
+          <button key={pack} onClick={e => { e.stopPropagation(); onSet({ pack }) }}
+            style={{ padding: '3px 12px', borderRadius: 3, border: `1px solid ${p.pack === pack ? C.accent : C.border}`, background: p.pack === pack ? `${C.accent}22` : C.bgCard, color: p.pack === pack ? C.accent : C.textMuted, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>
+            {pack === 'synth' ? 'Acoustic' : '808'}
+          </button>
+        ))}
+      </div>
+
+      {/* 16-pad grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 5 }}>
+        {DRUM_HITS.map((hit, idx) => {
+          const pad     = getPad(hit.pitch)
+          const color   = DRUM_PAD_COLORS[idx % DRUM_PAD_COLORS.length]
+          const isSelected = selectedPad === hit.pitch
+          return (
+            <div key={hit.pitch} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <button
+                onClick={e => { e.stopPropagation(); setSelectedPad(isSelected ? null : hit.pitch); previewNote(engine.ctx, engine.masterGain, instrument, hit.pitch) }}
+                onMouseDown={e => e.stopPropagation()}
+                style={{ padding: '10px 4px', borderRadius: 4, border: `2px solid ${isSelected ? color : pad.mute ? '#555' : C.border}`, background: isSelected ? `${color}22` : pad.mute ? 'rgba(80,80,80,0.2)' : C.bgCard, color: pad.mute ? '#666' : C.textPrimary, fontSize: 10, cursor: 'pointer', textAlign: 'center', transition: 'all 80ms', fontWeight: 700 }}
+              >
+                <div>{hit.label}</div>
+                <div style={{ fontSize: 8, color: '#666', marginTop: 2 }}>{Math.round(pad.volume * 100)}%{pad.pitch !== 0 ? ` ${pad.pitch > 0 ? '+' : ''}${pad.pitch}` : ''}</div>
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Per-pad detail editor */}
+      {selectedPad !== null && sel !== null && (
+        <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 4, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textPrimary, marginBottom: 2 }}>{selHit?.label ?? 'Pad'}</div>
+          <SliderRow label="Volume" value={sel.volume} min={0} max={1} step={0.01} fmt={v => `${Math.round(v * 100)}%`} onChange={v => updatePad(selectedPad, { volume: v })} />
+          <SliderRow label="Pitch"  value={sel.pitch}  min={-24} max={24} step={1} fmt={v => `${v > 0 ? '+' : ''}${v}st`} onChange={v => updatePad(selectedPad, { pitch: v })} />
+          <SliderRow label="Pan"    value={sel.pan}    min={-1}  max={1}  step={0.01} fmt={v => v === 0 ? 'C' : v > 0 ? `R${Math.round(v * 100)}` : `L${Math.round(-v * 100)}`} onChange={v => updatePad(selectedPad, { pan: v })} />
+          <label onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, color: C.textMuted }}>
+            <input type="checkbox" checked={sel.mute} onChange={e => { e.stopPropagation(); updatePad(selectedPad, { mute: e.target.checked }) }} onClick={e => e.stopPropagation()} style={{ accentColor: C.accent }} />
+            Mute
+          </label>
         </div>
-      </Section>
+      )}
     </div>
   )
 })
@@ -298,9 +338,10 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'poly', params: { ...params, ...changes } } })
   }, [dispatch, trackId, instrType, instrument.params])
 
-  const setDrumPack = useCallback((pack: DrumInstrumentParams['pack']) => {
-    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'drum', params: { pack } } })
-  }, [dispatch, trackId])
+  const setDrum = useCallback((changes: Partial<DrumInstrumentParams>) => {
+    const prev = instrType === 'drum' ? instrument.params as DrumInstrumentParams : { pack: 'synth' as const }
+    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'drum', params: { ...prev, ...changes } } })
+  }, [dispatch, trackId, instrType, instrument.params])
 
   return (
     <div style={{
@@ -313,7 +354,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
         ))}
       </div>
 
-      {instrType === 'drum' && <DrumPanel instrument={instrument} onPack={setDrumPack} />}
+      {instrType === 'drum' && <DrumPanel instrument={instrument} onSet={setDrum} />}
       {instrType === 'fm'   && <FmPanel   instrument={instrument} trackId={trackId} onSet={setFm} />}
       {instrType === 'poly' && <PolyPanel instrument={instrument} onSet={setPoly} />}
     </div>

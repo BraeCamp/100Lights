@@ -5,10 +5,12 @@ import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
-  DelayParams, FilterParams, EffectType,
+  DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
+  MidiEffect, MidiEffectType, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams,
 } from '@/lib/daw-types'
 import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
+  defaultSaturator, defaultRedux, defaultAutoPan, defaultUtility, defaultLfo,
 } from '@/lib/daw-types'
 
 // ── Label map ──────────────────────────────────────────────────────────────────
@@ -19,6 +21,11 @@ const EFFECT_LABELS: Record<EffectType, string> = {
   reverb:     'Reverb',
   delay:      'Delay',
   filter:     'Filter',
+  saturator:  'Saturator',
+  redux:      'Redux',
+  autopan:    'Auto Pan',
+  utility:    'Utility',
+  lfo:        'LFO',
 }
 
 // ── Shared micro-components ────────────────────────────────────────────────────
@@ -247,6 +254,125 @@ function FilterControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
   )
 }
 
+// ── Saturator controls ─────────────────────────────────────────────────────────
+
+function SaturatorControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as SaturatorParams
+  const up = (changes: Partial<SaturatorParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Drive"><RangeCtrl value={p.drive} min={0} max={1} step={0.01} onChange={v => up({ drive: v })} /></CtrlRow>
+      <CtrlRow label="Color"><RangeCtrl value={p.color} min={0} max={1} step={0.01} onChange={v => up({ color: v })} /></CtrlRow>
+      <CtrlRow label="Output"><RangeCtrl value={p.output} min={-12} max={6} step={0.1} onChange={v => up({ output: v })} /></CtrlRow>
+    </>
+  )
+}
+
+// ── Redux controls ─────────────────────────────────────────────────────────────
+
+function ReduxControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as ReduxParams
+  const up = (changes: Partial<ReduxParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Bit Depth"><RangeCtrl value={p.bitDepth} min={1} max={16} step={1} onChange={v => up({ bitDepth: v })} /></CtrlRow>
+      <CtrlRow label="Sample Rate"><RangeCtrl value={p.sampleRate} min={100} max={44100} step={100} onChange={v => up({ sampleRate: v })} /></CtrlRow>
+    </>
+  )
+}
+
+// ── Auto Pan controls ──────────────────────────────────────────────────────────
+
+function AutoPanControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as AutoPanParams
+  const up = (changes: Partial<AutoPanParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Rate"><RangeCtrl value={p.rate} min={0.01} max={10} step={0.01} onChange={v => up({ rate: v })} /></CtrlRow>
+      <CtrlRow label="Depth"><RangeCtrl value={p.depth} min={0} max={1} step={0.01} onChange={v => up({ depth: v })} /></CtrlRow>
+      <CtrlRow label="Shape">
+        <select value={p.waveform} style={{ width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2 }}
+          onChange={e => { e.stopPropagation(); up({ waveform: e.target.value as AutoPanParams['waveform'] }) }}
+          onKeyDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+          <option value="sine">Sine</option>
+          <option value="triangle">Triangle</option>
+          <option value="square">Square</option>
+        </select>
+      </CtrlRow>
+    </>
+  )
+}
+
+// ── Utility controls ───────────────────────────────────────────────────────────
+
+function UtilityControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as UtilityParams
+  const up = (changes: Partial<UtilityParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Gain dB"><RangeCtrl value={p.gain} min={-12} max={12} step={0.1} onChange={v => up({ gain: v })} /></CtrlRow>
+      <CtrlRow label="Width"><RangeCtrl value={p.width} min={0} max={2} step={0.01} onChange={v => up({ width: v })} /></CtrlRow>
+      <CtrlRow label="">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['mono', 'muteL', 'muteR'] as const).map(k => (
+            <button key={k} onClick={() => up({ [k]: !p[k] })} style={{ fontSize: 9, padding: '2px 5px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${p[k] ? 'var(--accent)' : 'var(--border)'}`, background: p[k] ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)', color: p[k] ? 'var(--accent)' : 'var(--text-muted)' }}>
+              {k === 'mono' ? 'Mono' : k === 'muteL' ? 'M-L' : 'M-R'}
+            </button>
+          ))}
+        </div>
+      </CtrlRow>
+    </>
+  )
+}
+
+// ── LFO controls ───────────────────────────────────────────────────────────────
+
+function LfoControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as LfoParams
+  const up = (changes: Partial<LfoParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const selectStyle = { width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2 }
+  return (
+    <>
+      <CtrlRow label="Rate"><RangeCtrl value={p.rate} min={0.01} max={20} step={0.01} onChange={v => up({ rate: v })} /></CtrlRow>
+      <CtrlRow label="Depth"><RangeCtrl value={p.depth} min={0} max={1} step={0.01} onChange={v => up({ depth: v })} /></CtrlRow>
+      <CtrlRow label="Target">
+        <select value={p.target} style={selectStyle} onChange={e => { e.stopPropagation(); up({ target: e.target.value as LfoParams['target'] }) }} onKeyDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+          <option value="pan">Pan</option>
+          <option value="volume">Volume</option>
+          <option value="filter">Filter</option>
+        </select>
+      </CtrlRow>
+      <CtrlRow label="Shape">
+        <select value={p.waveform} style={selectStyle} onChange={e => { e.stopPropagation(); up({ waveform: e.target.value as LfoParams['waveform'] }) }} onKeyDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+          <option value="sine">Sine</option>
+          <option value="triangle">Triangle</option>
+          <option value="sawtooth">Sawtooth</option>
+          <option value="square">Square</option>
+        </select>
+      </CtrlRow>
+      {p.target === 'filter' && <>
+        <CtrlRow label="F Min"><RangeCtrl value={p.filterFreqMin} min={20} max={20000} step={1} onChange={v => up({ filterFreqMin: v })} /></CtrlRow>
+        <CtrlRow label="F Max"><RangeCtrl value={p.filterFreqMax} min={20} max={20000} step={1} onChange={v => up({ filterFreqMax: v })} /></CtrlRow>
+      </>}
+    </>
+  )
+}
+
 // ── Device card ────────────────────────────────────────────────────────────────
 
 function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
@@ -329,6 +455,11 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         {effect.type === 'reverb'     && <ReverbControls     effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'delay'      && <DelayControls      effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'filter'     && <FilterControls     effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'saturator'  && <SaturatorControls  effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'redux'      && <ReduxControls      effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'autopan'    && <AutoPanControls    effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'utility'    && <UtilityControls    effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'lfo'        && <LfoControls        effect={effect} trackId={trackId} returnId={returnId} />}
       </div>
     </div>
   )
@@ -342,6 +473,11 @@ const ADD_OPTIONS: { type: EffectType; label: string }[] = [
   { type: 'reverb',     label: 'Reverb' },
   { type: 'delay',      label: 'Delay' },
   { type: 'filter',     label: 'Filter' },
+  { type: 'saturator',  label: 'Saturator' },
+  { type: 'redux',      label: 'Redux (Bit Crush)' },
+  { type: 'autopan',    label: 'Auto Pan' },
+  { type: 'utility',    label: 'Utility' },
+  { type: 'lfo',        label: 'LFO' },
 ]
 
 function makeDefaultParams(type: EffectType) {
@@ -351,6 +487,12 @@ function makeDefaultParams(type: EffectType) {
     case 'reverb':     return defaultReverb()
     case 'delay':      return defaultDelay()
     case 'filter':     return defaultFilter()
+    case 'saturator':  return defaultSaturator()
+    case 'redux':      return defaultRedux()
+    case 'autopan':    return defaultAutoPan()
+    case 'utility':    return defaultUtility()
+    case 'lfo':        return defaultLfo()
+    default:           return defaultEq3()
   }
 }
 
@@ -443,6 +585,166 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
   )
 }
 
+// ── MIDI effect cards ──────────────────────────────────────────────────────────
+
+const MIDI_EFFECT_LABELS: Record<MidiEffectType, string> = {
+  velocity: 'Velocity',
+  scale:    'Scale',
+  chord:    'Chord',
+  arp:      'Arpeggiator',
+}
+
+const MIDI_ADD_OPTIONS: { type: MidiEffectType; label: string }[] = [
+  { type: 'velocity', label: 'Velocity' },
+  { type: 'scale',    label: 'Scale' },
+  { type: 'chord',    label: 'Chord' },
+  { type: 'arp',      label: 'Arpeggiator' },
+]
+
+function makeMidiDefault(type: MidiEffectType): MidiEffect['params'] {
+  switch (type) {
+    case 'velocity': return { enabled: true, outMin: 0, outMax: 127, random: 0 }
+    case 'scale':    return { enabled: true, root: 0, scale: 'major' }
+    case 'chord':    return { enabled: true, intervals: [4, 7] }
+    case 'arp':      return { enabled: true, style: 'up', rate: 0.25, octaves: 1, gate: 0.9 }
+  }
+}
+
+function MidiEffectCard({ effect, trackId }: { effect: MidiEffect; trackId: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params
+  const up = (changes: Partial<typeof p>) =>
+    dispatch({ type: 'UPDATE_MIDI_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } as typeof p } })
+  const selStyle: React.CSSProperties = { width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2 }
+
+  return (
+    <div style={{ width: 160, minHeight: 120, background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.3)', borderRadius: 4, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', borderBottom: '1px solid rgba(124,58,237,0.2)', background: 'rgba(124,58,237,0.12)' }}>
+        <button
+          onClick={() => up({ enabled: !p.enabled })}
+          style={{ width: 12, height: 12, borderRadius: 2, border: 'none', background: p.enabled ? '#a78bfa' : '#333', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+        />
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: '#c4b5fd', letterSpacing: '0.04em' }}>{MIDI_EFFECT_LABELS[effect.type]}</span>
+        <button onClick={() => dispatch({ type: 'REMOVE_MIDI_EFFECT', trackId, effectId: effect.id })}
+          style={{ width: 14, height: 14, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>×</button>
+      </div>
+      <div style={{ padding: '8px 6px', flex: 1 }}>
+        {effect.type === 'velocity' && (() => {
+          const vp = p as VelocityMidiParams
+          return <>
+            <CtrlRow label="Min"><RangeCtrl value={vp.outMin} min={0} max={127} step={1} onChange={v => up({ outMin: v })} /></CtrlRow>
+            <CtrlRow label="Max"><RangeCtrl value={vp.outMax} min={0} max={127} step={1} onChange={v => up({ outMax: v })} /></CtrlRow>
+            <CtrlRow label="Rand"><RangeCtrl value={vp.random} min={0} max={1} step={0.01} onChange={v => up({ random: v })} /></CtrlRow>
+          </>
+        })()}
+        {effect.type === 'scale' && (() => {
+          const sp = p as ScaleMidiParams
+          return <>
+            <CtrlRow label="Root">
+              <select value={sp.root} style={selStyle} onChange={e => { e.stopPropagation(); up({ root: parseInt(e.target.value) }) }} onClick={e => e.stopPropagation()}>
+                {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].map((n,i) => <option key={i} value={i}>{n}</option>)}
+              </select>
+            </CtrlRow>
+            <CtrlRow label="Scale">
+              <select value={sp.scale} style={selStyle} onChange={e => { e.stopPropagation(); up({ scale: e.target.value as ScaleMidiParams['scale'] }) }} onClick={e => e.stopPropagation()}>
+                {['major','minor','penta-maj','penta-min','dorian','chromatic'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </CtrlRow>
+          </>
+        })()}
+        {effect.type === 'chord' && (() => {
+          const cp = p as ChordMidiParams
+          return <>
+            <CtrlRow label="Intervals">
+              <input
+                type="text"
+                defaultValue={cp.intervals.join(', ')}
+                onBlur={e => {
+                  const parsed = e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
+                  if (parsed.length > 0) up({ intervals: parsed })
+                }}
+                onKeyDown={e => e.stopPropagation()}
+                onClick={e => e.stopPropagation()}
+                style={{ width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 3px', borderRadius: 2 }}
+                title="Semitone intervals (e.g. 4, 7 for major chord)"
+              />
+            </CtrlRow>
+          </>
+        })()}
+        {effect.type === 'arp' && (() => {
+          const ap = p as ArpMidiParams
+          return <>
+            <CtrlRow label="Style">
+              <select value={ap.style} style={selStyle} onChange={e => { e.stopPropagation(); up({ style: e.target.value as ArpMidiParams['style'] }) }} onClick={e => e.stopPropagation()}>
+                <option value="up">Up</option>
+                <option value="down">Down</option>
+                <option value="updown">Up-Down</option>
+                <option value="random">Random</option>
+              </select>
+            </CtrlRow>
+            <CtrlRow label="Rate"><RangeCtrl value={ap.rate} min={0.0625} max={1} step={0.0625} onChange={v => up({ rate: v })} /></CtrlRow>
+            <CtrlRow label="Oct"><RangeCtrl value={ap.octaves} min={1} max={3} step={1} onChange={v => up({ octaves: v })} /></CtrlRow>
+            <CtrlRow label="Gate"><RangeCtrl value={ap.gate} min={0.05} max={1} step={0.01} onChange={v => up({ gate: v })} /></CtrlRow>
+          </>
+        })()}
+      </div>
+    </div>
+  )
+}
+
+function AddMidiEffectButton({ trackId }: { trackId: string }) {
+  const { dispatch } = useDaw()
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 })
+
+  useEffect(() => {
+    if (!open) return
+    function onMouseDown(e: MouseEvent) {
+      if (dropRef.current?.contains(e.target as Node)) return
+      if (btnRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [open])
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => {
+          if (btnRef.current) {
+            const r = btnRef.current.getBoundingClientRect()
+            setDropPos({ top: r.top, left: r.left })
+          }
+          setOpen(v => !v)
+        }}
+        style={{ width: 28, height: 28, borderRadius: 4, border: '1px dashed rgba(124,58,237,0.4)', background: 'transparent', color: 'rgba(124,58,237,0.6)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+        title="Add MIDI effect"
+      >+</button>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={dropRef} style={{ position: 'fixed', bottom: `calc(100vh - ${dropPos.top}px + 4px)`, left: dropPos.left, zIndex: 9999, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: 4, boxShadow: '0 -4px 20px rgba(0,0,0,0.6)', minWidth: 140 }}>
+          {MIDI_ADD_OPTIONS.map(opt => (
+            <button
+              key={opt.type}
+              onClick={() => {
+                dispatch({ type: 'ADD_MIDI_EFFECT', trackId, effect: { id: `mfx-${Date.now()}`, type: opt.type, params: makeMidiDefault(opt.type) } })
+                setOpen(false)
+              }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, borderRadius: 2 }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)' }}
+            >{opt.label}</button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  )
+}
+
 // ── Main export ────────────────────────────────────────────────────────────────
 
 export default function DeviceChain({ trackId }: { trackId: string }) {
@@ -450,19 +752,36 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
   const track = project.tracks.find(t => t.id === trackId)
   if (!track) return null
 
+  const midiEffects = track.midiEffects ?? []
+
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'row',
-      gap: 8,
-      overflowX: 'auto',
-      padding: 8,
-      alignItems: 'flex-start',
-    }}>
-      {track.effects.map(effect => (
-        <EffectDevice key={effect.id} effect={effect} trackId={trackId} />
-      ))}
-      <AddDeviceButton trackId={trackId} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* Audio FX row */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'row',
+        gap: 8,
+        overflowX: 'auto',
+        padding: 8,
+        alignItems: 'flex-start',
+      }}>
+        {track.effects.map(effect => (
+          <EffectDevice key={effect.id} effect={effect} trackId={trackId} />
+        ))}
+        <AddDeviceButton trackId={trackId} />
+      </div>
+      {/* MIDI FX row */}
+      {(midiEffects.length > 0 || track.instrument) && (
+        <div style={{ borderTop: '1px solid rgba(124,58,237,0.2)', padding: '4px 8px 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 8, color: 'rgba(124,58,237,0.7)', letterSpacing: '0.1em', fontWeight: 700, flexShrink: 0 }}>MIDI FX</span>
+          <div style={{ display: 'flex', flexDirection: 'row', gap: 6, overflowX: 'auto', alignItems: 'flex-start' }}>
+            {midiEffects.map(mfx => (
+              <MidiEffectCard key={mfx.id} effect={mfx} trackId={trackId} />
+            ))}
+            <AddMidiEffectButton trackId={trackId} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

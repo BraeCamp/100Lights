@@ -8,7 +8,7 @@ export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last'
 
 // ── Effects ───────────────────────────────────────────────────────────────────
 
-export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter'
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo'
 
 export interface Eq3Params {
   enabled: boolean
@@ -54,7 +54,47 @@ export interface FilterParams {
   q: number          // 0.1..20
 }
 
-export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams
+export interface SaturatorParams {
+  enabled: boolean
+  drive: number      // 0..1 — controls tanh waveshaper gain
+  color: number      // 0..1 — low-shelf boost pre-shaper (warmth)
+  output: number     // dB -12..+6
+}
+
+export interface ReduxParams {
+  enabled: boolean
+  bitDepth: number   // 1..16 — quantizes to 2^n steps
+  sampleRate: number // 100..44100 — downsamples by factor
+}
+
+export interface AutoPanParams {
+  enabled: boolean
+  rate: number       // Hz 0.01..10
+  depth: number      // 0..1
+  waveform: 'sine' | 'triangle' | 'square'
+  phase: number      // degrees 0..360 (offset between L/R)
+}
+
+export interface UtilityParams {
+  enabled: boolean
+  gain: number       // dB -inf..+12
+  mono: boolean      // collapse stereo to mono
+  muteL: boolean
+  muteR: boolean
+  width: number      // 0..2 (1 = normal stereo)
+}
+
+export interface LfoParams {
+  enabled: boolean
+  rate: number       // Hz 0.01..20
+  depth: number      // 0..1
+  waveform: 'sine' | 'triangle' | 'sawtooth' | 'square'
+  target: 'pan' | 'volume' | 'filter'
+  filterFreqMin: number   // Hz — used when target='filter'
+  filterFreqMax: number   // Hz
+}
+
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams
 
 export interface TrackEffect {
   id: string
@@ -77,12 +117,81 @@ export function defaultDelay(): DelayParams {
 export function defaultFilter(): FilterParams {
   return { enabled: true, type: 'lowpass', frequency: 8000, q: 1 }
 }
+export function defaultSaturator(): SaturatorParams {
+  return { enabled: true, drive: 0.4, color: 0.3, output: 0 }
+}
+export function defaultRedux(): ReduxParams {
+  return { enabled: true, bitDepth: 8, sampleRate: 22050 }
+}
+export function defaultAutoPan(): AutoPanParams {
+  return { enabled: true, rate: 1, depth: 0.7, waveform: 'sine', phase: 180 }
+}
+export function defaultUtility(): UtilityParams {
+  return { enabled: true, gain: 0, mono: false, muteL: false, muteR: false, width: 1 }
+}
+export function defaultLfo(): LfoParams {
+  return { enabled: true, rate: 1, depth: 0.5, waveform: 'sine', target: 'pan', filterFreqMin: 200, filterFreqMax: 8000 }
+}
+
+// ── MIDI Effects ──────────────────────────────────────────────────────────────
+
+export type MidiEffectType = 'velocity' | 'scale' | 'chord' | 'arp'
+
+export interface VelocityMidiParams {
+  enabled: boolean
+  outMin: number    // 0-127
+  outMax: number    // 0-127
+  random: number    // 0-127 max random offset added
+}
+
+export interface ScaleMidiParams {
+  enabled: boolean
+  root: number      // 0-11 (C=0)
+  scale: 'major' | 'minor' | 'penta-maj' | 'penta-min' | 'dorian' | 'chromatic'
+}
+
+export interface ChordMidiParams {
+  enabled: boolean
+  intervals: number[]  // semitone offsets to add (e.g. [4,7] = major triad)
+}
+
+export interface ArpMidiParams {
+  enabled: boolean
+  style: 'up' | 'down' | 'updown' | 'random'
+  rate: number     // beats per note (e.g. 0.25 = 1/16th)
+  octaves: number  // 1, 2, or 3
+  gate: number     // 0-1, note length as fraction of rate
+}
+
+export type MidiEffectParams = VelocityMidiParams | ScaleMidiParams | ChordMidiParams | ArpMidiParams
+
+export interface MidiEffect {
+  id: string
+  type: MidiEffectType
+  params: MidiEffectParams
+}
+
+export function defaultVelocityMidi(): VelocityMidiParams { return { enabled: true, outMin: 0, outMax: 127, random: 0 } }
+export function defaultScaleMidi(): ScaleMidiParams { return { enabled: true, root: 0, scale: 'major' } }
+export function defaultChordMidi(): ChordMidiParams { return { enabled: true, intervals: [4, 7] } }
+export function defaultArpMidi(): ArpMidiParams { return { enabled: true, style: 'up', rate: 0.25, octaves: 1, gate: 0.9 } }
 
 // ── Instruments ───────────────────────────────────────────────────────────────
 
 export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler'
 
-export interface DrumInstrumentParams { pack: 'synth' | '808' }
+export interface DrumPadSettings {
+  sampleId?: string   // library preset id or custom sample id
+  volume: number      // 0..1
+  pitch: number       // semitones -24..24
+  pan: number         // -1..1
+  mute: boolean
+}
+
+export interface DrumInstrumentParams {
+  pack: 'synth' | '808'
+  pads?: Record<number, DrumPadSettings>  // keyed by MIDI pitch
+}
 
 export interface FmInstrumentParams {
   waveform: OscillatorType
@@ -214,12 +323,15 @@ export interface DawTrack {
   mute: boolean
   solo: boolean
   armed: boolean
+  frozen?: boolean    // freeze: render to audio buffer, disable instrument
   inputSource?: string | null  // 'mic' | 'system' | null — audio input for recording
   height: number      // arrangement lane height in px
   effects: TrackEffect[]
+  midiEffects?: MidiEffect[]
   instrument: TrackInstrument
   groupId?: string    // parent group track id
   sendAmounts?: Record<string, number>  // returnTrackId → send level 0–1
+  sendModes?: Record<string, 'pre' | 'post'>  // returnTrackId → pre/post fader
   crossfader?: CrossfaderSide
 }
 
@@ -230,7 +342,15 @@ export interface ReturnTrack {
   volume: number
   pan: number
   mute: boolean
+  soloSafe?: boolean  // stays audible when a track is soloed
   effects: TrackEffect[]
+}
+
+export interface CueMarker {
+  id: string
+  beat: number
+  name: string
+  color?: string
 }
 
 export interface TakeLane {
@@ -335,6 +455,10 @@ export interface DawProject {
   takeLanes: TakeLane[]
   crossfaderValue: number   // 0–1 (0=A, 0.5=center, 1=B)
   waveformZoom: number      // 1–8 vertical zoom multiplier for arrangement waveforms
+  swing: number             // 0–1 (0 = straight, 0.5 = full swing)
+  cueMarkers: CueMarker[]
+  key: number               // 0-11 (C=0), displayed in transport
+  scale: string             // 'major' | 'minor' | etc.
 }
 
 // ── UI state ──────────────────────────────────────────────────────────────────
@@ -383,5 +507,9 @@ export function defaultProject(): DawProject {
     takeLanes: [],
     crossfaderValue: 0.5,
     waveformZoom: 1,
+    swing: 0,
+    cueMarkers: [],
+    key: 0,
+    scale: 'major',
   }
 }

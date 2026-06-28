@@ -193,7 +193,20 @@ export function playInstrumentNote(
   if (instrument.type === 'drum') {
     const p    = instrument.params as DrumInstrumentParams
     const type = pitchToDrumType(pitch)
-    playDrumHit(ctx, p.pack, type, when, velocity / 127, undefined, undefined, dest)
+    const pad  = p.pads?.[pitch]
+    if (pad?.mute) return
+    let effectiveDest = dest
+    if (pad && (pad.volume !== 0.8 || pad.pan !== 0 || pad.pitch !== 0)) {
+      const padGain   = ctx.createGain()
+      const padPanner = ctx.createStereoPanner()
+      padGain.gain.value   = pad.volume
+      padPanner.pan.value  = pad.pan
+      padGain.connect(padPanner)
+      padPanner.connect(dest)
+      effectiveDest = padGain
+    }
+    const vel = pad ? (velocity / 127) * pad.volume : velocity / 127
+    playDrumHit(ctx, p.pack, type, when, vel, pad?.pitch ? pitch + pad.pitch : undefined, undefined, effectiveDest)
     return
   }
 

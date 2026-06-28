@@ -25,7 +25,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
   const loopDragRef  = useRef<{ type: 'start'|'end'|'move'; startX: number; startLoopStart: number; startLoopEnd: number } | null>(null)
   const [loopCursor, setLoopCursor] = useState('grab')
   const { project, dispatch } = useDaw()
-  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled } = project
+  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [] } = project
   const pxPerSec = beatW * tempo / 60
 
   useEffect(() => {
@@ -122,7 +122,34 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
             onSeek(Math.max(0, (e.clientX - rect.left + scrollLeft) / beatW))
           }
         }}
+        onDoubleClick={e => {
+          const rect  = e.currentTarget.getBoundingClientRect()
+          const localY = e.clientY - rect.top
+          if (localY >= SEC_H) return
+          const beat = Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, sigNum))
+          const name = `Cue ${cueMarkers.length + 1}`
+          dispatch({ type: 'ADD_CUE_MARKER', marker: { id: `cue-${Date.now()}`, beat, name } })
+        }}
       />
+      {/* Cue markers */}
+      {cueMarkers.map(marker => {
+        const mx = marker.beat * beatW - scrollLeft
+        if (mx < -8 || mx > 9999) return null
+        return (
+          <div
+            key={marker.id}
+            style={{ position: 'absolute', top: 0, left: mx, width: 1, height: RULER_H, background: marker.color ?? '#f59e0b', zIndex: 2, pointerEvents: 'none' }}
+          >
+            <div
+              title={`${marker.name || 'Cue'} — right-click to remove`}
+              style={{ position: 'absolute', top: 0, left: 0, background: marker.color ?? '#f59e0b', color: '#000', fontSize: 8, padding: '1px 3px', borderRadius: '0 2px 2px 0', whiteSpace: 'nowrap', fontWeight: 700, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'context-menu', pointerEvents: 'auto' }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_CUE_MARKER', markerId: marker.id }) }}
+            >
+              {marker.name || '♦'}
+            </div>
+          </div>
+        )
+      })}
       {loopEnabled && loopR > loopL && (
         <div
           style={{

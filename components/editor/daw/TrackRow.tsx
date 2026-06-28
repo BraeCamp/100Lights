@@ -139,7 +139,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
-  const [frozen,         setFrozen]         = useState(false)
+  const frozen = track.frozen ?? false
   const [takesExpanded,  setTakesExpanded]  = useState(false)
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
   const inputBtnRef        = useRef<HTMLButtonElement>(null)
@@ -477,7 +477,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
             {/* Freeze / Bounce */}
             <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
-            <button onClick={() => { setFrozen(v => !v); setTrackCtxMenu(null) }}
+            <button onClick={() => { dispatch({ type: 'SET_TRACK_FROZEN', trackId: track.id, frozen: !frozen }); setTrackCtxMenu(null) }}
               style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}

@@ -298,6 +298,54 @@ export default function Transport() {
 
       <div style={divider} />
 
+      {/* Swing */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>SWING</span>
+        <input
+          type="range" min={0} max={0.5} step={0.01}
+          value={project.swing ?? 0}
+          onChange={e => {
+            const swing = parseFloat(e.target.value)
+            dispatch({ type: 'SET_SWING', swing })
+            engine.swing = swing
+          }}
+          className="cf-slider"
+          style={{ width: 56, accentColor: 'var(--accent)' }}
+          title={`Swing: ${Math.round((project.swing ?? 0) * 100)}%`}
+        />
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', minWidth: 26, textAlign: 'right' }}>
+          {Math.round((project.swing ?? 0) * 100)}%
+        </span>
+      </div>
+
+      <div style={divider} />
+
+      {/* Key / Scale */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        <select
+          value={project.key ?? 0}
+          onChange={e => dispatch({ type: 'SET_KEY_SCALE', key: parseInt(e.target.value), scale: project.scale ?? 'major' })}
+          style={{ background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 3, padding: '2px 3px', cursor: 'pointer' }}
+          title="Root note"
+        >
+          {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].map((n, i) => (
+            <option key={i} value={i}>{n}</option>
+          ))}
+        </select>
+        <select
+          value={project.scale ?? 'major'}
+          onChange={e => dispatch({ type: 'SET_KEY_SCALE', key: project.key ?? 0, scale: e.target.value })}
+          style={{ background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 3, padding: '2px 3px', cursor: 'pointer' }}
+          title="Scale"
+        >
+          {['major','minor','penta-maj','penta-min','dorian','chromatic'].map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={divider} />
+
       {/* Master volume */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
         <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />

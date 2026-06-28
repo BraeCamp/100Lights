@@ -5,7 +5,7 @@ import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
-  ReturnTrack, TakeLane,
+  ReturnTrack, TakeLane, MidiEffect, CueMarker,
 } from './daw-types'
 import {
   defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT,
@@ -77,6 +77,19 @@ export type DawAction =
   // Crossfader / waveform zoom
   | { type: 'SET_CROSSFADER'; value: number }
   | { type: 'SET_WAVEFORM_ZOOM'; zoom: number }
+  // Swing + key/scale
+  | { type: 'SET_SWING'; swing: number }
+  | { type: 'SET_KEY_SCALE'; key: number; scale: string }
+  // Cue markers
+  | { type: 'ADD_CUE_MARKER'; marker: CueMarker }
+  | { type: 'REMOVE_CUE_MARKER'; markerId: string }
+  | { type: 'UPDATE_CUE_MARKER'; markerId: string; patch: Partial<CueMarker> }
+  // MIDI effects
+  | { type: 'ADD_MIDI_EFFECT'; trackId: string; effect: MidiEffect }
+  | { type: 'REMOVE_MIDI_EFFECT'; trackId: string; effectId: string }
+  | { type: 'UPDATE_MIDI_EFFECT'; trackId: string; effectId: string; patch: Partial<MidiEffect> }
+  // Track freeze
+  | { type: 'SET_TRACK_FROZEN'; trackId: string; frozen: boolean }
   // Full replace (load from saved)
   | { type: 'LOAD_PROJECT'; project: DawProject }
 
@@ -377,6 +390,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         takeLanes:       p.takeLanes       ?? [],
         crossfaderValue: p.crossfaderValue ?? 0.5,
         waveformZoom:    p.waveformZoom    ?? 1,
+        swing:           p.swing           ?? 0,
+        cueMarkers:      p.cueMarkers      ?? [],
+        key:             p.key             ?? 0,
+        scale:           p.scale           ?? 'major',
       }
     }
 
@@ -439,6 +456,50 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_WAVEFORM_ZOOM':
       return { ...project, waveformZoom: Math.max(1, Math.min(8, action.zoom)) }
+
+    case 'SET_SWING':
+      return { ...project, swing: Math.max(0, Math.min(1, action.swing)) }
+
+    case 'SET_KEY_SCALE':
+      return { ...project, key: action.key, scale: action.scale }
+
+    case 'ADD_CUE_MARKER':
+      return { ...project, cueMarkers: [...(project.cueMarkers ?? []), action.marker].sort((a, b) => a.beat - b.beat) }
+
+    case 'REMOVE_CUE_MARKER':
+      return { ...project, cueMarkers: (project.cueMarkers ?? []).filter(m => m.id !== action.markerId) }
+
+    case 'UPDATE_CUE_MARKER':
+      return { ...project, cueMarkers: (project.cueMarkers ?? []).map(m => m.id === action.markerId ? { ...m, ...action.patch } : m) }
+
+    case 'ADD_MIDI_EFFECT': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId ? { ...t, midiEffects: [...(t.midiEffects ?? []), action.effect] } : t
+      )
+      return { ...project, tracks }
+    }
+
+    case 'REMOVE_MIDI_EFFECT': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId ? { ...t, midiEffects: (t.midiEffects ?? []).filter(e => e.id !== action.effectId) } : t
+      )
+      return { ...project, tracks }
+    }
+
+    case 'UPDATE_MIDI_EFFECT': {
+      const tracks = project.tracks.map(t => {
+        if (t.id !== action.trackId) return t
+        return { ...t, midiEffects: (t.midiEffects ?? []).map(e => e.id === action.effectId ? { ...e, ...action.patch } : e) }
+      })
+      return { ...project, tracks }
+    }
+
+    case 'SET_TRACK_FROZEN': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId ? { ...t, frozen: action.frozen } : t
+      )
+      return { ...project, tracks }
+    }
 
     default:
       return project

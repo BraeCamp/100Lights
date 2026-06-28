@@ -1,6 +1,6 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -17,7 +17,9 @@ interface TrackNodes {
   analyser: AnalyserNode
   effectsInput: GainNode    // sources connect here
   effectsOutput: GainNode   // routes into panner
-  sendGains: Map<string, GainNode>  // returnTrackId → send gain (post-fader tap)
+  sendGains: Map<string, GainNode>     // returnTrackId → send gain (post-fader tap from analyser)
+  preSendGains: Map<string, GainNode>  // returnTrackId → send gain (pre-fader tap from effectsOutput)
+  sendModes: Map<string, 'pre' | 'post'>
 }
 
 // Return track (FX bus) routing nodes
@@ -86,8 +88,10 @@ export class DawEngine extends EventTarget {
   private metronomeHandle: ReturnType<typeof setInterval> | null = null
 
   // Session launch
-  private _sessionQueue  = new Map<string, { clip: AudioClip; launchCtxTime: number }>()
-  private _sessionSlots  = new Map<string, SessionSlot>()
+  private _sessionQueue      = new Map<string, { clip: AudioClip; launchCtxTime: number }>()
+  private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchCtxTime: number }>()
+  private _sessionSlots      = new Map<string, SessionSlot>()
+  private _sessionMidiSlots  = new Map<string, { clip: MidiClip; startCtxTime: number; intervalId: ReturnType<typeof setInterval> }>()
   launchQuantization: LaunchQuantization = 'bar'
 
   // Session-only clock (runs independent of arrangement transport)
@@ -113,6 +117,7 @@ export class DawEngine extends EventTarget {
   loopEnabled = false
   loopStart = 0
   loopEnd = 16
+  swing = 0
   private _beatsPerBar = 4
 
   private _startCtxTime = 0
@@ -171,16 +176,20 @@ export class DawEngine extends EventTarget {
       analyser.connect(this.masterGain)
 
       // Create a send gain for every existing return bus (start at 0)
-      const sendGains = new Map<string, GainNode>()
+      const sendGains    = new Map<string, GainNode>()
+      const preSendGains = new Map<string, GainNode>()
+      const sendModes    = new Map<string, 'pre' | 'post'>()
       for (const [returnId, bus] of this.returnBuses) {
-        const sendGain = this.ctx.createGain()
-        sendGain.gain.value = 0
-        analyser.connect(sendGain)
-        sendGain.connect(bus.input)
+        const sendGain = this.ctx.createGain(); sendGain.gain.value = 0
+        analyser.connect(sendGain); sendGain.connect(bus.input)
         sendGains.set(returnId, sendGain)
+        const preSend = this.ctx.createGain(); preSend.gain.value = 0
+        effectsOutput.connect(preSend); preSend.connect(bus.input)
+        preSendGains.set(returnId, preSend)
+        sendModes.set(returnId, 'post')
       }
 
-      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, effectsOutput, sendGains })
+      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, effectsOutput, sendGains, preSendGains, sendModes })
     }
 
     // (Re)build effects chain when effects array is provided
@@ -236,9 +245,8 @@ export class DawEngine extends EventTarget {
     if (!nodes) return
     const chain = this.effectsChains.get(id)
     if (chain) { chain.dispose(); this.effectsChains.delete(id) }
-    for (const sendGain of nodes.sendGains.values()) {
-      try { sendGain.disconnect() } catch { /* ok */ }
-    }
+    for (const sg of nodes.sendGains.values())    { try { sg.disconnect() } catch { /* ok */ } }
+    for (const sg of nodes.preSendGains.values()) { try { sg.disconnect() } catch { /* ok */ } }
     nodes.gain.disconnect()
     nodes.panner.disconnect()
     nodes.analyser.disconnect()
@@ -268,13 +276,15 @@ export class DawEngine extends EventTarget {
     panner.pan.value = pan
     this.returnBuses.set(id, { input, effectsOutput, gain, panner })
 
-    // Wire every existing track's post-fader analyser into this return bus
+    // Wire every existing track's post-fader analyser (and pre-fader effectsOutput) into this return bus
     for (const [, nodes] of this.trackNodes) {
-      const sendGain = this.ctx.createGain()
-      sendGain.gain.value = 0
-      nodes.analyser.connect(sendGain)
-      sendGain.connect(input)
+      const sendGain = this.ctx.createGain(); sendGain.gain.value = 0
+      nodes.analyser.connect(sendGain); sendGain.connect(input)
       nodes.sendGains.set(id, sendGain)
+      const preSend = this.ctx.createGain(); preSend.gain.value = 0
+      nodes.effectsOutput.connect(preSend); preSend.connect(input)
+      nodes.preSendGains.set(id, preSend)
+      nodes.sendModes.set(id, 'post')
     }
 
     if (effects !== undefined) this._rebuildReturnEffectsChain(id, effects)
@@ -309,11 +319,11 @@ export class DawEngine extends EventTarget {
     const bus = this.returnBuses.get(id)
     if (!bus) return
     for (const nodes of this.trackNodes.values()) {
-      const sendGain = nodes.sendGains.get(id)
-      if (sendGain) {
-        try { sendGain.disconnect() } catch { /* ok */ }
-        nodes.sendGains.delete(id)
-      }
+      const sg = nodes.sendGains.get(id)
+      if (sg) { try { sg.disconnect() } catch { /* ok */ } nodes.sendGains.delete(id) }
+      const psg = nodes.preSendGains.get(id)
+      if (psg) { try { psg.disconnect() } catch { /* ok */ } nodes.preSendGains.delete(id) }
+      nodes.sendModes.delete(id)
     }
     try { bus.input.disconnect() } catch { /* ok */ }
     try { bus.effectsOutput.disconnect() } catch { /* ok */ }
@@ -323,10 +333,22 @@ export class DawEngine extends EventTarget {
   }
 
   setSendAmount(trackId: string, returnId: string, amount: number) {
+    this._setSendAmount(trackId, returnId, amount, 'post')
+  }
+
+  private _setSendAmount(trackId: string, returnId: string, amount: number, mode: 'pre' | 'post') {
     const nodes = this.trackNodes.get(trackId)
     if (!nodes) return
-    const sendGain = nodes.sendGains.get(returnId)
-    if (sendGain) sendGain.gain.setTargetAtTime(amount, this.ctx.currentTime, 0.01)
+    const prevMode = nodes.sendModes.get(returnId) ?? 'post'
+    nodes.sendModes.set(returnId, mode)
+    const t = this.ctx.currentTime
+    if (mode === 'pre') {
+      nodes.sendGains.get(returnId)?.gain.setTargetAtTime(0, t, 0.01)
+      nodes.preSendGains.get(returnId)?.gain.setTargetAtTime(amount, t, 0.01)
+    } else {
+      if (prevMode === 'pre') nodes.preSendGains.get(returnId)?.gain.setTargetAtTime(0, t, 0.01)
+      nodes.sendGains.get(returnId)?.gain.setTargetAtTime(amount, t, 0.01)
+    }
   }
 
   setReturnVolume(id: string, volume: number) {
@@ -444,6 +466,7 @@ export class DawEngine extends EventTarget {
     this.loopEnabled  = project.loopEnabled
     this.loopStart    = project.loopStart
     this.loopEnd      = project.loopEnd
+    this.swing        = project.swing ?? 0
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._clips       = project.arrangementClips.filter(isAudioClip)
     this._midiClips   = project.arrangementClips.filter(isMidiClip)
@@ -460,16 +483,25 @@ export class DawEngine extends EventTarget {
       if (!(project.returnTracks ?? []).find(rt => rt.id === id)) this.removeReturnTrack(id)
     }
 
-    const anySoloed = project.tracks.some(t => t.solo)
+    const anySoloed     = project.tracks.some(t => t.solo)
+    const returnTracks  = project.returnTracks ?? []
     for (const t of project.tracks) {
       this.ensureTrack(t.id, t.effects)
       const silenced = t.mute || (anySoloed && !t.solo)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
-      // Sync send amounts
-      for (const rt of project.returnTracks ?? []) {
-        this.setSendAmount(t.id, rt.id, t.sendAmounts?.[rt.id] ?? 0)
+      for (const rt of returnTracks) {
+        const amount = t.sendAmounts?.[rt.id] ?? 0
+        const mode   = t.sendModes?.[rt.id] ?? 'post'
+        this._setSendAmount(t.id, rt.id, amount, mode)
       }
+    }
+    // Solo-safe: silence returns during solo unless soloSafe is set
+    for (const rt of returnTracks) {
+      const bus = this.returnBuses.get(rt.id)
+      if (!bus) continue
+      const silenced = rt.mute || (anySoloed && !rt.soloSafe)
+      bus.gain.gain.value = silenced ? 0 : rt.volume
     }
     for (const id of this.trackNodes.keys()) {
       if (!project.tracks.find(t => t.id === id)) this.removeTrack(id)
@@ -534,7 +566,15 @@ export class DawEngine extends EventTarget {
         this._sessionQueue.delete(trackId)
       }
     }
-    if (this._sessionQueue.size === 0 && this._sessionSlots.size === 0) {
+    for (const [trackId, queued] of this._sessionMidiQueue.entries()) {
+      if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
+        this._launchSessionMidiSlot(trackId, queued.clip, queued.launchCtxTime)
+        this._sessionMidiQueue.delete(trackId)
+      }
+    }
+    const hasActive = this._sessionQueue.size > 0 || this._sessionSlots.size > 0
+                   || this._sessionMidiQueue.size > 0 || this._sessionMidiSlots.size > 0
+    if (!hasActive) {
       this._stopSessionTicker()
       this._sessionClockRunning = false
     }
@@ -668,19 +708,117 @@ export class DawEngine extends EventTarget {
     for (const trackId of this._sessionSlots.keys()) {
       this._stopSessionTrack(trackId)
     }
+    for (const trackId of [...this._sessionMidiSlots.keys()]) {
+      this._stopSessionMidiTrack(trackId)
+    }
     this._sessionQueue.clear()
+    this._sessionMidiQueue.clear()
     this._stopSessionTicker()
     this._sessionClockRunning = false
   }
 
+  async queueSessionMidi(trackId: string, clip: MidiClip, quantOverride?: LaunchQuantization) {
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
+
+    const playing = this._sessionMidiSlots.get(trackId)
+    if (playing && playing.clip.id === clip.id) {
+      this._stopSessionMidiTrack(trackId)
+      return
+    }
+
+    const q = quantOverride ?? this.launchQuantization
+    let launchCtxTime: number
+
+    if (this.isPlaying) {
+      const launchBeat = this._nextQuantBeat()
+      launchCtxTime = this.ctx.currentTime + this.beatsToSeconds(launchBeat - this.currentBeat)
+    } else if (this._sessionClockRunning) {
+      launchCtxTime = this._nextSessionQuantCtxTime(q)
+    } else {
+      this._sessionClockStartCtxTime = this.ctx.currentTime
+      this._sessionClockRunning      = true
+      launchCtxTime                  = this.ctx.currentTime
+    }
+
+    this._sessionMidiQueue.set(trackId, { clip, launchCtxTime })
+    this._ensureSessionTicker()
+    this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'queued' } }))
+  }
+
+  private _stopSessionMidiTrack(trackId: string) {
+    const slot = this._sessionMidiSlots.get(trackId)
+    if (slot) {
+      clearInterval(slot.intervalId)
+      const clipId = slot.clip.id
+      this._sessionMidiSlots.delete(trackId)
+      this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId, state: 'idle' } }))
+    }
+    this._sessionMidiQueue.delete(trackId)
+  }
+
+  private _launchSessionMidiSlot(trackId: string, clip: MidiClip, launchCtxTime: number) {
+    const track = this._tracks.find(t => t.id === trackId)
+    const nodes = this.trackNodes.get(trackId)
+    if (!track || !nodes) return
+
+    const existing = this._sessionMidiSlots.get(trackId)
+    if (existing) { clearInterval(existing.intervalId); this._sessionMidiSlots.delete(trackId) }
+
+    const clipDurBeats = clip.durationBeats || 4
+    const clipDurSec   = this.beatsToSeconds(clipDurBeats)
+    const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+
+    const scheduleLoop = (iterationStart: number) => {
+      for (const note of processedNotes) {
+        const noteStartAt = iterationStart + this.beatsToSeconds(this._applySwing(note.startBeat))
+        const noteDur     = this.beatsToSeconds(note.durationBeats)
+        if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
+        if (clip.presetId) {
+          const bufKey = `${clip.presetId}:${note.pitch}`
+          const buf    = this._presetBufCache.get(bufKey)
+          if (buf === undefined) void this._loadPresetBuffer(clip.presetId, note.pitch)
+          if (buf) {
+            const velGain = this.ctx.createGain(); velGain.gain.value = (note.velocity ?? 100) / 127
+            const src = this.ctx.createBufferSource(); src.buffer = buf
+            src.connect(velGain); velGain.connect(nodes.effectsInput)
+            src.start(noteStartAt); src.stop(noteStartAt + noteDur)
+            src.onended = () => { src.disconnect(); velGain.disconnect() }
+          }
+        } else {
+          playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur)
+        }
+      }
+    }
+
+    scheduleLoop(launchCtxTime)
+    const intervalId = setInterval(() => {
+      if (!this._sessionMidiSlots.has(trackId)) return
+      const elapsed   = this.ctx.currentTime - launchCtxTime
+      const iteration = Math.floor(elapsed / clipDurSec) + 1
+      const nextStart = launchCtxTime + iteration * clipDurSec
+      if (nextStart - this.ctx.currentTime < SCHEDULE_LOOKAHEAD * 2) {
+        scheduleLoop(nextStart)
+      }
+    }, SCHEDULER_INTERVAL)
+
+    this._sessionMidiSlots.set(trackId, { clip, startCtxTime: launchCtxTime, intervalId })
+    this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'playing' } }))
+  }
+
   // Returns current state of a session slot
   getSessionState(trackId: string, clipId: string): 'idle' | 'queued' | 'playing' {
-    const queued  = this._sessionQueue.get(trackId)
-    const playing = this._sessionSlots.get(trackId)
-    if (queued?.clip.id  === clipId) return 'queued'
-    if (playing?.clip.id === clipId) return 'playing'
+    const queued      = this._sessionQueue.get(trackId)
+    const playing     = this._sessionSlots.get(trackId)
+    const midiQueued  = this._sessionMidiQueue.get(trackId)
+    const midiPlaying = this._sessionMidiSlots.get(trackId)
+    if (queued?.clip.id      === clipId) return 'queued'
+    if (playing?.clip.id     === clipId) return 'playing'
+    if (midiQueued?.clip.id  === clipId) return 'queued'
+    if (midiPlaying?.clip.id === clipId) return 'playing'
     return 'idle'
   }
+
+  stopSessionMidiTrack(trackId: string) { this._stopSessionMidiTrack(trackId) }
 
   // Returns 0..1 playback progress for a session slot
   getSessionProgress(trackId: string): number {
@@ -783,12 +921,14 @@ export class DawEngine extends EventTarget {
       const nodes = this.trackNodes.get(clip.trackId)
       if (!nodes) continue
 
-      for (const note of clip.notes) {
+      const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+
+      for (const note of processedNotes) {
         const noteKey   = `${clip.id}:${note.id}` as NoteKey
         if (this._scheduledNoteKeys.has(noteKey)) continue
 
-        const noteAbsBeat = clip.startBeat + note.startBeat
-        const noteEnd     = noteAbsBeat + note.durationBeats
+        const noteAbsBeat = clip.startBeat + this._applySwing(note.startBeat)
+        const noteEnd     = clip.startBeat + note.startBeat + note.durationBeats
         if (noteEnd < now) continue
         if (noteAbsBeat > now + aheadBeats) continue
 
@@ -801,7 +941,6 @@ export class DawEngine extends EventTarget {
           const bufKey = `${clip.presetId}:${note.pitch}`
           const buf    = this._presetBufCache.get(bufKey)
           if (buf === undefined) {
-            // Buffer not loaded yet — kick off async load; note will be retried next tick
             void this._loadPresetBuffer(clip.presetId, note.pitch)
             continue
           }
@@ -821,7 +960,6 @@ export class DawEngine extends EventTarget {
         }
 
         this._scheduledNoteKeys.add(noteKey)
-        // Expire key after note ends — capture version so a loop-reset clear() doesn't invalidate a fresh schedule
         const expireMs = (startAt - contextNow + remaining + 0.1) * 1000
         const keyVer   = this._noteKeyVersion
         setTimeout(() => { if (this._noteKeyVersion === keyVer) this._scheduledNoteKeys.delete(noteKey) }, Math.max(0, expireMs))
@@ -858,6 +996,108 @@ export class DawEngine extends EventTarget {
       const handle = this.effectsChains.get(trackId)?.handles.get(effectId)
       handle?.setParam(paramKey, value)
     }
+  }
+
+  // Swing: offbeat 16ths (beat pos ≈ 0.25, 0.75, 1.25…) are delayed by up to 1/8 beat
+  private _applySwing(beat: number): number {
+    if (this.swing === 0) return beat
+    const sub16  = Math.round(beat * 4)  // 16th note index
+    const isOdd  = sub16 % 2 !== 0       // "offbeat" 16th
+    return isOdd ? beat + this.swing * 0.125 : beat
+  }
+
+  // Process MIDI notes through a chain of MIDI effects; returns possibly expanded set of notes
+  private _applyMidiEffects(notes: MidiNote[], midiEffects: MidiEffect[]): MidiNote[] {
+    if (!midiEffects || midiEffects.length === 0) return notes
+
+    let result = [...notes]
+    for (const fx of midiEffects) {
+      if (fx.type === 'velocity') {
+        const p = fx.params as VelocityMidiParams
+        if (!p.enabled) continue
+        result = result.map(n => {
+          const range  = p.outMax - p.outMin
+          const scaled = p.outMin + (n.velocity / 127) * range
+          const rand   = p.random > 0 ? (Math.random() * 2 - 1) * p.random : 0
+          return { ...n, velocity: Math.max(0, Math.min(127, Math.round(scaled + rand))) }
+        })
+      } else if (fx.type === 'scale') {
+        const p = fx.params as ScaleMidiParams
+        if (!p.enabled) continue
+        const SCALES: Record<string, number[]> = {
+          'major':     [0,2,4,5,7,9,11],
+          'minor':     [0,2,3,5,7,8,10],
+          'penta-maj': [0,2,4,7,9],
+          'penta-min': [0,3,5,7,10],
+          'dorian':    [0,2,3,5,7,9,10],
+          'chromatic': [0,1,2,3,4,5,6,7,8,9,10,11],
+        }
+        const intervals = SCALES[p.scale] ?? SCALES.major
+        result = result.map(n => {
+          const pc      = ((n.pitch - p.root) % 12 + 12) % 12
+          const octave  = Math.floor((n.pitch - p.root) / 12)
+          let best = intervals[0], bestDist = 13
+          for (const iv of intervals) {
+            const d = Math.abs(pc - iv)
+            if (d < bestDist) { bestDist = d; best = iv }
+          }
+          return { ...n, pitch: p.root + octave * 12 + best }
+        })
+      } else if (fx.type === 'chord') {
+        const p = fx.params as ChordMidiParams
+        if (!p.enabled) continue
+        const extra: MidiNote[] = []
+        for (const n of result) {
+          for (const iv of p.intervals) {
+            extra.push({ ...n, id: n.id + '_chord_' + iv, pitch: n.pitch + iv })
+          }
+        }
+        result = [...result, ...extra]
+      } else if (fx.type === 'arp') {
+        const p = fx.params as ArpMidiParams
+        if (!p.enabled) continue
+        // Group notes that start close together into chords (within 0.05 beats)
+        const sorted = [...result].sort((a, b) => a.startBeat - b.startBeat)
+        const chords: MidiNote[][] = []
+        for (const n of sorted) {
+          const last = chords[chords.length - 1]
+          if (last && Math.abs(n.startBeat - last[0].startBeat) < 0.05) {
+            last.push(n)
+          } else {
+            chords.push([n])
+          }
+        }
+        const arpNotes: MidiNote[] = []
+        let cursor = sorted[0]?.startBeat ?? 0
+        for (const chord of chords) {
+          // Sort chord pitches by style
+          let pitches = chord.map(n => n.pitch)
+          if (p.style === 'down') pitches = [...pitches].reverse()
+          else if (p.style === 'updown') pitches = [...pitches, ...[...pitches].reverse().slice(1, -1)]
+          else if (p.style === 'random') pitches = [...pitches].sort(() => Math.random() - 0.5)
+
+          // Expand across octaves
+          const expanded: number[] = []
+          for (let oct = 0; oct < p.octaves; oct++) {
+            for (const pitch of pitches) expanded.push(pitch + oct * 12)
+          }
+          if (p.style === 'down') expanded.reverse()
+
+          for (let i = 0; i < expanded.length; i++) {
+            arpNotes.push({
+              id: chord[0].id + '_arp_' + i,
+              pitch: expanded[i],
+              startBeat: cursor,
+              durationBeats: p.rate * p.gate,
+              velocity: chord[0].velocity,
+            })
+            cursor += p.rate
+          }
+        }
+        result = arpNotes
+      }
+    }
+    return result
   }
 
   private _scheduleArrangementClip(clip: AudioClip, buf: AudioBuffer, now: number, contextNow: number) {

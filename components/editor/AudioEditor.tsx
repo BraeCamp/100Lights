@@ -570,7 +570,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   >×</button>
                 </div>
                 {/* Panel content */}
-                <div style={{ maxHeight: 180, overflowY: 'auto', overflowX: 'auto' }}>
+                <div style={{ maxHeight: bottomTab === 'instrument' ? 320 : 200, overflowY: 'auto', overflowX: 'auto' }}>
                   {selectedTrackId && bottomTab === 'devices'    && <DeviceChain trackId={selectedTrackId} />}
                   {selectedTrackId && bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
                   {selectedReturnId && <ReturnDeviceChain returnId={selectedReturnId} />}

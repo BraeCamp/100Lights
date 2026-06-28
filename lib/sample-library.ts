@@ -22,26 +22,40 @@ export const SAMPLE_LIBRARY: SamplePreset[] = [
 
 const C4 = 261.63
 const SR = 44100
-const DUR = 2.5
 
-type Gen = () => Promise<AudioBuffer>
+const PRESET_DURATIONS: Record<string, number> = {
+  'moog-lead':    4,
+  'supersaw':     4,
+  'juno-pad':     12,
+  'oberheim-pad': 12,
+  'glass-pad':    10,
+  'mini-bass':    4,
+  'tb303':        4,
+  'b3-organ':     12,
+  'dx7-bell':     6,
+  'strings':      12,
+  'flute':        10,
+  'tape-warm':    12,
+}
+
+type Gen = (dur: number) => Promise<AudioBuffer>
 
 const GENERATORS: Record<string, Gen> = {
 
-  'moog-lead': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'moog-lead': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const osc = ctx.createOscillator()
     osc.type = 'sawtooth'; osc.frequency.value = C4
     const filt = ctx.createBiquadFilter()
     filt.type = 'lowpass'; filt.frequency.value = 2200; filt.Q.value = 3.5
     const g = ctx.createGain(); g.gain.value = 0.7
     osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
-    osc.start(0); osc.stop(DUR)
+    osc.start(0); osc.stop(dur)
     return ctx.startRendering()
   },
 
-  'supersaw': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'supersaw': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const detunes = [-12, -6, -2, 0, 2, 6, 12]
     const g = ctx.createGain(); g.gain.value = 0.6 / detunes.length
     g.connect(ctx.destination)
@@ -53,25 +67,25 @@ const GENERATORS: Record<string, Gen> = {
       osc.type = 'sawtooth'
       osc.frequency.value = C4 * Math.pow(2, cents / 1200)
       osc.connect(filt)
-      osc.start(0); osc.stop(DUR)
+      osc.start(0); osc.stop(dur)
     }
     return ctx.startRendering()
   },
 
-  'juno-pad': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'juno-pad': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const osc = ctx.createOscillator()
     osc.type = 'square'; osc.frequency.value = C4
     const filt = ctx.createBiquadFilter()
     filt.type = 'lowpass'; filt.frequency.value = 1200; filt.Q.value = 1.5
     const g = ctx.createGain(); g.gain.value = 0.65
     osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
-    osc.start(0); osc.stop(DUR)
+    osc.start(0); osc.stop(dur)
     return ctx.startRendering()
   },
 
-  'oberheim-pad': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'oberheim-pad': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const g = ctx.createGain(); g.gain.value = 0.4
     g.connect(ctx.destination)
     const filt = ctx.createBiquadFilter()
@@ -82,13 +96,13 @@ const GENERATORS: Record<string, Gen> = {
       osc.type = 'sawtooth'
       osc.frequency.value = C4 * Math.pow(2, cents / 1200)
       osc.connect(filt)
-      osc.start(0); osc.stop(DUR)
+      osc.start(0); osc.stop(dur)
     }
     return ctx.startRendering()
   },
 
-  'glass-pad': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'glass-pad': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const g = ctx.createGain(); g.gain.value = 0.7
     g.connect(ctx.destination)
     // Fundamental + upper partials at non-integer ratios for metallic/glassy character
@@ -98,37 +112,37 @@ const GENERATORS: Record<string, Gen> = {
       osc.type = 'sine'; osc.frequency.value = C4 * ratio
       const pg = ctx.createGain(); pg.gain.value = amp
       osc.connect(pg); pg.connect(g)
-      osc.start(0); osc.stop(DUR)
+      osc.start(0); osc.stop(dur)
     }
     return ctx.startRendering()
   },
 
-  'mini-bass': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'mini-bass': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const osc = ctx.createOscillator()
     osc.type = 'square'; osc.frequency.value = C4 / 2  // one octave down for bass feel
     const filt = ctx.createBiquadFilter()
     filt.type = 'lowpass'; filt.frequency.value = 350; filt.Q.value = 1
     const g = ctx.createGain(); g.gain.value = 0.75
     osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
-    osc.start(0); osc.stop(DUR)
+    osc.start(0); osc.stop(dur)
     return ctx.startRendering()
   },
 
-  'tb303': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'tb303': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const osc = ctx.createOscillator()
     osc.type = 'sawtooth'; osc.frequency.value = C4 / 2
     const filt = ctx.createBiquadFilter()
     filt.type = 'lowpass'; filt.frequency.value = 800; filt.Q.value = 10
     const g = ctx.createGain(); g.gain.value = 0.65
     osc.connect(filt); filt.connect(g); g.connect(ctx.destination)
-    osc.start(0); osc.stop(DUR)
+    osc.start(0); osc.stop(dur)
     return ctx.startRendering()
   },
 
-  'b3-organ': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'b3-organ': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const g = ctx.createGain(); g.gain.value = 0.7
     g.connect(ctx.destination)
     // Hammond drawbar harmonics: 16', 8', 5⅓', 4', 2⅔', 2', 1⅗', 1⅓', 1'
@@ -141,30 +155,30 @@ const GENERATORS: Record<string, Gen> = {
       osc.type = 'sine'; osc.frequency.value = C4 * ratio
       const pg = ctx.createGain(); pg.gain.value = amp
       osc.connect(pg); pg.connect(g)
-      osc.start(0); osc.stop(DUR)
+      osc.start(0); osc.stop(dur)
     }
     return ctx.startRendering()
   },
 
-  'dx7-bell': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'dx7-bell': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const carrier = ctx.createOscillator()
     carrier.type = 'sine'; carrier.frequency.value = C4
     const modulator = ctx.createOscillator()
     modulator.type = 'sine'; modulator.frequency.value = C4 * 3.5
     const modGain = ctx.createGain()
     modGain.gain.setValueAtTime(C4 * 8, 0)
-    modGain.gain.exponentialRampToValueAtTime(C4 * 0.5, DUR)
+    modGain.gain.exponentialRampToValueAtTime(C4 * 0.5, dur)
     modulator.connect(modGain); modGain.connect(carrier.frequency)
     const g = ctx.createGain(); g.gain.value = 0.7
     carrier.connect(g); g.connect(ctx.destination)
-    carrier.start(0); carrier.stop(DUR)
-    modulator.start(0); modulator.stop(DUR)
+    carrier.start(0); carrier.stop(dur)
+    modulator.start(0); modulator.stop(dur)
     return ctx.startRendering()
   },
 
-  'strings': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'strings': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const g = ctx.createGain(); g.gain.value = 0.5
     g.connect(ctx.destination)
     const filt = ctx.createBiquadFilter()
@@ -175,13 +189,13 @@ const GENERATORS: Record<string, Gen> = {
       osc.type = 'sawtooth'
       osc.frequency.value = C4 * Math.pow(2, cents / 1200)
       osc.connect(filt)
-      osc.start(0); osc.stop(DUR)
+      osc.start(0); osc.stop(dur)
     }
     return ctx.startRendering()
   },
 
-  'flute': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'flute': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const g = ctx.createGain(); g.gain.value = 0.7
     g.connect(ctx.destination)
     // Fundamental dominant, slight second harmonic, narrow bandpass peak for air
@@ -191,13 +205,13 @@ const GENERATORS: Record<string, Gen> = {
       osc.type = 'sine'; osc.frequency.value = C4 * ratio
       const pg = ctx.createGain(); pg.gain.value = amp
       osc.connect(pg); pg.connect(g)
-      osc.start(0); osc.stop(DUR)
+      osc.start(0); osc.stop(dur)
     }
     return ctx.startRendering()
   },
 
-  'tape-warm': async () => {
-    const ctx = new OfflineAudioContext(1, Math.ceil(SR * DUR), SR)
+  'tape-warm': async (dur) => {
+    const ctx = new OfflineAudioContext(1, Math.ceil(SR * dur), SR)
     const osc = ctx.createOscillator()
     osc.type = 'sawtooth'; osc.frequency.value = C4
     // Tape saturation: gentle soft-clip curve
@@ -213,7 +227,7 @@ const GENERATORS: Record<string, Gen> = {
     filt.type = 'lowpass'; filt.frequency.value = 500; filt.Q.value = 0.6
     const g = ctx.createGain(); g.gain.value = 0.7
     osc.connect(shaper); shaper.connect(filt); filt.connect(g); g.connect(ctx.destination)
-    osc.start(0); osc.stop(DUR)
+    osc.start(0); osc.stop(dur)
     return ctx.startRendering()
   },
 }
@@ -225,7 +239,8 @@ export async function getSampleBuffer(presetId: string): Promise<AudioBuffer | n
   if (cache.has(presetId)) return cache.get(presetId)!
   const gen = GENERATORS[presetId]
   if (!gen) return null
-  const buf = await gen()
+  const dur = PRESET_DURATIONS[presetId] ?? 4
+  const buf = await gen(dur)
   cache.set(presetId, buf)
   return buf
 }

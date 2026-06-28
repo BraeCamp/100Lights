@@ -190,8 +190,9 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
           <div style={{ fontSize: 7, color: '#444', letterSpacing: '0.06em', textTransform: 'uppercase', textAlign: 'center' }}>Sends</div>
           {project.returnTracks.map((rt, idx) => {
-            const sendVal = track.sendAmounts?.[rt.id] ?? 0
-            const rtLabel = String.fromCharCode(65 + idx)
+            const sendVal  = track.sendAmounts?.[rt.id] ?? 0
+            const sendMode = (track.sendModes?.[rt.id] ?? 'post') as 'pre' | 'post'
+            const rtLabel  = String.fromCharCode(65 + idx)
             return (
               <div key={rt.id} style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
                 <span style={{ fontSize: 7, color: '#666', width: 8, textAlign: 'right', flexShrink: 0 }}>{rtLabel}</span>
@@ -204,6 +205,15 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
                   }}
                   format={v => `${Math.round(v * 100)}%`}
                 />
+                <button
+                  title={`${sendMode === 'pre' ? 'Pre' : 'Post'}-fader send — click to toggle`}
+                  onClick={() => {
+                    const next = sendMode === 'pre' ? 'post' : 'pre'
+                    dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendModes: { ...(track.sendModes ?? {}), [rt.id]: next } } })
+                    engine.setSendAmount(track.id, rt.id, sendVal)
+                  }}
+                  style={{ fontSize: 6, padding: '1px 2px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${sendMode === 'pre' ? 'var(--accent)' : 'var(--border)'}`, background: sendMode === 'pre' ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)', color: sendMode === 'pre' ? 'var(--accent)' : 'var(--text-muted)', lineHeight: 1, flexShrink: 0 }}
+                >{sendMode === 'pre' ? 'PRE' : 'PST'}</button>
               </div>
             )
           })}
@@ -285,16 +295,23 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
         <span style={{ fontSize: 8, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{db}dB</span>
       </div>
 
-      {/* Mute button */}
-      <button
-        onClick={() => {
-          const next = !rt.mute
-          dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { mute: next } })
-          engine.setReturnVolume(rt.id, next ? 0 : rt.volume)
-        }}
-        style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: rt.mute ? '#d97706' : 'var(--bg-surface)', color: rt.mute ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
-        title="Mute return"
-      >M</button>
+      {/* Mute / Solo-safe row */}
+      <div style={{ display: 'flex', gap: 3 }}>
+        <button
+          onClick={() => {
+            const next = !rt.mute
+            dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { mute: next } })
+            engine.setReturnVolume(rt.id, next ? 0 : rt.volume)
+          }}
+          style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: rt.mute ? '#d97706' : 'var(--bg-surface)', color: rt.mute ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
+          title="Mute return"
+        >M</button>
+        <button
+          onClick={() => dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { soloSafe: !rt.soloSafe } })}
+          style={{ width: 24, height: 18, fontSize: 8, borderRadius: 3, border: `1px solid ${rt.soloSafe ? '#a78bfa' : 'var(--border)'}`, background: rt.soloSafe ? 'rgba(167,139,250,0.18)' : 'var(--bg-surface)', color: rt.soloSafe ? '#a78bfa' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
+          title="Solo-safe: keep this return audible during track solos"
+        >SS</button>
+      </div>
 
       {/* FX toggle */}
       <button
