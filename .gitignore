@@ -17,8 +17,13 @@
 /.next/
 /out/
 
-# production
-/build
+# next.js production output (distinct from /build which holds app icons)
+/.next/export
+
+# electron — compiled output and installers
+/dist-electron/
+/electron/dist/
+/electron/node_modules/
 
 # misc
 .DS_Store

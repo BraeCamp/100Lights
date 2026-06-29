@@ -1,0 +1,122 @@
+{
+  "name": "100lights-desktop",
+  "version": "0.1.0",
+  "description": "100Lights — Professional Audio & Video Editing",
+  "main": "dist/main.js",
+  "author": {
+    "name": "Brae Campbell",
+    "email": "braedancampbell@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "NODE_ENV=development electron .",
+    "build": "tsc -p tsconfig.json",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:all": "npm run build && electron-builder --mac --win"
+  },
+  "dependencies": {
+    "electron-log": "^5.2.4",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^2.5.0",
+    "@types/node": "^20.0.0",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3"
+  },
+  "build": {
+    "appId": "com.100lights.app",
+    "productName": "100Lights",
+    "copyright": "Copyright © 2026 100Lights",
+    "directories": {
+      "output": "../dist-electron",
+      "buildResources": "../build"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "../build/icons/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "../build/entitlements.mac.plist",
+      "entitlementsInherit": "../build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Install 100Lights",
+      "background": "../build/dmg-background.png",
+      "icon": "../build/icons/icon.icns",
+      "iconSize": 100,
+      "contents": [
+        {
+          "x": 380,
+          "y": 240,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 140,
+          "y": 240,
+          "type": "file"
+        }
+      ]
+    },
+    "win": {
+      "icon": "../build/icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "installerIcon": "../build/icons/icon.ico",
+      "uninstallerIcon": "../build/icons/icon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "BraeCamp",
+        "repo": "100Lights",
+        "releaseType": "release"
+      }
+    ],
+    "afterSign": "scripts/notarize.js"
+  },
+  "allowScripts": {
+    "electron@34.5.8": true
+  }
+}
