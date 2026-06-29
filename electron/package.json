@@ -46,39 +46,17 @@
       "entitlements": "../build/entitlements.mac.plist",
       "entitlementsInherit": "../build/entitlements.mac.plist",
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
+        { "target": "dmg", "arch": ["x64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
       ]
     },
     "dmg": {
       "title": "Install 100Lights",
-      "background": "../build/dmg-background.png",
       "icon": "../build/icons/icon.icns",
       "iconSize": 100,
       "contents": [
-        {
-          "x": 380,
-          "y": 240,
-          "type": "link",
-          "path": "/Applications"
-        },
-        {
-          "x": 140,
-          "y": 240,
-          "type": "file"
-        }
+        { "x": 380, "y": 240, "type": "link", "path": "/Applications" },
+        { "x": 140, "y": 240, "type": "file" }
       ]
     },
     "win": {
