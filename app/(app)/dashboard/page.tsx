@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useUser } from '@clerk/nextjs'
 import {
-  Film, AudioLines, FileText, Newspaper, PanelsTopBottom,
+  Film, AudioLines,
   ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X,
   Star, Pencil, ExternalLink, Clock,
 } from 'lucide-react'
@@ -15,9 +15,6 @@ import { MODULE_DEFS } from '@/lib/editor-types'
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
-  transcript: FileText,
-  content: Newspaper,
-  storyboard: PanelsTopBottom,
 }
 
 interface ProjectSummary {

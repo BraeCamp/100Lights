@@ -64,6 +64,7 @@ export interface ProjectEditorProps {
   projectName: string
   modules?: ModuleKey[]
   allowImport?: boolean
+  audioMode?: 'music' | 'podcast'
 }
 
 interface SyncItem {
@@ -269,7 +270,7 @@ function AudioSyncModal({
 
 // ── Main component ────────────────────────────────────────────
 
-export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport }: ProjectEditorProps) {
+export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp }: ProjectEditorProps) {
   const isNewProject = !projectId
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
     isNewProject ? (moduleProp ?? ['video']) : null
@@ -282,6 +283,8 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const [audioMedia, setAudioMedia]     = useState<SerializedAudioMedia[]>([])
   const [moduleSavedAt, setModuleSavedAt] = useState<Partial<Record<ModuleKey, string>>>({})
   const [initAudioTracks, setInitAudioTracks] = useState<AudioTrack[]>([])
+  const [audioMode, setAudioMode]           = useState<'music' | 'podcast' | undefined>(audioModeProp)
+  const [podcastMeta, setPodcastMeta]       = useState<import('@/lib/project-serializer').PodcastMeta | undefined>(undefined)
   const [pendingModules, setPendingModules] = useState<ModuleKey[] | null>(null)
   const [syncItems, setSyncItems]       = useState<SyncItem[] | null>(null)
   const savedProjectId = useRef(projectId ?? crypto.randomUUID())
@@ -299,6 +302,8 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
         setOutputs(deserializeOutputs(data.outputs))
         setAudioMedia(data.audioMedia ?? [])
         setModuleSavedAt(data.moduleSavedAt ?? {})
+        if (data.audioMode) setAudioMode(data.audioMode)
+        if (data.podcastMeta) setPodcastMeta(data.podcastMeta)
         // Resolve audio media to playable URLs before AudioEditor mounts
         if (data.audioMedia?.length) {
           const tracks = await resolveAudioMediaToTracks(data.audioMedia)
@@ -320,6 +325,8 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     modules?: ModuleKey[]
     audioMedia?: SerializedAudioMedia[]
     moduleSavedAt?: Partial<Record<ModuleKey, string>>
+    audioMode?: 'music' | 'podcast'
+    podcastMeta?: import('@/lib/project-serializer').PodcastMeta
   }) {
     const name    = patch.name    ?? localName
     const outs    = patch.outputs ?? outputs
@@ -348,6 +355,8 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       audioMedia:  am,
       moduleSavedAt: msat,
       modules:     mods,
+      audioMode:   patch.audioMode ?? savedData?.audioMode,
+      podcastMeta: patch.podcastMeta ?? savedData?.podcastMeta,
     }
 
     if (isDemo) return
@@ -462,7 +471,10 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   }
 
   // ── AudioEditor save callback ──────────────────────────────
-  async function handleAudioSave(tracks: AudioTrack[]) {
+  async function handleAudioSave(
+    tracks: AudioTrack[],
+    meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: import('@/lib/project-serializer').PodcastMeta },
+  ) {
     const now = new Date().toISOString()
     const serialized: SerializedAudioMedia[] = tracks
       .filter(t => !!t.r2Key)
@@ -474,9 +486,13 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
         r2Key:       t.r2Key!,
         savedAt:     now,
       }))
+    if (meta?.audioMode)   setAudioMode(meta.audioMode)
+    if (meta?.podcastMeta) setPodcastMeta(meta.podcastMeta)
     await save({
       audioMedia: serialized,
       moduleSavedAt: { audio: now },
+      audioMode: meta?.audioMode,
+      podcastMeta: meta?.podcastMeta,
     })
   }
 
@@ -488,8 +504,8 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   // ── Module flags ──────────────────────────────────────────
   const hasVideo      = activeModules.includes('video')
   const hasAudio      = activeModules.includes('audio')
-  const hasContent    = activeModules.includes('content')
-  const hasTranscript = activeModules.includes('transcript')
+  const hasContent    = (activeModules as string[]).includes('content')
+  const hasTranscript = (activeModules as string[]).includes('transcript')
 
   // ── Props factories ───────────────────────────────────────
 
@@ -529,6 +545,8 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onProjectNameCommit: commitName,
     onSave: handleAudioSave,
     initialTracks: initAudioTracks,
+    audioMode,
+    initialPodcastMeta: podcastMeta,
     ...sharedModuleProps,
   }
 

@@ -769,7 +769,7 @@ export default function VideoEditor({
   const isAudioOnly = mediaItems.length > 0 && mediaItems.every(m => m.contentType === 'audio')
   const hasVideo      = activeModules.includes('video')
   const hasAudio      = activeModules.includes('audio')
-  const hasStoryboard = activeModules.includes('storyboard')
+  const hasStoryboard = (activeModules as string[]).includes('storyboard')
 
   // Interpolate speed from a clip's velocity curve keyframes
   function interpSpeedRamp(points: Array<{ t: number; speed: number }>, t: number): number {

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, FileText, Newspaper, PanelsTopBottom } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -18,9 +18,6 @@ interface Usage {
 const APP_ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
-  transcript: FileText,
-  content: Newspaper,
-  storyboard: PanelsTopBottom,
 }
 
 function UsageMeter({ used, limit, label }: { used: number; limit: number; label: string }) {

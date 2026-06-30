@@ -4,7 +4,7 @@ import { useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { UserButton } from '@clerk/nextjs'
-import { Film, AudioLines, FileText, Newspaper, PanelsTopBottom, ArrowLeft, ArrowRight, Check } from 'lucide-react'
+import { Film, AudioLines, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import ProjectEditor from '@/components/editor/ProjectEditor'
@@ -12,17 +12,17 @@ import ProjectEditor from '@/components/editor/ProjectEditor'
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
-  transcript: FileText,
-  content: Newspaper,
-  storyboard: PanelsTopBottom,
 }
 
 export default function NewProjectPage() {
   const searchParams = useSearchParams()
   const moduleParam = searchParams.get('modules')
+  const audioModeParam = searchParams.get('audioMode')
   const initModule: ModuleKey | null = moduleParam
     ? (MODULE_DEFS.some(m => m.key === moduleParam.split(',')[0]) ? moduleParam.split(',')[0] as ModuleKey : null)
     : null
+  const initAudioMode: 'music' | 'podcast' | undefined =
+    audioModeParam === 'podcast' ? 'podcast' : audioModeParam === 'music' ? 'music' : undefined
   const [phase, setPhase] = useState<'pick' | 'edit'>(initModule !== null ? 'edit' : 'pick')
   const [projectName, setProjectName] = useState('')
   const [selected, setSelected] = useState<ModuleKey | null>(initModule)
@@ -38,6 +38,7 @@ export default function NewProjectPage() {
         <ProjectEditor
           projectName={projectName.trim() || 'New Project'}
           modules={selected ? [selected] : []}
+          audioMode={initAudioMode}
           allowImport
         />
       </div>

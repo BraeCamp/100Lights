@@ -8,6 +8,7 @@ import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
+import type { PodcastMeta } from '@/lib/project-serializer'
 import type { Caption } from '@/lib/types'
 import { captureAudioInput } from '@/lib/audio-capture'
 import type { AudioInputSource } from '@/lib/audio-capture'
@@ -30,14 +31,17 @@ export interface AudioEditorProps {
   currentTime?: number
   onTimeChange?: (t: number) => void
   onProjectNameCommit?: (name: string) => void
-  onSave?: (tracks: AudioTrack[]) => Promise<void>
+  onSave?: (tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta }) => Promise<void>
   hideHeader?: boolean
   activeModules?: ModuleKey[]
   onModulesChange?: (modules: ModuleKey[]) => void
+  audioMode?: 'music' | 'podcast'
+  initialPodcastMeta?: PodcastMeta
 }
 
 // ── Lazy view imports ─────────────────────────────────────────────────────────
 
+const EpisodePanel = dynamic(() => import('./daw/EpisodePanel'), { ssr: false })
 const SessionView = dynamic(() => import('./daw/SessionView'), { ssr: false })
 const ArrangementView = dynamic(() => import('./daw/ArrangementView'), { ssr: false })
 const Mixer = dynamic(() => import('./daw/Mixer'), { ssr: false })
@@ -79,16 +83,39 @@ function buildInitialProject(tracks: AudioTrack[]): DawProject {
   return { ...base, tracks: dawTracks, arrangementClips, sessionGrid }
 }
 
+function buildPodcastProject(): DawProject {
+  const base = defaultProject()
+  const tracks: DawTrack[] = [
+    { id: crypto.randomUUID(), name: 'Host',    type: 'audio', color: TRACK_COLORS[0], volume: 0.8, pan: 0, mute: false, solo: false, armed: false, height: DEFAULT_TRACK_HEIGHT, effects: [], instrument: defaultTrackInstrument('audio') },
+    { id: crypto.randomUUID(), name: 'Guest 1', type: 'audio', color: TRACK_COLORS[1], volume: 0.8, pan: 0, mute: false, solo: false, armed: false, height: DEFAULT_TRACK_HEIGHT, effects: [], instrument: defaultTrackInstrument('audio') },
+    { id: crypto.randomUUID(), name: 'Music Bed', type: 'audio', color: TRACK_COLORS[2], volume: 0.3, pan: 0, mute: false, solo: false, armed: false, height: DEFAULT_TRACK_HEIGHT, effects: [], instrument: defaultTrackInstrument('audio') },
+  ]
+  const sessionGrid: Record<string, (null)[]> = {}
+  for (const t of tracks) sessionGrid[t.id] = Array(base.scenes.length).fill(null)
+  return { ...base, tracks, sessionGrid, tempo: 0 }
+}
+
+const DEFAULT_PODCAST_META: PodcastMeta = {
+  showName: '', episodeTitle: '', episodeNumber: null, season: null, description: '', guests: '',
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function AudioEditor(props: AudioEditorProps) {
   const { initialTracks, onSave, onProjectNameCommit } = props
+  const isPodcast = props.audioMode === 'podcast'
 
   const initialProject = useMemo(
-    () => (initialTracks?.length ? buildInitialProject(initialTracks) : defaultProject()),
+    () => {
+      if (initialTracks?.length) return buildInitialProject(initialTracks)
+      if (isPodcast) return buildPodcastProject()
+      return defaultProject()
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
+
+  const [podcastMeta, setPodcastMeta] = useState<PodcastMeta>(props.initialPodcastMeta ?? DEFAULT_PODCAST_META)
 
   const [project, rawDispatch] = useReducer(reducer, initialProject)
   const engineRef = useRef<DawEngine | null>(null)
@@ -291,6 +318,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
+  const [leftTab,   setLeftTab]   = useState<'library' | 'episode'>('library')
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
@@ -327,7 +355,7 @@ export default function AudioEditor(props: AudioEditorProps) {
               r2Key: audioClip?.r2Key,
             } satisfies AudioTrack
           })
-        await onSaveRef.current(tracks)
+        await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta })
         setSaveStatus('saved')
         setTimeout(() => setSaveStatus(null), 2500)
       } catch {
@@ -479,7 +507,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-          {/* Sound Library sidebar */}
+          {/* Left sidebar: Library (always) + Episode (podcast only) */}
           <div style={{
             width: 240,
             flexShrink: 0,
@@ -489,7 +517,28 @@ export default function AudioEditor(props: AudioEditorProps) {
             overflow: 'hidden',
             background: 'var(--bg-surface)',
           }}>
-            <SoundLibraryPanel embedded={true} />
+            {isPodcast && (
+              <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)', height: 30 }}>
+                {(['library', 'episode'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setLeftTab(tab)}
+                    style={{
+                      flex: 1, background: leftTab === tab ? 'var(--bg-card)' : 'transparent',
+                      border: 'none', borderRight: tab === 'library' ? '1px solid var(--border)' : 'none',
+                      color: leftTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
+                      fontSize: 11, cursor: 'pointer', fontWeight: leftTab === tab ? 500 : 400,
+                      textTransform: 'capitalize',
+                    }}
+                  >{tab}</button>
+                ))}
+              </div>
+            )}
+            {(!isPodcast || leftTab === 'library') ? (
+              <SoundLibraryPanel embedded={true} />
+            ) : (
+              <EpisodePanel meta={podcastMeta} onChange={setPodcastMeta} />
+            )}
           </div>
 
           {/* Main area */}
@@ -505,7 +554,15 @@ export default function AudioEditor(props: AudioEditorProps) {
               padding: '0 8px',
               flexShrink: 0,
             }}>
-              {(['session', 'arrangement', 'mixer'] as DawView[]).map(v => (
+              {isPodcast && (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  padding: '2px 7px', borderRadius: 4, marginRight: 6,
+                  background: 'rgba(249,115,22,0.12)', color: '#f97316',
+                  border: '1px solid rgba(249,115,22,0.25)',
+                }}>Podcast</span>
+              )}
+              {(isPodcast ? ['arrangement', 'mixer'] as DawView[] : ['session', 'arrangement', 'mixer'] as DawView[]).map(v => (
                 <button
                   key={v}
                   onClick={() => setView(v)}

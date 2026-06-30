@@ -59,6 +59,15 @@ export interface SerializedOutput {
   captions?: Caption[]
 }
 
+export interface PodcastMeta {
+  showName: string
+  episodeTitle: string
+  episodeNumber: number | null
+  season: number | null
+  description: string
+  guests: string
+}
+
 export interface SerializedAudioMedia {
   id: string
   name: string
@@ -92,6 +101,9 @@ export interface CfProjFile {
   moduleSavedAt?: Partial<Record<ModuleKey, string>>
   // Which modules are loaded in this project (undefined = all, for backward compat)
   modules?: ModuleKey[]
+  // Audio sub-mode
+  audioMode?: 'music' | 'podcast'
+  podcastMeta?: PodcastMeta
 }
 
 // ── Serialize ────────────────────────────────────────────────

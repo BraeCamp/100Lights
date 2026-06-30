@@ -130,7 +130,7 @@ export const DEFAULT_TRACKS: Track[] = [
 
 // ── Modular project system ────────────────────────────────────
 
-export type ModuleKey = 'video' | 'audio' | 'transcript' | 'content' | 'storyboard'
+export type ModuleKey = 'video' | 'audio'
 
 export interface ModuleDef {
   key: ModuleKey
@@ -154,27 +154,6 @@ export const MODULE_DEFS: ModuleDef[] = [
     tagline: 'Full DAW — sequences, mixing, effects',
     features: ['Arrangement & Session view', 'Mixer with sends & returns', '10 DSP effects chain', 'Sample library (2178 sounds)'],
     color: '#3b82f6',
-  },
-  {
-    key: 'transcript',
-    label: 'Transcript',
-    tagline: 'AI captions, speaker detection',
-    features: ['AI transcription', 'Speaker detection', 'Inline caption editing', 'Full-text search'],
-    color: '#10b981',
-  },
-  {
-    key: 'content',
-    label: 'Content',
-    tagline: 'Articles, blogs, show notes',
-    features: ['AI article generation', 'Blog posts', 'Show notes', 'Social captions'],
-    color: '#f59e0b',
-  },
-  {
-    key: 'storyboard',
-    label: 'Storyboard',
-    tagline: 'Visual planning & scenes',
-    features: ['Scene cards', 'Chapter markers', 'Shot list', 'Visual timeline'],
-    color: '#ec4899',
   },
 ]
 

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import {
-  Film, AudioLines, FileText, Newspaper, PanelsTopBottom,
+  Film, AudioLines, Music2, Mic2,
   Plus, ArrowRight, Clock, Star, Pencil, RefreshCw, AlertCircle,
 } from 'lucide-react'
 import { MODULE_DEFS } from '@/lib/editor-types'
@@ -14,18 +14,12 @@ import type { ModuleKey } from '@/lib/editor-types'
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
-  transcript: FileText,
-  content: Newspaper,
-  storyboard: PanelsTopBottom,
 }
 
 // Per-module hero copy — distinct identity for each app
 const HERO_COPY: Record<ModuleKey, { headline: string; sub: string }> = {
-  audio:      { headline: 'Your Sound Studio',        sub: 'Compose, arrange, mix, and master — from first beat to final export.' },
-  video:      { headline: 'Your Editing Suite',       sub: 'Cut, color grade, and export. Professional tools without the bloat.' },
-  transcript: { headline: 'Your Transcript Workspace', sub: 'AI-powered captions and speaker detection, inline-editable in seconds.' },
-  content:    { headline: 'Your Content Studio',      sub: 'Turn recordings into articles, blogs, and show notes automatically.' },
-  storyboard: { headline: 'Your Visual Planner',      sub: 'Map out scenes, shots, and chapters before you shoot or edit.' },
+  audio: { headline: 'Your Sound Studio',  sub: 'Compose, arrange, mix, and master — from first beat to final export.' },
+  video: { headline: 'Your Editing Suite', sub: 'Cut, color grade, and export. Professional tools without the bloat.' },
 }
 
 interface ProjectSummary {
@@ -168,21 +162,54 @@ export default function AppPage() {
           </div>
 
           {/* CTA */}
-          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-end' }}>
-            <Link
-              href={`/new?modules=${mod.key}`}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '12px 22px', borderRadius: 10,
-                background: mod.color, color: '#fff',
-                fontSize: 13, fontWeight: 700, textDecoration: 'none',
-                boxShadow: `0 4px 20px color-mix(in srgb, ${mod.color} 35%, transparent)`,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <Plus size={15} />
-              New {mod.label} Project
-            </Link>
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+            {mod.key === 'audio' ? (
+              <>
+                <Link
+                  href="/new?modules=audio&audioMode=music"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '11px 18px', borderRadius: 10,
+                    background: mod.color, color: '#fff',
+                    fontSize: 13, fontWeight: 700, textDecoration: 'none',
+                    boxShadow: `0 4px 20px color-mix(in srgb, ${mod.color} 35%, transparent)`,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <Music2 size={14} />
+                  New Music Project
+                </Link>
+                <Link
+                  href="/new?modules=audio&audioMode=podcast"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '11px 18px', borderRadius: 10,
+                    background: 'rgba(249,115,22,0.12)', color: '#f97316',
+                    fontSize: 13, fontWeight: 700, textDecoration: 'none',
+                    border: '1px solid rgba(249,115,22,0.3)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <Mic2 size={14} />
+                  New Podcast
+                </Link>
+              </>
+            ) : (
+              <Link
+                href={`/new?modules=${mod.key}`}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '12px 22px', borderRadius: 10,
+                  background: mod.color, color: '#fff',
+                  fontSize: 13, fontWeight: 700, textDecoration: 'none',
+                  boxShadow: `0 4px 20px color-mix(in srgb, ${mod.color} 35%, transparent)`,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Plus size={15} />
+                New {mod.label} Project
+              </Link>
+            )}
           </div>
         </div>
       </div>
