@@ -26,6 +26,13 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Decode signing certificate
+        env:
+          MAC_CERT_B64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+        run: |
+          echo "$MAC_CERT_B64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          echo "CSC_LINK=$RUNNER_TEMP/certificate.p12" >> $GITHUB_ENV
+
       - name: Install electron dependencies
         working-directory: electron
         run: npm ci
@@ -37,7 +44,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          CSC_LINK: ${{ env.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run dist:mac

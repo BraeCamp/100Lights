@@ -15,6 +15,10 @@ exports.default = async function notarizing(context) {
     console.log('Skipping notarization — APPLE_ID not set')
     return
   }
+  if (!process.env.CSC_LINK && !process.env.CSC_KEYCHAIN) {
+    console.log('Skipping notarization — app was not code signed (no CSC_LINK or CSC_KEYCHAIN)')
+    return
+  }
 
   const appName = context.packager.appInfo.productFilename
   const appPath = `${context.appOutDir}/${appName}.app`
