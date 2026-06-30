@@ -15,13 +15,17 @@ exports.default = async function notarizing(context) {
     console.log('Skipping notarization — APPLE_ID not set')
     return
   }
-  if (!process.env.CSC_LINK && !process.env.CSC_KEYCHAIN) {
-    console.log('Skipping notarization — app was not code signed (no CSC_LINK or CSC_KEYCHAIN)')
-    return
-  }
 
   const appName = context.packager.appInfo.productFilename
   const appPath = `${context.appOutDir}/${appName}.app`
+
+  const { execFileSync } = require('child_process')
+  try {
+    execFileSync('codesign', ['--verify', '--deep', appPath], { stdio: 'pipe' })
+  } catch {
+    console.log('Skipping notarization — app is not code signed (signing was skipped or failed)')
+    return
+  }
 
   console.log(`Notarizing ${appPath}...`)
 
