@@ -498,13 +498,15 @@ export default function ArrangementView() {
           title="Increase waveform zoom"
         >+</button>
         <div style={{ flex: 1 }} />
-        <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
-          ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-          border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
-          background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
-          color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
-          letterSpacing: '0.04em',
-        }}>PIANO ROLL</button>
+        {audioMode !== 'podcast' && (
+          <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
+            ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
+            border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
+            background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
+            color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
+            letterSpacing: '0.04em',
+          }}>PIANO ROLL</button>
+        )}
         <button
           onClick={() => setShowExport(true)}
           title="Export project audio"

@@ -6,7 +6,7 @@ import {
   Trash2, ArrowLeft, Eye, EyeOff, Copy,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
-  Minus, Plus, Maximize2,
+  Minus, Plus, Maximize2, Circle, GripVertical,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -28,6 +28,21 @@ type RectLayer = {
   hidden?: boolean
 }
 
+type EllipseLayer = {
+  id: string
+  kind: 'ellipse'
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+  fill: string
+  opacity: number
+  strokeColor?: string
+  strokeWidth?: number
+  hidden?: boolean
+}
+
 type TextLayer = {
   id: string
   kind: 'text'
@@ -41,6 +56,7 @@ type TextLayer = {
   fontFamily?: string
   textAlign?: 'left' | 'center' | 'right'
   letterSpacing?: number
+  opacity?: number
   hidden?: boolean
 }
 
@@ -53,12 +69,13 @@ type ImageLayer = {
   width: number
   height: number
   src: string
+  opacity?: number
   hidden?: boolean
 }
 
-type Layer = RectLayer | TextLayer | ImageLayer
+type Layer = RectLayer | EllipseLayer | TextLayer | ImageLayer
 
-type Tool = 'select' | 'rect' | 'text'
+type Tool = 'select' | 'rect' | 'ellipse' | 'text'
 
 interface CanvasPreset {
   label: string
@@ -88,7 +105,7 @@ function uid() {
 }
 
 function getLayerDims(layer: Layer): { w: number; h: number } {
-  if (layer.kind === 'rect' || layer.kind === 'image') {
+  if (layer.kind === 'rect' || layer.kind === 'image' || layer.kind === 'ellipse') {
     return { w: layer.width, h: layer.height }
   }
   return {
@@ -132,25 +149,37 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
   const [editingName, setEditingName] = useState(false)
   const [localName, setLocalName] = useState(projectName)
   const [showPresets, setShowPresets] = useState(false)
+  const [showCustomSize, setShowCustomSize] = useState(false)
+  const [customW, setCustomW] = useState(1200)
+  const [customH, setCustomH] = useState(630)
   const [dragging, setDragging] = useState<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null)
-  const [drawing, setDrawing] = useState<{ startX: number; startY: number } | null>(null)
+  const [resizing, setResizing] = useState<{
+    id: string; handle: string; startX: number; startY: number
+    origX: number; origY: number; origW: number; origH: number
+    origFontSize?: number
+  } | null>(null)
+  const [drawing, setDrawing] = useState<{ startX: number; startY: number; tool: 'rect' | 'ellipse' } | null>(null)
   const [drawPreview, setDrawPreview] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [bgColor, setBgColor] = useState('#ffffff')
   const [showBgPicker, setShowBgPicker] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [scale, setScale] = useState(1)
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
+  const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasAreaRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const exportCanvasRef = useRef<HTMLCanvasElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const dragLayerIdRef = useRef<string | null>(null)
 
   const undoHistory = useRef<Layer[][]>([])
   const redoHistory = useRef<Layer[][]>([])
 
   const rectCountRef = useRef(0)
+  const ellipseCountRef = useRef(0)
   const textCountRef = useRef(0)
   const imageCountRef = useRef(0)
 
@@ -171,6 +200,21 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
     if (canvasAreaRef.current) ro.observe(canvasAreaRef.current)
     return () => ro.disconnect()
   }, [canvasW, canvasH])
+
+  // ── Focus contenteditable when entering text edit mode ────
+
+  useEffect(() => {
+    if (!editingTextId) return
+    const el = document.querySelector(`[data-edit-id="${editingTextId}"]`) as HTMLDivElement | null
+    if (!el) return
+    el.focus()
+    const range = document.createRange()
+    const sel = window.getSelection()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  }, [editingTextId])
 
   // ── History ────────────────────────────────────────────────
 
@@ -216,6 +260,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
     const newId = uid()
     let newName = selected.name
     if (selected.kind === 'rect') newName = `Rectangle ${++rectCountRef.current}`
+    else if (selected.kind === 'ellipse') newName = `Ellipse ${++ellipseCountRef.current}`
     else if (selected.kind === 'text') newName = `Text ${++textCountRef.current}`
     else newName = `Image ${++imageCountRef.current}`
     const newLayer: Layer = { ...selected, id: newId, x: selected.x + 20, y: selected.y + 20, name: newName } as Layer
@@ -237,9 +282,9 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
   // ── Tool: pointer events on the canvas ────────────────────
 
   function onCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (tool === 'rect') {
+    if (tool === 'rect' || tool === 'ellipse') {
       const { x, y } = canvasCoords(e)
-      setDrawing({ startX: x, startY: y })
+      setDrawing({ startX: x, startY: y, tool })
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       setSelectedId(null)
       return
@@ -252,8 +297,9 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
       const layer: TextLayer = {
         id, kind: 'text', name,
         x, y,
-        text: 'Text', fontSize: 32, color: '#ffffff', fontWeight: '600',
+        text: 'Text', fontSize: 32, color: '#1a1a1a', fontWeight: '600',
         fontFamily: 'system-ui, sans-serif', textAlign: 'left', letterSpacing: 0,
+        opacity: 100,
       }
       setLayers(ls => [...ls, layer])
       setSelectedId(id)
@@ -276,16 +322,28 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
   function onCanvasPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     if (drawing && drawPreview && drawPreview.w > 4 && drawPreview.h > 4) {
       const id = uid()
-      const name = `Rectangle ${++rectCountRef.current}`
       saveHistory()
-      const layer: RectLayer = {
-        id, kind: 'rect', name,
-        x: drawPreview.x, y: drawPreview.y,
-        width: drawPreview.w, height: drawPreview.h,
-        fill: '#ec4899', opacity: 100,
-        borderRadius: 0, strokeColor: '#000000', strokeWidth: 0,
+      if (drawing.tool === 'rect') {
+        const name = `Rectangle ${++rectCountRef.current}`
+        const layer: RectLayer = {
+          id, kind: 'rect', name,
+          x: drawPreview.x, y: drawPreview.y,
+          width: drawPreview.w, height: drawPreview.h,
+          fill: '#ec4899', opacity: 100,
+          borderRadius: 0, strokeColor: '#000000', strokeWidth: 0,
+        }
+        setLayers(ls => [...ls, layer])
+      } else {
+        const name = `Ellipse ${++ellipseCountRef.current}`
+        const layer: EllipseLayer = {
+          id, kind: 'ellipse', name,
+          x: drawPreview.x, y: drawPreview.y,
+          width: drawPreview.w, height: drawPreview.h,
+          fill: '#ec4899', opacity: 100,
+          strokeColor: '#000000', strokeWidth: 0,
+        }
+        setLayers(ls => [...ls, layer])
       }
-      setLayers(ls => [...ls, layer])
       setSelectedId(id)
       setTool('select')
     }
@@ -299,6 +357,14 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
     if (tool !== 'select') return
     e.stopPropagation()
     setSelectedId(id)
+    // Double-click on text layer enters inline edit mode
+    if (e.detail >= 2) {
+      const layer = layers.find(l => l.id === id)
+      if (layer?.kind === 'text') {
+        setEditingTextId(id)
+        return
+      }
+    }
     const layer = layers.find(l => l.id === id)
     if (!layer) return
     ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
@@ -315,6 +381,64 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
 
   function onLayerPointerUp() {
     setDragging(null)
+  }
+
+  // ── Resize handles ─────────────────────────────────────────
+
+  function onResizeHandlePointerDown(e: React.PointerEvent<HTMLDivElement>, handle: string) {
+    if (tool !== 'select') return
+    e.stopPropagation()
+    if (!selected) return
+    ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+    saveHistory()
+    const { w, h } = getLayerDims(selected)
+    setResizing({
+      id: selected.id,
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: selected.x,
+      origY: selected.y,
+      origW: w,
+      origH: h,
+      origFontSize: selected.kind === 'text' ? selected.fontSize : undefined,
+    })
+  }
+
+  function onResizePointerMove(e: React.PointerEvent) {
+    if (!resizing) return
+    const dx = (e.clientX - resizing.startX) / (scale * zoom)
+    const dy = (e.clientY - resizing.startY) / (scale * zoom)
+
+    let newX = resizing.origX
+    let newY = resizing.origY
+    let newW = resizing.origW
+    let newH = resizing.origH
+
+    const h = resizing.handle
+    if (h === 'tl' || h === 'ml' || h === 'bl') { newX = resizing.origX + dx; newW = resizing.origW - dx }
+    if (h === 'tr' || h === 'mr' || h === 'br') { newW = resizing.origW + dx }
+    if (h === 'tl' || h === 'tc' || h === 'tr') { newY = resizing.origY + dy; newH = resizing.origH - dy }
+    if (h === 'bl' || h === 'bc' || h === 'br') { newH = resizing.origH + dy }
+
+    newW = Math.max(4, newW)
+    newH = Math.max(4, newH)
+
+    if (resizing.origFontSize !== undefined) {
+      // text layer — resize by changing fontSize proportionally
+      const ratio = newH / resizing.origH
+      const newFontSize = Math.max(8, Math.round(resizing.origFontSize * ratio))
+      updateLayer(resizing.id, { x: Math.round(newX), y: Math.round(newY), fontSize: newFontSize } as Partial<Layer>)
+    } else {
+      updateLayer(resizing.id, {
+        x: Math.round(newX), y: Math.round(newY),
+        width: Math.round(newW), height: Math.round(newH),
+      } as Partial<Layer>)
+    }
+  }
+
+  function onResizePointerUp() {
+    setResizing(null)
   }
 
   // ── Image upload ───────────────────────────────────────────
@@ -337,7 +461,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
         const layer: ImageLayer = {
           id, kind: 'image', name,
           x: Math.round((canvasW - w) / 2), y: Math.round((canvasH - h) / 2),
-          width: w, height: h, src,
+          width: w, height: h, src, opacity: 100,
         }
         setLayers(ls => [...ls, layer])
         setSelectedId(id)
@@ -387,14 +511,33 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
             ctx.strokeRect(layer.x, layer.y, layer.width, layer.height)
           }
         }
+      } else if (layer.kind === 'ellipse') {
+        ctx.globalAlpha = (layer.opacity ?? 100) / 100
+        const cx = layer.x + layer.width / 2
+        const cy = layer.y + layer.height / 2
+        const rx = layer.width / 2
+        const ry = layer.height / 2
+        ctx.fillStyle = layer.fill
+        ctx.beginPath()
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+        ctx.fill()
+        const sw = layer.strokeWidth ?? 0
+        if (sw > 0) {
+          ctx.strokeStyle = layer.strokeColor ?? '#000000'
+          ctx.lineWidth = sw
+          ctx.beginPath()
+          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+          ctx.stroke()
+        }
       } else if (layer.kind === 'text') {
-        ctx.globalAlpha = 1
+        ctx.globalAlpha = (layer.opacity ?? 100) / 100
         ctx.fillStyle = layer.color
         const ff = layer.fontFamily ?? 'system-ui, sans-serif'
         ctx.font = `${layer.fontWeight} ${layer.fontSize}px ${ff}`
         ctx.textAlign = layer.textAlign ?? 'left'
         ctx.fillText(layer.text, layer.x, layer.y + layer.fontSize)
       } else if (layer.kind === 'image') {
+        ctx.globalAlpha = (layer.opacity ?? 100) / 100
         const img = new window.Image()
         img.src = layer.src
         ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height)
@@ -421,9 +564,11 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
+      if ((e.target as HTMLElement).isContentEditable) return
       if (e.key === 'Backspace' || e.key === 'Delete') deleteSelected()
       if (e.key === 'v' || e.key === 'Escape') setTool('select')
       if (e.key === 'r') setTool('rect')
+      if (e.key === 'e') setTool('ellipse')
       if (e.key === 't') setTool('text')
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
         e.preventDefault()
@@ -488,7 +633,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
       <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {/* Layer type label */}
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-          {selected.kind === 'rect' ? 'Rectangle' : selected.kind === 'text' ? 'Text' : 'Image'}
+          {selected.kind === 'rect' ? 'Rectangle' : selected.kind === 'ellipse' ? 'Ellipse' : selected.kind === 'text' ? 'Text' : 'Image'}
           {' '}<span style={{ fontWeight: 400, textTransform: 'none' }}>— {selected.name}</span>
         </div>
 
@@ -504,7 +649,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
             <input type="number" value={selected.y} onChange={e => updateLayer(selected.id, { y: Number(e.target.value) } as Partial<Layer>)} style={inputStyle} />
           </label>
         </div>
-        {(selected.kind === 'rect' || selected.kind === 'image') && (
+        {(selected.kind === 'rect' || selected.kind === 'image' || selected.kind === 'ellipse') && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>W</span>
@@ -540,6 +685,49 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                 />
               </label>
             </div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Opacity ({selected.opacity}%)</span>
+              <input
+                type="range" min={0} max={100} value={selected.opacity}
+                onChange={e => updateLayer(selected.id, { opacity: Number(e.target.value) } as Partial<Layer>)}
+                style={{ accentColor: ACCENT }}
+              />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Stroke color</span>
+                <input
+                  type="color"
+                  value={selected.strokeColor ?? '#000000'}
+                  onChange={e => updateLayer(selected.id, { strokeColor: e.target.value } as Partial<Layer>)}
+                  style={{ ...inputStyle, padding: 2, height: 30, cursor: 'pointer' }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Stroke width</span>
+                <input
+                  type="number" min={0} max={100}
+                  value={selected.strokeWidth ?? 0}
+                  onChange={e => updateLayer(selected.id, { strokeWidth: Number(e.target.value) } as Partial<Layer>)}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+          </>
+        )}
+
+        {/* Appearance — ellipse */}
+        {selected.kind === 'ellipse' && (
+          <>
+            {sectionLabel('Appearance')}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Fill</span>
+              <input
+                type="color" value={selected.fill}
+                onChange={e => updateLayer(selected.id, { fill: e.target.value } as Partial<Layer>)}
+                style={{ ...inputStyle, padding: 2, height: 30, cursor: 'pointer' }}
+              />
+            </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Opacity ({selected.opacity}%)</span>
               <input
@@ -611,6 +799,14 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
               />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Opacity ({selected.opacity ?? 100}%)</span>
+              <input
+                type="range" min={0} max={100} value={selected.opacity ?? 100}
+                onChange={e => updateLayer(selected.id, { opacity: Number(e.target.value) } as Partial<Layer>)}
+                style={{ accentColor: ACCENT }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Weight</span>
               <select
                 value={selected.fontWeight}
@@ -654,6 +850,21 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                   </button>
                 ))}
               </div>
+            </label>
+          </>
+        )}
+
+        {/* Opacity — image */}
+        {selected.kind === 'image' && (
+          <>
+            {sectionLabel('Appearance')}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Opacity ({selected.opacity ?? 100}%)</span>
+              <input
+                type="range" min={0} max={100} value={selected.opacity ?? 100}
+                onChange={e => updateLayer(selected.id, { opacity: Number(e.target.value) } as Partial<Layer>)}
+                style={{ accentColor: ACCENT }}
+              />
             </label>
           </>
         )}
@@ -859,7 +1070,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
               {PRESETS.map(p => (
                 <button
                   key={p.label}
-                  onClick={() => { setCanvasW(p.width); setCanvasH(p.height); setShowPresets(false) }}
+                  onClick={() => { setCanvasW(p.width); setCanvasH(p.height); setShowPresets(false); setShowCustomSize(false) }}
                   style={{
                     display: 'block', width: '100%', textAlign: 'left',
                     padding: '7px 14px', fontSize: 12, background: 'transparent',
@@ -871,6 +1082,54 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                   {p.label}
                 </button>
               ))}
+              <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+              <button
+                onClick={() => { setCustomW(canvasW); setCustomH(canvasH); setShowCustomSize(c => !c) }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '7px 14px', fontSize: 12, background: 'transparent',
+                  border: 'none', color: 'var(--text-primary)', cursor: 'pointer',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
+                onMouseLeave={e => (e.currentTarget.style.background = '')}
+              >
+                Custom…
+              </button>
+              {showCustomSize && (
+                <div style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="number" min={1} max={8000} value={customW}
+                      onChange={e => setCustomW(Number(e.target.value))}
+                      style={{ ...inputStyle, width: 72 }}
+                      placeholder="W"
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>×</span>
+                    <input
+                      type="number" min={1} max={8000} value={customH}
+                      onChange={e => setCustomH(Number(e.target.value))}
+                      style={{ ...inputStyle, width: 72 }}
+                      placeholder="H"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (customW > 0 && customH > 0) {
+                        setCanvasW(customW)
+                        setCanvasH(customH)
+                        setShowPresets(false)
+                        setShowCustomSize(false)
+                      }
+                    }}
+                    style={{
+                      padding: '5px 10px', borderRadius: 6, fontSize: 12,
+                      background: ACCENT, color: '#fff', border: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    Apply
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -931,6 +1190,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
           }}>
             {toolBtn('select', MousePointer2, 'Select (V)')}
             {toolBtn('rect', Square, 'Rectangle (R)')}
+            {toolBtn('ellipse', Circle, 'Ellipse (E)')}
             {toolBtn('text', Type, 'Text (T)')}
             {iconBtn('Upload image', ImageIcon, () => fileInputRef.current?.click())}
           </div>
@@ -953,22 +1213,61 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
             )}
             {[...layers].reverse().map(layer => {
               const isActive = layer.id === selectedId
+              const isDragOver = dragOverLayerId === layer.id
               return (
                 <div
                   key={layer.id}
+                  draggable
+                  onDragStart={e => {
+                    dragLayerIdRef.current = layer.id
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={e => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    setDragOverLayerId(layer.id)
+                  }}
+                  onDragLeave={() => setDragOverLayerId(null)}
+                  onDrop={e => {
+                    e.preventDefault()
+                    setDragOverLayerId(null)
+                    if (!dragLayerIdRef.current || dragLayerIdRef.current === layer.id) return
+                    saveHistory()
+                    const fromId = dragLayerIdRef.current
+                    setLayers(ls => {
+                      const fromIdx = ls.findIndex(l => l.id === fromId)
+                      const toIdx = ls.findIndex(l => l.id === layer.id)
+                      if (fromIdx === -1 || toIdx === -1) return ls
+                      const next = [...ls]
+                      const [moved] = next.splice(fromIdx, 1)
+                      next.splice(toIdx, 0, moved)
+                      return next
+                    })
+                    dragLayerIdRef.current = null
+                  }}
+                  onDragEnd={() => setDragOverLayerId(null)}
                   onClick={() => setSelectedId(layer.id)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
+                    display: 'flex', alignItems: 'center', gap: 4,
                     padding: '5px 8px', cursor: 'pointer',
                     background: isActive ? `color-mix(in srgb, ${ACCENT} 12%, transparent)` : 'transparent',
                     borderLeft: isActive ? `2px solid ${ACCENT}` : '2px solid transparent',
+                    borderTop: isDragOver ? `2px solid ${ACCENT}` : '2px solid transparent',
                   }}
                   onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'var(--border)' }}
                   onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
                 >
+                  <span
+                    title="Drag to reorder"
+                    style={{ color: 'var(--text-muted)', flexShrink: 0, display: 'flex', cursor: 'grab', opacity: 0.5 }}
+                  >
+                    <GripVertical size={10} />
+                  </span>
                   <span style={{ color: 'var(--text-muted)', flexShrink: 0, display: 'flex' }}>
                     {layer.kind === 'rect'
                       ? <Square size={11} />
+                      : layer.kind === 'ellipse'
+                      ? <Circle size={11} />
                       : layer.kind === 'text'
                       ? <Type size={11} />
                       : <ImageIcon size={11} />}
@@ -1008,7 +1307,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
             flex: 1, overflow: 'hidden', position: 'relative',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: '#1a1a1f',
-            cursor: tool === 'rect' ? 'crosshair' : tool === 'text' ? 'text' : 'default',
+            cursor: (tool === 'rect' || tool === 'ellipse') ? 'crosshair' : tool === 'text' ? 'text' : 'default',
           }}
           onClick={closeAllDropdowns}
         >
@@ -1023,8 +1322,8 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
               flexShrink: 0,
             }}
             onPointerDown={onCanvasPointerDown}
-            onPointerMove={e => { onCanvasPointerMove(e); onLayerPointerMove(e) }}
-            onPointerUp={e => { onCanvasPointerUp(e); onLayerPointerUp() }}
+            onPointerMove={e => { onCanvasPointerMove(e); onLayerPointerMove(e); onResizePointerMove(e) }}
+            onPointerUp={e => { onCanvasPointerUp(e); onLayerPointerUp(); onResizePointerUp() }}
           >
             {/* Canvas background */}
             <div style={{
@@ -1065,7 +1364,8 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                 )
               }
 
-              if (layer.kind === 'text') {
+              if (layer.kind === 'ellipse') {
+                const sw = layer.strokeWidth ?? 0
                 return (
                   <div
                     key={layer.id}
@@ -1073,16 +1373,79 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                     style={{
                       position: 'absolute',
                       left: layer.x, top: layer.y,
-                      fontSize: layer.fontSize,
-                      fontWeight: layer.fontWeight,
-                      color: layer.color,
-                      fontFamily: layer.fontFamily ?? 'system-ui, sans-serif',
-                      textAlign: layer.textAlign ?? 'left',
-                      letterSpacing: layer.letterSpacing ? `${layer.letterSpacing}px` : undefined,
-                      whiteSpace: 'pre',
+                      width: layer.width, height: layer.height,
+                      background: layer.fill,
+                      opacity: layer.opacity / 100,
+                      borderRadius: '50%',
+                      border: sw > 0 ? `${sw}px solid ${layer.strokeColor ?? '#000000'}` : undefined,
+                      boxSizing: 'border-box',
                       cursor: tool === 'select' ? 'move' : undefined,
                       userSelect: 'none',
-                      lineHeight: 1.2,
+                      ...selStyle,
+                    }}
+                  />
+                )
+              }
+
+              if (layer.kind === 'text') {
+                const isEditing = editingTextId === layer.id
+                const textStyle: React.CSSProperties = {
+                  position: 'absolute',
+                  left: layer.x, top: layer.y,
+                  fontSize: layer.fontSize,
+                  fontWeight: layer.fontWeight,
+                  color: layer.color,
+                  fontFamily: layer.fontFamily ?? 'system-ui, sans-serif',
+                  textAlign: layer.textAlign ?? 'left',
+                  letterSpacing: layer.letterSpacing ? `${layer.letterSpacing}px` : undefined,
+                  whiteSpace: 'pre',
+                  lineHeight: 1.2,
+                  opacity: (layer.opacity ?? 100) / 100,
+                }
+                if (isEditing) {
+                  return (
+                    <div
+                      key={layer.id}
+                      contentEditable
+                      suppressContentEditableWarning
+                      data-edit-id={layer.id}
+                      onPointerDown={e => e.stopPropagation()}
+                      onBlur={e => {
+                        updateLayer(layer.id, { text: e.currentTarget.textContent ?? '' } as Partial<Layer>)
+                        setEditingTextId(null)
+                      }}
+                      onKeyDown={e => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          ;(e.currentTarget as HTMLDivElement).blur()
+                        }
+                        if (e.key === 'Escape') {
+                          setEditingTextId(null)
+                          ;(e.currentTarget as HTMLDivElement).blur()
+                        }
+                      }}
+                      style={{
+                        ...textStyle,
+                        cursor: 'text',
+                        userSelect: 'text',
+                        minWidth: 20,
+                        outline: `2px solid ${ACCENT}`,
+                        outlineOffset: 2,
+                      }}
+                    >
+                      {layer.text}
+                    </div>
+                  )
+                }
+                return (
+                  <div
+                    key={layer.id}
+                    onPointerDown={e => onLayerPointerDown(e, layer.id)}
+                    style={{
+                      ...textStyle,
+                      cursor: tool === 'select' ? 'move' : undefined,
+                      userSelect: 'none',
                       ...selStyle,
                     }}
                   >
@@ -1105,6 +1468,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                       left: layer.x, top: layer.y,
                       width: layer.width, height: layer.height,
                       objectFit: 'fill',
+                      opacity: (layer.opacity ?? 100) / 100,
                       cursor: tool === 'select' ? 'move' : undefined,
                       userSelect: 'none',
                       display: 'block',
@@ -1117,7 +1481,46 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
               return null
             })}
 
-            {/* Draw preview rect */}
+            {/* Resize handles — rendered outside layer stack, inside wrapper */}
+            {selected && (() => {
+              const { w: lw, h: lh } = getLayerDims(selected)
+              const hs = 8
+              const half = hs / 2
+              type HandleDef = { id: string; left: number; top: number; cursor: string }
+              const corners: HandleDef[] = [
+                { id: 'tl', left: selected.x - half,          top: selected.y - half,          cursor: 'nw-resize' },
+                { id: 'tr', left: selected.x + lw - half,     top: selected.y - half,          cursor: 'ne-resize' },
+                { id: 'bl', left: selected.x - half,          top: selected.y + lh - half,     cursor: 'sw-resize' },
+                { id: 'br', left: selected.x + lw - half,     top: selected.y + lh - half,     cursor: 'se-resize' },
+              ]
+              const edges: HandleDef[] = [
+                { id: 'tc', left: selected.x + lw / 2 - half, top: selected.y - half,          cursor: 'n-resize' },
+                { id: 'bc', left: selected.x + lw / 2 - half, top: selected.y + lh - half,     cursor: 's-resize' },
+                { id: 'ml', left: selected.x - half,          top: selected.y + lh / 2 - half, cursor: 'w-resize' },
+                { id: 'mr', left: selected.x + lw - half,     top: selected.y + lh / 2 - half, cursor: 'e-resize' },
+              ]
+              const handles = selected.kind === 'text' ? corners : [...corners, ...edges]
+              return handles.map(hd => (
+                <div
+                  key={hd.id}
+                  onPointerDown={e => onResizeHandlePointerDown(e, hd.id)}
+                  style={{
+                    position: 'absolute',
+                    left: hd.left, top: hd.top,
+                    width: hs, height: hs,
+                    background: '#ffffff',
+                    border: `1.5px solid ${ACCENT}`,
+                    borderRadius: 1,
+                    cursor: hd.cursor,
+                    zIndex: 100,
+                    boxSizing: 'border-box',
+                    pointerEvents: 'all',
+                  }}
+                />
+              ))
+            })()}
+
+            {/* Draw preview */}
             {drawPreview && (
               <div style={{
                 position: 'absolute',
@@ -1125,6 +1528,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                 width: drawPreview.w, height: drawPreview.h,
                 border: `2px dashed ${ACCENT}`,
                 background: `color-mix(in srgb, ${ACCENT} 15%, transparent)`,
+                borderRadius: drawing?.tool === 'ellipse' ? '50%' : 0,
                 pointerEvents: 'none',
               }} />
             )}

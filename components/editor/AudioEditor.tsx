@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
-import { DawContext, reducer, makeAudioClip, migrateProject } from '@/lib/daw-state'
+import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
@@ -50,6 +50,78 @@ const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
 const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
+
+// ── Podcast Setup Panel ───────────────────────────────────────────────────────
+
+function PodcastSetupPanel() {
+  const { project, dispatch } = useDaw()
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
+  const [openTrackId,  setOpenTrackId]  = useState<string | null>(null)
+
+  useEffect(() => {
+    navigator.mediaDevices?.enumerateDevices().then(devs => {
+      setAudioDevices(devs.filter(d => d.kind === 'audioinput'))
+    }).catch(() => {})
+  }, [])
+
+  const voiceTracks = project.tracks.filter(
+    t => t.type === 'audio' && (t.name === 'Host' || /^Guest \d+$/.test(t.name))
+  )
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
+        Recording Setup
+      </div>
+      {voiceTracks.map(track => (
+        <div key={track.id} style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: track.color, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: 'var(--text-primary)', flex: 1 }}>{track.name}</span>
+            <button
+              onClick={() => setOpenTrackId(openTrackId === track.id ? null : track.id)}
+              title="Select microphone input"
+              style={{
+                fontSize: 9, padding: '2px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700,
+                border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
+                background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
+                color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
+              }}
+            >IN</button>
+          </div>
+          {openTrackId === track.id && (
+            <select
+              value={track.inputSource ?? ''}
+              onChange={e => {
+                const deviceId = e.target.value || null
+                dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { inputSource: deviceId } })
+                setOpenTrackId(null)
+              }}
+              style={{ width: '100%', fontSize: 11, padding: '3px 5px', marginTop: 4, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, outline: 'none', cursor: 'pointer' }}
+            >
+              <option value="">— None —</option>
+              <option value="mic">Microphone (default)</option>
+              {audioDevices.map(d => (
+                <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microphone'}</option>
+              ))}
+              <option value="system">System Audio</option>
+            </select>
+          )}
+        </div>
+      ))}
+      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
+          Quick Tips
+        </div>
+        <ul style={{ margin: 0, padding: '0 0 0 14px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, listStyleType: 'disc' }}>
+          <li>Arm a track (•) then press record</li>
+          <li>Voice chain is pre-applied to voice tracks</li>
+          <li>Use Music Bed for background music at low volume</li>
+        </ul>
+      </div>
+    </div>
+  )
+}
 
 // ── Initial project builder ───────────────────────────────────────────────────
 
@@ -345,7 +417,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
-  const [leftTab,   setLeftTab]   = useState<'library' | 'episode'>('library')
+  const [leftTab,   setLeftTab]   = useState<'library' | 'episode' | 'setup'>(isPodcast ? 'setup' : 'library')
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
@@ -548,18 +620,18 @@ export default function AudioEditor(props: AudioEditorProps) {
           }}>
             {isPodcast && (
               <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)', height: 30 }}>
-                {(['library', 'episode'] as const).map(tab => (
+                {(['setup', 'episode'] as const).map(tab => (
                   <button
                     key={tab}
                     onClick={() => setLeftTab(tab)}
                     style={{
                       flex: 1, background: leftTab === tab ? 'var(--bg-card)' : 'transparent',
-                      border: 'none', borderRight: tab === 'library' ? '1px solid var(--border)' : 'none',
+                      border: 'none', borderRight: tab === 'setup' ? '1px solid var(--border)' : 'none',
                       color: leftTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
                       fontSize: 11, cursor: 'pointer', fontWeight: leftTab === tab ? 500 : 400,
                       textTransform: 'capitalize',
                     }}
-                  >{tab}</button>
+                  >{tab === 'setup' ? 'Setup' : 'Episode'}</button>
                 ))}
               </div>
             )}
@@ -576,8 +648,10 @@ export default function AudioEditor(props: AudioEditorProps) {
                 >+ Guest</button>
               </div>
             )}
-            {(!isPodcast || leftTab === 'library') ? (
+            {!isPodcast ? (
               <SoundLibraryPanel embedded={true} />
+            ) : leftTab === 'setup' ? (
+              <PodcastSetupPanel />
             ) : (
               <EpisodePanel meta={podcastMeta} onChange={setPodcastMeta} />
             )}

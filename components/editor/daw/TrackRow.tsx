@@ -407,7 +407,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               {/* Input source — opens settings card */}
               <button
                 ref={inputBtnRef}
-                title="Audio input settings"
+                title={audioMode === 'podcast' ? 'Select microphone input' : 'Audio input settings'}
                 onClick={e => { e.stopPropagation(); setShowInputCard(v => !v) }}
                 style={{
                   fontSize: 7, height: 14, borderRadius: 2, padding: '0 3px',
@@ -416,7 +416,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
                   cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap',
                 }}>
-                {!track.inputSource ? '·IN' : track.inputSource === 'system' ? 'SYS' : 'MIC'}
+                {!track.inputSource ? (audioMode === 'podcast' ? 'MIC' : '·IN') : track.inputSource === 'system' ? 'SYS' : 'MIC'}
               </button>
               {showInputCard && inputBtnRef.current && (
                 <TrackInputCard
