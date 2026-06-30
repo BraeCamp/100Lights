@@ -2,10 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, FileText, Newspaper, PanelsTopBottom } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
+import { MODULE_DEFS } from '@/lib/editor-types'
+import type { ModuleKey } from '@/lib/editor-types'
 
 interface Usage {
   plan: 'free' | 'pro'
@@ -13,11 +15,13 @@ interface Usage {
   transcriptions: { used: number; limit: number }
 }
 
-const navItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/new', label: 'New Project', icon: PlusCircle },
-  { href: '/projects', label: 'All Projects', icon: FolderOpen },
-]
+const APP_ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
+  video: Film,
+  audio: AudioLines,
+  transcript: FileText,
+  content: Newspaper,
+  storyboard: PanelsTopBottom,
+}
 
 function UsageMeter({ used, limit, label }: { used: number; limit: number; label: string }) {
   const pct = Math.min(100, Math.round((used / limit) * 100))
@@ -71,12 +75,33 @@ export default function Sidebar() {
   const aiAtLimit = usage && usage.aiGenerations.used >= usage.aiGenerations.limit
   const transcribeAtLimit = usage && usage.transcriptions.used >= usage.transcriptions.limit
 
+  function navLink(href: string, label: string, Icon: React.ComponentType<{ size?: number; color?: string }>) {
+    const active = pathname === href
+    return (
+      <Link
+        key={href}
+        href={href}
+        aria-current={active ? 'page' : undefined}
+        className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
+        style={{
+          background: active ? 'var(--accent-subtle)' : 'transparent',
+          color: active ? 'var(--accent-light)' : 'var(--text-secondary)',
+          fontWeight: active ? '500' : '400',
+        }}
+      >
+        <Icon size={15} />
+        {label}
+      </Link>
+    )
+  }
+
   return (
     <aside
-      className="flex flex-col w-60 shrink-0 h-screen sticky top-0"
+      className="flex flex-col w-56 shrink-0 h-screen sticky top-0"
       aria-label="Application sidebar"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
     >
+      {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 py-5" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
           <Zap size={14} color="#fff" fill="#fff" />
@@ -86,23 +111,46 @@ export default function Sidebar() {
         </span>
       </div>
 
-      <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5" aria-label="Main navigation">
-        {navItems.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
+      <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto" aria-label="Main navigation">
+        {/* Workspace */}
+        <div style={{ padding: '2px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+          Workspace
+        </div>
+        {navLink('/dashboard', 'Home', LayoutDashboard)}
+        {navLink('/new', 'New Project', PlusCircle)}
+        {navLink('/projects', 'All Projects', FolderOpen)}
+
+        {/* Apps */}
+        <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+          Apps
+        </div>
+        {MODULE_DEFS.map(mod => {
+          const Icon = APP_ICONS[mod.key]
+          const href = `/apps/${mod.key}`
+          const active = pathname === href || pathname.startsWith(`${href}/`)
           return (
             <Link
-              key={href}
+              key={mod.key}
               href={href}
               aria-current={active ? 'page' : undefined}
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
               style={{
-                background: active ? 'var(--accent-subtle)' : 'transparent',
-                color: active ? 'var(--accent-light)' : 'var(--text-secondary)',
+                background: active ? `color-mix(in srgb, ${mod.color} 12%, transparent)` : 'transparent',
+                color: active ? mod.color : 'var(--text-secondary)',
                 fontWeight: active ? '500' : '400',
               }}
             >
-              <Icon size={16} />
-              {label}
+              {/* Colored dot */}
+              <div style={{
+                width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: active
+                  ? `color-mix(in srgb, ${mod.color} 18%, transparent)`
+                  : 'transparent',
+              }}>
+                <Icon size={13} color={active ? mod.color : 'var(--text-muted)'} />
+              </div>
+              {mod.label}
             </Link>
           )
         })}
@@ -148,7 +196,7 @@ export default function Sidebar() {
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
           style={{ color: pathname === '/settings' ? 'var(--text-secondary)' : 'var(--text-muted)' }}
         >
-          <Settings size={16} />
+          <Settings size={15} />
           Settings
         </Link>
         <Link
@@ -156,7 +204,7 @@ export default function Sidebar() {
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
           style={{ color: pathname === '/trash' ? 'var(--text-secondary)' : 'var(--text-muted)' }}
         >
-          <Trash2 size={16} />
+          <Trash2 size={15} />
           Trash
         </Link>
         {user && (
@@ -172,7 +220,7 @@ export default function Sidebar() {
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
           style={{ color: 'var(--text-muted)' }}
         >
-          <MessageSquare size={16} />
+          <MessageSquare size={15} />
           Send feedback
         </a>
         <div className="flex gap-3 px-3 pt-1">

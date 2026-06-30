@@ -64,7 +64,8 @@ export async function GET() {
         id, name, saved_at, starred,
         data->'clips'            AS clips,
         data->'media'            AS media,
-        data->'media'->0->>'thumbnail' AS thumbnail
+        data->'media'->0->>'thumbnail' AS thumbnail,
+        data->'modules'          AS modules
       FROM projects
       WHERE user_id = ${userId} AND deleted_at IS NULL
       ORDER BY starred DESC, saved_at DESC
@@ -75,7 +76,8 @@ export async function GET() {
         id, name, saved_at,
         data->'clips'            AS clips,
         data->'media'            AS media,
-        data->'media'->0->>'thumbnail' AS thumbnail
+        data->'media'->0->>'thumbnail' AS thumbnail,
+        data->'modules'          AS modules
       FROM projects
       WHERE user_id = ${userId} AND deleted_at IS NULL
       ORDER BY saved_at DESC
@@ -90,6 +92,7 @@ export async function GET() {
     clips:     Array.isArray(r.clips) ? r.clips.length : 0,
     media:     Array.isArray(r.media) ? r.media.length : 0,
     thumbnail: r.thumbnail ?? null,
+    modules:   Array.isArray(r.modules) ? r.modules : null,
   })))
 }
 

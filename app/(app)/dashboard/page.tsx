@@ -129,7 +129,7 @@ function AppCard({ mod }: { mod: typeof MODULE_DEFS[number] }) {
       {/* Footer CTA */}
       <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
         <Link
-          href={`/new?modules=${mod.key}`}
+          href={`/apps/${mod.key}`}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             padding: '8px 0', borderRadius: 7, fontSize: 12, fontWeight: 600,
