@@ -661,6 +661,74 @@ export default function ArrangementView() {
         document.body
       )}
       {showExport && <AudioExportModal onClose={() => setShowExport(false)} audioMode={audioMode} podcastMeta={podcastMeta} />}
+      {showPublish && createPortal(
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
+          onClick={e => { if (e.target === e.currentTarget) setShowPublish(false) }}
+        >
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, width: 380, maxWidth: '90vw' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Publish Podcast</div>
+            {!publishFeedUrl ? (
+              <>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
+                  Generate an RSS feed for your podcast episode. Submit the URL to Spotify, Apple Podcasts, or any podcast platform.
+                </p>
+                {publishError && (
+                  <p style={{ fontSize: 11, color: '#f87171', marginBottom: 12 }}>{publishError}</p>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    disabled={publishLoading}
+                    onClick={async () => {
+                      setPublishLoading(true)
+                      setPublishError(null)
+                      try {
+                        const res = await fetch(`/api/podcast/${project.id}/publish`, { method: 'POST' })
+                        const json = await res.json()
+                        if (!res.ok) throw new Error(json.error ?? 'Failed to publish')
+                        setPublishFeedUrl(json.feedUrl)
+                      } catch (err: unknown) {
+                        setPublishError(err instanceof Error ? err.message : 'Something went wrong')
+                      } finally {
+                        setPublishLoading(false)
+                      }
+                    }}
+                    style={{ flex: 1, padding: '7px 0', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: publishLoading ? 'not-allowed' : 'pointer', opacity: publishLoading ? 0.6 : 1 }}
+                  >{publishLoading ? 'Generating…' : 'Generate RSS Feed'}</button>
+                  <button
+                    onClick={() => setShowPublish(false)}
+                    style={{ padding: '7px 14px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+                  >Cancel</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Your RSS feed is ready:</p>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                  <input
+                    readOnly
+                    value={publishFeedUrl}
+                    style={{ flex: 1, fontSize: 11, padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', fontFamily: 'monospace' }}
+                    onFocus={e => e.currentTarget.select()}
+                  />
+                  <button
+                    onClick={() => navigator.clipboard.writeText(publishFeedUrl)}
+                    style={{ padding: '5px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer' }}
+                  >Copy</button>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
+                  Submit this URL to Spotify, Apple Podcasts, or any podcast platform.
+                </p>
+                <button
+                  onClick={() => setShowPublish(false)}
+                  style={{ width: '100%', padding: '7px 0', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+                >Done</button>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

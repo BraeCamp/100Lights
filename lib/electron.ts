@@ -23,6 +23,10 @@ export interface ElectronAPI {
   platform: 'darwin' | 'win32' | 'linux'
   appVersion: string
   isElectron: true
+  // Launcher / module window management
+  openModule: (moduleKey: string) => Promise<void>
+  focusModule: (moduleKey: string) => Promise<void>
+  showLauncher: () => Promise<void>
 }
 
 declare global {
@@ -56,4 +60,18 @@ export async function nativeSaveFile(options?: {
 // Reveal a file in Finder / Explorer. No-op in the browser.
 export function revealInFolder(filePath: string): void {
   window.electronAPI?.showItemInFolder(filePath)
+}
+
+// Open a module in its own window (Electron), or navigate to its app page (browser).
+export function openModule(moduleKey: string, router?: { push: (href: string) => void }): void {
+  if (window.electronAPI) {
+    void window.electronAPI.openModule(moduleKey)
+  } else {
+    router?.push(`/apps/${moduleKey}`)
+  }
+}
+
+// Bring the launcher window back into focus (Electron only).
+export function showLauncher(): void {
+  window.electronAPI?.showLauncher()
 }

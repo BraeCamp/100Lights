@@ -56,23 +56,39 @@ function isExternalPayment(url: string): boolean {
   }
 }
 
-let mainWindow: BrowserWindow | null = null
+// Returns the module key if the URL is an /apps/<moduleKey> path, otherwise null.
+function moduleKeyFromUrl(url: string): string | null {
+  try {
+    const { pathname } = new URL(url)
+    const match = pathname.match(/^\/apps\/([^/]+)/)
+    return match ? match[1] : null
+  } catch {
+    return null
+  }
+}
 
-async function createWindow(): Promise<void> {
-  // Patch COOP/COEP headers so SharedArrayBuffer (used by FFmpeg.wasm) works
-  // in Electron. The production server sets these; this ensures they're present
-  // in dev and as a safety net.
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const res = { ...details.responseHeaders }
-    // Only patch the main app responses, not cross-origin CDN assets
-    if (isInternal(details.url)) {
-      res['Cross-Origin-Opener-Policy'] = ['same-origin']
-      res['Cross-Origin-Embedder-Policy'] = ['credentialless']
-    }
-    callback({ responseHeaders: res })
-  })
+const oauthPopupOptions = {
+  width: 520,
+  height: 680,
+  webPreferences: {
+    nodeIntegration: false,
+    contextIsolation: true,
+    sandbox: true,
+  },
+}
 
-  mainWindow = new BrowserWindow({
+let launcherWindow: BrowserWindow | null = null
+const moduleWindows = new Map<string, BrowserWindow>()
+
+function openModuleWindow(moduleKey: string): void {
+  const existing = moduleWindows.get(moduleKey)
+  if (existing) {
+    if (existing.isMinimized()) existing.restore()
+    existing.focus()
+    return
+  }
+
+  const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1080,
@@ -93,97 +109,179 @@ async function createWindow(): Promise<void> {
     show: false,
   })
 
-  // Avoid white flash on load
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
-    if (isDev) mainWindow?.webContents.openDevTools({ mode: 'detach' })
-    log.info('Window ready')
+  win.once('ready-to-show', () => {
+    win.show()
+    if (isDev) win.webContents.openDevTools({ mode: 'detach' })
+    log.info('Module window ready:', moduleKey)
   })
 
   // Block keyboard zoom shortcuts (Cmd/Ctrl +/-)
-  // The DAW manages zoom internally per-canvas; OS-level zoom breaks the layout
-  mainWindow.webContents.on('before-input-event', (event, input) => {
+  win.webContents.on('before-input-event', (event, input) => {
     if ((input.meta || input.control) && ['+', '-', '=', '0'].includes(input.key)) {
       event.preventDefault()
     }
   })
 
   // Keep zoom factor at 1 if something else tries to change it
-  mainWindow.webContents.on('zoom-changed', (_e, dir) => {
+  win.webContents.on('zoom-changed', (_e, dir) => {
     if (dir === 'in' || dir === 'out') {
-      mainWindow?.webContents.setZoomFactor(1)
+      win.webContents.setZoomFactor(1)
     }
   })
 
-  // Handle new-window requests (links with target="_blank", Clerk OAuth popups, etc.)
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // Stripe checkout → always system browser for security
+  win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalPayment(url)) {
       shell.openExternal(url)
       return { action: 'deny' }
     }
-
-    // OAuth providers → allow as a constrained popup so the callback
-    // redirects back to 100lights.com within Electron, completing the flow
     if (isOAuthProvider(url)) {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 520,
-          height: 680,
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            sandbox: true,
-          },
-        },
-      }
+      return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions }
     }
-
-    // Internal app links (Clerk UI, dashboard redirects) → open in main window
     if (isInternal(url)) {
-      mainWindow?.loadURL(url)
+      win.loadURL(url)
       return { action: 'deny' }
     }
-
-    // Anything else (docs, external links) → system browser
     shell.openExternal(url)
     return { action: 'deny' }
   })
 
-  // Prevent navigating away from the app domain
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  win.webContents.on('will-navigate', (event, url) => {
     if (!isInternal(url)) {
       event.preventDefault()
       shell.openExternal(url)
     }
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
+  win.on('closed', () => {
+    moduleWindows.delete(moduleKey)
+    log.info('Module window closed:', moduleKey)
   })
 
-  await mainWindow.loadURL(APP_URL)
-  log.info('Loaded', APP_URL)
+  moduleWindows.set(moduleKey, win)
+  void win.loadURL(`${APP_URL}/apps/${moduleKey}`)
+  log.info('Opening module window:', moduleKey)
 }
 
-// Single-instance enforcement — second launch focuses the existing window
+async function createLauncherWindow(): Promise<void> {
+  // Patch COOP/COEP headers so SharedArrayBuffer (used by FFmpeg.wasm) works
+  // in Electron. The production server sets these; this ensures they're present
+  // in dev and as a safety net.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const res = { ...details.responseHeaders }
+    // Only patch the main app responses, not cross-origin CDN assets
+    if (isInternal(details.url)) {
+      res['Cross-Origin-Opener-Policy'] = ['same-origin']
+      res['Cross-Origin-Embedder-Policy'] = ['credentialless']
+    }
+    callback({ responseHeaders: res })
+  })
+
+  launcherWindow = new BrowserWindow({
+    width: 960,
+    height: 600,
+    resizable: false,
+    center: true,
+    backgroundColor: '#0d0d14',
+    // Mac: hide title bar, keep traffic lights
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      zoomFactor: 1.0,
+    },
+    show: false,
+  })
+
+  launcherWindow.once('ready-to-show', () => {
+    launcherWindow?.show()
+    if (isDev) launcherWindow?.webContents.openDevTools({ mode: 'detach' })
+    log.info('Launcher window ready')
+  })
+
+  // Intercept /apps/* links — open as module windows instead of navigating in-place.
+  // This means clicking a module card in the browser version opens a new window in desktop.
+  launcherWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalPayment(url)) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    if (isOAuthProvider(url)) {
+      return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions }
+    }
+    const moduleKey = moduleKeyFromUrl(url)
+    if (moduleKey) {
+      openModuleWindow(moduleKey)
+      return { action: 'deny' }
+    }
+    // Internal app links (Clerk UI, dashboard redirects) → load in launcher
+    if (isInternal(url)) {
+      launcherWindow?.loadURL(url)
+      return { action: 'deny' }
+    }
+    // Anything else (docs, external links) → system browser
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  // Also intercept direct navigations to /apps/* within the launcher
+  launcherWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isInternal(url)) {
+      event.preventDefault()
+      shell.openExternal(url)
+      return
+    }
+    const moduleKey = moduleKeyFromUrl(url)
+    if (moduleKey) {
+      event.preventDefault()
+      openModuleWindow(moduleKey)
+    }
+  })
+
+  launcherWindow.on('closed', () => {
+    launcherWindow = null
+  })
+
+  await launcherWindow.loadURL(`${APP_URL}/launcher`)
+  log.info('Loaded launcher', `${APP_URL}/launcher`)
+}
+
+// Module-related IPC handlers live here (not ipc.ts) because they need direct
+// access to openModuleWindow, moduleWindows, and launcherWindow.
+function setupModuleIpc(): void {
+  ipcMain.handle('module:open', (_event, moduleKey: string) => {
+    openModuleWindow(moduleKey)
+  })
+  ipcMain.handle('module:focus', (_event, moduleKey: string) => {
+    moduleWindows.get(moduleKey)?.focus()
+  })
+  ipcMain.handle('launcher:show', () => {
+    launcherWindow?.show()
+    launcherWindow?.focus()
+  })
+}
+
+// Single-instance enforcement — second launch focuses the launcher
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', (_event, _argv) => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
+    if (launcherWindow) {
+      if (launcherWindow.isMinimized()) launcherWindow.restore()
+      launcherWindow.focus()
     }
   })
 
   app.whenReady().then(async () => {
     setupIpc()
-    await createWindow()
-    if (mainWindow) {
-      setupMenu(mainWindow, isDev)
+    setupModuleIpc()
+    await createLauncherWindow()
+    if (launcherWindow) {
+      setupMenu(launcherWindow, isDev)
       setupUpdater(isDev)
     }
   })
@@ -193,7 +291,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// macOS: re-create window when dock icon is clicked and no windows exist
+// macOS: re-create launcher when dock icon is clicked and no windows exist
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  if (BrowserWindow.getAllWindows().length === 0) createLauncherWindow()
 })

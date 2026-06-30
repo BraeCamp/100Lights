@@ -7,8 +7,9 @@ import { UpgradeModalProvider } from '@/components/UpgradeModal'
 export default function AppLayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const isEditor = pathname === '/new' || (pathname.startsWith('/projects/') && pathname !== '/projects')
+  const isLauncher = pathname === '/launcher'
 
-  if (isEditor) {
+  if (isEditor || isLauncher) {
     return (
       <UpgradeModalProvider>
         <div className="h-full">{children}</div>

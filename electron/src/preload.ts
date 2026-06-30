@@ -30,6 +30,11 @@ export interface ElectronAPI {
   showItemInFolder: (filePath: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
 
+  // Multi-window module management
+  openModule: (moduleKey: string) => Promise<void>
+  focusModule: (moduleKey: string) => Promise<void>
+  showLauncher: () => Promise<void>
+
   // App metadata
   platform: NodeJS.Platform
   appVersion: string
@@ -41,6 +46,9 @@ const electronAPI: ElectronAPI = {
   saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),
   showItemInFolder: (filePath) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  openModule: (moduleKey) => ipcRenderer.invoke('module:open', moduleKey),
+  focusModule: (moduleKey) => ipcRenderer.invoke('module:focus', moduleKey),
+  showLauncher: () => ipcRenderer.invoke('launcher:show'),
   platform: process.platform,
   appVersion: ipcRenderer.sendSync('app:version') as string,
   isElectron: true,
