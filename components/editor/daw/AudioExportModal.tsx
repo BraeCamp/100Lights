@@ -165,10 +165,12 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
                       {podcastMeta.episodeTitle}
                     </div>
                   )}
-                  <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'var(--text-muted)' }}>
-                    {podcastMeta.episodeNumber != null && <span>Ep. {podcastMeta.episodeNumber}</span>}
-                    {podcastMeta.season != null && <span>· Season {podcastMeta.season}</span>}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+                    {podcastMeta.season != null && <span>S{podcastMeta.season}</span>}
+                    {podcastMeta.episodeNumber != null && <span>E{podcastMeta.episodeNumber}</span>}
+                    {podcastMeta.host && <span>· Host: {podcastMeta.host}</span>}
                     {podcastMeta.guests && <span>· {podcastMeta.guests}</span>}
+                    {podcastMeta.episodeType && podcastMeta.episodeType !== 'full' && <span style={{ textTransform: 'capitalize' }}>· {podcastMeta.episodeType}</span>}
                   </div>
                 </div>
               )}

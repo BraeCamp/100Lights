@@ -35,6 +35,17 @@ export default function Transport() {
   const [showTuner, setShowTuner] = useState(false)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
 
+  // Inject pulse keyframe for recording indicator (once per page)
+  useEffect(() => {
+    const id = 'daw-rec-pulse-style'
+    if (typeof document !== 'undefined' && !document.getElementById(id)) {
+      const style = document.createElement('style')
+      style.id = id
+      style.textContent = '@keyframes dawRecPulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }'
+      document.head.appendChild(style)
+    }
+  }, [])
+
   // Keep isPlayingRef in sync for the RAF closure
   useEffect(() => { isPlayingRef.current = playing }, [playing])
 
@@ -240,6 +251,7 @@ export default function Transport() {
             color: recording ? '#ff3b3b' : 'var(--text-secondary)',
             border: recording ? '1px solid #ff3b3b' : '1px solid var(--border)',
             background: recording ? 'rgba(255,59,59,0.14)' : '#1e1e1e',
+            animation: recording ? 'dawRecPulse 1s infinite' : undefined,
           }}
           onClick={handleRecord}
           title="Record"
@@ -338,6 +350,7 @@ export default function Transport() {
           color: recording ? '#ff3b3b' : 'var(--text-secondary)',
           border: recording ? '1px solid #ff3b3b' : '1px solid var(--border)',
           background: recording ? 'rgba(255,59,59,0.14)' : '#1e1e1e',
+          animation: recording ? 'dawRecPulse 1s infinite' : undefined,
         }}
         onClick={handleRecord}
         title="Record"

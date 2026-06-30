@@ -517,15 +517,30 @@ export default function ArrangementView() {
           }}
         >EXPORT</button>
         {audioMode === 'podcast' && (
-          <button
-            onClick={() => { setShowPublish(true); setPublishFeedUrl(null); setPublishError(null) }}
-            title="Publish podcast RSS feed"
-            style={{
-              ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
-              border: '1px solid var(--border)', background: 'transparent',
-              color: 'var(--text-muted)', letterSpacing: '0.04em', marginLeft: 4,
-            }}
-          >PUBLISH</button>
+          <>
+            <button
+              onClick={() => {
+                const beat = engine.currentBeat
+                const name = `Chapter ${(project.cueMarkers ?? []).length + 1}`
+                dispatch({ type: 'ADD_CUE_MARKER', marker: { id: `cue-${Date.now()}`, beat, name } })
+              }}
+              title="Add chapter marker at playhead position (or double-click ruler)"
+              style={{
+                ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
+                border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.1)',
+                color: '#f59e0b', letterSpacing: '0.04em', marginLeft: 4,
+              }}
+            >+ CHAPTER</button>
+            <button
+              onClick={() => { setShowPublish(true); setPublishFeedUrl(null); setPublishError(null) }}
+              title="Publish podcast RSS feed"
+              style={{
+                ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
+                border: '1px solid var(--border)', background: 'transparent',
+                color: 'var(--text-muted)', letterSpacing: '0.04em', marginLeft: 4,
+              }}
+            >PUBLISH</button>
+          </>
         )}
         {onSave && (
           <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" style={{
@@ -562,10 +577,11 @@ export default function ArrangementView() {
           }}>
             <span style={{
               fontSize: 12, color: 'var(--text-muted)',
-              textAlign: 'center', lineHeight: 1.6,
+              textAlign: 'center', lineHeight: 1.8,
               background: 'rgba(0,0,0,0.4)', padding: '10px 18px', borderRadius: 6,
             }}>
-              Arm a track (click the ● button), then press Record to capture audio
+              Arm a track (click the ● button), then press Record to capture audio<br/>
+              <span style={{ fontSize: 10, opacity: 0.7 }}>Add chapter markers with the + CHAPTER button or by double-clicking the ruler</span>
             </span>
           </div>
         )}

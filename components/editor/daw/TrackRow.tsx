@@ -25,6 +25,80 @@ export const HDR_W = 200
 const AUTO_H = 60
 const TAKE_H = 32
 
+// ── VU Meter ──────────────────────────────────────────────────────────────────
+
+export function VUMeter({ deviceId, active }: { deviceId: string | null | undefined; active: boolean }) {
+  const [level, setLevel] = useState(0)
+  const animRef   = useRef<number | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const ctxRef    = useRef<AudioContext | null>(null)
+
+  useEffect(() => {
+    if (!active || !deviceId) {
+      setLevel(0)
+      return
+    }
+    const capturedDeviceId = deviceId
+    let cancelled = false
+
+    async function setup() {
+      try {
+        const constraints = capturedDeviceId === 'mic'
+          ? { audio: true }
+          : { audio: { deviceId: { exact: capturedDeviceId } } }
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        const ctx = new AudioContext()
+        ctxRef.current = ctx
+        const source   = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        source.connect(analyser)
+        const data = new Float32Array(analyser.fftSize)
+
+        function tick() {
+          analyser.getFloatTimeDomainData(data)
+          let rms = 0
+          for (const v of data) rms += v * v
+          rms = Math.sqrt(rms / data.length)
+          setLevel(Math.min(1, rms * 6))
+          animRef.current = requestAnimationFrame(tick)
+        }
+        animRef.current = requestAnimationFrame(tick)
+      } catch { /* permission denied or no device */ }
+    }
+    setup()
+
+    return () => {
+      cancelled = true
+      if (animRef.current) cancelAnimationFrame(animRef.current)
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+      ctxRef.current?.close().catch(() => {})
+      ctxRef.current = null
+    }
+  }, [active, deviceId])
+
+  const pct   = Math.round(level * 100)
+  const color = pct > 80 ? '#ef4444' : pct > 60 ? '#f97316' : '#22c55e'
+
+  return (
+    <div style={{
+      width: 6, height: 40, background: 'var(--border)', borderRadius: 3,
+      overflow: 'hidden', flexShrink: 0, position: 'relative',
+    }}>
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        height: `${pct}%`,
+        background: color,
+        transition: 'height 50ms, background 100ms',
+        borderRadius: 3,
+      }} />
+    </div>
+  )
+}
+
 export type SnapMode = 'off' | '1/16' | '1/8' | 'beat' | 'bar'
 
 export function snapBeat(beat: number, mode: SnapMode, beatsPerBar = 4): number {
@@ -389,6 +463,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 border: '1px solid rgba(249,115,22,0.3)',
                 letterSpacing: '0.05em', fontWeight: 700,
               }}>VC</span>
+            )}
+            {/* VU Meter — podcast mode, audio tracks, only active when armed */}
+            {audioMode === 'podcast' && track.type === 'audio' && (
+              <VUMeter deviceId={track.inputSource} active={track.armed} />
             )}
           </div>
           <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>

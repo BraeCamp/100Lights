@@ -65,10 +65,13 @@ export interface PodcastMeta {
   episodeNumber: number | null
   season: number | null
   description: string
+  host?: string         // podcast host name(s)
   guests: string
   artwork?: string      // base64 data URL for cover image
   tags?: string         // comma-separated RSS category tags
   websiteUrl?: string   // podcast website URL
+  episodeType?: 'full' | 'trailer' | 'bonus'
+  explicit?: boolean
 }
 
 export interface SerializedAudioMedia {

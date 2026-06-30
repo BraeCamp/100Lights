@@ -26,6 +26,10 @@ type RectLayer = {
   strokeColor?: string
   strokeWidth?: number
   hidden?: boolean
+  shadowColor?: string
+  shadowBlur?: number
+  shadowX?: number
+  shadowY?: number
 }
 
 type EllipseLayer = {
@@ -41,6 +45,10 @@ type EllipseLayer = {
   strokeColor?: string
   strokeWidth?: number
   hidden?: boolean
+  shadowColor?: string
+  shadowBlur?: number
+  shadowX?: number
+  shadowY?: number
 }
 
 type TextLayer = {
@@ -71,6 +79,10 @@ type ImageLayer = {
   src: string
   opacity?: number
   hidden?: boolean
+  shadowColor?: string
+  shadowBlur?: number
+  shadowX?: number
+  shadowY?: number
 }
 
 type Layer = RectLayer | EllipseLayer | TextLayer | ImageLayer
@@ -167,6 +179,8 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
   const [scale, setScale] = useState(1)
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null)
+  const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasAreaRef = useRef<HTMLDivElement>(null)
@@ -174,6 +188,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
   const exportCanvasRef = useRef<HTMLCanvasElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const dragLayerIdRef = useRef<string | null>(null)
+  const clipboardRef = useRef<Layer | null>(null)
 
   const undoHistory = useRef<Layer[][]>([])
   const redoHistory = useRef<Layer[][]>([])
@@ -474,13 +489,24 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
 
   // ── Export ─────────────────────────────────────────────────
 
-  function exportAs(format: 'png' | 'jpeg' | 'webp') {
+  async function exportAs(format: 'png' | 'jpeg' | 'webp') {
     const canvas = exportCanvasRef.current
     if (!canvas) return
     canvas.width = canvasW
     canvas.height = canvasH
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    // Pre-load all image layer sources before drawing
+    const imageMap = new Map<string, HTMLImageElement>()
+    await Promise.all(
+      layers.filter(l => l.kind === 'image' && !l.hidden).map(l => new Promise<void>(resolve => {
+        const img = new window.Image()
+        img.onload = () => { imageMap.set(l.id, img); resolve() }
+        img.onerror = () => resolve()
+        img.src = (l as ImageLayer).src
+      }))
+    )
 
     ctx.fillStyle = bgColor
     ctx.fillRect(0, 0, canvasW, canvasH)
@@ -492,6 +518,12 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
         ctx.globalAlpha = (layer.opacity ?? 100) / 100
         const r = layer.borderRadius ?? 0
         ctx.fillStyle = layer.fill
+        if (layer.shadowBlur || layer.shadowX || layer.shadowY) {
+          ctx.shadowColor = layer.shadowColor ?? '#000000'
+          ctx.shadowBlur = layer.shadowBlur ?? 0
+          ctx.shadowOffsetX = layer.shadowX ?? 0
+          ctx.shadowOffsetY = layer.shadowY ?? 0
+        }
         if (r > 0) {
           ctx.beginPath()
           ctx.roundRect(layer.x, layer.y, layer.width, layer.height, r)
@@ -499,6 +531,10 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
         } else {
           ctx.fillRect(layer.x, layer.y, layer.width, layer.height)
         }
+        ctx.shadowColor = 'transparent'
+        ctx.shadowBlur = 0
+        ctx.shadowOffsetX = 0
+        ctx.shadowOffsetY = 0
         const sw = layer.strokeWidth ?? 0
         if (sw > 0) {
           ctx.strokeStyle = layer.strokeColor ?? '#000000'
@@ -518,9 +554,19 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
         const rx = layer.width / 2
         const ry = layer.height / 2
         ctx.fillStyle = layer.fill
+        if (layer.shadowBlur || layer.shadowX || layer.shadowY) {
+          ctx.shadowColor = layer.shadowColor ?? '#000000'
+          ctx.shadowBlur = layer.shadowBlur ?? 0
+          ctx.shadowOffsetX = layer.shadowX ?? 0
+          ctx.shadowOffsetY = layer.shadowY ?? 0
+        }
         ctx.beginPath()
         ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
         ctx.fill()
+        ctx.shadowColor = 'transparent'
+        ctx.shadowBlur = 0
+        ctx.shadowOffsetX = 0
+        ctx.shadowOffsetY = 0
         const sw = layer.strokeWidth ?? 0
         if (sw > 0) {
           ctx.strokeStyle = layer.strokeColor ?? '#000000'
@@ -538,9 +584,8 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
         ctx.fillText(layer.text, layer.x, layer.y + layer.fontSize)
       } else if (layer.kind === 'image') {
         ctx.globalAlpha = (layer.opacity ?? 100) / 100
-        const img = new window.Image()
-        img.src = layer.src
-        ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height)
+        const img = imageMap.get(layer.id)
+        if (img) ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height)
       }
       ctx.restore()
     }
@@ -566,7 +611,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
       if ((e.target as HTMLElement).isContentEditable) return
       if (e.key === 'Backspace' || e.key === 'Delete') deleteSelected()
-      if (e.key === 'v' || e.key === 'Escape') setTool('select')
+      if ((e.key === 'v' && !e.metaKey && !e.ctrlKey) || e.key === 'Escape') setTool('select')
       if (e.key === 'r') setTool('rect')
       if (e.key === 'e') setTool('ellipse')
       if (e.key === 't') setTool('text')
@@ -577,6 +622,41 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') {
         e.preventDefault()
         redo()
+      }
+      // Arrow nudge
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (selectedId) {
+          const layer = layers.find(l => l.id === selectedId)
+          if (layer) {
+            e.preventDefault()
+            const dist = e.shiftKey ? 10 : 1
+            if (e.key === 'ArrowLeft') updateLayer(selectedId, { x: layer.x - dist } as Partial<Layer>)
+            if (e.key === 'ArrowRight') updateLayer(selectedId, { x: layer.x + dist } as Partial<Layer>)
+            if (e.key === 'ArrowUp') updateLayer(selectedId, { y: layer.y - dist } as Partial<Layer>)
+            if (e.key === 'ArrowDown') updateLayer(selectedId, { y: layer.y + dist } as Partial<Layer>)
+          }
+        }
+      }
+      // Copy
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+        const layer = layers.find(l => l.id === selectedId)
+        if (layer) clipboardRef.current = { ...layer }
+      }
+      // Paste
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+        const clip = clipboardRef.current
+        if (clip) {
+          saveHistory()
+          const newId = uid()
+          let newName = clip.name
+          if (clip.kind === 'rect') newName = `Rectangle ${++rectCountRef.current}`
+          else if (clip.kind === 'ellipse') newName = `Ellipse ${++ellipseCountRef.current}`
+          else if (clip.kind === 'text') newName = `Text ${++textCountRef.current}`
+          else newName = `Image ${++imageCountRef.current}`
+          const newLayer: Layer = { ...clip, id: newId, x: clip.x + 20, y: clip.y + 20, name: newName }
+          setLayers(ls => [...ls, newLayer])
+          setSelectedId(newId)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -869,6 +949,53 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
           </>
         )}
 
+        {/* Shadow — rect, ellipse, image */}
+        {(selected.kind === 'rect' || selected.kind === 'ellipse' || selected.kind === 'image') && (
+          <>
+            {sectionLabel('Shadow')}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Color</span>
+                <input
+                  type="color"
+                  value={selected.shadowColor ?? '#000000'}
+                  onChange={e => updateLayer(selected.id, { shadowColor: e.target.value } as Partial<Layer>)}
+                  style={{ ...inputStyle, padding: 2, height: 30, cursor: 'pointer' }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Blur</span>
+                <input
+                  type="number" min={0} max={100}
+                  value={selected.shadowBlur ?? 0}
+                  onChange={e => updateLayer(selected.id, { shadowBlur: Number(e.target.value) } as Partial<Layer>)}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>X</span>
+                <input
+                  type="number" min={-100} max={100}
+                  value={selected.shadowX ?? 0}
+                  onChange={e => updateLayer(selected.id, { shadowX: Number(e.target.value) } as Partial<Layer>)}
+                  style={inputStyle}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Y</span>
+                <input
+                  type="number" min={-100} max={100}
+                  value={selected.shadowY ?? 0}
+                  onChange={e => updateLayer(selected.id, { shadowY: Number(e.target.value) } as Partial<Layer>)}
+                  style={inputStyle}
+                />
+              </label>
+            </div>
+          </>
+        )}
+
         {/* Align to Canvas */}
         {sectionLabel('Align to Canvas')}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
@@ -1157,7 +1284,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
               {(['png', 'jpeg', 'webp'] as const).map(fmt => (
                 <button
                   key={fmt}
-                  onClick={() => { exportAs(fmt); setShowExportMenu(false) }}
+                  onClick={() => { void exportAs(fmt); setShowExportMenu(false) }}
                   style={{
                     display: 'block', width: '100%', textAlign: 'left',
                     padding: '7px 14px', fontSize: 12, background: 'transparent',
@@ -1272,13 +1399,31 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                       ? <Type size={11} />
                       : <ImageIcon size={11} />}
                   </span>
-                  <span style={{
-                    fontSize: 11,
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {layer.name}
-                  </span>
+                  {renamingLayerId === layer.id ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={e => setRenameValue(e.target.value)}
+                      onBlur={() => {
+                        const trimmed = renameValue.trim()
+                        if (trimmed) updateLayer(layer.id, { name: trimmed } as Partial<Layer>)
+                        setRenamingLayerId(null)
+                      }}
+                      onKeyDown={e => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+                        if (e.key === 'Escape') setRenamingLayerId(null)
+                      }}
+                      style={{ fontSize: 11, background: 'transparent', border: 'none', borderBottom: '1px solid var(--accent)', outline: 'none', color: 'var(--text-primary)', width: '100%' }}
+                    />
+                  ) : (
+                    <span
+                      onDoubleClick={() => { setRenamingLayerId(layer.id); setRenameValue(layer.name) }}
+                      style={{ fontSize: 11, color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {layer.name}
+                    </span>
+                  )}
                   <button
                     onClick={e => {
                       e.stopPropagation()
@@ -1343,6 +1488,9 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
 
               if (layer.kind === 'rect') {
                 const sw = layer.strokeWidth ?? 0
+                const rectShadow = (layer.shadowBlur || layer.shadowX || layer.shadowY)
+                  ? `drop-shadow(${layer.shadowX ?? 0}px ${layer.shadowY ?? 0}px ${layer.shadowBlur ?? 0}px ${layer.shadowColor ?? '#000000'})`
+                  : undefined
                 return (
                   <div
                     key={layer.id}
@@ -1358,6 +1506,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                       boxSizing: 'border-box',
                       cursor: tool === 'select' ? 'move' : undefined,
                       userSelect: 'none',
+                      filter: rectShadow,
                       ...selStyle,
                     }}
                   />
@@ -1366,6 +1515,9 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
 
               if (layer.kind === 'ellipse') {
                 const sw = layer.strokeWidth ?? 0
+                const ellipseShadow = (layer.shadowBlur || layer.shadowX || layer.shadowY)
+                  ? `drop-shadow(${layer.shadowX ?? 0}px ${layer.shadowY ?? 0}px ${layer.shadowBlur ?? 0}px ${layer.shadowColor ?? '#000000'})`
+                  : undefined
                 return (
                   <div
                     key={layer.id}
@@ -1381,6 +1533,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                       boxSizing: 'border-box',
                       cursor: tool === 'select' ? 'move' : undefined,
                       userSelect: 'none',
+                      filter: ellipseShadow,
                       ...selStyle,
                     }}
                   />
@@ -1455,6 +1608,9 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
               }
 
               if (layer.kind === 'image') {
+                const imgShadow = (layer.shadowBlur || layer.shadowX || layer.shadowY)
+                  ? `drop-shadow(${layer.shadowX ?? 0}px ${layer.shadowY ?? 0}px ${layer.shadowBlur ?? 0}px ${layer.shadowColor ?? '#000000'})`
+                  : undefined
                 return (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -1472,6 +1628,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                       cursor: tool === 'select' ? 'move' : undefined,
                       userSelect: 'none',
                       display: 'block',
+                      filter: imgShadow,
                       ...(isSelected ? { outline: `2px solid ${ACCENT}`, outlineOffset: 2 } : {}),
                     }}
                   />

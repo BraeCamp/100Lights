@@ -36,19 +36,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const meta = data.podcastMeta
-  const showName    = meta?.showName    ?? data.name ?? 'Untitled Show'
+  const showName     = meta?.showName     ?? data.name ?? 'Untitled Show'
   const episodeTitle = meta?.episodeTitle ?? data.name ?? 'Untitled Episode'
   const description  = meta?.description ?? ''
-  const author       = (row.owner_username as string) ?? ''
+  const host         = meta?.host ?? (row.owner_username as string) ?? ''
+  const guests       = meta?.guests ?? ''
+  const allAuthors   = [host, ...guests.split(',').map((g: string) => g.trim())].filter(Boolean).join(', ')
+  const websiteUrl   = meta?.websiteUrl ?? ''
+  const explicit     = meta?.explicit ? 'yes' : 'no'
+  const episodeType  = meta?.episodeType ?? 'full'
   const savedAt      = (row.saved_at as string) ?? data.savedAt ?? new Date().toISOString()
   const pubDate      = toRfc2822(savedAt)
-
-  let episodeTitleFull = episodeTitle
-  if (meta?.season != null && meta?.episodeNumber != null) {
-    episodeTitleFull = `${episodeTitle} (S${meta.season}E${meta.episodeNumber})`
-  } else if (meta?.episodeNumber != null) {
-    episodeTitleFull = `${episodeTitle} (E${meta.episodeNumber})`
-  }
 
   // Get the first audio media item's R2 key
   const audioMedia: SerializedAudioMedia[] = data.audioMedia ?? []
@@ -58,18 +56,35 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     enclosureUrl = await presignDownload(audioMedia[0].r2Key, 86400)
   }
 
+  // Build optional tags
+  const seasonTag        = meta?.season != null ? `\n      <itunes:season>${meta.season}</itunes:season>` : ''
+  const episodeNumberTag = meta?.episodeNumber != null ? `\n      <itunes:episode>${meta.episodeNumber}</itunes:episode>` : ''
+  const imageTag         = meta?.artwork
+    ? `\n    <itunes:image href="${escapeXml(websiteUrl + '/artwork.jpg')}"/>`
+    : ''
+  const websiteTag       = websiteUrl ? `\n    <link>${escapeXml(websiteUrl)}</link>` : ''
+  const categoryTags     = (meta?.tags ?? '')
+    .split(',')
+    .map((t: string) => t.trim())
+    .filter(Boolean)
+    .map((t: string) => `\n    <itunes:category text="${escapeXml(t)}"/>`)
+    .join('')
+
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
     <title>${escapeXml(showName)}</title>
     <description>${escapeXml(description)}</description>
-    <itunes:author>${escapeXml(author)}</itunes:author>
-    <itunes:explicit>no</itunes:explicit>
+    <itunes:author>${escapeXml(allAuthors || host)}</itunes:author>
+    <itunes:explicit>${explicit}</itunes:explicit>${imageTag}${websiteTag}${categoryTags}
     <item>
-      <title>${escapeXml(episodeTitleFull)}</title>
+      <title>${escapeXml(episodeTitle)}</title>
       <description>${escapeXml(description)}</description>
+      <itunes:author>${escapeXml(allAuthors || host)}</itunes:author>
+      <itunes:episodeType>${episodeType}</itunes:episodeType>${seasonTag}${episodeNumberTag}
+      <itunes:explicit>${explicit}</itunes:explicit>
       <enclosure url="${escapeXml(enclosureUrl)}" length="0" type="audio/webm"/>
-      <guid>${escapeXml(id)}</guid>
+      <guid isPermaLink="false">${escapeXml(id)}</guid>
       <pubDate>${pubDate}</pubDate>
       <itunes:duration>0</itunes:duration>
     </item>

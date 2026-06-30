@@ -13,6 +13,7 @@ import type { Caption } from '@/lib/types'
 import { captureAudioInput } from '@/lib/audio-capture'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
+import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getPresets } from '@/lib/midi-presets'
@@ -68,47 +69,64 @@ function PodcastSetupPanel() {
     t => t.type === 'audio' && (t.name === 'Host' || /^Guest \d+$/.test(t.name))
   )
 
+  function getDeviceName(inputSource: string | null | undefined): string | null {
+    if (!inputSource) return null
+    if (inputSource === 'mic') return 'Default Microphone'
+    if (inputSource === 'system') return 'System Audio'
+    return audioDevices.find(d => d.deviceId === inputSource)?.label || 'Microphone'
+  }
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
         Recording Setup
       </div>
-      {voiceTracks.map(track => (
-        <div key={track.id} style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: track.color, flexShrink: 0 }} />
-            <span style={{ fontSize: 11, color: 'var(--text-primary)', flex: 1 }}>{track.name}</span>
-            <button
-              onClick={() => setOpenTrackId(openTrackId === track.id ? null : track.id)}
-              title="Select microphone input"
-              style={{
-                fontSize: 9, padding: '2px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700,
-                border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
-                background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
-                color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
-              }}
-            >IN</button>
+      {voiceTracks.map(track => {
+        const deviceName = getDeviceName(track.inputSource)
+        return (
+          <div key={track.id} style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: track.color, flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: 'var(--text-primary)', flex: 1 }}>{track.name}</span>
+              {/* Test-level VU meter — active whenever a source is selected */}
+              <VUMeter deviceId={track.inputSource} active={!!track.inputSource} />
+              <button
+                onClick={() => setOpenTrackId(openTrackId === track.id ? null : track.id)}
+                title="Select microphone input"
+                style={{
+                  fontSize: 9, padding: '2px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700,
+                  border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
+                  background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
+                  color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
+                }}
+              >MIC</button>
+            </div>
+            {deviceName && (
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, marginLeft: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {deviceName}
+              </div>
+            )}
+            {openTrackId === track.id && (
+              <select
+                value={track.inputSource ?? ''}
+                onChange={e => {
+                  const deviceId = e.target.value || null
+                  dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { inputSource: deviceId } })
+                  setOpenTrackId(null)
+                }}
+                style={{ width: '100%', fontSize: 11, padding: '3px 5px', marginTop: 4, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, outline: 'none', cursor: 'pointer' }}
+              >
+                <option value="">— None —</option>
+                <option value="mic">Microphone (default)</option>
+                {audioDevices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microphone'}</option>
+                ))}
+                <option value="system">System Audio</option>
+              </select>
+            )}
           </div>
-          {openTrackId === track.id && (
-            <select
-              value={track.inputSource ?? ''}
-              onChange={e => {
-                const deviceId = e.target.value || null
-                dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { inputSource: deviceId } })
-                setOpenTrackId(null)
-              }}
-              style={{ width: '100%', fontSize: 11, padding: '3px 5px', marginTop: 4, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, outline: 'none', cursor: 'pointer' }}
-            >
-              <option value="">— None —</option>
-              <option value="mic">Microphone (default)</option>
-              {audioDevices.map(d => (
-                <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microphone'}</option>
-              ))}
-              <option value="system">System Audio</option>
-            </select>
-          )}
-        </div>
-      ))}
+        )
+      })}
       <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
           Quick Tips

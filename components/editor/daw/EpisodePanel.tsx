@@ -150,12 +150,20 @@ export default function EpisodePanel({ meta, onChange }: Props) {
       {/* People */}
       <div>
         <div style={sectionLabel}>People</div>
-        <div style={{ paddingTop: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8 }}>
+          <Field label="Host">
+            <input
+              value={meta.host ?? ''}
+              onChange={e => set('host', e.target.value || undefined)}
+              placeholder="Your name..."
+              style={inputStyle}
+            />
+          </Field>
           <Field label="Guests">
             <input
               value={meta.guests}
               onChange={e => set('guests', e.target.value)}
-              placeholder="Guest names..."
+              placeholder="Guest names, comma separated..."
               style={inputStyle}
             />
           </Field>
@@ -166,6 +174,17 @@ export default function EpisodePanel({ meta, onChange }: Props) {
       <div>
         <div style={sectionLabel}>Publication</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8 }}>
+          <Field label="Episode Type">
+            <select
+              value={meta.episodeType ?? 'full'}
+              onChange={e => set('episodeType', e.target.value as 'full' | 'trailer' | 'bonus')}
+              style={{ ...inputStyle, cursor: 'pointer' }}
+            >
+              <option value="full">Full</option>
+              <option value="trailer">Trailer</option>
+              <option value="bonus">Bonus</option>
+            </select>
+          </Field>
           <Field label="Tags / Category">
             <input
               value={meta.tags ?? ''}
@@ -174,7 +193,6 @@ export default function EpisodePanel({ meta, onChange }: Props) {
               style={inputStyle}
             />
           </Field>
-
           <Field label="Website URL">
             <input
               type="url"
@@ -184,6 +202,15 @@ export default function EpisodePanel({ meta, onChange }: Props) {
               style={inputStyle}
             />
           </Field>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={meta.explicit ?? false}
+              onChange={e => set('explicit', e.target.checked || undefined)}
+              style={{ accentColor: 'var(--accent)', width: 14, height: 14 }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Explicit content</span>
+          </label>
         </div>
       </div>
 
