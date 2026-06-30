@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -213,6 +213,14 @@ export default function Sidebar() {
             </span>
           </div>
         )}
+        <Link
+          href="/download"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Download size={15} />
+          Get Desktop App
+        </Link>
         <a
           href="mailto:feedback@100lights.com?subject=Feedback"
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
