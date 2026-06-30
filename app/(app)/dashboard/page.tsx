@@ -3,7 +3,22 @@
 import { useState, useEffect, Suspense, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { PlusCircle, Film, ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X, Star, Pencil } from 'lucide-react'
+import { useUser } from '@clerk/nextjs'
+import {
+  Film, AudioLines, FileText, Newspaper, PanelsTopBottom,
+  ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X,
+  Star, Pencil, ExternalLink, Clock,
+} from 'lucide-react'
+import type { ModuleKey } from '@/lib/editor-types'
+import { MODULE_DEFS } from '@/lib/editor-types'
+
+const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
+  video: Film,
+  audio: AudioLines,
+  transcript: FileText,
+  content: Newspaper,
+  storyboard: PanelsTopBottom,
+}
 
 interface ProjectSummary {
   id: string
@@ -16,7 +31,14 @@ interface ProjectSummary {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const d = new Date(iso)
+  const now = new Date()
+  const diffMs = now.getTime() - d.getTime()
+  const diffDays = Math.floor(diffMs / 86400000)
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  if (diffDays < 7) return `${diffDays}d ago`
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function UpgradeBanner() {
@@ -40,7 +62,93 @@ function UpgradeBanner() {
   )
 }
 
+function AppCard({ mod }: { mod: typeof MODULE_DEFS[number] }) {
+  const Icon = ICONS[mod.key]
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: 12,
+        border: `1px solid ${hovered ? mod.color + '55' : 'var(--border)'}`,
+        background: hovered
+          ? `color-mix(in srgb, ${mod.color} 6%, var(--bg-card))`
+          : 'var(--bg-card)',
+        overflow: 'hidden',
+        transition: 'border-color 0.15s, background 0.15s',
+        cursor: 'default',
+      }}
+    >
+      {/* Colored top strip */}
+      <div style={{
+        height: 3,
+        background: mod.color,
+        opacity: hovered ? 1 : 0.6,
+        transition: 'opacity 0.15s',
+      }} />
+
+      {/* Body */}
+      <div style={{ padding: '20px 20px 16px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* Icon + name row */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: `color-mix(in srgb, ${mod.color} 14%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${mod.color} 25%, transparent)`,
+          }}>
+            <Icon size={20} color={mod.color} />
+          </div>
+        </div>
+
+        <div style={{
+          fontSize: 13, fontWeight: 700, letterSpacing: '0.04em',
+          color: 'var(--text-primary)', marginBottom: 4,
+        }}>
+          {mod.label}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.4 }}>
+          {mod.tagline}
+        </div>
+
+        {/* Feature bullets */}
+        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+          {mod.features.map(f => (
+            <li key={f} style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+              <span style={{ color: mod.color, fontSize: 7, flexShrink: 0 }}>▸</span>
+              {f}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Footer CTA */}
+      <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+        <Link
+          href={`/new?modules=${mod.key}`}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            padding: '8px 0', borderRadius: 7, fontSize: 12, fontWeight: 600,
+            background: hovered ? mod.color : 'transparent',
+            color: hovered ? '#fff' : mod.color,
+            border: `1px solid ${hovered ? mod.color : mod.color + '55'}`,
+            textDecoration: 'none',
+            transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+          }}
+        >
+          Open <ExternalLink size={11} />
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
+  const { user } = useUser()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -91,103 +199,108 @@ export default function DashboardPage() {
     return () => document.removeEventListener('mousedown', close)
   }, [ctxMenu])
 
-  const recentProjects = projects.slice(0, 5)
+  const firstName = user?.firstName ?? user?.username ?? null
+  const recentProjects = projects.slice(0, 6)
 
   return (
     <>
     <main className="flex-1 overflow-y-auto">
-      <div className="p-8 max-w-5xl">
+      <div style={{ padding: '40px 40px 60px', maxWidth: 1100 }}>
         <Suspense fallback={null}><UpgradeBanner /></Suspense>
-        <div className="flex items-start justify-between mb-10">
-          <div>
-            <h1 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Dashboard</h1>
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Your recent content and processing activity</p>
-          </div>
-          <Link
-            href="/new"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium"
-            style={{ background: 'var(--accent)', color: '#fff' }}
-          >
-            <PlusCircle size={15} />
-            New project
-          </Link>
+
+        {/* Greeting */}
+        <div style={{ marginBottom: 40 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
+            {firstName ? `Hey, ${firstName}.` : 'Welcome back.'}
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            What are you building today?
+          </p>
         </div>
 
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recent projects</h2>
-            <Link href="/projects" className="flex items-center gap-1 text-xs" style={{ color: 'var(--accent-light)' }}>
-              View all <ArrowRight size={12} />
+        {/* ── App Launcher Grid ── */}
+        <section style={{ marginBottom: 52 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+              Your Apps
+            </h2>
+            <Link
+              href="/new"
+              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
+            >
+              New project <ArrowRight size={11} />
+            </Link>
+          </div>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+            gap: 12,
+          }}>
+            {MODULE_DEFS.map(mod => (
+              <AppCard key={mod.key} mod={mod} />
+            ))}
+          </div>
+        </section>
+
+        {/* ── Recent Projects ── */}
+        <section>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+              Recent Projects
+            </h2>
+            <Link href="/projects" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}>
+              View all <ArrowRight size={11} />
             </Link>
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-10 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '36px 0', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</span>
             </div>
           ) : error ? (
-            <div className="flex flex-col items-center justify-center py-14 rounded-xl border gap-3" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-              <AlertCircle size={20} color="var(--text-muted)" />
-              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Failed to load projects</p>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '36px 0', gap: 12, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+              <AlertCircle size={18} color="var(--text-muted)" />
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>Failed to load projects</p>
               <button
                 onClick={loadProjects}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-                style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}
               >
-                <RefreshCw size={12} /> Retry
+                <RefreshCw size={11} /> Retry
               </button>
             </div>
           ) : recentProjects.length === 0 ? (
-            <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
-              <div className="px-6 pt-8 pb-6 text-center border-b" style={{ borderColor: 'var(--border)' }}>
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'var(--accent-subtle)', border: '1px solid rgba(139,92,246,0.25)' }}>
-                  <Film size={24} color="var(--accent-light)" />
-                </div>
-                <h3 className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                  Turn your first recording into content
-                </h3>
-                <p className="text-sm max-w-xs mx-auto mb-5" style={{ color: 'var(--text-secondary)' }}>
-                  Upload a video, podcast, or audio file and 100Lights will transcribe it and generate articles, blog posts, and show notes automatically.
-                </p>
-                <Link
-                  href="/new"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold"
-                  style={{ background: 'var(--accent)', color: '#fff' }}
-                >
-                  <PlusCircle size={15} />
-                  Create your first project
-                </Link>
-              </div>
-              <div className="grid grid-cols-3 divide-x" style={{ borderColor: 'var(--border)' }}>
-                {[
-                  { step: '01', label: 'Upload any video or audio', sub: 'MP4, MOV, MP3, WAV — up to 4 GB' },
-                  { step: '02', label: 'AI transcribes in minutes', sub: 'Word-for-word with timestamps' },
-                  { step: '03', label: 'Generate content instantly', sub: 'Articles, blog posts, show notes' },
-                ].map(({ step, label, sub }) => (
-                  <div key={step} className="px-5 py-4" style={{ borderColor: 'var(--border)' }}>
-                    <div className="text-lg font-bold mb-1.5" style={{ color: 'var(--border-light)' }}>{step}</div>
-                    <div className="text-xs font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>{label}</div>
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{sub}</div>
-                  </div>
-                ))}
-              </div>
+            <div style={{ padding: '36px 0', textAlign: 'center', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No projects yet — pick an app above to get started.</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {recentProjects.map((project) => (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+              {recentProjects.map(project => (
                 <div
                   key={project.id}
-                  className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
-                  style={{ background: 'var(--bg-card)', borderColor: project.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '12px 14px', borderRadius: 10,
+                    border: project.starred ? '1px solid rgba(139,92,246,0.35)' : '1px solid var(--border)',
+                    background: 'var(--bg-card)', cursor: 'default',
+                  }}
                   onContextMenu={e => { e.preventDefault(); setCtxMenu({ id: project.id, name: project.name, x: e.clientX, y: e.clientY }) }}
                 >
-                  <Link href={`/projects/${project.id}`} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+                  <Link
+                    href={`/projects/${project.id}`}
+                    style={{
+                      width: 40, height: 28, borderRadius: 6, flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'var(--border)', overflow: 'hidden', textDecoration: 'none',
+                    }}
+                  >
                     {project.thumbnail
-                      ? <img src={project.thumbnail} className="w-full h-full object-cover" alt="" />
-                      : <Film size={16} color="var(--text-secondary)" />
+                      ? <img src={project.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                      : <Film size={14} color="var(--text-secondary)" />
                     }
                   </Link>
-                  <div className="flex-1 min-w-0">
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     {renamingId === project.id ? (
                       <input
                         autoFocus
@@ -195,69 +308,66 @@ export default function DashboardPage() {
                         onChange={e => setRenameValue(e.target.value)}
                         onBlur={() => commitRename(project.id)}
                         onKeyDown={e => { if (e.key === 'Enter') commitRename(project.id); if (e.key === 'Escape') setRenamingId(null) }}
-                        className="text-sm font-medium bg-transparent outline-none border-b w-full"
-                        style={{ color: 'var(--text-primary)', borderColor: 'var(--accent)' }}
+                        style={{ fontSize: 12, fontWeight: 500, background: 'transparent', outline: 'none', borderBottom: '1px solid var(--accent)', width: '100%', color: 'var(--text-primary)' }}
                         onClick={e => e.stopPropagation()}
                       />
                     ) : (
                       <Link
                         href={`/projects/${project.id}`}
-                        className="text-sm font-medium truncate block w-full hover:underline"
-                        style={{ color: 'var(--text-primary)' }}
+                        style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       >
                         {project.name}
                       </Link>
                     )}
-                    <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                      {project.clips} clip{project.clips !== 1 ? 's' : ''} · {project.media} media file{project.media !== 1 ? 's' : ''}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      <Clock size={9} color="var(--text-muted)" />
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{formatDate(project.savedAt)}</span>
                     </div>
                   </div>
-                  <Link href={`/projects/${project.id}`} className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(project.savedAt)}</Link>
-                  <button
-                    onClick={() => startRename(project.id, project.name)}
-                    title="Rename project"
-                    className="p-1.5 rounded-lg shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
-                      fetch(`/api/projects/${project.id}`, { method: 'PATCH' }).catch(() => {
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                    <button
+                      onClick={() => startRename(project.id, project.name)}
+                      title="Rename"
+                      style={{ padding: 5, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', opacity: 0.5 }}
+                      onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                      onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}
+                    >
+                      <Pencil size={11} />
+                    </button>
+                    <button
+                      onClick={() => {
                         setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
-                      })
-                    }}
-                    title={project.starred ? 'Unstar' : 'Star'}
-                    className="p-1.5 rounded-lg shrink-0"
-                    style={{ color: project.starred ? '#f59e0b' : 'var(--text-muted)' }}
-                  >
-                    <Star size={14} fill={project.starred ? '#f59e0b' : 'none'} />
-                  </button>
+                        fetch(`/api/projects/${project.id}`, { method: 'PATCH' }).catch(() => {
+                          setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
+                        })
+                      }}
+                      title={project.starred ? 'Unstar' : 'Star'}
+                      style={{ padding: 5, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: project.starred ? '#f59e0b' : 'var(--text-muted)' }}
+                    >
+                      <Star size={12} fill={project.starred ? '#f59e0b' : 'none'} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
-
+        </section>
       </div>
     </main>
 
-    {/* Right-click context menu */}
     {ctxMenu && (
       <div
         ref={ctxRef}
-        className="fixed z-50 rounded-lg py-1 shadow-lg"
-        style={{ top: ctxMenu.y, left: ctxMenu.x, background: 'var(--bg-card)', border: '1px solid var(--border)', minWidth: 140 }}
+        style={{ position: 'fixed', top: ctxMenu.y, left: ctxMenu.x, zIndex: 50, borderRadius: 8, padding: '4px 0', background: 'var(--bg-card)', border: '1px solid var(--border)', minWidth: 140, boxShadow: '0 4px 16px rgba(0,0,0,0.3)' }}
       >
         <button
-          className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-2"
-          style={{ color: 'var(--text-primary)' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 12px', fontSize: 12, color: 'var(--text-primary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
           onMouseEnter={e => (e.currentTarget.style.background = 'var(--border)')}
           onMouseLeave={e => (e.currentTarget.style.background = '')}
           onClick={() => { startRename(ctxMenu.id, ctxMenu.name); setCtxMenu(null) }}
         >
-          <Pencil size={13} /> Rename
+          <Pencil size={12} /> Rename
         </button>
       </div>
     )}

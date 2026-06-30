@@ -214,7 +214,6 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
       : { label: 'Delete', fn: onDelete },
     { label: 'Splice at Playhead', fn: () => onSplice?.() },
-    { label: 'Bounce to New Track', fn: () => alert('Bounce: not yet implemented') },
     ...(isAudioClip(clip) ? [
       { label: 'Clip Settings', fn: () => onSettings?.() },
       { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },

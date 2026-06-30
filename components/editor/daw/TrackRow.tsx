@@ -126,13 +126,14 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onToggleFold?: () => void
   onGroupTracks?: () => void
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
   const dragHRef  = useRef<{ startY: number; startH: number } | null>(null)
   const [editing,    setEditing]    = useState(false)
   const [draft,      setDraft]      = useState(track.name)
+  const cancelRenameRef = useRef(false)
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
@@ -371,8 +372,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {frozen && <span title="Frozen" style={{ fontSize: 10, flexShrink: 0 }}>❄</span>}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-                onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) }}
-                onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } e.stopPropagation() }}
+                onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
+                onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
                 style={{ flex: 1, fontSize: 11, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
               />
             ) : (
@@ -389,9 +390,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {track.instrument.type !== 'drum' && (<>
               {/* Arm button */}
               <button
-                title={track.armed ? 'Disarm track' : 'Arm for recording'}
+                title={track.armed ? (recording ? 'Recording…' : 'Disarm track') : 'Arm for recording'}
                 onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { armed: !track.armed } }) }}
-                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${track.armed ? '#ef4444' : 'var(--border)'}`, background: track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>
+                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>
                 ●
               </button>
               {/* Input source — opens settings card */}
@@ -484,14 +485,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             >
               <span>❄</span>
               <span>{frozen ? 'Unfreeze Track' : 'Freeze Track'}</span>
-            </button>
-            <button onClick={() => { setTrackCtxMenu(null); alert('Bounce: not yet implemented') }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
-              onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
-              onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
-            >
-              <span>⬇</span>
-              <span>Bounce to New Track</span>
             </button>
 
             {/* Group selected tracks — show only when multiple tracks selected and this track is one of them */}

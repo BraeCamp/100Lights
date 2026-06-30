@@ -151,8 +151,8 @@ export const MODULE_DEFS: ModuleDef[] = [
   {
     key: 'audio',
     label: 'Audio',
-    tagline: 'Waveform editing, mixing, EQ',
-    features: ['Waveform editor', 'Per-clip EQ', 'Volume automation', 'Silence detection'],
+    tagline: 'Full DAW — sequences, mixing, effects',
+    features: ['Arrangement & Session view', 'Mixer with sends & returns', '10 DSP effects chain', 'Sample library (2178 sounds)'],
     color: '#3b82f6',
   },
   {

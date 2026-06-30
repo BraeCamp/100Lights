@@ -293,6 +293,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
 
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
@@ -327,6 +328,11 @@ export default function AudioEditor(props: AudioEditorProps) {
             } satisfies AudioTrack
           })
         await onSaveRef.current(tracks)
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus(null), 2500)
+      } catch {
+        setSaveStatus('error')
+        setTimeout(() => setSaveStatus(null), 4000)
       } finally {
         setIsSaving(false)
       }
@@ -346,7 +352,10 @@ export default function AudioEditor(props: AudioEditorProps) {
 
       if (e.code === 'Space') {
         e.preventDefault()
-        if (engine.isPlaying) {
+        if (engine.isRecording) {
+          engine.stop()
+          void engine.stopRecording()
+        } else if (engine.isPlaying) {
           engine.stop()
         } else {
           engine.play()
@@ -584,6 +593,22 @@ export default function AudioEditor(props: AudioEditorProps) {
       {/* Floating pad / keyboard overlay */}
       {showPads && selectedTrackId && (
         <PadInput trackId={selectedTrackId} onClose={() => setShowPads(false)} />
+      )}
+
+      {/* Save toast */}
+      {(saveStatus === 'saved' || saveStatus === 'error') && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 100,
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 16px', borderRadius: 10,
+          background: saveStatus === 'saved' ? '#18251a' : '#250f0f',
+          border: `1px solid ${saveStatus === 'saved' ? '#166534' : '#7f1d1d'}`,
+          color: saveStatus === 'saved' ? '#4ade80' : '#f87171',
+          fontSize: 13, fontWeight: 500,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+        }}>
+          {saveStatus === 'saved' ? '✓ Project saved' : '✗ Save failed'}
+        </div>
       )}
     </DawContext.Provider>
   )
