@@ -133,6 +133,15 @@ export function defaultLfo(): LfoParams {
   return { enabled: true, rate: 1, depth: 0.5, waveform: 'sine', target: 'pan', filterFreqMin: 200, filterFreqMax: 8000 }
 }
 
+/** Returns a fresh voice-optimized effects chain for podcast/voice recording. */
+export function voiceChainEffects(): TrackEffect[] {
+  return [
+    { id: crypto.randomUUID(), type: 'filter',     params: { enabled: true, type: 'highpass' as FilterParams['type'], frequency: 80, q: 0.7 } as FilterParams },
+    { id: crypto.randomUUID(), type: 'compressor', params: { enabled: true, threshold: -18, ratio: 4, attack: 0.003, release: 0.25, knee: 6, makeupGain: 3, sidechainTrackId: null } as CompressorParams },
+    { id: crypto.randomUUID(), type: 'eq3',        params: { enabled: true, lowGain: -2, midGain: 3, highGain: 0, lowFreq: 200, midFreq: 3000, highFreq: 8000 } as Eq3Params },
+  ]
+}
+
 // ── MIDI Effects ──────────────────────────────────────────────────────────────
 
 export type MidiEffectType = 'velocity' | 'scale' | 'chord' | 'arp'

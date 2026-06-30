@@ -5,12 +5,19 @@ import { createPortal } from 'react-dom'
 import { X, Download, Loader2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
+import type { PodcastMeta } from '@/lib/project-serializer'
 
 interface Props {
   onClose: () => void
+  audioMode?: 'music' | 'podcast'
+  podcastMeta?: PodcastMeta
 }
 
-export default function AudioExportModal({ onClose }: Props) {
+function slugify(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || ''
+}
+
+export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Props) {
   const { project, engine } = useDaw()
   const [phase, setPhase] = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
   const [progress, setProgress] = useState(0)
@@ -53,8 +60,19 @@ export default function AudioExportModal({ onClose }: Props) {
     }, 100)
   }
 
-  const safeName = (project.name ?? 'export').replace(/[^a-z0-9_\-\s]/gi, '').trim() || 'export'
-  const filename = `${safeName}.webm`
+  // Filename: slug from podcast metadata or project name
+  const filename = (() => {
+    if (audioMode === 'podcast' && podcastMeta) {
+      const showSlug = slugify(podcastMeta.showName)
+      const epPart   = podcastMeta.episodeNumber != null ? `ep-${podcastMeta.episodeNumber}` : null
+      const parts    = [showSlug, epPart].filter((p): p is string => Boolean(p))
+      return parts.length > 0 ? `${parts.join('-')}.webm` : 'podcast-export.webm'
+    }
+    const safeName = (project.name ?? 'export').replace(/[^a-z0-9_\-\s]/gi, '').trim() || 'export'
+    return `${safeName}.webm`
+  })()
+
+  const isPodcast = audioMode === 'podcast'
 
   const overlay = (
     <div
@@ -68,14 +86,16 @@ export default function AudioExportModal({ onClose }: Props) {
       <div
         style={{
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
-          borderRadius: 12, width: 360, overflow: 'hidden',
+          borderRadius: 12, width: 380, overflow: 'hidden',
           boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
         }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Export Audio</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {isPodcast ? 'Export Podcast Episode' : 'Export Audio'}
+          </span>
           {phase !== 'recording' && (
             <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}>
               <X size={16} />
@@ -129,7 +149,31 @@ export default function AudioExportModal({ onClose }: Props) {
 
           {phase === 'done' && downloadUrl && (
             <>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 18 }}>
+              {/* Episode info card — shown in podcast mode */}
+              {isPodcast && podcastMeta && (
+                <div style={{
+                  marginBottom: 16, padding: '10px 12px', borderRadius: 8,
+                  background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)',
+                }}>
+                  {podcastMeta.showName && (
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#f97316', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
+                      {podcastMeta.showName}
+                    </div>
+                  )}
+                  {podcastMeta.episodeTitle && (
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
+                      {podcastMeta.episodeTitle}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+                    {podcastMeta.episodeNumber != null && <span>Ep. {podcastMeta.episodeNumber}</span>}
+                    {podcastMeta.season != null && <span>· Season {podcastMeta.season}</span>}
+                    {podcastMeta.guests && <span>· {podcastMeta.guests}</span>}
+                  </div>
+                </div>
+              )}
+
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
                 Export complete. Click below to download.
               </p>
               <a
@@ -142,8 +186,11 @@ export default function AudioExportModal({ onClose }: Props) {
                   textDecoration: 'none',
                 }}
               >
-                <Download size={14} /> Download {filename}
+                <Download size={14} /> {isPodcast ? 'Download Podcast Episode' : `Download ${filename}`}
               </a>
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.5 }}>
+                Exported as WebM/Opus. For MP3, re-encode with any converter.
+              </p>
             </>
           )}
 

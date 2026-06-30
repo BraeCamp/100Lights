@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import {
-  Film, AudioLines, Music2, Mic2,
+  Film, AudioLines, Music2, Mic2, Palette,
   Plus, ArrowRight, Clock, Star, Pencil, RefreshCw, AlertCircle,
 } from 'lucide-react'
 import { MODULE_DEFS } from '@/lib/editor-types'
@@ -14,12 +14,14 @@ import type { ModuleKey } from '@/lib/editor-types'
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
+  image: Palette,
 }
 
 // Per-module hero copy — distinct identity for each app
 const HERO_COPY: Record<ModuleKey, { headline: string; sub: string }> = {
   audio: { headline: 'Your Sound Studio',  sub: 'Compose, arrange, mix, and master — from first beat to final export.' },
   video: { headline: 'Your Editing Suite', sub: 'Cut, color grade, and export. Professional tools without the bloat.' },
+  image: { headline: 'Your Design Canvas', sub: 'Layer-based graphics editor. Design thumbnails, brand assets, and social graphics.' },
 }
 
 interface ProjectSummary {

@@ -7,6 +7,7 @@ import type {
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
   ReturnTrack, TakeLane, MidiEffect, CueMarker,
 } from './daw-types'
+import type { PodcastMeta } from './project-serializer'
 import {
   defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT,
   defaultTrackInstrument,
@@ -534,6 +535,9 @@ export interface DawContextValue {
   // Save
   onSave?: () => void
   isSaving: boolean
+  // Podcast / audio mode
+  audioMode?: 'music' | 'podcast'
+  podcastMeta?: PodcastMeta
   // Transport (live)
   playing: boolean
   recording: boolean

@@ -46,6 +46,11 @@ const TranscriptEditor = dynamic(
   { ssr: false, loading: () => <EditorSpinner label="Loading transcript editor…" /> }
 )
 
+const ImageEditor = dynamic(
+  () => import('./ImageEditor'),
+  { ssr: false, loading: () => <EditorSpinner label="Loading image editor…" /> }
+)
+
 // ── Shared spinner ────────────────────────────────────────────
 
 function EditorSpinner({ label }: { label: string }) {
@@ -504,6 +509,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   // ── Module flags ──────────────────────────────────────────
   const hasVideo      = activeModules.includes('video')
   const hasAudio      = activeModules.includes('audio')
+  const hasImage      = (activeModules as string[]).includes('image')
   const hasContent    = (activeModules as string[]).includes('content')
   const hasTranscript = (activeModules as string[]).includes('transcript')
 
@@ -669,6 +675,14 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       <TranscriptEditor {...transcriptProps} />
       {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
     </>
+  )
+
+  if (hasImage) return (
+    <ImageEditor
+      projectId={projectId}
+      projectName={localName}
+      onProjectNameCommit={commitName}
+    />
   )
 
   // Storyboard without video is not meaningful on its own yet

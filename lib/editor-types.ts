@@ -130,7 +130,7 @@ export const DEFAULT_TRACKS: Track[] = [
 
 // ── Modular project system ────────────────────────────────────
 
-export type ModuleKey = 'video' | 'audio'
+export type ModuleKey = 'video' | 'audio' | 'image'
 
 export interface ModuleDef {
   key: ModuleKey
@@ -154,6 +154,13 @@ export const MODULE_DEFS: ModuleDef[] = [
     tagline: 'Full DAW — sequences, mixing, effects',
     features: ['Arrangement & Session view', 'Mixer with sends & returns', '10 DSP effects chain', 'Sample library (2178 sounds)'],
     color: '#3b82f6',
+  },
+  {
+    key: 'image',
+    label: 'Image',
+    tagline: 'Canvas, layers, text, brand kits',
+    features: ['Layer-based canvas', 'Text & shapes', 'Brand kit (colors, fonts)', 'Export to PNG/JPG/WebP'],
+    color: '#ec4899',
   },
 ]
 

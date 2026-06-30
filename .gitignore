@@ -25,6 +25,9 @@
 /electron/dist/
 /electron/node_modules/
 
+# claude code agent worktrees — stale checkouts break git status
+.claude/worktrees/
+
 # misc
 .DS_Store
 *.pem

@@ -4,7 +4,7 @@ import { useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { UserButton } from '@clerk/nextjs'
-import { Film, AudioLines, ArrowLeft, ArrowRight, Check } from 'lucide-react'
+import { Film, AudioLines, Palette, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import ProjectEditor from '@/components/editor/ProjectEditor'
@@ -12,6 +12,7 @@ import ProjectEditor from '@/components/editor/ProjectEditor'
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
+  image: Palette,
 }
 
 export default function NewProjectPage() {

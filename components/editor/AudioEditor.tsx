@@ -3,7 +3,7 @@
 import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
@@ -128,6 +128,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const historyRef = useRef<DawProject[]>([])
   const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
+  const voiceChainAppliedRef = useRef(false)
 
   // ── Per-track external input recording ──────────────────────────────────────
   type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
@@ -147,6 +148,20 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
     rawDispatch(action)
   }, [])
+
+  // Auto-apply voice chain to Host and Guest 1 tracks on new podcast projects
+  useEffect(() => {
+    if (!isPodcast) return
+    if (voiceChainAppliedRef.current) return
+    voiceChainAppliedRef.current = true
+    const p = projectRef.current
+    const targets = p.tracks.filter(
+      t => (t.name === 'Host' || t.name === 'Guest 1') && t.effects.length === 0
+    )
+    for (const track of targets) {
+      dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { effects: voiceChainEffects() } })
+    }
+  }, [isPodcast, dispatch])
 
   // ── Engine lifecycle ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -484,10 +499,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     setExpandedPianoRollClipId,
     onSave: onSave ? () => { void handleSaveRef.current() } : undefined,
     isSaving,
+    audioMode: props.audioMode,
+    podcastMeta,
   }), [
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     playing, recording, position, setPosition, metronome, showPads,
-    expandedPianoRollClipId, onSave, isSaving,
+    expandedPianoRollClipId, onSave, isSaving, podcastMeta,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────

@@ -252,7 +252,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, setSelectedClipIds, onSave, isSaving } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, setSelectedClipIds, onSave, isSaving, audioMode, podcastMeta } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -261,6 +261,10 @@ export default function ArrangementView() {
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
   // Group track fold state: set of group track IDs that are folded
   const [showExport, setShowExport] = useState(false)
+  const [showPublish, setShowPublish] = useState(false)
+  const [publishFeedUrl, setPublishFeedUrl] = useState<string | null>(null)
+  const [publishLoading, setPublishLoading] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
   const [foldedGroups, setFoldedGroups] = useState<Set<string>>(new Set())
   // Multi-track selection for grouping
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set())
@@ -510,6 +514,17 @@ export default function ArrangementView() {
             color: 'var(--text-muted)', letterSpacing: '0.04em', marginLeft: 4,
           }}
         >EXPORT</button>
+        {audioMode === 'podcast' && (
+          <button
+            onClick={() => { setShowPublish(true); setPublishFeedUrl(null); setPublishError(null) }}
+            title="Publish podcast RSS feed"
+            style={{
+              ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
+              border: '1px solid var(--border)', background: 'transparent',
+              color: 'var(--text-muted)', letterSpacing: '0.04em', marginLeft: 4,
+            }}
+          >PUBLISH</button>
+        )}
         {onSave && (
           <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" style={{
             ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
@@ -645,7 +660,7 @@ export default function ArrangementView() {
         </div>,
         document.body
       )}
-      {showExport && <AudioExportModal onClose={() => setShowExport(false)} />}
+      {showExport && <AudioExportModal onClose={() => setShowExport(false)} audioMode={audioMode} podcastMeta={podcastMeta} />}
     </div>
   )
 }

@@ -11,6 +11,7 @@ import type {
 import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
   defaultSaturator, defaultRedux, defaultAutoPan, defaultUtility, defaultLfo,
+  voiceChainEffects,
 } from '@/lib/daw-types'
 
 // ── Label map ──────────────────────────────────────────────────────────────────
@@ -496,6 +497,37 @@ function makeDefaultParams(type: EffectType) {
   }
 }
 
+function VoiceChainButton({ trackId }: { trackId: string }) {
+  const { dispatch, project } = useDaw()
+  const track = project.tracks.find(t => t.id === trackId)
+  if (!track || track.type !== 'audio') return null
+
+  function apply() {
+    if (track!.effects.length > 0) {
+      if (!window.confirm('Replace existing effects with Voice Chain?')) return
+    }
+    dispatch({ type: 'UPDATE_TRACK', trackId, patch: { effects: voiceChainEffects() } })
+  }
+
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); apply() }}
+      title="Apply voice preset for podcast/voice recording"
+      style={{
+        alignSelf: 'flex-start', flexShrink: 0,
+        background: 'rgba(249,115,22,0.10)',
+        border: '1px solid rgba(249,115,22,0.35)',
+        color: '#f97316', fontSize: 11, cursor: 'pointer',
+        borderRadius: 4, padding: '6px 10px', whiteSpace: 'nowrap',
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(249,115,22,0.22)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(249,115,22,0.10)' }}
+    >
+      Voice Chain
+    </button>
+  )
+}
+
 function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const [open, setOpen] = useState(false)
@@ -768,6 +800,7 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         {track.effects.map(effect => (
           <EffectDevice key={effect.id} effect={effect} trackId={trackId} />
         ))}
+        <VoiceChainButton trackId={trackId} />
         <AddDeviceButton trackId={trackId} />
       </div>
       {/* MIDI FX row */}
