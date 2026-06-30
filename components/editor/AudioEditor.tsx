@@ -321,6 +321,18 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [])
 
   // ── UI state ────────────────────────────────────────────────────────────────
+  // ── Podcast helpers ──────────────────────────────────────────────────────────
+  function handleAddGuest() {
+    const guestNums = project.tracks
+      .filter(t => /^Guest \d+$/.test(t.name))
+      .map(t => parseInt(t.name.split(' ')[1]))
+      .filter(n => !isNaN(n))
+    const nextNum = guestNums.length > 0 ? Math.max(...guestNums) + 1 : 2
+    const newId = crypto.randomUUID()
+    dispatch({ type: 'ADD_TRACK', id: newId, name: `Guest ${nextNum}` })
+    dispatch({ type: 'UPDATE_TRACK', trackId: newId, patch: { effects: voiceChainEffects() } })
+  }
+
   const [view, setView] = useState<DawView>('arrangement')
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
@@ -549,6 +561,19 @@ export default function AudioEditor(props: AudioEditorProps) {
                     }}
                   >{tab}</button>
                 ))}
+              </div>
+            )}
+            {isPodcast && (
+              <div style={{ display: 'flex', padding: '5px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                <button
+                  onClick={handleAddGuest}
+                  title="Add a new guest track with voice processing"
+                  style={{
+                    flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 4,
+                    border: '1px solid var(--border)', background: 'transparent',
+                    color: 'var(--text-muted)', cursor: 'pointer',
+                  }}
+                >+ Guest</button>
               </div>
             )}
             {(!isPodcast || leftTab === 'library') ? (

@@ -126,7 +126,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onToggleFold?: () => void
   onGroupTracks?: () => void
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
@@ -380,6 +380,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
                 {track.name}
               </span>
+            )}
+            {/* Voice chain badge — podcast mode only */}
+            {audioMode === 'podcast' && track.effects.length > 0 && (
+              <span title="Voice chain active" style={{
+                fontSize: 8, padding: '1px 3px', borderRadius: 2, flexShrink: 0,
+                background: 'rgba(249,115,22,0.15)', color: '#f97316',
+                border: '1px solid rgba(249,115,22,0.3)',
+                letterSpacing: '0.05em', fontWeight: 700,
+              }}>VC</span>
             )}
           </div>
           <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>

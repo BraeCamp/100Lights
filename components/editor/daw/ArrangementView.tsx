@@ -551,6 +551,23 @@ export default function ArrangementView() {
         onWheel={handleWheel}
         onMouseDown={onLaneMouseDown}
       >
+        {/* Podcast empty-state hint */}
+        {audioMode === 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (
+          <div style={{
+            position: 'absolute', left: HDR_W, right: 0, top: 0, bottom: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none', zIndex: 1,
+          }}>
+            <span style={{
+              fontSize: 12, color: 'var(--text-muted)',
+              textAlign: 'center', lineHeight: 1.6,
+              background: 'rgba(0,0,0,0.4)', padding: '10px 18px', borderRadius: 6,
+            }}>
+              Arm a track (click the ● button), then press Record to capture audio
+            </span>
+          </div>
+        )}
+
         {visibleTracks.map(track => (
           <TrackRow
             key={track.id}

@@ -66,6 +66,9 @@ export interface PodcastMeta {
   season: number | null
   description: string
   guests: string
+  artwork?: string      // base64 data URL for cover image
+  tags?: string         // comma-separated RSS category tags
+  websiteUrl?: string   // podcast website URL
 }
 
 export interface SerializedAudioMedia {

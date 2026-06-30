@@ -8,30 +8,68 @@ import dynamic from 'next/dynamic'
 
 const PadTuner = dynamic(() => import('./PadTuner'), { ssr: false })
 
-export default function Transport() {
-  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome } = useDaw()
+function fmtHMS(secs: number): string {
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const s = Math.floor(secs % 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
 
+export default function Transport() {
+  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode } = useDaw()
+
+  // ── Refs ────────────────────────────────────────────────────────────────────
   const posRef = useRef<HTMLSpanElement>(null)
   const rafRef = useRef<number | undefined>(undefined)
 
+  // Podcast wall-clock tracking
+  const wallSecsRef    = useRef(0)
+  const lastFrameRef   = useRef<number | undefined>(undefined)
+  const isPlayingRef   = useRef(playing)
+  const podcastPosRef  = useRef<HTMLSpanElement>(null)
+
+  // ── State (music mode only) ─────────────────────────────────────────────────
   const [editingBpm, setEditingBpm] = useState(false)
   const [bpmDraft, setBpmDraft] = useState('')
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
 
-  // Direct DOM mutation every frame — keeps position display smooth without React re-renders
+  // Keep isPlayingRef in sync for the RAF closure
+  useEffect(() => { isPlayingRef.current = playing }, [playing])
+
+  // RAF loop — music mode: render beats; podcast mode: render wall-clock time
   useEffect(() => {
-    const num = project.timeSignatureNum
-    function frame() {
-      if (posRef.current) {
-        posRef.current.textContent = formatBeat(engine.currentBeat, num)
+    if (audioMode === 'podcast') {
+      function podcastFrame(nowMs: number) {
+        if (isPlayingRef.current) {
+          if (lastFrameRef.current !== undefined) {
+            wallSecsRef.current += (nowMs - lastFrameRef.current) / 1000
+          }
+          lastFrameRef.current = nowMs
+        } else {
+          lastFrameRef.current = undefined
+        }
+        if (podcastPosRef.current) {
+          podcastPosRef.current.textContent = fmtHMS(wallSecsRef.current)
+        }
+        rafRef.current = requestAnimationFrame(podcastFrame)
       }
-      rafRef.current = requestAnimationFrame(frame)
+      rafRef.current = requestAnimationFrame(podcastFrame)
+    } else {
+      const num = project.timeSignatureNum
+      function musicFrame() {
+        if (posRef.current) {
+          posRef.current.textContent = formatBeat(engine.currentBeat, num)
+        }
+        rafRef.current = requestAnimationFrame(musicFrame)
+      }
+      rafRef.current = requestAnimationFrame(musicFrame)
     }
-    rafRef.current = requestAnimationFrame(frame)
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current) }
-  }, [engine, project.timeSignatureNum])
+  }, [engine, project.timeSignatureNum, audioMode])
+
+  // ── Common handlers ─────────────────────────────────────────────────────────
 
   function handlePlayStop() {
     if (playing) {
@@ -43,7 +81,7 @@ export default function Transport() {
 
   function handleRecord() {
     if (recording) {
-      if (playing) engine.stop()   // pause at current position, not rewind
+      if (playing) engine.stop()
       engine.stopRecording()
     } else {
       if (!playing) engine.play()
@@ -56,9 +94,23 @@ export default function Transport() {
     setPosition(0)
   }
 
+  function handlePodcastRewind() {
+    engine.seek(0)
+    setPosition(0)
+    wallSecsRef.current = 0
+    lastFrameRef.current = undefined
+  }
+
   function handleLoopToggle() {
     dispatch({ type: 'SET_LOOP_ENABLED', enabled: !project.loopEnabled })
   }
+
+  function handleVolumeChange(e: React.ChangeEvent<HTMLInputElement>) {
+    dispatch({ type: 'SET_MASTER_VOLUME', volume: parseFloat(e.target.value) })
+    engine.setMasterVolume(parseFloat(e.target.value))
+  }
+
+  // ── Music-only handlers ─────────────────────────────────────────────────────
 
   function handleBpmCommit(value: string) {
     const n = parseFloat(value)
@@ -82,10 +134,19 @@ export default function Transport() {
     setEditingTimeSig(false)
   }
 
-  function handleVolumeChange(e: React.ChangeEvent<HTMLInputElement>) {
-    dispatch({ type: 'SET_MASTER_VOLUME', volume: parseFloat(e.target.value) })
-    engine.setMasterVolume(parseFloat(e.target.value))
+  // ── Podcast-only handlers ───────────────────────────────────────────────────
+
+  const voiceTracks = project.tracks.filter(t => t.type === 'audio' && t.name !== 'Music Bed')
+  const allVoiceArmed = voiceTracks.length > 0 && voiceTracks.every(t => t.armed)
+
+  function handleRecAllVoice() {
+    const arm = !allVoiceArmed
+    for (const t of voiceTracks) {
+      dispatch({ type: 'UPDATE_TRACK', trackId: t.id, patch: { armed: arm } })
+    }
   }
+
+  // ── Style objects ───────────────────────────────────────────────────────────
 
   const base: React.CSSProperties = {
     display: 'flex',
@@ -141,17 +202,120 @@ export default function Transport() {
     padding: '2px 4px',
   }
 
+  const wrapStyle: React.CSSProperties = {
+    height: 48,
+    background: '#1a1a1a',
+    borderBottom: '1px solid var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '0 10px',
+    flexShrink: 0,
+  }
+
+  // ── Podcast transport ───────────────────────────────────────────────────────
+
+  if (audioMode === 'podcast') {
+    return (
+      <div style={wrapStyle}>
+        {/* Transport controls */}
+        <button style={base} onClick={handlePodcastRewind} title="Rewind to start">
+          <SkipBack size={13} />
+        </button>
+
+        <button
+          style={playing ? active : base}
+          onClick={handlePlayStop}
+          title="Play / Stop (Space)"
+        >
+          {playing
+            ? <Square size={11} fill="currentColor" />
+            : <Play size={13} fill="currentColor" />
+          }
+        </button>
+
+        <button
+          style={{
+            ...base,
+            color: recording ? '#ff3b3b' : 'var(--text-secondary)',
+            border: recording ? '1px solid #ff3b3b' : '1px solid var(--border)',
+            background: recording ? 'rgba(255,59,59,0.14)' : '#1e1e1e',
+          }}
+          onClick={handleRecord}
+          title="Record"
+        >
+          <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
+        </button>
+
+        <button
+          style={project.loopEnabled ? active : base}
+          onClick={handleLoopToggle}
+          title="Toggle loop"
+        >
+          <Repeat size={13} />
+        </button>
+
+        <div style={divider} />
+
+        {/* HH:MM:SS position */}
+        <div style={{
+          ...monoDisplay,
+          cursor: 'default',
+          fontSize: 14,
+          letterSpacing: '0.06em',
+          minWidth: 88,
+          textAlign: 'center',
+          padding: '3px 10px',
+          userSelect: 'none',
+        }}>
+          <span ref={podcastPosRef}>00:00:00</span>
+        </div>
+
+        <div style={divider} />
+
+        {/* Arm all voice tracks */}
+        <button
+          onClick={handleRecAllVoice}
+          title="Arm / disarm all voice tracks for recording"
+          style={{
+            ...base,
+            width: 'auto',
+            padding: '0 10px',
+            fontSize: 9,
+            fontFamily: 'monospace',
+            letterSpacing: '0.06em',
+            background: allVoiceArmed ? 'rgba(239,68,68,0.15)' : '#1e1e1e',
+            border: allVoiceArmed ? '1px solid #ef4444' : '1px solid var(--border)',
+            color: allVoiceArmed ? '#ef4444' : 'var(--text-secondary)',
+          }}
+        >
+          REC ALL VOICE
+        </button>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Master volume */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={project.masterVolume}
+            onChange={handleVolumeChange}
+            className="cf-slider"
+            style={{ width: 68, accentColor: 'var(--accent)' }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // ── Music transport (original) ──────────────────────────────────────────────
+
   return (
-    <div style={{
-      height: 48,
-      background: '#1a1a1a',
-      borderBottom: '1px solid var(--border)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 4,
-      padding: '0 10px',
-      flexShrink: 0,
-    }}>
+    <div style={wrapStyle}>
       {/* Transport controls */}
       <button style={base} onClick={handleRewind} title="Rewind to start">
         <SkipBack size={13} />
