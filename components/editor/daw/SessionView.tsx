@@ -775,8 +775,11 @@ export default function SessionView() {
   const [sessionRecording, setSessionRecording] = useState(false)
   const [anyPlaying, setAnyPlaying]             = useState(false)
   const [slotRecording, setSlotRecording]       = useState<SlotRecording>(null)
+  const [capturing, setCapturing]               = useState(false)
   const projectRef = useRef(project)
   projectRef.current = project
+  // captureMap tracks { startBeat } for each trackId currently playing a session clip
+  const captureMapRef = useRef<Map<string, { startBeat: number; clip: DawClip }>>(new Map())
 
   useEffect(() => { engine.launchQuantization = quantize }, [quantize, engine])
 
@@ -786,6 +789,37 @@ export default function SessionView() {
     engine.addEventListener('recording-complete', onDone)
     return () => engine.removeEventListener('recording-complete', onDone)
   }, [engine])
+
+  // Session → Arrangement capture: stamp clips into arrangement as they play/stop
+  useEffect(() => {
+    function onSessionState(e: Event) {
+      if (!capturing) return
+      const { trackId, clipId, state } = (e as CustomEvent<{ trackId: string; clipId: string; state: string }>).detail
+      const proj = projectRef.current
+
+      if (state === 'playing') {
+        // Find the session clip
+        const clip = Object.values(proj.sessionGrid).flatMap(s => s ?? []).find(c => c?.id === clipId)
+        if (clip) captureMapRef.current.set(trackId, { startBeat: engine.currentBeat, clip })
+      } else if (state === 'idle') {
+        const entry = captureMapRef.current.get(trackId)
+        if (!entry) return
+        captureMapRef.current.delete(trackId)
+        const durationBeats = Math.max(0.25, engine.currentBeat - entry.startBeat)
+        if (isAudioClip(entry.clip)) {
+          const arrClip = makeAudioClip(trackId, entry.clip.name, entry.startBeat, durationBeats, {
+            audioUrl: entry.clip.audioUrl,
+            waveformPeaks: entry.clip.waveformPeaks,
+            color: entry.clip.color,
+            gain: entry.clip.gain,
+          })
+          dispatch({ type: 'ADD_CLIP', clip: arrClip })
+        }
+      }
+    }
+    engine.addEventListener('session-state', onSessionState)
+    return () => engine.removeEventListener('session-state', onSessionState)
+  }, [capturing, engine, dispatch])
 
   // Poll for any playing/queued session clips — drives "Back to Arr" button
   useEffect(() => {
@@ -932,6 +966,26 @@ export default function SessionView() {
         >
           <Circle size={9} fill={sessionRecording ? '#ef4444' : 'transparent'} />
           REC
+        </button>
+
+        {/* Capture to Arrangement */}
+        <button
+          onClick={() => {
+            const next = !capturing
+            setCapturing(next)
+            if (next && !engine.isPlaying) engine.play()
+            if (!next) captureMapRef.current.clear()
+          }}
+          title="Capture to Arrangement — stamps session clips into the arrangement timeline as you play them"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
+            borderRadius: 3, border: `1px solid ${capturing ? '#22c55e' : 'var(--border)'}`, cursor: 'pointer',
+            background: capturing ? 'rgba(34,197,94,0.18)' : 'var(--bg-card)',
+            color: capturing ? '#22c55e' : 'var(--text-muted)',
+          }}
+        >
+          <Circle size={9} fill={capturing ? '#22c55e' : 'transparent'} color={capturing ? '#22c55e' : 'currentColor'} />
+          CAPTURE
         </button>
 
         {/* MIDI overdub */}

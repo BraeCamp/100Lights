@@ -7,6 +7,9 @@ import { useDaw, makeMidiClip } from '@/lib/daw-state'
 import { isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
 import type { ReturnTrack } from '@/lib/daw-types'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
+import dynamic from 'next/dynamic'
+
+const AudioExportModal = dynamic(() => import('./AudioExportModal'), { ssr: false })
 
 const SEC_H   = 24
 const BAR_H   = 20
@@ -257,6 +260,7 @@ export default function ArrangementView() {
   const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
   // Group track fold state: set of group track IDs that are folded
+  const [showExport, setShowExport] = useState(false)
   const [foldedGroups, setFoldedGroups] = useState<Set<string>>(new Set())
   // Multi-track selection for grouping
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set())
@@ -497,6 +501,15 @@ export default function ArrangementView() {
           color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
           letterSpacing: '0.04em',
         }}>PIANO ROLL</button>
+        <button
+          onClick={() => setShowExport(true)}
+          title="Export project audio"
+          style={{
+            ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
+            border: '1px solid var(--border)', background: 'transparent',
+            color: 'var(--text-muted)', letterSpacing: '0.04em', marginLeft: 4,
+          }}
+        >EXPORT</button>
         {onSave && (
           <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" style={{
             ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
@@ -632,6 +645,7 @@ export default function ArrangementView() {
         </div>,
         document.body
       )}
+      {showExport && <AudioExportModal onClose={() => setShowExport(false)} />}
     </div>
   )
 }
