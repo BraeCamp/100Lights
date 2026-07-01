@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     secure:   process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     maxAge:   MAX_AGE,
-    path:     '/admin',
+    path:     '/',
   })
 
   return Response.json({ ok: true })
@@ -25,6 +25,8 @@ export async function POST(req: Request) {
 
 export async function DELETE() {
   const jar = await cookies()
-  jar.delete(COOKIE)
+  // Clear both path variants so old and new cookies are purged
+  jar.set(COOKIE, '', { maxAge: 0, path: '/' })
+  jar.set(COOKIE, '', { maxAge: 0, path: '/admin' })
   return Response.json({ ok: true })
 }

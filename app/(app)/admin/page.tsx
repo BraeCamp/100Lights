@@ -5,6 +5,7 @@ import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
+import AdvisorPanel from './AdvisorPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -126,6 +127,13 @@ export default async function AdminPage() {
             </tbody>
           </table>
         </div>
+
+        {/* ── AI Advisor ────────────────────────────────────────────────────── */}
+        <SectionHeader
+          title="AI Business Advisor"
+          description="Claude Sonnet with live access to your platform metrics. Ask about marketing, growth, compliance, pricing, or user acquisition."
+        />
+        <AdvisorPanel />
 
         {/* ── Audio Editor ──────────────────────────────────────────────────── */}
         <SectionHeader
