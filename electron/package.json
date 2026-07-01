@@ -1,6 +1,6 @@
 {
   "name": "100lights-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "100Lights — Professional Audio & Video Editing",
   "main": "dist/main.js",
   "author": {
