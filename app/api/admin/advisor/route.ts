@@ -11,21 +11,22 @@ async function isAdmin(): Promise<boolean> {
 }
 
 async function gatherContext() {
+  const fallback0 = [{ cnt: 0 }]
   const [
     users, proUsers, newThisWeek, newThisMonth,
     projects, podcastProjects, projectsThisWeek,
     usageRows, moduleRows, churnRows,
   ] = await Promise.all([
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions`,
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'pro' AND status = 'active'`,
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '7 days'`,
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '30 days'`,
-    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL`,
-    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND data->>'audioMode' = 'podcast'`,
-    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND saved_at > NOW() - INTERVAL '7 days'`,
-    sql`SELECT action, SUM(count)::int AS total FROM usage WHERE reset_at > NOW() GROUP BY action`,
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions`.catch(() => fallback0),
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'pro' AND status = 'active'`.catch(() => fallback0),
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '7 days'`.catch(() => fallback0),
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '30 days'`.catch(() => fallback0),
+    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL`.catch(() => fallback0),
+    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND data->>'audioMode' = 'podcast'`.catch(() => fallback0),
+    sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND saved_at > NOW() - INTERVAL '7 days'`.catch(() => fallback0),
+    sql`SELECT action, SUM(count)::int AS total FROM usage WHERE reset_at > NOW() GROUP BY action`.catch(() => []),
     sql`SELECT module_key, COUNT(*)::int AS cnt FROM module_licenses WHERE license_type = 'purchased' GROUP BY module_key`.catch(() => []),
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'free' AND status = 'active' AND updated_at < NOW() - INTERVAL '30 days'`.catch(() => [{ cnt: 0 }]),
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'free' AND status = 'active' AND updated_at < NOW() - INTERVAL '30 days'`.catch(() => fallback0),
   ])
 
   let mrr = 0
@@ -68,7 +69,11 @@ export async function POST(req: Request) {
     return new Response('Bad Request', { status: 400 })
   }
 
-  const ctx = await gatherContext()
+  const ctx = await gatherContext().catch(() => ({
+    totalUsers: 0, proUsers: 0, freeUsers: 0, newThisWeek: 0, newThisMonth: 0,
+    totalProjects: 0, podcastProjects: 0, projectsThisWeek: 0, dormantFreeUsers: 0,
+    transcriptions: 0, aiGenerations: 0, modulePurchases: {}, mrr: 0, priceAmount: 0, conversionRate: '0',
+  }))
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 
   const system = `You are an AI business advisor embedded in the admin panel of 100Lights — a SaaS creative platform for audio, video, and image editing. The owner (Brae) is the sole operator. Your job is to give direct, specific, actionable advice on marketing, user acquisition, compliance, growth, and product strategy.

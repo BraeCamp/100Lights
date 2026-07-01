@@ -4,6 +4,7 @@ import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
 import AdvisorPanel from './AdvisorPanel'
+import CollapsibleSection from './CollapsibleSection'
 import { estimateCost } from '@/lib/ai-logger'
 
 export const dynamic = 'force-dynamic'
@@ -313,11 +314,12 @@ export default async function AdminPage() {
         <MidiPresetsPanel />
 
         {/* ── Potential Samples ─────────────────────────────────────────────── */}
-        <SectionHeader
+        <CollapsibleSection
           title="Potential Samples and Packs"
-          description="Preview and add new instrument sample packs from the FluidR3 GM soundfont. Every instrument covers the full 88-key range (A0–C8, MIDI 21–108) — all notes are individually sampled, no pitch-shifting. Click Preview to hear a sample note, then Add to Library to import all 88 notes and create a MIDI preset."
-        />
-        <PotentialSamplesPanel />
+          description="Preview and add new instrument sample packs from the FluidR3 GM soundfont. Every instrument covers the full 88-key range (A0–C8, MIDI 21–108) — all notes are individually sampled, no pitch-shifting."
+        >
+          <PotentialSamplesPanel />
+        </CollapsibleSection>
 
         {/* ── Quick links ───────────────────────────────────────────────────── */}
         <SectionHeader title="Quick Links" />
