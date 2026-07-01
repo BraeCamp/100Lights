@@ -143,37 +143,8 @@ export default async function DownloadPage() {
       </div>
 
       <p style={{ fontSize: 12, color: '#4a4a5e', marginBottom: 64 }}>
-        Version {version} · Free to install · Buy only the modules you need
+        Version {version} · Free during early access
       </p>
-
-      {/* Module pricing grid */}
-      <div style={{ width: '100%', maxWidth: 760, marginBottom: 64 }}>
-        <h2 style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4a4a5e', textAlign: 'center', marginBottom: 24 }}>
-          What's inside
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          {MODULES.map(mod => (
-            <div key={mod.key} style={{
-              borderRadius: 12, overflow: 'hidden',
-              border: '1px solid #1e1e2e', background: '#0f0f1a',
-            }}>
-              <div style={{ height: 4, background: mod.color }} />
-              <div style={{ padding: '20px 20px 16px' }}>
-                <div style={{ fontSize: 22, marginBottom: 8 }}>{mod.emoji}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>{mod.label}</div>
-                <div style={{ fontSize: 12, color: '#5a5a6e', lineHeight: 1.5, marginBottom: 14 }}>{mod.desc}</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: mod.free ? '#4ade80' : '#fff' }}>
-                  {mod.free ? 'Free' : `$${mod.price}`}
-                  {!mod.free && <span style={{ fontSize: 12, fontWeight: 400, color: '#5a5a6e' }}> one-time</span>}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p style={{ textAlign: 'center', fontSize: 13, color: '#4a4a5e', marginTop: 16 }}>
-          Or get everything for <strong style={{ color: '#fff' }}>$129</strong> — all current and future modules included.
-        </p>
-      </div>
 
       {/* Use in browser */}
       <div style={{
@@ -193,42 +164,3 @@ export default async function DownloadPage() {
     </div>
   )
 }
-
-const MODULES = [
-  {
-    key: 'audio',
-    label: 'Audio',
-    emoji: '🎵',
-    color: '#3b82f6',
-    desc: 'Full DAW — arrangement, session view, mixer, effects chain, sample library.',
-    free: true,
-    price: 0,
-  },
-  {
-    key: 'audio_pro',
-    label: 'Audio Pro',
-    emoji: '🎙️',
-    color: '#f97316',
-    desc: 'Podcast mode with episode management, voice chain presets, and RSS distribution.',
-    free: false,
-    price: 49,
-  },
-  {
-    key: 'video',
-    label: 'Video',
-    emoji: '🎬',
-    color: '#8b5cf6',
-    desc: 'Multi-track timeline, color grading, LUTs, transitions, and export.',
-    free: false,
-    price: 79,
-  },
-  {
-    key: 'image',
-    label: 'Image',
-    emoji: '🖼️',
-    color: '#ec4899',
-    desc: 'Layer-based canvas editor. Design thumbnails, brand assets, and social graphics.',
-    free: false,
-    price: 39,
-  },
-]
