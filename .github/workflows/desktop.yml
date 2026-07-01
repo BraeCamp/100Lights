@@ -26,12 +26,21 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Decode signing certificate
+      - name: Import signing certificate into keychain
         env:
           MAC_CERT_B64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
         run: |
-          echo "$MAC_CERT_B64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          echo "CSC_LINK=$RUNNER_TEMP/certificate.p12" >> $GITHUB_ENV
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          echo "$MAC_CERT_B64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import "$CERT_PATH" -k build.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
       - name: Install electron dependencies
         working-directory: electron
@@ -44,9 +53,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ env.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run dist:mac
 
       - name: Upload Mac artifacts
