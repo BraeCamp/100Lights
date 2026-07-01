@@ -15,6 +15,7 @@ import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
+import GuestPanel from './daw/GuestPanel'
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getPresets } from '@/lib/midi-presets'
 
@@ -423,6 +424,18 @@ export default function AudioEditor(props: AudioEditorProps) {
     dispatch({ type: 'UPDATE_TRACK', trackId: newId, patch: { effects: voiceChainEffects() } })
   }
 
+  function handlePullTrack(url: string, guestName: string, timelineOffsetMs: number) {
+    const trackId   = crypto.randomUUID()
+    const bpm       = project.tempo ?? 120
+    const startBeat = (timelineOffsetMs / 1000) * (bpm / 60)
+    dispatch({ type: 'ADD_TRACK', id: trackId, name: guestName })
+    dispatch({ type: 'UPDATE_TRACK', trackId, patch: { effects: voiceChainEffects() } })
+    dispatch({
+      type: 'ADD_CLIP',
+      clip: makeAudioClip(trackId, `${guestName} recording`, startBeat, 0, { audioUrl: url }),
+    })
+  }
+
   const [view, setView] = useState<DawView>('arrangement')
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
@@ -435,7 +448,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
-  const [leftTab,   setLeftTab]   = useState<'library' | 'episode' | 'setup'>(isPodcast ? 'setup' : 'library')
+  const [leftTab,   setLeftTab]   = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
@@ -638,18 +651,17 @@ export default function AudioEditor(props: AudioEditorProps) {
           }}>
             {isPodcast && (
               <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)', height: 30 }}>
-                {(['setup', 'episode'] as const).map(tab => (
+                {(['setup', 'episode', 'guests'] as const).map((tab, i, arr) => (
                   <button
                     key={tab}
                     onClick={() => setLeftTab(tab)}
                     style={{
                       flex: 1, background: leftTab === tab ? 'var(--bg-card)' : 'transparent',
-                      border: 'none', borderRight: tab === 'setup' ? '1px solid var(--border)' : 'none',
+                      border: 'none', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
                       color: leftTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
                       fontSize: 11, cursor: 'pointer', fontWeight: leftTab === tab ? 500 : 400,
-                      textTransform: 'capitalize',
                     }}
-                  >{tab === 'setup' ? 'Setup' : 'Episode'}</button>
+                  >{tab === 'setup' ? 'Setup' : tab === 'episode' ? 'Episode' : 'Guests'}</button>
                 ))}
               </div>
             )}
@@ -670,6 +682,13 @@ export default function AudioEditor(props: AudioEditorProps) {
               <SoundLibraryPanel embedded={true} />
             ) : leftTab === 'setup' ? (
               <PodcastSetupPanel />
+            ) : leftTab === 'guests' ? (
+              <div style={{ flex: 1, overflow: 'auto', padding: '0 12px' }}>
+                {props.projectId
+                  ? <GuestPanel projectId={props.projectId} onPullTrack={handlePullTrack} />
+                  : <p style={{ fontSize: 12, color: 'var(--text-muted)', padding: '16px 0' }}>Save the project first to invite guests.</p>
+                }
+              </div>
             ) : (
               <EpisodePanel meta={podcastMeta} onChange={setPodcastMeta} />
             )}
