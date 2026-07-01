@@ -1,14 +1,8 @@
-import { cookies } from 'next/headers'
 import { sql } from '@/lib/db'
 import { stripe } from '@/lib/stripe'
+import { isAdmin } from '@/lib/admin-auth'
 
 export const runtime = 'nodejs'
-
-async function isAdmin(): Promise<boolean> {
-  const jar = await cookies()
-  const token = jar.get('admin_auth')?.value
-  return !!token && token === process.env.ADMIN_CODE
-}
 
 async function gatherContext() {
   const fallback0 = [{ cnt: 0 }]

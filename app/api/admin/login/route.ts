@@ -1,9 +1,14 @@
 import { cookies } from 'next/headers'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 const COOKIE = 'admin_auth'
 const MAX_AGE = 60 * 60 * 24 * 7 // 7 days
 
 export async function POST(req: Request) {
+  if (!await isAdminEmail()) {
+    return Response.json({ error: 'Unauthorized' }, { status: 403 })
+  }
+
   const { code } = await req.json().catch(() => ({ code: '' }))
   const expected = process.env.ADMIN_CODE
 

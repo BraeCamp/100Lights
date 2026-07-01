@@ -1,14 +1,9 @@
-import { cookies } from 'next/headers'
 import { writeFile } from 'fs/promises'
 import path from 'path'
+import { isAdmin } from '@/lib/admin-auth'
 
 export async function POST(req: Request) {
-  // Auth check
-  const jar   = await cookies()
-  const token = jar.get('admin_auth')?.value
-  if (!token || token !== process.env.ADMIN_CODE) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { correctionSeeds, splitPairs } = await req.json()
 
