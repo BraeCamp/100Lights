@@ -52,7 +52,7 @@ function UpgradeBanner() {
         <CheckCircle2 size={18} color="var(--accent-light)" />
         <div>
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Welcome to Pro!</p>
-          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>You now have 100 AI generations and 20 GB of storage per month.</p>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>You now have 20 GB of storage and priority support.</p>
         </div>
       </div>
       <button onClick={() => setVisible(false)} aria-label="Dismiss" style={{ color: 'var(--text-muted)' }}><X size={16} /></button>

@@ -11,7 +11,6 @@ import type { ModuleKey } from '@/lib/editor-types'
 
 interface Usage {
   plan: 'free' | 'pro'
-  aiGenerations: { used: number; limit: number }
 }
 
 const APP_ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
@@ -20,34 +19,6 @@ const APP_ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: 
   image: Palette,
 }
 
-function UsageMeter({ used, limit, label }: { used: number; limit: number; label: string }) {
-  const pct = Math.min(100, Math.round((used / limit) * 100))
-  const nearLimit = pct >= 80
-  const atLimit = used >= limit
-  const color = atLimit ? 'var(--error)' : nearLimit ? 'var(--warning)' : 'var(--accent-light)'
-
-  return (
-    <div className="mb-2">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</span>
-        <span className="text-xs tabular-nums" style={{ color: atLimit ? 'var(--error)' : 'var(--text-muted)' }}>
-          {used}/{limit}
-        </span>
-      </div>
-      <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
-        <div
-          className="h-full rounded-full transition-all"
-          role="progressbar"
-          aria-valuenow={pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={label + ' usage'}
-          style={{ width: `${pct}%`, background: color }}
-        />
-      </div>
-    </div>
-  )
-}
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -77,7 +48,6 @@ export default function Sidebar() {
   }, [])
 
   const isPro = usage?.plan === 'pro'
-  const aiAtLimit = usage && usage.aiGenerations.used >= usage.aiGenerations.limit
 
   function navLink(href: string, label: string, Icon: React.ComponentType<{ size?: number; color?: string }>) {
     const active = pathname === href
@@ -160,36 +130,15 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* AI usage meter */}
-      {usage && (
-        <div className="mx-3 mb-3 px-3 py-3 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>AI usage</span>
-            {!isPro && (
-              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
-                Free
-              </span>
-            )}
-          </div>
-          <UsageMeter used={usage.aiGenerations.used} limit={usage.aiGenerations.limit} label="AI generations" />
-          {!isPro && aiAtLimit && (
-            <button
-              onClick={() => showUpgrade('You\'ve used your free monthly AI credits. Upgrade to Pro for 10× more.')}
-              className="w-full mt-2 py-1.5 rounded-lg text-xs font-semibold"
-              style={{ background: 'var(--accent)', color: '#fff' }}
-            >
-              Upgrade to Pro
-            </button>
-          )}
-          {!isPro && !aiAtLimit && (
-            <button
-              onClick={() => showUpgrade()}
-              className="w-full mt-2 py-1.5 rounded-lg text-xs"
-              style={{ color: 'var(--accent-light)' }}
-            >
-              Upgrade for more →
-            </button>
-          )}
+      {!isPro && usage && (
+        <div className="mx-3 mb-3 px-3 py-2.5 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <button
+            onClick={() => showUpgrade()}
+            className="w-full py-1.5 rounded-lg text-xs font-semibold"
+            style={{ background: 'var(--accent)', color: '#fff' }}
+          >
+            Upgrade to Pro
+          </button>
         </div>
       )}
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Settings, Zap, CreditCard, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn } from 'lucide-react'
+import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import Link from 'next/link'
 import posthog from 'posthog-js'
@@ -112,16 +112,11 @@ export default function SettingsPage() {
                   Manage billing
                 </button>
               </div>
-              <div className="mt-4 pt-4 grid grid-cols-2 gap-3" style={{ borderTop: '1px solid var(--border)' }}>
-                {[
-                  { label: 'AI generations', value: '100/mo' },
-                  { label: 'Storage', value: '20 GB' },
-                ].map(({ label, value }) => (
-                  <div key={label} className="text-center">
-                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{value}</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</p>
-                  </div>
-                ))}
+              <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+                <div className="text-center">
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>20 GB</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Storage</p>
+                </div>
               </div>
             </div>
           ) : (
@@ -129,7 +124,7 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Free plan</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>10 AI generations · 500 MB storage</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>500 MB storage</p>
                 </div>
               </div>
               <div
@@ -138,7 +133,7 @@ export default function SettingsPage() {
               >
                 <div>
                   <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Upgrade to Pro — $19/month</p>
-                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>100 AI generations · 20 GB storage</p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>20 GB storage</p>
                 </div>
                 <button
                   onClick={handleUpgrade}
@@ -154,22 +149,6 @@ export default function SettingsPage() {
               )}
             </div>
           )}
-        </div>
-
-        {/* AI features */}
-        <div
-          className="flex items-center gap-4 p-5 rounded-xl border mt-4"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-        >
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--accent-subtle)' }}>
-            <Zap size={18} color="var(--accent-light)" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>AI features are ready</p>
-            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              AI features are powered by 100Lights — no API keys needed.
-            </p>
-          </div>
         </div>
 
         <div
