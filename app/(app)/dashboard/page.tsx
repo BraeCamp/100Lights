@@ -7,7 +7,7 @@ import { useUser } from '@clerk/nextjs'
 import {
   Film, AudioLines, Palette,
   ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X,
-  Star, Pencil, ExternalLink, Clock,
+  Star, Pencil, ExternalLink, Clock, LogIn,
 } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
@@ -146,7 +146,7 @@ function AppCard({ mod }: { mod: typeof MODULE_DEFS[number] }) {
 }
 
 export default function DashboardPage() {
-  const { user } = useUser()
+  const { user, isSignedIn, isLoaded } = useUser()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -186,7 +186,7 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { loadProjects() }, [])
+  useEffect(() => { if (isLoaded && isSignedIn) loadProjects(); else if (isLoaded && !isSignedIn) setLoading(false) }, [isLoaded, isSignedIn])
 
   useEffect(() => {
     if (!ctxMenu) return
@@ -252,7 +252,17 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {loading ? (
+          {!isSignedIn && isLoaded ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderRadius: 12, border: '1px solid rgba(139,92,246,0.25)', background: 'linear-gradient(135deg, rgba(139,92,246,0.07), rgba(59,130,246,0.05))' }}>
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 3px' }}>Sign in to sync projects to the cloud</p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>Projects you create now are saved locally. Sign in to access them anywhere.</p>
+              </div>
+              <Link href="/sign-in" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 600, textDecoration: 'none', flexShrink: 0, marginLeft: 16 }}>
+                <LogIn size={13} /> Sign in
+              </Link>
+            </div>
+          ) : loading ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '36px 0', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</span>
             </div>

@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Settings, Zap, CreditCard, CheckCircle2, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react'
+import { Settings, Zap, CreditCard, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn } from 'lucide-react'
+import { useUser } from '@clerk/nextjs'
+import Link from 'next/link'
 import posthog from 'posthog-js'
 
 interface BillingInfo {
@@ -11,6 +13,7 @@ interface BillingInfo {
 }
 
 export default function SettingsPage() {
+  const { isSignedIn, isLoaded } = useUser()
   const [billing, setBilling] = useState<BillingInfo | null>(null)
   const [billingError, setBillingError] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -24,7 +27,7 @@ export default function SettingsPage() {
       .catch(() => setBillingError(true))
   }
 
-  useEffect(() => { loadBilling() }, [])
+  useEffect(() => { if (isLoaded && isSignedIn) loadBilling() }, [isLoaded, isSignedIn])
 
   async function handleUpgrade() {
     setLoading(true)
@@ -67,7 +70,16 @@ export default function SettingsPage() {
         {/* Plan status */}
         <div className="mb-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Plan</h2>
-          {billingError ? (
+          {!isSignedIn ? (
+            <div className="flex flex-col items-center gap-3 py-10 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <LogIn size={18} color="var(--text-muted)" />
+              <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Sign in to manage billing</p>
+              <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>Create an account to sync your projects and unlock Pro features.</p>
+              <Link href="/sign-in" className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg font-semibold" style={{ background: 'var(--accent)', color: '#fff' }}>
+                <LogIn size={12} /> Sign in
+              </Link>
+            </div>
+          ) : billingError ? (
             <div className="flex flex-col items-center gap-3 py-10 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
               <AlertCircle size={18} color="var(--text-muted)" />
               <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Failed to load billing info</p>

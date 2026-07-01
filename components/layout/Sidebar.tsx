@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -213,13 +213,22 @@ export default function Sidebar() {
           <Trash2 size={15} />
           Trash
         </Link>
-        {user && (
+        {user ? (
           <div className="flex items-center gap-3 px-3 py-2" aria-label="User menu">
             <UserButton appearance={{ elements: { avatarBox: 'w-6 h-6' } }} />
             <span className="text-xs truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }}>
               {user.firstName ?? user.emailAddresses[0]?.emailAddress}
             </span>
           </div>
+        ) : (
+          <Link
+            href="/sign-in"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+            style={{ background: 'var(--accent)', color: '#fff', margin: '0 0 2px' }}
+          >
+            <LogIn size={14} />
+            Sign in
+          </Link>
         )}
         <Link
           href="/download"
