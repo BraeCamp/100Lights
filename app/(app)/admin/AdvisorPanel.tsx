@@ -23,17 +23,29 @@ export default function AdvisorPanel() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput]       = useState('')
   const [streaming, setStreaming] = useState(false)
-  const bottomRef    = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const textareaRef  = useRef<HTMLTextAreaElement>(null)
+  const pinnedRef    = useRef(true) // true = auto-scroll to bottom
 
+  // Scroll the chat container (not the page) only when pinned
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!pinnedRef.current) return
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages])
+
+  function onContainerScroll() {
+    const el = containerRef.current
+    if (!el) return
+    // Unpin if user scrolled up more than 60px from bottom
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }
 
   async function send(text: string) {
     const trimmed = text.trim()
     if (!trimmed || streaming) return
 
+    pinnedRef.current = true // re-pin on every new send
     const userMsg: Message = { role: 'user', content: trimmed }
     const history = [...messages, userMsg]
     setMessages([...history, { role: 'assistant', content: '' }])
@@ -167,11 +179,15 @@ export default function AdvisorPanel() {
 
       {/* Chat messages */}
       {messages.length > 0 && (
-        <div style={{
-          display: 'flex', flexDirection: 'column', gap: 16,
-          maxHeight: 600, overflowY: 'auto',
-          padding: '4px 0',
-        }}>
+        <div
+          ref={containerRef}
+          onScroll={onContainerScroll}
+          style={{
+            display: 'flex', flexDirection: 'column', gap: 16,
+            maxHeight: 600, overflowY: 'auto',
+            padding: '4px 0',
+          }}
+        >
           {messages.map((msg, i) => (
             <div key={i} style={{
               display: 'flex',
@@ -212,7 +228,6 @@ export default function AdvisorPanel() {
               </div>
             </div>
           ))}
-          <div ref={bottomRef} />
         </div>
       )}
 
