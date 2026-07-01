@@ -55,6 +55,7 @@ export default function Sidebar() {
   const { user } = useUser()
   const { showUpgrade } = useUpgradeModal()
   const [usage, setUsage] = useState<Usage | null>(null)
+  const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
 
   function fetchUsage() {
     fetch('/api/usage')
@@ -67,6 +68,13 @@ export default function Sidebar() {
     fetchUsage()
     const id = setInterval(fetchUsage, 60_000)
     return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/platform-flags')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { enabledModules?: string[] } | null) => { if (d?.enabledModules) setEnabledModules(d.enabledModules) })
+      .catch(() => {})
   }, [])
 
   const isPro = usage?.plan === 'pro'
@@ -122,7 +130,7 @@ export default function Sidebar() {
         <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
           Apps
         </div>
-        {MODULE_DEFS.map(mod => {
+        {MODULE_DEFS.filter(mod => enabledModules.includes(mod.key)).map(mod => {
           const Icon = APP_ICONS[mod.key]
           const href = `/apps/${mod.key}`
           const active = pathname === href || pathname.startsWith(`${href}/`)

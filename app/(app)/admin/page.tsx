@@ -5,7 +5,9 @@ import MidiPresetsPanel from './MidiPresetsPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
 import AdvisorPanel from './AdvisorPanel'
 import CollapsibleSection from './CollapsibleSection'
+import PlatformFlagsPanel from './PlatformFlagsPanel'
 import { estimateCost } from '@/lib/ai-logger'
+import { getFlags, getWeeklyReport } from '@/lib/platform-flags'
 
 export const dynamic = 'force-dynamic'
 
@@ -142,7 +144,9 @@ const ROUTE_LABELS: Record<string, string> = {
 }
 
 export default async function AdminPage() {
-  const [stats, aiStats, recentUsers] = await Promise.all([getStats(), getAiStats(), getRecentUsers()])
+  const [stats, aiStats, recentUsers, flags, weeklyReport] = await Promise.all([
+    getStats(), getAiStats(), getRecentUsers(), getFlags(), getWeeklyReport(),
+  ])
   const conversionRate = stats.totalUsers > 0
     ? ((stats.proUsers / stats.totalUsers) * 100).toFixed(1)
     : '0'
@@ -162,6 +166,10 @@ export default async function AdminPage() {
           </div>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Live stats — refreshes on page load</p>
         </div>
+
+        {/* ── Module Gates ──────────────────────────────────────────────────── */}
+        <SectionHeader title="Module Gates" description="Control which modules and audio modes are live for all users." />
+        <PlatformFlagsPanel initial={flags} />
 
         {/* ── User Analytics ────────────────────────────────────────────────── */}
         <SectionHeader title="Users" description="Signups, subscriptions, and project activity." />
@@ -286,6 +294,29 @@ export default async function AdminPage() {
               </table>
             </div>
           </>
+        )}
+
+        {/* ── Weekly Report ─────────────────────────────────────────────────── */}
+        <SectionHeader
+          title="Weekly Growth Report"
+          description="Auto-generated every Monday at 9am UTC by the AI advisor. Run /api/cron/weekly-report manually to trigger."
+        />
+        {weeklyReport ? (
+          <div style={{
+            padding: '16px 20px', borderRadius: 10,
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+          }}>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Generated {new Date(weeklyReport.generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </p>
+            <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+              {weeklyReport.content}
+            </div>
+          </div>
+        ) : (
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            No report yet. It runs every Monday at 9am UTC, or you can trigger it manually via GET /api/cron/weekly-report with the correct Authorization header.
+          </p>
         )}
 
         {/* ── AI Advisor ────────────────────────────────────────────────────── */}
