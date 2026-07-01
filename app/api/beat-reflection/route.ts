@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
+import { logAiCall } from '@/lib/ai-logger'
 
 interface CorrectionInput {
   time:         number
@@ -70,8 +71,9 @@ Be concrete (reference actual numbers where available). Do not apologize. Just a
 
   if (!res.ok) return Response.json({ error: 'AI error' }, { status: res.status })
 
-  const data = await res.json() as { content: Array<{ type: string; text: string }> }
+  const data = await res.json() as { content: Array<{ type: string; text: string }>; usage?: { input_tokens: number; output_tokens: number } }
   const reflection = (data.content.find(b => b.type === 'text')?.text ?? '').trim()
+  void logAiCall(userId, 'beat/reflection', 'claude-haiku-4-5-20251001', data.usage?.input_tokens ?? 0, data.usage?.output_tokens ?? 0)
 
   return Response.json({ reflection })
 }

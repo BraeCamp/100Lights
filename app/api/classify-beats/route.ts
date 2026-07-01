@@ -16,6 +16,7 @@
 
 import { auth } from '@clerk/nextjs/server'
 import type { BeatType } from '@/lib/beat-analyzer'
+import { logAiCall } from '@/lib/ai-logger'
 
 interface HitInput {
   id: string
@@ -261,7 +262,8 @@ Example: ["kick","hihat","delete","snare","hihat"]`
     return Response.json({ error: errMsg }, { status: res.status })
   }
 
-  const data = await res.json() as { content: Array<{ type: string; text: string }> }
+  const data = await res.json() as { content: Array<{ type: string; text: string }>; usage?: { input_tokens: number; output_tokens: number } }
+  void logAiCall(userId, 'beat/classify', 'claude-haiku-4-5-20251001', data.usage?.input_tokens ?? 0, data.usage?.output_tokens ?? 0)
   // The prefilled "[" is not included in the completion text, so prepend it
   const rawText = '[' + (data.content.find(b => b.type === 'text')?.text ?? '')
 

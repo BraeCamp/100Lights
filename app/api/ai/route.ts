@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { logAiCall } from '@/lib/ai-logger'
 
 interface AiRequest {
   system?:    string
@@ -58,7 +59,9 @@ export async function POST(req: Request) {
 
   const data = await anthropicRes.json() as {
     content: Array<{ type: string; text: string }>
+    usage?: { input_tokens: number; output_tokens: number }
   }
   const text = data.content.find(b => b.type === 'text')?.text ?? ''
+  void logAiCall(userId, 'ai/generate', body.model ?? 'claude-haiku-4-5-20251001', data.usage?.input_tokens ?? 0, data.usage?.output_tokens ?? 0)
   return Response.json({ content: text })
 }

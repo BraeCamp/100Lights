@@ -83,9 +83,14 @@ interface TuneRequest {
   userFeedback?: string
 }
 
+import { auth } from '@clerk/nextjs/server'
+import { logAiCall } from '@/lib/ai-logger'
+
 export async function POST(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return Response.json({ error: 'No API key' }, { status: 503 })
+
+  const { userId } = await auth()
 
   const body = await req.json() as TuneRequest
   const { code, pitchSummary, iteration, previousIterations = [], userFeedback = '' } = body
@@ -232,7 +237,8 @@ WEB AUDIO PITFALLS:
     return Response.json({ error: err }, { status: anthropicRes.status })
   }
 
-  const data = await anthropicRes.json() as { content: { type: string; text: string }[] }
+  const data = await anthropicRes.json() as { content: { type: string; text: string }[]; usage?: { input_tokens: number; output_tokens: number } }
+  void logAiCall(userId ?? 'anon', 'synth/tune', 'claude-sonnet-4-6', data.usage?.input_tokens ?? 0, data.usage?.output_tokens ?? 0)
   const raw = data.content.find(b => b.type === 'text')?.text ?? ''
 
   const iterMatch = raw.match(/<iteration>([\s\S]*?)<\/iteration>/)
