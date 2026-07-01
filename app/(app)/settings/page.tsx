@@ -112,9 +112,8 @@ export default function SettingsPage() {
                   Manage billing
                 </button>
               </div>
-              <div className="mt-4 pt-4 grid grid-cols-3 gap-3" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="mt-4 pt-4 grid grid-cols-2 gap-3" style={{ borderTop: '1px solid var(--border)' }}>
                 {[
-                  { label: 'Transcriptions', value: '30/mo' },
                   { label: 'AI generations', value: '100/mo' },
                   { label: 'Storage', value: '20 GB' },
                 ].map(({ label, value }) => (
@@ -130,7 +129,7 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Free plan</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>3 transcriptions · 10 AI generations · 500 MB storage</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>10 AI generations · 500 MB storage</p>
                 </div>
               </div>
               <div
@@ -139,7 +138,7 @@ export default function SettingsPage() {
               >
                 <div>
                   <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Upgrade to Pro — $19/month</p>
-                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>30 transcriptions · 100 AI generations · 20 GB storage</p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>100 AI generations · 20 GB storage</p>
                 </div>
                 <button
                   onClick={handleUpgrade}
@@ -168,7 +167,7 @@ export default function SettingsPage() {
           <div>
             <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>AI features are ready</p>
             <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              Transcription and AI writing are powered by 100Lights — no API keys needed.
+              AI features are powered by 100Lights — no API keys needed.
             </p>
           </div>
         </div>

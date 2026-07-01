@@ -79,7 +79,7 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
               You've reached your limit
             </h2>
             <p className="text-sm mb-5" style={{ color: 'var(--text-secondary)' }}>
-              {reason || 'Upgrade to Pro to keep going — more AI power, more transcriptions, more storage.'}
+              {reason || 'Upgrade to Pro to keep going — more AI power and more storage.'}
             </p>
 
             {/* Billing toggle */}
@@ -120,7 +120,6 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
                 Pro plan
               </div>
               {[
-                '30 transcriptions per month',
                 '100 AI generations per month',
                 '20 GB media storage',
                 'Priority processing',

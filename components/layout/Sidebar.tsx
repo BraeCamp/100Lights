@@ -12,7 +12,6 @@ import type { ModuleKey } from '@/lib/editor-types'
 interface Usage {
   plan: 'free' | 'pro'
   aiGenerations: { used: number; limit: number }
-  transcriptions: { used: number; limit: number }
 }
 
 const APP_ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
@@ -79,7 +78,6 @@ export default function Sidebar() {
 
   const isPro = usage?.plan === 'pro'
   const aiAtLimit = usage && usage.aiGenerations.used >= usage.aiGenerations.limit
-  const transcribeAtLimit = usage && usage.transcriptions.used >= usage.transcriptions.limit
 
   function navLink(href: string, label: string, Icon: React.ComponentType<{ size?: number; color?: string }>) {
     const active = pathname === href
@@ -173,9 +171,8 @@ export default function Sidebar() {
               </span>
             )}
           </div>
-          <UsageMeter used={usage.aiGenerations.used} limit={usage.aiGenerations.limit} label="Generations" />
-          <UsageMeter used={usage.transcriptions.used} limit={usage.transcriptions.limit} label="Transcriptions" />
-          {!isPro && (aiAtLimit || transcribeAtLimit) && (
+          <UsageMeter used={usage.aiGenerations.used} limit={usage.aiGenerations.limit} label="AI generations" />
+          {!isPro && aiAtLimit && (
             <button
               onClick={() => showUpgrade('You\'ve used your free monthly AI credits. Upgrade to Pro for 10× more.')}
               className="w-full mt-2 py-1.5 rounded-lg text-xs font-semibold"
@@ -184,7 +181,7 @@ export default function Sidebar() {
               Upgrade to Pro
             </button>
           )}
-          {!isPro && !aiAtLimit && !transcribeAtLimit && (
+          {!isPro && !aiAtLimit && (
             <button
               onClick={() => showUpgrade()}
               className="w-full mt-2 py-1.5 rounded-lg text-xs"

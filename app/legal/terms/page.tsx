@@ -14,7 +14,7 @@ export default function TermsPage() {
           },
           {
             title: '2. Description of Service',
-            body: '100Lights is an AI-powered content repurposing platform that transcribes, edits, and generates content from video and audio files. Features include transcription, captioning, timeline editing, and AI-generated written content.',
+            body: '100Lights is an AI-powered creative platform for podcast editing, video editing, and image creation. Features include a browser-based audio/video editor, chapter markers, RSS feed generation, image layering tools, and AI-assisted content generation.',
           },
           {
             title: '3. Account Registration',

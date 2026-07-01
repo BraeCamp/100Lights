@@ -7,7 +7,6 @@ import { Check, ArrowRight } from 'lucide-react'
 type Period = 'monthly' | 'annual'
 
 const FREE_FEATURES = [
-  '3 transcriptions / month',
   '10 AI content generations / month',
   '500 MB file storage',
   'Unlimited projects',
@@ -15,7 +14,6 @@ const FREE_FEATURES = [
 ]
 
 const PRO_FEATURES = [
-  '30 transcriptions / month',
   '100 AI content generations / month',
   '20 GB file storage',
   'Unlimited projects',

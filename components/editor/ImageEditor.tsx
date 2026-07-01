@@ -300,7 +300,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
     if (tool === 'rect' || tool === 'ellipse') {
       const { x, y } = canvasCoords(e)
       setDrawing({ startX: x, startY: y, tool })
-      ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+      try { (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId) } catch {}
       setSelectedId(null)
       return
     }
