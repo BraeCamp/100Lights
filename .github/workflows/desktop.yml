@@ -62,6 +62,12 @@ jobs:
         working-directory: electron
         run: npm ci
 
+      - name: Set keychain partition list
+        run: |
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
       - name: Unlock keychain before build
         run: security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
@@ -71,6 +77,11 @@ jobs:
           ls -la dist-electron/ || echo "dist-electron does not exist yet"
           which codesign
           security find-identity -v -p codesigning
+
+      - name: Pre-build keychain verification
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Build & package (Mac)
         working-directory: electron
