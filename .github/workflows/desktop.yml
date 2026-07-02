@@ -60,7 +60,9 @@ jobs:
 
       - name: Install electron dependencies
         working-directory: electron
-        run: npm ci
+        run: |
+          npm ci
+          node scripts/patch-check-signature.js
 
       - name: Set keychain partition list
         run: |
