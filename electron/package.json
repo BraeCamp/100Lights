@@ -10,6 +10,7 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/patch-check-signature.js",
     "dev": "NODE_ENV=development electron .",
     "build": "tsc -p tsconfig.json",
     "dist:mac": "npm run build && electron-builder --mac",

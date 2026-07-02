@@ -65,6 +65,13 @@ jobs:
       - name: Unlock keychain before build
         run: security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+      - name: Verify build environment
+        run: |
+          set -x
+          ls -la dist-electron/ || echo "dist-electron does not exist yet"
+          which codesign
+          security find-identity -v -p codesigning
+
       - name: Build & package (Mac)
         working-directory: electron
         env:
