@@ -83,7 +83,9 @@ jobs:
           CSC_KEYCHAIN: ${{ env.KEYCHAIN_PATH }}
           CSC_FOR_PULL_REQUEST: false
           DEBUG: electron-builder
-        run: npm run dist:mac
+        run: |
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          npm run dist:mac
 
       - name: Upload Mac artifacts
         uses: actions/upload-artifact@v4
