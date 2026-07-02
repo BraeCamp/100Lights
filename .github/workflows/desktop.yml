@@ -95,12 +95,15 @@ jobs:
           CSC_FOR_PULL_REQUEST: false
           DEBUG: electron-builder
         run: |
-          # Keep keychain unlocked in background
+          # Keep keychain unlocked in background with more frequent unlocking
           (while true; do
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-            sleep 30
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" 2>/dev/null || true
+            sleep 10
           done) &
           UNLOCK_PID=$!
+
+          # Add small delay to ensure keychain is ready
+          sleep 2
 
           npm run dist:mac
           EXIT_CODE=$?
