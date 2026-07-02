@@ -5,30 +5,36 @@ exports.default = async function notarizing(context) {
   if (context.electronPlatformName !== 'darwin') return
 
   const { APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env
-  if (!APPLE_ID) {
-    console.log('Skipping notarization — APPLE_ID not set')
+
+  if (!APPLE_ID || !APPLE_APP_SPECIFIC_PASSWORD || !APPLE_TEAM_ID) {
+    console.log(
+      '[notarize] Skipping notarization — missing env vars:',
+      ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']
+        .filter(k => !process.env[k])
+        .join(', ') || 'none'
+    )
     return
   }
+
+  console.log('[notarize] APPLE_ID set:', APPLE_ID.slice(0, 4) + '****')
+  console.log('[notarize] APPLE_TEAM_ID:', APPLE_TEAM_ID)
 
   const appName = context.packager.appInfo.productFilename
   const appPath = path.join(context.appOutDir, `${appName}.app`)
 
-  // Verify signing before submitting
   try {
     execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath], { stdio: 'pipe' })
-    console.log('Code signature verified:', appPath)
+    console.log('[notarize] Code signature verified:', appPath)
   } catch (err) {
-    console.log('App is not signed — skipping notarization')
+    console.log('[notarize] App is not signed — skipping notarization')
     return
   }
 
-  // Zip the .app for submission (notarytool requires a zip, pkg, or dmg)
   const zipPath = path.join(context.appOutDir, `${appName}.zip`)
-  console.log('Creating ZIP for notarytool submission...')
+  console.log('[notarize] Creating ZIP for submission...')
   execFileSync('ditto', ['-c', '-k', '--keepParent', appPath, zipPath])
 
-  // Submit to Apple and wait for approval
-  console.log('Submitting to Apple notarization service...')
+  console.log('[notarize] Submitting to Apple notarization service...')
   execFileSync('xcrun', [
     'notarytool', 'submit', zipPath,
     '--apple-id',  APPLE_ID,
@@ -37,10 +43,9 @@ exports.default = async function notarizing(context) {
     '--wait',
   ], { stdio: 'inherit' })
 
-  // Staple the ticket to the .app so it works offline
-  console.log('Stapling notarization ticket...')
+  console.log('[notarize] Stapling ticket...')
   execFileSync('xcrun', ['stapler', 'staple', appPath], { stdio: 'inherit' })
 
   execFileSync('rm', [zipPath])
-  console.log('Notarization complete')
+  console.log('[notarize] Notarization complete')
 }
