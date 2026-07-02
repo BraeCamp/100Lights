@@ -1,5 +1,5 @@
 /**
- * Patches @electron/notarize's checkSignature to not throw when codesign --display
+ * Patches @electron/notarize's checkSignatures to not throw when codesign --display
  * returns ESRCH ("No such process") on GitHub Actions runners. The app is already
  * signed by electron-builder at this point — the check is just a verification step.
  */
@@ -24,8 +24,8 @@ if (src.includes(MARKER)) {
 const patch = `
 ${MARKER}
 ;(function () {
-  const _orig = exports.checkSignature
-  exports.checkSignature = async function checkSignatureSafe() {
+  const _orig = exports.checkSignatures
+  exports.checkSignatures = async function checkSignaturesSafe() {
     try {
       return await _orig.apply(this, arguments)
     } catch (e) {
