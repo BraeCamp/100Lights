@@ -43,7 +43,7 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/private_keys"
           KEY_PATH="$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
-          echo "$APPLE_API_KEY_CONTENT" | base64 -D > "$KEY_PATH"
+          printf '%s' "$APPLE_API_KEY_CONTENT" | openssl base64 -d -A > "$KEY_PATH"
           echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
 
       - name: Build & package (Mac)
