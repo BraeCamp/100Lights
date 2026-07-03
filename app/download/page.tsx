@@ -16,8 +16,8 @@ async function getLatestRelease(): Promise<{ version: string; macDmg: string; ma
       data.assets.find(a => a.name.includes(substr))?.browser_download_url ?? ''
     return {
       version,
-      macDmg: find('.dmg'),
-      macArm: find('arm64') || find('.dmg'),
+      macDmg: find('x64.dmg') || find('.dmg'),
+      macArm: find('arm64.dmg') || find('arm64'),
       winExe: find('.exe') || find('Setup'),
     }
   } catch {
