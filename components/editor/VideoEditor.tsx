@@ -436,6 +436,11 @@ export default function VideoEditor({
   const focusRecordingRef    = useRef(false)
   const focusBufferRef       = useRef<Array<{ time: number; x: number; y: number }>>([])
   const lastFocusKfTimeRef   = useRef(0)
+  const [isElectronMac, setIsElectronMac] = useState(false)
+  useEffect(() => {
+    setIsElectronMac(!!window.electronAPI && navigator.platform.startsWith('Mac'))
+  }, [])
+
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -2425,7 +2430,7 @@ export default function VideoEditor({
     <div data-editor="true" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
 
       {/* ── Header ───────────────────────────────────────────── */}
-      <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+      <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', paddingLeft: isElectronMac ? 80 : 16 }}>
         <Link href="/dashboard" className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
           <ArrowLeft size={12} /> Dashboard
         </Link>

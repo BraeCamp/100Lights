@@ -17,6 +17,10 @@ function fmtHMS(secs: number): string {
 
 export default function Transport() {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode } = useDaw()
+  const [isElectronMac, setIsElectronMac] = useState(false)
+  useEffect(() => {
+    setIsElectronMac(!!window.electronAPI && navigator.platform.startsWith('Mac'))
+  }, [])
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const posRef = useRef<HTMLSpanElement>(null)
@@ -220,7 +224,8 @@ export default function Transport() {
     display: 'flex',
     alignItems: 'center',
     gap: 4,
-    padding: '0 10px',
+    paddingLeft: isElectronMac ? 80 : 10,
+    paddingRight: 10,
     flexShrink: 0,
   }
 
