@@ -1,6 +1,6 @@
 {
   "name": "100lights-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "100Lights — Professional Audio & Video Editing",
   "main": "dist/main.js",
   "author": {
@@ -91,7 +91,7 @@
         "provider": "github",
         "owner": "BraeCamp",
         "repo": "100Lights",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "afterSign": "scripts/notarize.js"
