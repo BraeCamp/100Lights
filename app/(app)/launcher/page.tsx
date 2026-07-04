@@ -168,11 +168,7 @@ function AudioSubCard({
   const router = useRouter()
 
   function handleOpen() {
-    if (typeof window !== 'undefined' && window.electronAPI) {
-      void window.electronAPI.openModule(`audio?mode=${mode}`)
-    } else {
-      router.push(`/apps/audio?mode=${mode}`)
-    }
+    router.push(`/apps/audio?mode=${mode}`)
   }
 
   return (

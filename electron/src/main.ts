@@ -162,6 +162,50 @@ function openModuleWindow(moduleKey: string): void {
   log.info('Opening module window:', moduleKey)
 }
 
+function openProjectWindow(url: string): void {
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1080,
+    minHeight: 640,
+    backgroundColor: '#0d0d14',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      zoomFactor: 1.0,
+    },
+    show: false,
+  })
+
+  win.once('ready-to-show', () => {
+    win.show()
+    if (isDev) win.webContents.openDevTools({ mode: 'detach' })
+  })
+
+  win.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (isExternalPayment(u)) { shell.openExternal(u); return { action: 'deny' } }
+    if (isOAuthProvider(u)) { return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions } }
+    if (isInternal(u)) { win.loadURL(u); return { action: 'deny' } }
+    shell.openExternal(u)
+    return { action: 'deny' }
+  })
+
+  win.webContents.on('will-navigate', (event, u) => {
+    if (!isInternal(u)) {
+      event.preventDefault()
+      shell.openExternal(u)
+    }
+  })
+
+  void win.loadURL(url)
+  log.info('Opening project window:', url)
+}
+
 async function createLauncherWindow(): Promise<void> {
   // Patch COOP/COEP headers so SharedArrayBuffer (used by FFmpeg.wasm) works
   // in Electron. The production server sets these; this ensures they're present
@@ -203,8 +247,6 @@ async function createLauncherWindow(): Promise<void> {
     log.info('Launcher window ready')
   })
 
-  // Intercept /apps/* links — open as module windows instead of navigating in-place.
-  // This means clicking a module card in the browser version opens a new window in desktop.
   launcherWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalPayment(url)) {
       shell.openExternal(url)
@@ -213,32 +255,49 @@ async function createLauncherWindow(): Promise<void> {
     if (isOAuthProvider(url)) {
       return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions }
     }
-    const moduleKey = moduleKeyFromUrl(url)
-    if (moduleKey) {
-      openModuleWindow(moduleKey)
-      return { action: 'deny' }
-    }
-    // Internal app links (Clerk UI, dashboard redirects) → load in launcher
+    // Internal links load in the launcher window
     if (isInternal(url)) {
       launcherWindow?.loadURL(url)
       return { action: 'deny' }
     }
-    // Anything else (docs, external links) → system browser
     shell.openExternal(url)
     return { action: 'deny' }
   })
 
-  // Also intercept direct navigations to /apps/* within the launcher
   launcherWindow.webContents.on('will-navigate', (event, url) => {
     if (!isInternal(url)) {
       event.preventDefault()
       shell.openExternal(url)
       return
     }
-    const moduleKey = moduleKeyFromUrl(url)
-    if (moduleKey) {
+
+    const { pathname } = new URL(url)
+
+    // Projects open in a dedicated window
+    if (/^\/projects\/[^/]+$/.test(pathname)) {
       event.preventDefault()
-      openModuleWindow(moduleKey)
+      openProjectWindow(url)
+      return
+    }
+
+    // Navigating into a module — expand the launcher window to editor size
+    if (pathname.startsWith('/apps/')) {
+      launcherWindow!.setResizable(true)
+      launcherWindow!.setMinimumSize(1080, 640)
+      const [w, h] = launcherWindow!.getSize()
+      if (w < 1080 || h < 640) {
+        launcherWindow!.setSize(1440, 900, true)
+        launcherWindow!.center()
+      }
+      return
+    }
+
+    // Returning to launcher — restore compact size
+    if (pathname === '/launcher') {
+      launcherWindow!.setMinimumSize(960, 600)
+      launcherWindow!.setSize(960, 600, true)
+      launcherWindow!.setResizable(false)
+      launcherWindow!.center()
     }
   })
 

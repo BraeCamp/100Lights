@@ -62,13 +62,9 @@ export function revealInFolder(filePath: string): void {
   window.electronAPI?.showItemInFolder(filePath)
 }
 
-// Open a module in its own window (Electron), or navigate to its app page (browser).
+// Navigate to a module's app page. Always navigates in the current window.
 export function openModule(moduleKey: string, router?: { push: (href: string) => void }): void {
-  if (window.electronAPI) {
-    void window.electronAPI.openModule(moduleKey)
-  } else {
-    router?.push(`/apps/${moduleKey}`)
-  }
+  router?.push(`/apps/${moduleKey}`)
 }
 
 // Bring the launcher window back into focus (Electron only).

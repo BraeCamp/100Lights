@@ -27,9 +27,12 @@ export default function Sidebar() {
   const [usage, setUsage] = useState<Usage | null>(null)
   const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
   const [isElectron, setIsElectron] = useState(false)
+  const [isElectronMac, setIsElectronMac] = useState(false)
 
   useEffect(() => {
-    setIsElectron(typeof window !== 'undefined' && !!window.electronAPI)
+    const electron = typeof window !== 'undefined' && !!window.electronAPI
+    setIsElectron(electron)
+    setIsElectronMac(electron && navigator.platform.startsWith('Mac'))
   }, [])
 
   function fetchUsage() {
@@ -80,14 +83,35 @@ export default function Sidebar() {
       aria-label="Application sidebar"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-5" style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
-          <Zap size={14} color="#fff" fill="#fff" />
-        </div>
-        <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text-primary)' }}>
-          100Lights
-        </span>
+      {isElectronMac && (
+        <style>{`.sidebar-drag{-webkit-app-region:drag}.sidebar-nodrag{-webkit-app-region:no-drag}`}</style>
+      )}
+      {/* Logo — shifts right on Electron/Mac to clear traffic light buttons */}
+      <div
+        className={isElectronMac ? 'sidebar-drag' : undefined}
+        style={{ borderBottom: '1px solid var(--border)' }}
+      >
+        <Link
+          href={isElectron ? '/launcher' : '/dashboard'}
+          className={isElectronMac ? 'sidebar-nodrag flex items-center gap-2.5' : 'flex items-center gap-2.5'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            paddingTop: 20,
+            paddingBottom: 20,
+            paddingLeft: isElectronMac ? 80 : 20,
+            paddingRight: 20,
+            textDecoration: 'none',
+          }}
+        >
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
+            <Zap size={14} color="#fff" fill="#fff" />
+          </div>
+          <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            100Lights
+          </span>
+        </Link>
       </div>
 
       <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto" aria-label="Main navigation">
