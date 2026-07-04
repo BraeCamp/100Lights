@@ -160,3 +160,16 @@ input[type="range"].cf-slider::-moz-range-thumb {
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+/* Electron window drag regions.
+   -webkit-app-region is a Chromium-only property; ignored in regular browsers.
+   electron-drag-container makes the container draggable while keeping all
+   interactive children (a, button, input) clickable via auto no-drag. */
+.electron-drag       { -webkit-app-region: drag; }
+.electron-nodrag     { -webkit-app-region: no-drag; }
+.electron-drag-container { -webkit-app-region: drag; }
+.electron-drag-container a,
+.electron-drag-container button,
+.electron-drag-container input,
+.electron-drag-container select,
+.electron-drag-container textarea { -webkit-app-region: no-drag; }

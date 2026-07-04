@@ -2425,7 +2425,7 @@ export default function VideoEditor({
     <div data-editor="true" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
 
       {/* ── Header ───────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+      <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
         <Link href="/dashboard" className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
           <ArrowLeft size={12} /> Dashboard
         </Link>

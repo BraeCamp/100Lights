@@ -224,11 +224,13 @@ export default function Transport() {
     flexShrink: 0,
   }
 
+  const wrapClass = 'electron-drag-container'
+
   // ── Podcast transport ───────────────────────────────────────────────────────
 
   if (audioMode === 'podcast') {
     return (
-      <div style={wrapStyle}>
+      <div style={wrapStyle} className={wrapClass}>
         {/* Transport controls */}
         <button style={base} onClick={handlePodcastRewind} title="Rewind to start">
           <SkipBack size={13} />
@@ -327,7 +329,7 @@ export default function Transport() {
   // ── Music transport (original) ──────────────────────────────────────────────
 
   return (
-    <div style={wrapStyle}>
+    <div style={wrapStyle} className={wrapClass}>
       {/* Transport controls */}
       <button style={base} onClick={handleRewind} title="Rewind to start">
         <SkipBack size={13} />

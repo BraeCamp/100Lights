@@ -83,17 +83,14 @@ export default function Sidebar() {
       aria-label="Application sidebar"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
     >
-      {isElectronMac && (
-        <style>{`.sidebar-drag{-webkit-app-region:drag}.sidebar-nodrag{-webkit-app-region:no-drag}`}</style>
-      )}
       {/* Logo — shifts right on Electron/Mac to clear traffic light buttons */}
       <div
-        className={isElectronMac ? 'sidebar-drag' : undefined}
+        className={isElectronMac ? 'electron-drag' : undefined}
         style={{ borderBottom: '1px solid var(--border)' }}
       >
         <Link
           href={isElectron ? '/launcher' : '/dashboard'}
-          className={isElectronMac ? 'sidebar-nodrag flex items-center gap-2.5' : 'flex items-center gap-2.5'}
+          className={isElectronMac ? 'electron-nodrag flex items-center gap-2.5' : 'flex items-center gap-2.5'}
           style={{
             display: 'flex',
             alignItems: 'center',
