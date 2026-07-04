@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn, Check, X } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import Link from 'next/link'
 import posthog from 'posthog-js'
@@ -13,11 +13,71 @@ interface BillingInfo {
 }
 
 export default function SettingsPage() {
-  const { isSignedIn, isLoaded } = useUser()
+  const { isSignedIn, isLoaded, user } = useUser()
   const [billing, setBilling] = useState<BillingInfo | null>(null)
   const [billingError, setBillingError] = useState(false)
   const [loading, setLoading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
+
+  // Profile state
+  const [username, setUsername]       = useState('')
+  const [firstName, setFirstName]     = useState('')
+  const [lastName, setLastName]       = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileStatus, setProfileStatus] = useState<'idle' | 'saved' | 'error'>('idle')
+  const [profileError, setProfileError]   = useState('')
+  const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Sync from Clerk once loaded
+  useEffect(() => {
+    if (user) {
+      setUsername(user.username ?? '')
+      setFirstName(user.firstName ?? '')
+      setLastName(user.lastName ?? '')
+    }
+  }, [user])
+
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user) return
+
+    const trimmed = username.trim()
+    if (trimmed && !/^[a-zA-Z0-9_]{1,30}$/.test(trimmed)) {
+      setProfileError('Username can only contain letters, numbers, and underscores (max 30 characters).')
+      setProfileStatus('error')
+      return
+    }
+
+    setProfileSaving(true)
+    setProfileStatus('idle')
+    setProfileError('')
+
+    try {
+      await user.update({
+        username: trimmed || undefined,
+        firstName: firstName.trim() || undefined,
+        lastName: lastName.trim() || undefined,
+      })
+      setProfileStatus('saved')
+      if (statusTimer.current) clearTimeout(statusTimer.current)
+      statusTimer.current = setTimeout(() => setProfileStatus('idle'), 3000)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.toLowerCase().includes('username')) {
+        setProfileError('That username is already taken or usernames are not enabled in settings.')
+      } else {
+        setProfileError('Failed to save profile. Please try again.')
+      }
+      setProfileStatus('error')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  const profileDirty =
+    (username  !== (user?.username  ?? '')) ||
+    (firstName !== (user?.firstName ?? '')) ||
+    (lastName  !== (user?.lastName  ?? ''))
 
   function loadBilling() {
     setBillingError(false)
@@ -66,6 +126,129 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Settings</h1>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Account and billing preferences</p>
         </div>
+
+        {/* Profile */}
+        {isSignedIn && (
+          <div className="mb-10">
+            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Profile</h2>
+            <form
+              onSubmit={handleSaveProfile}
+              className="p-5 rounded-xl border"
+              style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+            >
+              {/* Username */}
+              <div className="mb-4">
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  Username
+                </label>
+                <div className="flex items-center gap-0" style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+                  <span className="px-3 py-2 text-sm select-none" style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--border)', background: 'var(--bg-base)', flexShrink: 0 }}>
+                    @
+                  </span>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="yourhandle"
+                    maxLength={30}
+                    autoComplete="username"
+                    style={{
+                      flex: 1,
+                      padding: '7px 12px',
+                      background: 'transparent',
+                      border: 'none',
+                      outline: 'none',
+                      fontSize: 14,
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  Letters, numbers, and underscores only. Used for your public project URLs.
+                </p>
+              </div>
+
+              {/* First + Last name */}
+              <div className="flex gap-3 mb-5">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                    First name
+                  </label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={e => setFirstName(e.target.value)}
+                    placeholder="First"
+                    maxLength={64}
+                    autoComplete="given-name"
+                    style={{
+                      width: '100%',
+                      padding: '7px 12px',
+                      borderRadius: 8,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-surface)',
+                      outline: 'none',
+                      fontSize: 14,
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                    Last name
+                  </label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={e => setLastName(e.target.value)}
+                    placeholder="Last"
+                    maxLength={64}
+                    autoComplete="family-name"
+                    style={{
+                      width: '100%',
+                      padding: '7px 12px',
+                      borderRadius: 8,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-surface)',
+                      outline: 'none',
+                      fontSize: 14,
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Footer row */}
+              <div className="flex items-center justify-between gap-3">
+                {profileStatus === 'saved' && (
+                  <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--success)' }}>
+                    <Check size={12} /> Saved
+                  </span>
+                )}
+                {profileStatus === 'error' && (
+                  <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--error)' }}>
+                    <X size={12} /> {profileError}
+                  </span>
+                )}
+                {profileStatus === 'idle' && <span />}
+                <button
+                  type="submit"
+                  disabled={profileSaving || !profileDirty}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold"
+                  style={{
+                    background: profileDirty ? 'var(--accent)' : 'var(--border)',
+                    color: profileDirty ? '#fff' : 'var(--text-muted)',
+                    opacity: profileSaving ? 0.6 : 1,
+                    cursor: profileDirty && !profileSaving ? 'pointer' : 'default',
+                    transition: 'background 0.15s',
+                  }}
+                >
+                  {profileSaving ? 'Saving…' : 'Save profile'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {/* Plan status */}
         <div className="mb-4">
