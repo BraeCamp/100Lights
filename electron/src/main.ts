@@ -180,11 +180,12 @@ async function createLauncherWindow(): Promise<void> {
     width: 960,
     height: 600,
     resizable: false,
+    fullscreenable: true,
     center: true,
     backgroundColor: '#0d0d14',
     // Mac: hide title bar, keep traffic lights
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
+    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 18 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,

@@ -435,6 +435,15 @@ function LauncherInner() {
   const [licenses, setLicenses] = useState<LicenseMap | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [isElectronMac, setIsElectronMac] = useState(false)
+
+  useEffect(() => {
+    setIsElectronMac(
+      typeof window !== 'undefined' &&
+      !!window.electronAPI &&
+      navigator.platform.startsWith('Mac')
+    )
+  }, [])
 
   // Show activation toast from URL param
   useEffect(() => {
@@ -482,7 +491,11 @@ function LauncherInner() {
       }}
     >
       {/* Header */}
+      {isElectronMac && (
+        <style>{`.launcher-header{-webkit-app-region:drag}.launcher-nodrag{-webkit-app-region:no-drag}`}</style>
+      )}
       <header
+        className={isElectronMac ? 'launcher-header' : undefined}
         style={{
           height: 52,
           borderBottom: '1px solid var(--border)',
@@ -490,7 +503,8 @@ function LauncherInner() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 20px',
+          paddingLeft: isElectronMac ? 84 : 20,
+          paddingRight: 20,
           flexShrink: 0,
         }}
       >
@@ -499,7 +513,7 @@ function LauncherInner() {
           <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>100Lights</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className={isElectronMac ? 'launcher-nodrag' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {user && (
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               {user.username ?? user.fullName ?? user.primaryEmailAddress?.emailAddress?.split('@')[0]}
