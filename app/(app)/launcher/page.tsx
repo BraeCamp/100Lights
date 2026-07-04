@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
+import { UserButton } from '@clerk/nextjs'
 import { Film, AudioLines, Palette, Settings, Zap, Music, Mic } from 'lucide-react'
 import Link from 'next/link'
 import { MODULE_DEFS, type ModuleKey } from '@/lib/editor-types'
@@ -515,9 +516,7 @@ function LauncherInner() {
 
         <div className={isElectronMac ? 'launcher-nodrag' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {user && (
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              {user.username ?? user.fullName ?? user.primaryEmailAddress?.emailAddress?.split('@')[0]}
-            </span>
+            <UserButton appearance={{ elements: { avatarBox: 'w-6 h-6' } }} />
           )}
           <Link
             href="/settings"

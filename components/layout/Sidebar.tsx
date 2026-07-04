@@ -26,6 +26,11 @@ export default function Sidebar() {
   const { showUpgrade } = useUpgradeModal()
   const [usage, setUsage] = useState<Usage | null>(null)
   const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
+  const [isElectron, setIsElectron] = useState(false)
+
+  useEffect(() => {
+    setIsElectron(typeof window !== 'undefined' && !!window.electronAPI)
+  }, [])
 
   function fetchUsage() {
     fetch('/api/usage')
@@ -176,14 +181,16 @@ export default function Sidebar() {
             Sign in
           </Link>
         )}
-        <Link
-          href="/download"
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          <Download size={15} />
-          Get Desktop App
-        </Link>
+        {!isElectron && (
+          <Link
+            href="/download"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <Download size={15} />
+            Get Desktop App
+          </Link>
+        )}
         <a
           href="mailto:feedback@100lights.com?subject=Feedback"
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
