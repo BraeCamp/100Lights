@@ -199,6 +199,16 @@ function openProjectWindow(url: string): void {
     if (!isInternal(u)) {
       event.preventDefault()
       shell.openExternal(u)
+      return
+    }
+    const { pathname } = new URL(u)
+    // "← Home" / "← Dashboard" from inside a project → surface the launcher
+    // and close this window so there's no orphaned project window in the background.
+    if (pathname === '/dashboard' || pathname === '/launcher') {
+      event.preventDefault()
+      launcherWindow?.show()
+      launcherWindow?.focus()
+      win.close()
     }
   })
 
@@ -273,8 +283,8 @@ async function createLauncherWindow(): Promise<void> {
 
     const { pathname } = new URL(url)
 
-    // Projects open in a dedicated window
-    if (/^\/projects\/[^/]+$/.test(pathname)) {
+    // New project form and existing projects open in a dedicated window
+    if (pathname === '/new' || /^\/projects\/[^/]+$/.test(pathname)) {
       event.preventDefault()
       openProjectWindow(url)
       return

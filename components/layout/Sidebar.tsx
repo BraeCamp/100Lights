@@ -116,7 +116,7 @@ export default function Sidebar() {
         <div style={{ padding: '2px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
           Workspace
         </div>
-        {navLink('/dashboard', 'Home', LayoutDashboard)}
+        {navLink(isElectron ? '/launcher' : '/dashboard', 'Home', LayoutDashboard)}
         {navLink('/new', 'New Project', PlusCircle)}
         {navLink('/projects', 'All Projects', FolderOpen)}
 
