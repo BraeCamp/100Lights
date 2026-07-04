@@ -9,7 +9,7 @@ async function getLatestRelease(): Promise<{ version: string; macDmg: string; ma
     const res = await fetch(
       'https://api.github.com/repos/BraeCamp/100Lights/releases/latest',
       {
-        next: { revalidate: 3600 },
+        next: { revalidate: 300 },
         headers: {
           'User-Agent': '100Lights-Site',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
