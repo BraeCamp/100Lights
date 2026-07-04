@@ -5,9 +5,16 @@ const GITHUB_RELEASES = 'https://github.com/BraeCamp/100Lights/releases/latest'
 
 async function getLatestRelease(): Promise<{ version: string; macDmg: string; macArm: string; winExe: string } | null> {
   try {
+    const token = process.env.GITHUB_TOKEN
     const res = await fetch(
       'https://api.github.com/repos/BraeCamp/100Lights/releases/latest',
-      { next: { revalidate: 3600 }, headers: { 'User-Agent': '100Lights-Site' } }
+      {
+        next: { revalidate: 3600 },
+        headers: {
+          'User-Agent': '100Lights-Site',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }
     )
     if (!res.ok) return null
     const data = await res.json() as { tag_name: string; assets: { name: string; browser_download_url: string }[] }
