@@ -9,6 +9,7 @@ import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { libraryGetAll } from './sound-library'
 import { libraryFulfill } from './default-samples'
 import type { MidiPreset } from './midi-presets'
+import { captureAudioInput } from './audio-capture'
 
 // Per-track Web Audio routing nodes
 interface TrackNodes {
@@ -1635,10 +1636,37 @@ export class DawEngine extends EventTarget {
   private _recChunks:   Blob[]                 = []
   private _captureNode: MediaStreamAudioDestinationNode | null = null
   private _recStartBeat = 0
+  private _micStreams = new Map<string, { stream: MediaStream; source: MediaStreamAudioSourceNode }>()
+
+  async startMicInput(trackId: string, source: string): Promise<void> {
+    // Stop any existing stream for this track first
+    this.stopMicInput(trackId)
+    const stream = await captureAudioInput(source)
+    const srcNode = this.ctx.createMediaStreamSource(stream)
+    this.ensureTrack(trackId)
+    const nodes = this.trackNodes.get(trackId)!
+    srcNode.connect(nodes.effectsInput)
+    this._micStreams.set(trackId, { stream, source: srcNode })
+  }
+
+  stopMicInput(trackId: string): void {
+    const entry = this._micStreams.get(trackId)
+    if (!entry) return
+    try { entry.source.disconnect() } catch { /* ok */ }
+    entry.stream.getTracks().forEach(t => t.stop())
+    this._micStreams.delete(trackId)
+  }
+
+  stopAllMicInputs(): void {
+    for (const trackId of [...this._micStreams.keys()]) {
+      this.stopMicInput(trackId)
+    }
+  }
 
   async startRecording(): Promise<void> {
     if (this._mediaRecorder) await this.stopRecording()
-    // Tap the master bus — captures everything the engine plays
+    // Tap the master bus — captures everything the engine plays,
+    // including any mic inputs already routed through track effects chains.
     this._captureNode  = this.ctx.createMediaStreamDestination()
     this.masterCompressor.connect(this._captureNode)
     this._recChunks    = []
@@ -1654,6 +1682,7 @@ export class DawEngine extends EventTarget {
   async stopRecording(): Promise<Blob | null> {
     if (!this._mediaRecorder) return null
     const endBeat = this.currentBeat  // capture before scheduler stops
+    this.stopAllMicInputs()
     return new Promise(resolve => {
       this._mediaRecorder!.onstop = () => {
         const mime = this._mediaRecorder?.mimeType || 'audio/webm'

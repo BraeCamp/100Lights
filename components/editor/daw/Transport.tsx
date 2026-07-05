@@ -95,11 +95,15 @@ export default function Transport() {
     }
   }
 
-  function handleRecord() {
+  async function handleRecord() {
     if (recording) {
       if (playing) engine.stop()
       engine.stopRecording()
     } else {
+      const armedTracks = project.tracks.filter(t => t.armed && t.inputSource)
+      if (armedTracks.length > 0) {
+        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource!)))
+      }
       if (!playing) engine.play()
       engine.startRecording()
     }
