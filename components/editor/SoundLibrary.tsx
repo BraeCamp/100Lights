@@ -856,7 +856,10 @@ const FOLDERS_KEY = 'sound-library-folders'
 
 export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean; onPick?: (entry: LibraryEntry) => void }) {
   const { user } = useUser()
-  initLibrary(user?.id ?? null)
+
+  useEffect(() => {
+    initLibrary(user?.id ?? null)
+  }, [user?.id])
 
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
@@ -894,7 +897,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     setEntries(all.sort((a, b) => b.addedAt.localeCompare(a.addedAt)))
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, user?.id])
 
   // Track whether any library entry is currently being dragged (to show unfiled drop zone)
   useEffect(() => {
