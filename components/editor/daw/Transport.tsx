@@ -39,6 +39,7 @@ export default function Transport() {
   const [showTuner, setShowTuner] = useState(false)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
+  const [micError, setMicError] = useState('')
 
   // Inject pulse keyframe for recording indicator (once per page)
   useEffect(() => {
@@ -100,12 +101,21 @@ export default function Transport() {
       if (playing) engine.stop()
       engine.stopRecording()
     } else {
-      const armedTracks = project.tracks.filter(t => t.armed)
-      if (armedTracks.length > 0) {
-        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+      try {
+        const armedTracks = project.tracks.filter(t => t.armed)
+        if (armedTracks.length > 0) {
+          await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+        }
+        if (!playing) engine.play()
+        engine.startRecording()
+        setMicError('')
+      } catch (err) {
+        const msg = err instanceof DOMException && err.name === 'NotAllowedError'
+          ? 'Mic permission denied — allow access in system settings'
+          : err instanceof Error ? err.message : 'Microphone access failed'
+        setMicError(msg)
+        setTimeout(() => setMicError(''), 5000)
       }
-      if (!playing) engine.play()
-      engine.startRecording()
     }
   }
 
@@ -270,6 +280,10 @@ export default function Transport() {
         >
           <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
         </button>
+
+        {micError && (
+          <span style={{ fontSize: 9, color: '#ff3b3b', maxWidth: 140, lineHeight: 1.2 }}>{micError}</span>
+        )}
 
         <button
           style={project.loopEnabled ? active : base}

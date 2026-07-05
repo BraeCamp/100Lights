@@ -1639,6 +1639,10 @@ export class DawEngine extends EventTarget {
   private _micStreams = new Map<string, { stream: MediaStream; source: MediaStreamAudioSourceNode }>()
 
   async startMicInput(trackId: string, source: string): Promise<void> {
+    // Resume a suspended AudioContext before touching getUserMedia —
+    // browsers suspend AudioContext until a user gesture, and a suspended
+    // context won't process mic audio even after it's connected.
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
     // Stop any existing stream for this track first
     this.stopMicInput(trackId)
     const stream = await captureAudioInput(source)
@@ -1664,6 +1668,7 @@ export class DawEngine extends EventTarget {
   }
 
   async startRecording(): Promise<void> {
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
     if (this._mediaRecorder) await this.stopRecording()
     // Tap the master bus — captures everything the engine plays,
     // including any mic inputs already routed through track effects chains.

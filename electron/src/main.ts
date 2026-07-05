@@ -171,6 +171,8 @@ function openProjectWindow(url: string): void {
     backgroundColor: '#0d0d14',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
+    fullscreenable: true,
+    resizable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -314,6 +316,21 @@ async function createLauncherWindow(): Promise<void> {
       launcherWindow!.setSize(960, 600, true)
       launcherWindow!.setResizable(false)
       launcherWindow!.center()
+    }
+  })
+
+  // Intercept Next.js client-side navigation (history.pushState) to project/new pages.
+  // will-navigate only fires for full-page navigations; pushState bypasses it.
+  let interceptingNav = false
+  launcherWindow.webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+    if (!isMainFrame || interceptingNav) return
+    let pathname: string
+    try { pathname = new URL(url).pathname } catch { return }
+    if (pathname === '/new' || /^\/projects\/[^/]+$/.test(pathname)) {
+      interceptingNav = true
+      openProjectWindow(url)
+      launcherWindow!.webContents.goBack()
+      setTimeout(() => { interceptingNav = false }, 500)
     }
   })
 

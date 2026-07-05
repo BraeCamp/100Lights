@@ -218,6 +218,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
   const [trackHasPlaying, setTrackHasPlaying] = useState(false)
   const rafRef    = useRef<number | undefined>(undefined)
   const prevState = useRef<SlotDisplayState>('idle')
+  const [micError, setMicError] = useState('')
 
   const audioClip = clip && isAudioClip(clip) ? clip : null
   const midiClip  = clip && isMidiClip(clip)  ? clip : null
@@ -388,8 +389,13 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
         await engine.startMicInput(track.id, track.inputSource ?? 'mic')
       }
       void engine.startRecording()
+      setMicError('')
     } catch (err) {
-      console.error('Recording failed to start:', err)
+      const msg = err instanceof DOMException && err.name === 'NotAllowedError'
+        ? 'Mic permission denied'
+        : err instanceof Error ? err.message : 'Mic access failed'
+      setMicError(msg)
+      setTimeout(() => setMicError(''), 4000)
       setSlotRecording(null)
     }
   }
@@ -580,7 +586,10 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
                     >{bars}</button>
                   ))}
                 </div>
-                <span style={{ fontSize: 8, color: 'rgba(239,68,68,0.6)' }}>bars</span>
+                {micError
+                  ? <span style={{ fontSize: 8, color: '#ef4444', textAlign: 'center', maxWidth: 140 }}>{micError}</span>
+                  : <span style={{ fontSize: 8, color: 'rgba(239,68,68,0.6)' }}>bars</span>
+                }
               </div>
             ) : hovered && trackHasPlaying ? (
               /* Track has a playing clip — clicking will stop it */
