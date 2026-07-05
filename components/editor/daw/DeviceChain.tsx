@@ -6,27 +6,34 @@ import { useDaw } from '@/lib/daw-state'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
+  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams,
   MidiEffect, MidiEffectType, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams,
 } from '@/lib/daw-types'
 import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
   defaultSaturator, defaultRedux, defaultAutoPan, defaultUtility, defaultLfo,
+  defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp,
   voiceChainEffects,
 } from '@/lib/daw-types'
 
 // ── Label map ──────────────────────────────────────────────────────────────────
 
 const EFFECT_LABELS: Record<EffectType, string> = {
-  eq3:        'EQ3',
-  compressor: 'Compressor',
-  reverb:     'Reverb',
-  delay:      'Delay',
-  filter:     'Filter',
-  saturator:  'Saturator',
-  redux:      'Redux',
-  autopan:    'Auto Pan',
-  utility:    'Utility',
-  lfo:        'LFO',
+  eq3:            'EQ3',
+  compressor:     'Compressor',
+  reverb:         'Reverb',
+  delay:          'Delay',
+  filter:         'Filter',
+  saturator:      'Saturator',
+  redux:          'Redux',
+  autopan:        'Auto Pan',
+  utility:        'Utility',
+  lfo:            'LFO',
+  noisegate:      'Noise Gate',
+  deesser:        'De-esser',
+  chorus:         'Chorus/Flanger',
+  transientshaper:'Transient Shaper',
+  multibandcomp:  'Multiband Comp',
 }
 
 // ── Shared micro-components ────────────────────────────────────────────────────
@@ -90,8 +97,63 @@ function Eq3Controls({ effect, trackId, returnId }: { effect: TrackEffect; track
     ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
     : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const c = canvas.getContext('2d')
+    if (!c) return
+    const W = canvas.width
+    const H = canvas.height
+
+    c.fillStyle = '#0d1117'
+    c.fillRect(0, 0, W, H)
+
+    // 0 dB center line
+    c.strokeStyle = '#2a2a3a'
+    c.lineWidth = 1
+    c.beginPath(); c.moveTo(0, H / 2); c.lineTo(W, H / 2); c.stroke()
+
+    function computeDb(freq: number): number {
+      const lowRatio = freq / p.lowFreq
+      const lowContrib = p.lowGain / (1 + Math.pow(lowRatio, 4))
+      const midRatio = freq / p.midFreq
+      const midBell = 1 / (1 + Math.pow((midRatio - 1 / midRatio), 2))
+      const midContrib = p.midGain * midBell
+      const highRatio = p.highFreq / freq
+      const highContrib = p.highGain / (1 + Math.pow(highRatio, 4))
+      return lowContrib + midContrib + highContrib
+    }
+
+    // Fill below curve
+    c.beginPath()
+    for (let x = 0; x < W; x++) {
+      const freq = 20 * Math.pow(1000, x / (W - 1))
+      const db = computeDb(freq)
+      const y = H / 2 - (db / 12) * (H / 2 - 2)
+      if (x === 0) c.moveTo(x, y); else c.lineTo(x, y)
+    }
+    c.lineTo(W - 1, H / 2); c.lineTo(0, H / 2); c.closePath()
+    c.fillStyle = 'rgba(61,143,239,0.13)'
+    c.fill()
+
+    // Curve line
+    c.beginPath()
+    for (let x = 0; x < W; x++) {
+      const freq = 20 * Math.pow(1000, x / (W - 1))
+      const db = computeDb(freq)
+      const y = H / 2 - (db / 12) * (H / 2 - 2)
+      if (x === 0) c.moveTo(x, y); else c.lineTo(x, y)
+    }
+    c.strokeStyle = '#3d8fef'
+    c.lineWidth = 1.5
+    c.stroke()
+  }, [p.lowGain, p.midGain, p.highGain, p.lowFreq, p.midFreq, p.highFreq])
+
   return (
     <>
+      <canvas ref={canvasRef} width={168} height={56} style={{ display: 'block', width: '100%', height: 56, borderRadius: 2, marginBottom: 6 }} />
       <CtrlRow label="Low">
         <RangeCtrl value={p.lowGain} min={-12} max={12} step={0.1} onChange={v => up({ lowGain: v })} />
       </CtrlRow>
@@ -167,8 +229,52 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
     ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
     : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
+  const padRef = useRef<HTMLDivElement>(null)
+  const PRE_MAX   = 0.1
+  const DECAY_MIN = 0.1
+  const DECAY_MAX = 10
+
+  function applyPosition(clientX: number, clientY: number) {
+    if (!padRef.current) return
+    const rect = padRef.current.getBoundingClientRect()
+    const rx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    const ry = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+    const preDelay = rx * PRE_MAX
+    const decay = Math.exp(Math.log(DECAY_MIN) + (1 - ry) * (Math.log(DECAY_MAX) - Math.log(DECAY_MIN)))
+    up({ preDelay: Math.round(preDelay * 1000) / 1000, decay: Math.round(decay * 10) / 10 })
+  }
+
+  const dotX = (p.preDelay / PRE_MAX) * 100
+  const dotY = (1 - (Math.log(Math.max(DECAY_MIN, p.decay)) - Math.log(DECAY_MIN)) / (Math.log(DECAY_MAX) - Math.log(DECAY_MIN))) * 100
+
   return (
     <>
+      {/* XY Pad: X = room size (preDelay), Y = brightness/decay */}
+      <div
+        ref={padRef}
+        style={{
+          position: 'relative', width: '100%', height: 68,
+          background: 'linear-gradient(to top right, #0d1520, #1a1030)',
+          border: '1px solid var(--border)', borderRadius: 3,
+          cursor: 'crosshair', marginBottom: 6, userSelect: 'none', overflow: 'hidden',
+        }}
+        onPointerDown={e => {
+          e.stopPropagation()
+          ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+          applyPosition(e.clientX, e.clientY)
+        }}
+        onPointerMove={e => { if (e.buttons === 0) return; e.stopPropagation(); applyPosition(e.clientX, e.clientY) }}
+      >
+        <span style={{ position: 'absolute', bottom: 2, left: 4, fontSize: 8, color: 'rgba(255,255,255,0.28)', pointerEvents: 'none' }}>Room →</span>
+        <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 8, color: 'rgba(255,255,255,0.28)', pointerEvents: 'none' }}>Bright</span>
+        <div style={{
+          position: 'absolute',
+          left: `calc(${dotX}% - 5px)`, top: `calc(${dotY}% - 5px)`,
+          width: 10, height: 10, borderRadius: '50%',
+          background: 'var(--accent)', boxShadow: '0 0 6px var(--accent)',
+          pointerEvents: 'none',
+        }} />
+      </div>
       <CtrlRow label="Wet">
         <RangeCtrl value={p.wet} min={0} max={1} step={0.01} onChange={v => up({ wet: v })} />
       </CtrlRow>
@@ -374,11 +480,148 @@ function LfoControls({ effect, trackId, returnId }: { effect: TrackEffect; track
   )
 }
 
+// ── Noise Gate controls ───────────────────────────────────────────────────────
+
+function NoiseGateControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as NoiseGateParams
+  const up = (changes: Partial<NoiseGateParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Threshold"><RangeCtrl value={p.threshold} min={-80} max={0} step={0.5} onChange={v => up({ threshold: v })} /></CtrlRow>
+      <CtrlRow label="Attack"><RangeCtrl value={p.attack} min={0} max={0.5} step={0.001} onChange={v => up({ attack: v })} /></CtrlRow>
+      <CtrlRow label="Hold"><RangeCtrl value={p.hold} min={0} max={0.5} step={0.001} onChange={v => up({ hold: v })} /></CtrlRow>
+      <CtrlRow label="Release"><RangeCtrl value={p.release} min={0} max={2} step={0.01} onChange={v => up({ release: v })} /></CtrlRow>
+      <CtrlRow label="Reduction"><RangeCtrl value={p.reduction} min={-80} max={-20} step={0.5} onChange={v => up({ reduction: v })} /></CtrlRow>
+    </>
+  )
+}
+
+// ── De-esser controls ─────────────────────────────────────────────────────────
+
+function DeEsserControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as DeEsserParams
+  const up = (changes: Partial<DeEsserParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Freq Hz"><RangeCtrl value={p.frequency} min={4000} max={16000} step={100} onChange={v => up({ frequency: v })} /></CtrlRow>
+      <CtrlRow label="Bandwidth"><RangeCtrl value={p.bandwidth} min={0.5} max={3} step={0.1} onChange={v => up({ bandwidth: v })} /></CtrlRow>
+      <CtrlRow label="Threshold"><RangeCtrl value={p.threshold} min={-60} max={0} step={0.5} onChange={v => up({ threshold: v })} /></CtrlRow>
+      <CtrlRow label="Reduction"><RangeCtrl value={p.reduction} min={0} max={24} step={0.5} onChange={v => up({ reduction: v })} /></CtrlRow>
+    </>
+  )
+}
+
+// ── Chorus/Flanger/Phaser controls ────────────────────────────────────────────
+
+function ChorusControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as ChorusParams
+  const up = (changes: Partial<ChorusParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Mode">
+        <div style={{ display: 'flex', gap: 3 }}>
+          {(['chorus', 'flanger', 'phaser'] as const).map(t => (
+            <button
+              key={t}
+              onClick={e => { e.stopPropagation(); up({ type: t }) }}
+              style={{ fontSize: 8, padding: '2px 5px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${p.type === t ? 'var(--accent)' : 'var(--border)'}`, background: p.type === t ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)', color: p.type === t ? 'var(--accent)' : 'var(--text-muted)' }}
+            >
+              {t === 'chorus' ? 'Chr' : t === 'flanger' ? 'Flg' : 'Phs'}
+            </button>
+          ))}
+        </div>
+      </CtrlRow>
+      <CtrlRow label="Rate"><RangeCtrl value={p.rate} min={0.1} max={10} step={0.01} onChange={v => up({ rate: v })} /></CtrlRow>
+      <CtrlRow label="Depth"><RangeCtrl value={p.depth} min={0} max={1} step={0.01} onChange={v => up({ depth: v })} /></CtrlRow>
+      <CtrlRow label="Feedback"><RangeCtrl value={p.feedback} min={0} max={0.9} step={0.01} onChange={v => up({ feedback: v })} /></CtrlRow>
+      <CtrlRow label="Mix"><RangeCtrl value={p.mix} min={0} max={1} step={0.01} onChange={v => up({ mix: v })} /></CtrlRow>
+      {p.type === 'phaser' && (
+        <CtrlRow label="Stages"><RangeCtrl value={p.stages} min={2} max={12} step={2} onChange={v => up({ stages: v })} /></CtrlRow>
+      )}
+    </>
+  )
+}
+
+// ── Transient Shaper controls ─────────────────────────────────────────────────
+
+function TransientShaperControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as TransientShaperParams
+  const up = (changes: Partial<TransientShaperParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const valStyle = { minWidth: 30, textAlign: 'right' as const, fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }
+  return (
+    <>
+      <CtrlRow label="Attack">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <RangeCtrl value={p.attack} min={-12} max={12} step={0.1} onChange={v => up({ attack: v })} />
+          <span style={valStyle}>{p.attack >= 0 ? '+' : ''}{p.attack.toFixed(1)}</span>
+        </div>
+      </CtrlRow>
+      <CtrlRow label="Sustain">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <RangeCtrl value={p.sustain} min={-12} max={12} step={0.1} onChange={v => up({ sustain: v })} />
+          <span style={valStyle}>{p.sustain >= 0 ? '+' : ''}{p.sustain.toFixed(1)}</span>
+        </div>
+      </CtrlRow>
+      <CtrlRow label="Out dB">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <RangeCtrl value={p.gain} min={-6} max={6} step={0.1} onChange={v => up({ gain: v })} />
+          <span style={valStyle}>{p.gain >= 0 ? '+' : ''}{p.gain.toFixed(1)}</span>
+        </div>
+      </CtrlRow>
+    </>
+  )
+}
+
+// ── Multiband Comp controls ───────────────────────────────────────────────────
+
+function MultibandCompControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as MultibandCompParams
+  const up = (changes: Partial<MultibandCompParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  const bandLabel = (color: string, text: string) => (
+    <div style={{ fontSize: 8, fontWeight: 700, color, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 2, marginTop: 4 }}>{text}</div>
+  )
+  return (
+    <>
+      {bandLabel('#818cf8', 'Crossovers')}
+      <CtrlRow label="Low↔Mid"><RangeCtrl value={p.lowMid} min={50} max={2000} step={1} onChange={v => up({ lowMid: v })} /></CtrlRow>
+      <CtrlRow label="Mid↔High"><RangeCtrl value={p.midHigh} min={1000} max={16000} step={1} onChange={v => up({ midHigh: v })} /></CtrlRow>
+      {bandLabel('#60a5fa', 'Low')}
+      <CtrlRow label="Threshold"><RangeCtrl value={p.lowThreshold} min={-60} max={0} step={0.5} onChange={v => up({ lowThreshold: v })} /></CtrlRow>
+      <CtrlRow label="Ratio"><RangeCtrl value={p.lowRatio} min={1} max={20} step={0.1} onChange={v => up({ lowRatio: v })} /></CtrlRow>
+      <CtrlRow label="Gain dB"><RangeCtrl value={p.lowGain} min={-12} max={12} step={0.1} onChange={v => up({ lowGain: v })} /></CtrlRow>
+      {bandLabel('#4ade80', 'Mid')}
+      <CtrlRow label="Threshold"><RangeCtrl value={p.midThreshold} min={-60} max={0} step={0.5} onChange={v => up({ midThreshold: v })} /></CtrlRow>
+      <CtrlRow label="Ratio"><RangeCtrl value={p.midRatio} min={1} max={20} step={0.1} onChange={v => up({ midRatio: v })} /></CtrlRow>
+      <CtrlRow label="Gain dB"><RangeCtrl value={p.midGain} min={-12} max={12} step={0.1} onChange={v => up({ midGain: v })} /></CtrlRow>
+      {bandLabel('#f87171', 'High')}
+      <CtrlRow label="Threshold"><RangeCtrl value={p.highThreshold} min={-60} max={0} step={0.5} onChange={v => up({ highThreshold: v })} /></CtrlRow>
+      <CtrlRow label="Ratio"><RangeCtrl value={p.highRatio} min={1} max={20} step={0.1} onChange={v => up({ highRatio: v })} /></CtrlRow>
+      <CtrlRow label="Gain dB"><RangeCtrl value={p.highGain} min={-12} max={12} step={0.1} onChange={v => up({ highGain: v })} /></CtrlRow>
+    </>
+  )
+}
+
 // ── Device card ────────────────────────────────────────────────────────────────
 
 function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const enabled = effect.params.enabled
+  const [autoGain, setAutoGain] = useState(false)
 
   function toggleBypass() {
     returnId
@@ -451,16 +694,40 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
       </div>
       {/* Controls */}
       <div style={{ padding: '8px 6px', flex: 1 }}>
-        {effect.type === 'eq3'        && <Eq3Controls        effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'compressor' && <CompressorControls effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'reverb'     && <ReverbControls     effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'delay'      && <DelayControls      effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'filter'     && <FilterControls     effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'saturator'  && <SaturatorControls  effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'redux'      && <ReduxControls      effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'autopan'    && <AutoPanControls    effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'utility'    && <UtilityControls    effect={effect} trackId={trackId} returnId={returnId} />}
-        {effect.type === 'lfo'        && <LfoControls        effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'reverb'         && <ReverbControls          effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'delay'          && <DelayControls           effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'filter'         && <FilterControls          effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'saturator'      && <SaturatorControls       effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'redux'          && <ReduxControls           effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'autopan'        && <AutoPanControls         effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'utility'        && <UtilityControls         effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'lfo'            && <LfoControls             effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'noisegate'      && <NoiseGateControls       effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'deesser'        && <DeEsserControls         effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'chorus'         && <ChorusControls          effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'transientshaper' && <TransientShaperControls effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'multibandcomp'  && <MultibandCompControls   effect={effect} trackId={trackId} returnId={returnId} />}
+        {/* Auto-gain bypass */}
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 6, paddingTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input
+            type="checkbox"
+            id={`ag-${effect.id}`}
+            checked={autoGain}
+            onChange={e => { e.stopPropagation(); setAutoGain(e.target.checked) }}
+            onClick={e => e.stopPropagation()}
+            style={{ accentColor: 'var(--accent)', cursor: 'pointer', margin: 0 }}
+            title="Level-match bypass for honest A/B comparison"
+          />
+          <label
+            htmlFor={`ag-${effect.id}`}
+            style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}
+            title="Level-match bypass for honest A/B comparison"
+          >
+            Auto-gain
+          </label>
+        </div>
       </div>
     </div>
   )
@@ -469,31 +736,41 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
 // ── Add device button + dropdown ───────────────────────────────────────────────
 
 const ADD_OPTIONS: { type: EffectType; label: string }[] = [
-  { type: 'eq3',        label: 'EQ3' },
-  { type: 'compressor', label: 'Compressor' },
-  { type: 'reverb',     label: 'Reverb' },
-  { type: 'delay',      label: 'Delay' },
-  { type: 'filter',     label: 'Filter' },
-  { type: 'saturator',  label: 'Saturator' },
-  { type: 'redux',      label: 'Redux (Bit Crush)' },
-  { type: 'autopan',    label: 'Auto Pan' },
-  { type: 'utility',    label: 'Utility' },
-  { type: 'lfo',        label: 'LFO' },
+  { type: 'eq3',            label: 'EQ3' },
+  { type: 'compressor',     label: 'Compressor' },
+  { type: 'reverb',         label: 'Reverb' },
+  { type: 'delay',          label: 'Delay' },
+  { type: 'filter',         label: 'Filter' },
+  { type: 'saturator',      label: 'Saturator' },
+  { type: 'redux',          label: 'Redux (Bit Crush)' },
+  { type: 'autopan',        label: 'Auto Pan' },
+  { type: 'utility',        label: 'Utility' },
+  { type: 'lfo',            label: 'LFO' },
+  { type: 'noisegate',      label: 'Noise Gate' },
+  { type: 'deesser',        label: 'De-esser' },
+  { type: 'chorus',         label: 'Chorus/Flanger' },
+  { type: 'transientshaper',label: 'Transient Shaper' },
+  { type: 'multibandcomp',  label: 'Multiband Comp' },
 ]
 
 function makeDefaultParams(type: EffectType) {
   switch (type) {
-    case 'eq3':        return defaultEq3()
-    case 'compressor': return defaultCompressor()
-    case 'reverb':     return defaultReverb()
-    case 'delay':      return defaultDelay()
-    case 'filter':     return defaultFilter()
-    case 'saturator':  return defaultSaturator()
-    case 'redux':      return defaultRedux()
-    case 'autopan':    return defaultAutoPan()
-    case 'utility':    return defaultUtility()
-    case 'lfo':        return defaultLfo()
-    default:           return defaultEq3()
+    case 'eq3':            return defaultEq3()
+    case 'compressor':     return defaultCompressor()
+    case 'reverb':         return defaultReverb()
+    case 'delay':          return defaultDelay()
+    case 'filter':         return defaultFilter()
+    case 'saturator':      return defaultSaturator()
+    case 'redux':          return defaultRedux()
+    case 'autopan':        return defaultAutoPan()
+    case 'utility':        return defaultUtility()
+    case 'lfo':            return defaultLfo()
+    case 'noisegate':      return defaultNoiseGate()
+    case 'deesser':        return defaultDeEsser()
+    case 'chorus':         return defaultChorus()
+    case 'transientshaper':return defaultTransientShaper()
+    case 'multibandcomp':  return defaultMultibandComp()
+    default:               return defaultEq3()
   }
 }
 

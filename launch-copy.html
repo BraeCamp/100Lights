@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>100Lights — Launch Copy</title>
+<style>
+/* ── Tokens ── */
+:root {
+  --bg:          #0d0d14;
+  --surface:     #13131e;
+  --surface2:    #1a1a28;
+  --border:      #252538;
+  --text:        #dcd9f0;
+  --muted:       #6b6882;
+  --subtle:      #2a2a3f;
+  --accent:      #8b5cf6;
+  --accent-dim:  rgba(139,92,246,0.12);
+  --font-sans:   system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:   'Menlo', 'Cascadia Code', 'Fira Mono', ui-monospace, monospace;
+  /* platform colors */
+  --tw:   #1d9bf0;
+  --rd:   #ff4500;
+  --ph:   #da552f;
+  --em:   #22c55e;
+  --ig:   #c13584;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:          #f5f4f0;
+    --surface:     #ffffff;
+    --surface2:    #f0eff9;
+    --border:      #dddbe8;
+    --text:        #18172a;
+    --muted:       #7a7898;
+    --subtle:      #eeedf8;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:          #0d0d14;
+  --surface:     #13131e;
+  --surface2:    #1a1a28;
+  --border:      #252538;
+  --text:        #dcd9f0;
+  --muted:       #6b6882;
+  --subtle:      #2a2a3f;
+}
+:root[data-theme="light"] {
+  --bg:          #f5f4f0;
+  --surface:     #ffffff;
+  --surface2:    #f0eff9;
+  --border:      #dddbe8;
+  --text:        #18172a;
+  --muted:       #7a7898;
+  --subtle:      #eeedf8;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 40px 20px 80px;
+}
+
+.doc { max-width: 820px; margin: 0 auto; }
+
+/* ── Page header ── */
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 32px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.head-left { display: flex; flex-direction: column; gap: 3px; }
+.head-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.head-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.head-date { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+/* ── Filter bar ── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 36px;
+}
+.filter-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.filter-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-family: var(--font-sans);
+}
+.filter-btn:hover { background: var(--subtle); color: var(--text); }
+.filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.filter-btn[data-ch="tw"].active  { background: rgba(29,155,240,.12); color: var(--tw); border-color: var(--tw); }
+.filter-btn[data-ch="rd"].active  { background: rgba(255,69,0,.12);   color: var(--rd); border-color: var(--rd); }
+.filter-btn[data-ch="ph"].active  { background: rgba(218,85,47,.12);  color: var(--ph); border-color: var(--ph); }
+.filter-btn[data-ch="em"].active  { background: rgba(34,197,94,.12);  color: var(--em); border-color: var(--em); }
+.filter-btn[data-ch="ig"].active  { background: rgba(193,53,132,.12); color: var(--ig); border-color: var(--ig); }
+
+/* ── Channel section ── */
+.channel { margin-bottom: 44px; }
+.channel.hidden { display: none; }
+
+.channel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.channel-tag {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 3px;
+}
+.tag-tw { background: rgba(29,155,240,.15); color: var(--tw); }
+.tag-rd { background: rgba(255,69,0,.15);   color: var(--rd); }
+.tag-ph { background: rgba(218,85,47,.15);  color: var(--ph); }
+.tag-em { background: rgba(34,197,94,.15);  color: var(--em); }
+.tag-ig { background: rgba(193,53,132,.15); color: var(--ig); }
+
+.channel-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.channel-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* ── Copy block grid ── */
+.blocks { display: flex; flex-direction: column; gap: 12px; }
+.blocks-row { display: grid; gap: 12px; }
+.blocks-row.cols-2 { grid-template-columns: 1fr 1fr; }
+.blocks-row.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+/* ── Copy card ── */
+.copy-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.copy-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  gap: 8px;
+}
+.copy-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.copy-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.char-count {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.char-count.over { color: #f87171; }
+.copy-btn {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+}
+.copy-btn:hover { background: var(--subtle); color: var(--text); }
+.copy-btn.copied { background: rgba(34,197,94,.15); color: var(--em); border-color: var(--em); }
+
+/* thread indicator */
+.thread-num {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--tw);
+  background: rgba(29,155,240,.1);
+  padding: 2px 7px;
+  border-radius: 3px;
+}
+
+/* copy block left accent */
+.copy-card[data-ch="tw"] .copy-block-wrap { border-left: 2px solid var(--tw); }
+.copy-card[data-ch="rd"] .copy-block-wrap { border-left: 2px solid var(--rd); }
+.copy-card[data-ch="ph"] .copy-block-wrap { border-left: 2px solid var(--ph); }
+.copy-card[data-ch="em"] .copy-block-wrap { border-left: 2px solid var(--em); }
+.copy-card[data-ch="ig"] .copy-block-wrap { border-left: 2px solid var(--ig); }
+
+.copy-block-wrap { overflow-x: auto; }
+.copy-block {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 13px 14px;
+  margin: 0;
+  user-select: text;
+  cursor: text;
+}
+
+.card-note {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* ── Usage note block ── */
+.usage-note {
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 10px 13px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.usage-note strong { color: var(--text); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .blocks-row.cols-2,
+  .blocks-row.cols-3 { grid-template-columns: 1fr; }
+  .channel-note { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="page-head">
+    <div class="head-left">
+      <div class="head-eyebrow">100Lights · Launch</div>
+      <div class="head-title">Advertising Copy</div>
+    </div>
+    <div class="head-date">July 2026</div>
+  </header>
+
+  <div class="filter-bar">
+    <span class="filter-label">Show</span>
+    <button class="filter-btn active" data-ch="all">All</button>
+    <button class="filter-btn" data-ch="tw">Twitter / X</button>
+    <button class="filter-btn" data-ch="rd">Reddit</button>
+    <button class="filter-btn" data-ch="ph">Product Hunt</button>
+    <button class="filter-btn" data-ch="em">Email</button>
+    <button class="filter-btn" data-ch="ig">Instagram</button>
+  </div>
+
+  <!-- ══════════ TWITTER ══════════ -->
+  <div class="channel" data-channel="tw">
+    <div class="channel-header">
+      <span class="channel-tag tag-tw">Twitter / X</span>
+      <span class="channel-name">Launch Thread + Standalones</span>
+      <span class="channel-note">Post the thread as a single chain · standalones for separate days</span>
+    </div>
+
+    <div class="blocks">
+
+      <div class="usage-note">
+        <strong>Thread strategy:</strong> Post all 5 tweets as a chain on launch day. Pin tweet 1 to your profile. Then spread the 3 standalone tweets across the following week — don't post them all at once.
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Thread · Tweet 1 — Hook</span>
+            <div class="copy-card-meta">
+              <span class="thread-num">1 / 5</span>
+              <span class="char-count" id="cc-t1"></span>
+              <button class="copy-btn" data-target="t1">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="t1">I've been building a full DAW and multi-camera video editor that runs in the browser — and as a native Mac and Windows desktop app.
+
+It's called 100Lights. Early access is open today.
+
+The first users get $5/module/month, locked forever.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Thread · Tweet 2 — What's inside</span>
+            <div class="copy-card-meta">
+              <span class="thread-num">2 / 5</span>
+              <span class="char-count" id="cc-t2"></span>
+              <button class="copy-btn" data-target="t2">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="t2">What's there right now:
+
+Audio →
+  Session view (Ableton-style clip launching)
+  Full arrangement timeline
+  Piano roll with MIDI effects
+  8-pad drum rack
+  Effects chain: EQ, compressor, reverb, delay, saturator
+  Stem separation + AI transcription
+
+Video →
+  Live multi-camera switching by sound source
+  Timeline editor, color grading, audio mixing
+
+Native Mac + Windows desktop app. Works in the browser today.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row cols-2">
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Thread · Tweet 3 — Pricing</span>
+            <div class="copy-card-meta">
+              <span class="thread-num">3 / 5</span>
+              <span class="char-count" id="cc-t3"></span>
+              <button class="copy-btn" data-target="t3">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="t3">The early access deal:
+
+→ $5/module/month — yours forever if you sign up now
+→ Price goes to $8 at 100 users
+→ Price goes to $12 at 500 users
+
+Stay subscribed and $5 is locked in. Cancel and come back later and you re-enter at the current price.
+
+It's a real incentive, not a countdown timer.</pre>
+          </div>
+        </div>
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Thread · Tweet 4 — Feedback program</span>
+            <div class="copy-card-meta">
+              <span class="thread-num">4 / 5</span>
+              <span class="char-count" id="cc-t4"></span>
+              <button class="copy-btn" data-target="t4">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="t4">I'm also paying for feedback — in free months:
+
+→ File 3 confirmed bugs: 1 module free for 2 months
+→ Do a 20-min recorded call with me: 3 months free
+→ Refer someone who sticks around 2 months: 1 month free
+
+Building solo. Real feedback at this stage is worth more to me than the subscription revenue.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Thread · Tweet 5 — CTA</span>
+            <div class="copy-card-meta">
+              <span class="thread-num">5 / 5</span>
+              <span class="char-count" id="cc-t5"></span>
+              <button class="copy-btn" data-target="t5">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="t5">If you make music, record podcasts, shoot video, or edit footage — I'd love to have you as an early user.
+
+→ 100lights.com
+
+Reply or DM if you have questions. Happy to talk through what's there and what's coming.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row cols-3">
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Standalone A — Price angle</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-ta"></span>
+              <button class="copy-btn" data-target="ta">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="ta">Most DAWs cost $400 upfront.
+
+100Lights is $5/month during early access — and that price is yours forever if you sign up now.
+
+Full audio + video editing suite, browser and desktop.
+
+100lights.com</pre>
+          </div>
+          <div class="card-note">Post 2–3 days after thread</div>
+        </div>
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Standalone B — Audio angle</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-tb"></span>
+              <button class="copy-btn" data-target="tb">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="tb">Session view, piano roll, drum rack, stems, transcription, full effects chain.
+
+All in the browser. Native Mac + Windows app too.
+
+$5/month early access — that rate is yours forever.
+
+100lights.com</pre>
+          </div>
+          <div class="card-note">Target music makers / producers</div>
+        </div>
+        <div class="copy-card" data-ch="tw">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Standalone C — Video angle</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-tc"></span>
+              <button class="copy-btn" data-target="tc">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="tc">If you do multi-camera video —
+
+100Lights lets you switch camera angles live by sound source or manual control, then refine the cut in a full timeline with color grading built in.
+
+Browser + Mac/Windows. $5/month early access.
+
+100lights.com</pre>
+          </div>
+          <div class="card-note">Target filmmakers / live event folks</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════ REDDIT ══════════ -->
+  <div class="channel" data-channel="rd">
+    <div class="channel-header">
+      <span class="channel-tag tag-rd">Reddit</span>
+      <span class="channel-name">Subreddit Posts</span>
+      <span class="channel-note">Tailor the title to each community · use the right body variant</span>
+    </div>
+
+    <div class="blocks">
+      <div class="usage-note">
+        <strong>Reddit rules:</strong> Read each sub's rules before posting. r/WeAreTheMusicMakers and r/videoediting both allow self-promo in moderation — lead with what you built, not what you're selling. Don't post all three on the same day.
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="rd">
+          <div class="copy-card-head">
+            <span class="copy-card-title">r/WeAreTheMusicMakers — Title</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-rm1t"></span>
+              <button class="copy-btn" data-target="rm1t">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="rm1t">I built a full browser DAW with session view, piano roll, drum rack, and a full effects chain — looking for beta users ($5/mo, locked forever)</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="rd">
+          <div class="copy-card-head">
+            <span class="copy-card-title">r/WeAreTheMusicMakers — Body</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-rm1b"></span>
+              <button class="copy-btn" data-target="rm1b">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="rm1b">Hey WATMM,
+
+Been working on 100Lights for a while and I'm finally opening it up. It's a browser-based + native desktop DAW:
+
+- Session view (Ableton-style clip launching and live performance)
+- Full arrangement timeline
+- Piano roll with MIDI effects: arpeggiator, chord, scale, velocity
+- 8-pad drum rack with per-pad volume, pitch, pan, mute
+- Effects chain per track: EQ, compressor, reverb, delay, saturator, auto-pan
+- Stem separation (Demucs)
+- AI transcription (Deepgram Nova-3)
+- Cloud project saving
+- Native Mac + Windows desktop app
+
+Early access is $5/module/month. That price is grandfathered — it goes to $8 at 100 users and $12 at 500. Sign up now and $5 is yours forever.
+
+I'm also doing a feedback program: file 3 confirmed bugs → 2 months free. Do a 20-minute call with me → 3 months free. If you want to shape how this gets built, this is the moment to get involved.
+
+Site: 100lights.com
+
+Happy to answer questions about how it's built. The audio engine runs on the Web Audio API with a custom scheduler — porting Ableton's session model to the browser was the interesting problem to solve.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="rd">
+          <div class="copy-card-head">
+            <span class="copy-card-title">r/videoediting — Title</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-rm2t"></span>
+              <button class="copy-btn" data-target="rm2t">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="rm2t">Built a multi-camera video editor with live switching and a full timeline that runs in the browser — early access open ($5/mo)</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="rd">
+          <div class="copy-card-head">
+            <span class="copy-card-title">r/videoediting — Body</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-rm2b"></span>
+              <button class="copy-btn" data-target="rm2b">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="rm2b">Hey all,
+
+I've been building 100Lights — a multi-camera video editor that works in the browser and as a native Mac/Windows app. Here's what's in the video module right now:
+
+- Live camera switching by sound source (automatic) or manual control
+- Multi-track timeline with precise cut control, blade tool, transitions
+- Color grading: brightness, contrast, saturation, highlights, LUT support
+- Per-track audio with volume, solo, mute, and EQ
+- Cloud project saving and sharing
+
+It's built as part of a larger creative suite that also includes a full audio DAW, but the video module works standalone.
+
+Early access is $5/month. That price is grandfathered — stays yours forever if you sign up now. Goes to $8 at 100 users.
+
+Looking for feedback. Do a 20-min recorded call with me and I'll give you 3 months free — honest reaction to the workflow is worth more than the subscription revenue at this stage.
+
+Site: 100lights.com</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="rd">
+          <div class="copy-card-head">
+            <span class="copy-card-title">r/SideProject — Title</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-rm3t"></span>
+              <button class="copy-btn" data-target="rm3t">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="rm3t">Launched early access for my browser + desktop audio/video editing suite — $5/module/month, grandfathered forever, built solo</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="rd">
+          <div class="copy-card-head">
+            <span class="copy-card-title">r/SideProject — Body</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-rm3b"></span>
+              <button class="copy-btn" data-target="rm3b">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="rm3b">Been building 100Lights solo for a while. Opening early access today.
+
+What it is: a professional creative suite — full DAW (audio workstation) and multi-camera video editor — that works in the browser and as a native Mac/Windows desktop app.
+
+Audio: session view, arrangement, piano roll, drum rack, effects chain, stems, transcription
+Video: live multi-camera switching, timeline, color grading, audio mixing
+Storage: cloud project saving, file library, sharing
+
+Tech: Next.js + Electron, Web Audio API, FFmpeg.wasm, Clerk, Neon, Cloudflare R2.
+
+Pricing: $5/module/month. Grandfathered forever — price goes to $8 at 100 users, $12 at 500. Sign up now and $5 is locked.
+
+Feedback program: 20-min call with me → 3 months free. 3 confirmed bugs → 2 months free. Referral that sticks → 1 month free per user.
+
+Would love feedback from other builders and early users. Site: 100lights.com</pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════ PRODUCT HUNT ══════════ -->
+  <div class="channel" data-channel="ph">
+    <div class="channel-header">
+      <span class="channel-tag tag-ph">Product Hunt</span>
+      <span class="channel-name">Launch Assets</span>
+      <span class="channel-note">Schedule for a Tuesday–Thursday morning PST launch</span>
+    </div>
+
+    <div class="blocks">
+      <div class="usage-note">
+        <strong>PH timing:</strong> Launches reset at 12:01 AM PST. Post Tuesday–Thursday for best visibility. Have 10–15 people ready to upvote in the first hour — early momentum is everything.
+      </div>
+
+      <div class="blocks-row cols-2">
+        <div class="copy-card" data-ch="ph">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Tagline</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-pht"></span>
+              <button class="copy-btn" data-target="pht">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="pht">A full DAW and video editor — browser and desktop, $5/month early access</pre>
+          </div>
+          <div class="card-note">60 char limit on PH — this is 71, trim "early access" if needed</div>
+        </div>
+        <div class="copy-card" data-ch="ph">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Tagline (short)</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-phts"></span>
+              <button class="copy-btn" data-target="phts">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="phts">Professional audio + video editing — browser and desktop</pre>
+          </div>
+          <div class="card-note">Fits within 60 chars</div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="ph">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Description</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-phd"></span>
+              <button class="copy-btn" data-target="phd">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="phd">100Lights is a professional creative suite for musicians, podcasters, and filmmakers.
+
+AUDIO — Full digital audio workstation: session view for live clip launching (Ableton-style), arrangement timeline, piano roll with MIDI effects, 8-pad drum rack, full effects chain (EQ, compressor, reverb, delay, saturator, auto-pan), stem separation, and AI transcription.
+
+VIDEO — Multi-camera session editor: switch camera angles in real time by sound source or manual control, then refine your cut in a full timeline with color grading and audio mixing built in.
+
+Works in the browser today. Download the native Mac or Windows desktop app for the full experience.
+
+EARLY ACCESS PRICING — $5/module/month, grandfathered for life. Price rises to $8 at 100 users. Sign up now and $5 is yours forever, no matter what pricing becomes later.
+
+Built solo. Actively looking for early users who want to shape what gets built next.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="ph">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Maker Comment (first comment)</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-phm"></span>
+              <button class="copy-btn" data-target="phm">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="phm">Hey PH! I'm Brae, the solo dev behind 100Lights.
+
+Been building this for a while and I'm genuinely excited to finally have it in people's hands.
+
+The thing I'm most proud of technically: getting a full session view — Ableton-style clip launching — running in the browser. It required building a custom audio scheduler on top of the Web Audio API to keep clips perfectly in sync. Interesting problem.
+
+The honest pitch for early access: you get a real professional tool at a price that's locked forever. I get users who care about the craft and will tell me what's actually broken.
+
+The feedback program is real — do a 20-minute call with me and I'll give you 3 months free. That's not a gimmick. Honest feedback at this stage is worth more to me than the subscription revenue.
+
+Happy to answer anything — what's in there, how it works technically, what's coming next. This is the best place to get me today.</pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════ EMAIL ══════════ -->
+  <div class="channel" data-channel="em">
+    <div class="channel-header">
+      <span class="channel-tag tag-em">Email</span>
+      <span class="channel-name">Launch Announcement</span>
+      <span class="channel-note">Send to any waitlist, contacts, or early interest list</span>
+    </div>
+
+    <div class="blocks">
+      <div class="usage-note">
+        <strong>Send timing:</strong> Tuesday–Thursday, 9–11 AM recipient local time. Personalize [Name] where possible. The P.S. is the highest-read part of a launch email — don't cut it.
+      </div>
+
+      <div class="blocks-row cols-2">
+        <div class="copy-card" data-ch="em">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Subject Line A</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-es1"></span>
+              <button class="copy-btn" data-target="es1">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="es1">100Lights is open — $5/month, yours forever</pre>
+          </div>
+        </div>
+        <div class="copy-card" data-ch="em">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Subject Line B (curiosity)</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-es2"></span>
+              <button class="copy-btn" data-target="es2">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="es2">The price goes up at 100 users. We're not there yet.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="em">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Email Body</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-eb"></span>
+              <button class="copy-btn" data-target="eb">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="eb">Hi [Name],
+
+I've been heads-down building 100Lights — a full audio workstation and video editor that works in your browser and as a native Mac/Windows desktop app. Today I'm opening early access.
+
+What's there right now:
+
+Audio: session view, arrangement timeline, piano roll, drum rack, effects chain (EQ, compressor, reverb, delay, and more), stem separation, AI transcription
+
+Video: live multi-camera switching by sound source, timeline editor, color grading, audio mixing
+
+Desktop: native Mac and Windows app — same tools, offline capable
+
+Early access pricing: $5/module/month. If you sign up now, that price is yours forever. It goes to $8 at 100 users, $12 at 500. Cancel and come back later and you re-enter at the current price. Stay in and $5 is locked.
+
+I'm also looking for feedback. Do a 20-minute recorded call with me and I'll comp 3 months. File 3 confirmed bugs, I'll comp 2 months. Refer someone who sticks around, 1 month per referral. These aren't conditions — if you want to help shape what gets built, there's a real reward for doing so.
+
+If you make music, record anything, or edit video — I'd love to have you as an early user.
+
+→ 100lights.com
+
+— Brae
+
+P.S. If this isn't for you but you know someone who does music or video work, forwarding this is genuinely the most useful thing you could do right now. The first 100 users set the direction of the product.</pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════ INSTAGRAM ══════════ -->
+  <div class="channel" data-channel="ig">
+    <div class="channel-header">
+      <span class="channel-tag tag-ig">Instagram</span>
+      <span class="channel-name">Captions</span>
+      <span class="channel-note">Pair with a screen recording or screenshot of the DAW / video editor</span>
+    </div>
+
+    <div class="blocks">
+      <div class="usage-note">
+        <strong>Visual first:</strong> Instagram copy supports the image — don't try to close the sale in the caption. Lead with what the product looks like. Put the link in bio, reference it at the end.
+      </div>
+
+      <div class="blocks-row cols-2">
+        <div class="copy-card" data-ch="ig">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Caption A — Audio focus</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-ig1"></span>
+              <button class="copy-btn" data-target="ig1">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="ig1">A full DAW in your browser.
+
+Session view, piano roll, drum rack, stems, transcription — and a native Mac and Windows desktop app.
+
+Early access is open. $5/month, locked forever for the first users.
+
+100lights.com — link in bio.</pre>
+          </div>
+          <div class="card-note">Use with DAW screenshot / session view recording</div>
+        </div>
+        <div class="copy-card" data-ch="ig">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Caption B — Video focus</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-ig2"></span>
+              <button class="copy-btn" data-target="ig2">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="ig2">Switch camera angles live. Refine the cut in the timeline. Grade the color. Mix the audio.
+
+All in one place — browser and desktop.
+
+100Lights early access is open. $5/month, grandfathered forever.
+
+100lights.com — link in bio.</pre>
+          </div>
+          <div class="card-note">Use with multi-camera editor recording</div>
+        </div>
+      </div>
+
+      <div class="blocks-row">
+        <div class="copy-card" data-ch="ig">
+          <div class="copy-card-head">
+            <span class="copy-card-title">Caption C — Founder / story angle</span>
+            <div class="copy-card-meta">
+              <span class="char-count" id="cc-ig3"></span>
+              <button class="copy-btn" data-target="ig3">Copy</button>
+            </div>
+          </div>
+          <div class="copy-block-wrap">
+            <pre class="copy-block" id="ig3">I built a professional audio + video editing suite, solo.
+
+It runs in the browser and as a native desktop app. Session view, timeline, piano roll, drum rack, multi-camera switching, color grading — the full stack.
+
+Early access is $5/module/month, and that price is locked forever for the first users. It goes up at 100 users.
+
+If you make music, record podcasts, or shoot video — 100lights.com. Link in bio.
+
+And if you want to help shape what gets built, I have a feedback program. DM me.</pre>
+          </div>
+          <div class="card-note">Use with a founder / behind-the-scenes style image</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /doc -->
+
+<script>
+// ── Character counts ──
+function countChars(id, targetId) {
+  const el = document.getElementById(targetId)
+  const cc = document.getElementById(id)
+  if (!el || !cc) return
+  const len = el.textContent.length
+  cc.textContent = len + ' chars'
+  cc.className = 'char-count' + (len > 280 && targetId.startsWith('t') ? ' over' : '')
+}
+
+const pairs = [
+  ['cc-t1','t1'],['cc-t2','t2'],['cc-t3','t3'],['cc-t4','t4'],['cc-t5','t5'],
+  ['cc-ta','ta'],['cc-tb','tb'],['cc-tc','tc'],
+  ['cc-rm1t','rm1t'],['cc-rm1b','rm1b'],
+  ['cc-rm2t','rm2t'],['cc-rm2b','rm2b'],
+  ['cc-rm3t','rm3t'],['cc-rm3b','rm3b'],
+  ['cc-pht','pht'],['cc-phts','phts'],['cc-phd','phd'],['cc-phm','phm'],
+  ['cc-es1','es1'],['cc-es2','es2'],['cc-eb','eb'],
+  ['cc-ig1','ig1'],['cc-ig2','ig2'],['cc-ig3','ig3'],
+]
+pairs.forEach(([cc, t]) => countChars(cc, t))
+
+// ── Copy buttons ──
+document.querySelectorAll('.copy-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.target
+    const pre = document.getElementById(target)
+    if (!pre) return
+    navigator.clipboard.writeText(pre.textContent.trim()).then(() => {
+      btn.textContent = 'Copied!'
+      btn.classList.add('copied')
+      setTimeout(() => {
+        btn.textContent = 'Copy'
+        btn.classList.remove('copied')
+      }, 2000)
+    })
+  })
+})
+
+// ── Filter ──
+const filterBtns = document.querySelectorAll('.filter-btn')
+const channels   = document.querySelectorAll('.channel')
+
+filterBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    filterBtns.forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+
+    const ch = btn.dataset.ch
+    channels.forEach(c => {
+      if (ch === 'all' || c.dataset.channel === ch) {
+        c.classList.remove('hidden')
+      } else {
+        c.classList.add('hidden')
+      }
+    })
+  })
+})
+</script>
+</body>
+</html>

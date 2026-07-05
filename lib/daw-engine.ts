@@ -34,6 +34,7 @@ interface ScheduledSource {
   source: AudioBufferSourceNode
   gainNode: GainNode
   clipId: string
+  basePlaybackRate?: number
   tailNodes?: AudioNode[]
   tailOscs?: OscillatorNode[]
   tailTimerId?: ReturnType<typeof setTimeout>
@@ -79,6 +80,8 @@ export class DawEngine extends EventTarget {
   private returnBuses = new Map<string, ReturnBus>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
+  private mixerEqNodes = new Map<string, { low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
+  varispeedRate = 1.0
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
   private pitchShiftCache      = new Map<string, AudioBuffer>()
@@ -170,10 +173,23 @@ export class DawEngine extends EventTarget {
       const analyser      = this.ctx.createAnalyser()
       analyser.fftSize = 256
 
-      effectsOutput.connect(gain)
+      // Mixer EQ: 3-band (lowshelf/peaking/highshelf) inserted between effects output and volume fader
+      const eqLow = this.ctx.createBiquadFilter()
+      eqLow.type = 'lowshelf'; eqLow.frequency.value = 200; eqLow.gain.value = 0
+      const eqMid = this.ctx.createBiquadFilter()
+      eqMid.type = 'peaking'; eqMid.frequency.value = 1000; eqMid.Q.value = 1; eqMid.gain.value = 0
+      const eqHi = this.ctx.createBiquadFilter()
+      eqHi.type = 'highshelf'; eqHi.frequency.value = 8000; eqHi.gain.value = 0
+
+      effectsOutput.connect(eqLow)
+      eqLow.connect(eqMid)
+      eqMid.connect(eqHi)
+      eqHi.connect(gain)
       gain.connect(panner)
       panner.connect(analyser)
       analyser.connect(this.masterGain)
+
+      this.mixerEqNodes.set(id, { low: eqLow, mid: eqMid, hi: eqHi })
 
       // Create a send gain for every existing return bus (start at 0)
       const sendGains    = new Map<string, GainNode>()
@@ -245,6 +261,13 @@ export class DawEngine extends EventTarget {
     if (!nodes) return
     const chain = this.effectsChains.get(id)
     if (chain) { chain.dispose(); this.effectsChains.delete(id) }
+    const eq = this.mixerEqNodes.get(id)
+    if (eq) {
+      try { eq.low.disconnect() } catch { /* ok */ }
+      try { eq.mid.disconnect() } catch { /* ok */ }
+      try { eq.hi.disconnect() } catch { /* ok */ }
+      this.mixerEqNodes.delete(id)
+    }
     for (const sg of nodes.sendGains.values())    { try { sg.disconnect() } catch { /* ok */ } }
     for (const sg of nodes.preSendGains.values()) { try { sg.disconnect() } catch { /* ok */ } }
     nodes.gain.disconnect()
@@ -373,6 +396,33 @@ export class DawEngine extends EventTarget {
 
   setMasterVolume(v: number) {
     this.masterGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02)
+  }
+
+  setMixerEq(trackId: string, low: number, mid: number, high: number) {
+    const eq = this.mixerEqNodes.get(trackId)
+    if (!eq) return
+    const t = this.ctx.currentTime
+    eq.low.gain.setTargetAtTime(low, t, 0.01)
+    eq.mid.gain.setTargetAtTime(mid, t, 0.01)
+    eq.hi.gain.setTargetAtTime(high, t, 0.01)
+  }
+
+  getMixerEq(trackId: string): { low: number; mid: number; hi: number } {
+    const eq = this.mixerEqNodes.get(trackId)
+    if (!eq) return { low: 0, mid: 0, hi: 0 }
+    return { low: eq.low.gain.value, mid: eq.mid.gain.value, hi: eq.hi.gain.value }
+  }
+
+  getTrackAnalyser(trackId: string): AnalyserNode | null {
+    return this.trackNodes.get(trackId)?.analyser ?? null
+  }
+
+  setPlaybackRate(rate: number) {
+    this.varispeedRate = Math.max(0.25, Math.min(2.0, rate))
+    for (const entry of this.scheduledSources) {
+      const base = entry.basePlaybackRate ?? 1.0
+      try { entry.source.playbackRate.value = base * this.varispeedRate } catch { /* source may have ended */ }
+    }
   }
 
   getTrackLevel(id: string): Uint8Array | null {
@@ -1203,7 +1253,7 @@ export class DawEngine extends EventTarget {
       }
     }
 
-    source.playbackRate.value = basePlaybackRate
+    source.playbackRate.value = basePlaybackRate * this.varispeedRate
     source.detune.value       = effectiveDetune
 
     // Build clip-effect chain
@@ -1255,7 +1305,7 @@ export class DawEngine extends EventTarget {
       .filter(e => e.type === 'reverb')
       .reduce((max, e) => Math.max(max, e.params.reverbDecay ?? 2), 0)
 
-    const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id }
+    const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id, basePlaybackRate }
     this.scheduledSources.push(entry)
     source.onended = () => {
       const idx = this.scheduledSources.indexOf(entry)

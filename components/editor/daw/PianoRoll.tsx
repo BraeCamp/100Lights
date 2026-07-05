@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
@@ -10,11 +10,12 @@ import { getPresets, addPreset, getGroupedPresets, type MidiPreset } from '@/lib
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
 
-const NOTE_H     = 10
-const PIANO_W    = 52
-const TOOLBAR_H  = 32
-const VELOCITY_H = 36
-const NUM_NOTES  = 128
+const NOTE_H      = 10
+const PIANO_W     = 52
+const TOOLBAR_H   = 32
+const CHORD_ROW_H = 26
+const VELOCITY_H  = 36
+const NUM_NOTES   = 128
 
 type Tool = 'draw' | 'select' | 'erase'
 type Quant = 0.25 | 0.5 | 1 | 2
@@ -22,17 +23,66 @@ type Quant = 0.25 | 0.5 | 1 | 2
 const QUANT_LABELS: Record<Quant, string> = { 0.25: '1/16', 0.5: '1/8', 1: '1/4', 2: '1/2' }
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-function noteName(pitch: number) { return NOTE_NAMES[pitch % 12] }
 function isBlack(pitch: number) { return [1, 3, 6, 8, 10].includes(pitch % 12) }
-function octave(pitch: number) { return Math.floor(pitch / 12) - 1 }
+function octave(pitch: number)  { return Math.floor(pitch / 12) - 1 }
+
+// ── Chord stamp ───────────────────────────────────────────────────────────────
+
+const CHORD_INTERVALS: Record<string, number[]> = {
+  Maj:   [0, 4, 7],
+  Min:   [0, 3, 7],
+  Maj7:  [0, 4, 7, 11],
+  Min7:  [0, 3, 7, 10],
+  Dom7:  [0, 4, 7, 10],
+  Sus4:  [0, 5, 7],
+  Sus2:  [0, 2, 7],
+  Dim:   [0, 3, 6],
+  Aug:   [0, 4, 8],
+  '9th': [0, 4, 7, 10, 14],
+  M9:    [0, 4, 7, 11, 14],
+}
+
+// ── Scale lock ────────────────────────────────────────────────────────────────
+
+const SCALE_INTERVALS: Record<string, number[]> = {
+  'major':     [0, 2, 4, 5, 7, 9, 11],
+  'minor':     [0, 2, 3, 5, 7, 8, 10],
+  'penta-maj': [0, 2, 4, 7, 9],
+  'penta-min': [0, 3, 5, 7, 10],
+  'dorian':    [0, 2, 3, 5, 7, 9, 10],
+  'chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+}
+
+function snapToScale(pitch: number, key: number, scale: string): number {
+  const intervals = SCALE_INTERVALS[scale] ?? SCALE_INTERVALS['major']
+  const oct = Math.floor(pitch / 12)
+  const noteInOctave = pitch % 12
+  const relativeNote = ((noteInOctave - key) + 12) % 12
+  let nearest = intervals[0]
+  let minDist = Math.abs(relativeNote - intervals[0])
+  for (const interval of intervals) {
+    const dist = Math.abs(relativeNote - interval)
+    if (dist < minDist) { minDist = dist; nearest = interval }
+  }
+  return Math.max(0, Math.min(127, oct * 12 + ((nearest + key) % 12)))
+}
+
+function getInScalePitches(key: number, scale: string): Set<number> {
+  const intervals = SCALE_INTERVALS[scale] ?? SCALE_INTERVALS['major']
+  return new Set(intervals.map(i => (i + key) % 12))
+}
 
 // ── Piano keys ────────────────────────────────────────────────────────────────
 
-function PianoKeys({ scrollTop, hoverPitch, onPlayNote, trackColor }: {
+function PianoKeys({
+  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches,
+}: {
   scrollTop: number
   hoverPitch: number | null
   onPlayNote: (pitch: number) => void
   trackColor: string
+  scaleLock: boolean
+  inScalePitches: Set<number>
 }) {
   return (
     <div style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: '#1a1a1a' }}>
@@ -42,13 +92,19 @@ function PianoKeys({ scrollTop, hoverPitch, onPlayNote, trackColor }: {
           const black = isBlack(pitch)
           const isC   = pitch % 12 === 0
           const hover = hoverPitch === pitch
+          const inScale = scaleLock && inScalePitches.has(pitch % 12)
+          const bg = hover
+            ? trackColor
+            : inScale
+              ? (black ? 'rgba(61,143,239,0.4)' : 'rgba(61,143,239,0.22)')
+              : (black ? '#1a1a1a' : '#2e2e2e')
           return (
             <div
               key={pitch}
               onMouseDown={() => onPlayNote(pitch)}
               style={{
                 height: NOTE_H, width: black ? '65%' : '100%',
-                background: hover ? trackColor : black ? '#1a1a1a' : '#2e2e2e',
+                background: bg,
                 borderBottom: '1px solid #111',
                 borderRight: black ? 'none' : '1px solid #333',
                 display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
@@ -70,41 +126,116 @@ function PianoKeys({ scrollTop, hoverPitch, onPlayNote, trackColor }: {
   )
 }
 
-// ── Velocity bar ──────────────────────────────────────────────────────────────
+// ── Velocity lane ─────────────────────────────────────────────────────────────
 
-function VelocityLane({ clip, beatW, scrollLeft, trackColor, onVelocityChange }: {
+function VelocityLane({
+  clip, beatW, scrollLeft, trackColor, selectedNotes, onVelocityChange,
+}: {
   clip: MidiClip
   beatW: number
   scrollLeft: number
   trackColor: string
+  selectedNotes: Set<string>
   onVelocityChange: (noteId: string, velocity: number) => void
 }) {
-  function onMouseDown(e: React.MouseEvent, note: MidiNote) {
+  function noteAtX(clientX: number, rect: DOMRect): MidiNote | null {
+    const absX = clientX - rect.left + scrollLeft
+    return clip.notes.find(n => {
+      const left  = n.startBeat * beatW
+      const right = left + Math.max(3, n.durationBeats * beatW - 2)
+      return absX >= left && absX <= right
+    }) ?? null
+  }
+
+  function velocityFromY(clientY: number, rect: DOMRect): number {
+    const relY = Math.max(0, Math.min(VELOCITY_H - 4, clientY - rect.top))
+    return Math.max(1, Math.min(127, Math.round((1 - relY / (VELOCITY_H - 4)) * 127)))
+  }
+
+  function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    const rect   = e.currentTarget.getBoundingClientRect()
+    const startX = e.clientX
     const startY = e.clientY
-    const startV = note.velocity
-    function onMove(ev: MouseEvent) {
-      const delta = (startY - ev.clientY) / 100
-      onVelocityChange(note.id, Math.max(1, Math.min(127, Math.round(startV + delta * 127))))
+
+    // Shift + drag → linear velocity ramp across selected notes
+    if (e.shiftKey) {
+      const sorted = clip.notes
+        .filter(n => selectedNotes.has(n.id))
+        .sort((a, b) => a.startBeat - b.startBeat)
+      if (sorted.length > 0) {
+        const startVel = velocityFromY(startY, rect)
+        function onRampMove(ev: MouseEvent) {
+          const endVel = velocityFromY(ev.clientY, rect)
+          sorted.forEach((note, i) => {
+            const t = sorted.length > 1 ? i / (sorted.length - 1) : 1
+            onVelocityChange(note.id, Math.max(1, Math.min(127, Math.round(startVel + (endVel - startVel) * t))))
+          })
+        }
+        function onRampUp() {
+          document.removeEventListener('mousemove', onRampMove)
+          document.removeEventListener('mouseup', onRampUp)
+        }
+        document.addEventListener('mousemove', onRampMove)
+        document.addEventListener('mouseup', onRampUp)
+        e.preventDefault()
+        return
+      }
     }
-    function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+
+    // Normal: detect paint mode (horizontal drag) vs vertical drag
+    const initialNote = noteAtX(startX, rect)
+    const startV = initialNote?.velocity ?? 64
+    let paintMode = false
+    let vertMode  = false
+
+    function onMove(ev: MouseEvent) {
+      const dx = Math.abs(ev.clientX - startX)
+      const dy = Math.abs(ev.clientY - startY)
+      if (!paintMode && !vertMode) {
+        if (dx > dy && dx > 4) paintMode = true
+        else if (dy > 4)       vertMode  = true
+      }
+      if (paintMode) {
+        const n = noteAtX(ev.clientX, rect)
+        if (n) onVelocityChange(n.id, velocityFromY(ev.clientY, rect))
+      } else if (vertMode && initialNote) {
+        const delta = (startY - ev.clientY) / 100
+        onVelocityChange(initialNote.id, Math.max(1, Math.min(127, Math.round(startV + delta * 127))))
+      }
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
   }
 
   return (
-    <div style={{ height: VELOCITY_H, background: '#111', borderTop: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+    <div
+      onMouseDown={onMouseDown}
+      style={{
+        height: VELOCITY_H, background: '#111',
+        borderTop: '1px solid var(--border)',
+        position: 'relative', overflow: 'hidden', cursor: 'crosshair',
+      }}
+    >
       {clip.notes.map(note => {
         const x = note.startBeat * beatW - scrollLeft
         const h = (note.velocity / 127) * (VELOCITY_H - 4)
         return (
           <div
             key={note.id}
-            onMouseDown={e => onMouseDown(e, note)}
             style={{
               position: 'absolute',
-              left: x, bottom: 2, width: Math.max(3, (note.durationBeats * beatW) - 2),
-              height: h, background: trackColor, borderRadius: '1px 1px 0 0',
-              cursor: 'ns-resize', opacity: 0.8,
+              left: x, bottom: 2,
+              width: Math.max(3, (note.durationBeats * beatW) - 2),
+              height: h,
+              background: trackColor,
+              borderRadius: '1px 1px 0 0',
+              opacity: 0.8,
+              pointerEvents: 'none',
             }}
             title={`Velocity: ${note.velocity}`}
           />
@@ -134,7 +265,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [showPresetPicker, setShowPresetPicker] = useState(false)
   const [previewing, setPreviewing]     = useState(false)
   const presetPickerRef = useRef<HTMLDivElement>(null)
-  // New-preset form state
   const [showNewPreset, setShowNewPreset] = useState(false)
   const [npName,    setNpName]    = useState('')
   const [npFolder,  setNpFolder]  = useState('')
@@ -142,6 +272,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [npHi,      setNpHi]      = useState(84)
   const [npLoading, setNpLoading] = useState(false)
   const [npSfText,  setNpSfText]  = useState<string | null>(null)
+
+  // ── New feature state
+  const [chordType, setChordType] = useState<string | null>(null)
+  const [scaleLock, setScaleLock] = useState(false)
+  const inScalePitches = getInScalePitches(project.key, project.scale)
 
   useEffect(() => { setPresets(getPresets()) }, [])
 
@@ -194,7 +329,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (!engine.ctx) return
     const preset = clip.presetId ? presets.find(p => p.id === clip.presetId) : null
     if (preset) {
-      // Play the actual preset sample for this pitch
       try {
         const NOTE_NAMES_PR = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
         const pitchName = `${NOTE_NAMES_PR[pitch % 12]}${Math.floor(pitch / 12) - 1}`
@@ -217,9 +351,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             return
           }
         }
-      } catch { /* fall through to oscillator */ }
+      } catch { /* fall through */ }
     }
-    // Fallback: sine oscillator
     const osc = engine.ctx.createOscillator()
     const g   = engine.ctx.createGain()
     osc.type = 'sine'
@@ -260,7 +393,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     finally { setNpLoading(false) }
   }
 
-  // Close ctx menu on outside click
   useEffect(() => {
     if (!ctxMenu) return
     function onDown(e: MouseEvent) {
@@ -278,7 +410,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { label: 'Major 7',    intervals: [4, 7, 11] },
     { label: 'Minor 7',    intervals: [3, 7, 10] },
     { label: 'Octave +1',  intervals: [12] },
-    { label: 'Octave −1',  intervals: [-12] },
+    { label: 'Octave -1',  intervals: [-12] },
   ]
 
   function expandToChord(source: MidiNote, intervals: number[]) {
@@ -310,18 +442,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     const pitch = rawPitch
 
     if (tool === 'draw') {
-      // Check if clicking an existing note
+      // Click on existing note → move it (scale lock does not apply to moves)
       const existing = clip.notes.find(n =>
         n.pitch === pitch &&
         n.startBeat <= rawBeat &&
         n.startBeat + n.durationBeats > rawBeat
       )
       if (existing) {
-        // Drag to move
         const startX = e.clientX, startY = e.clientY
         const sb = existing.startBeat, sp = existing.pitch
         const existingId = existing.id
-        function onMove(ev: MouseEvent) {
+        function onMoveExisting(ev: MouseEvent) {
           const db = (ev.clientX - startX) / beatW
           const dp = -Math.round((ev.clientY - startY) / NOTE_H)
           dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: existingId, patch: {
@@ -329,16 +460,50 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             pitch: Math.max(0, Math.min(127, sp + dp)),
           }})
         }
-        function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
-        document.addEventListener('mousemove', onMove)
-        document.addEventListener('mouseup', onUp)
+        function onUpExisting() {
+          document.removeEventListener('mousemove', onMoveExisting)
+          document.removeEventListener('mouseup', onUpExisting)
+        }
+        document.addEventListener('mousemove', onMoveExisting)
+        document.addEventListener('mouseup', onUpExisting)
         return
       }
 
-      // Create new note with drag to set duration
-      const note: MidiNote = { id: crypto.randomUUID(), pitch, startBeat: beat, durationBeats: quant, velocity: 100 }
+      // Apply scale lock to new note pitch
+      const finalPitch = scaleLock
+        ? snapToScale(pitch, project.key, project.scale)
+        : pitch
+
+      // Chord stamp: place all chord notes at once, no drag-to-extend
+      if (chordType !== null) {
+        const intervals = CHORD_INTERVALS[chordType]
+        if (intervals) {
+          for (const interval of intervals) {
+            const notePitch = finalPitch + interval
+            if (notePitch < 0 || notePitch > 127) continue
+            dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: {
+              id: crypto.randomUUID(),
+              pitch: notePitch,
+              startBeat: beat,
+              durationBeats: quant,
+              velocity: 80,
+            }})
+          }
+          playNote(finalPitch)
+          return
+        }
+      }
+
+      // Single note with drag-to-extend duration
+      const note: MidiNote = {
+        id: crypto.randomUUID(),
+        pitch: finalPitch,
+        startBeat: beat,
+        durationBeats: quant,
+        velocity: 100,
+      }
       dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note })
-      playNote(pitch)
+      playNote(finalPitch)
 
       const startX = e.clientX
       const noteId = note.id
@@ -347,7 +512,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         const dur   = Math.max(quant, snapBeat(quant + delta))
         dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { durationBeats: dur } })
       }
-      function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
       document.addEventListener('mousemove', onMove)
       document.addEventListener('mouseup', onUp)
     }
@@ -424,7 +592,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       tabIndex={-1}
       onKeyDown={handleKeyDown}
     >
-      {/* Toolbar */}
+      {/* ── Main toolbar ── */}
       <div style={{
         height: TOOLBAR_H, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
         background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0,
@@ -451,6 +619,21 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <button onClick={() => setBeatW(w => Math.min(200, w * 1.3))} style={prBtn} title="Zoom in"><ZoomIn size={12} /></button>
         <button onClick={() => setBeatW(w => Math.max(20, w * 0.77))} style={prBtn} title="Zoom out"><ZoomOut size={12} /></button>
+
+        {/* Scale lock */}
+        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+        <button
+          onClick={() => setScaleLock(v => !v)}
+          title={`Lock new notes to: ${NOTE_NAMES[project.key]} ${project.scale}`}
+          style={{
+            ...prBtn, fontSize: 9, padding: '2px 6px',
+            background: scaleLock ? 'rgba(167,139,250,0.15)' : 'transparent',
+            color: scaleLock ? '#a78bfa' : 'var(--text-muted)',
+            border: scaleLock ? '1px solid rgba(167,139,250,0.4)' : '1px solid transparent',
+          }}
+        >
+          {scaleLock ? `♩ ${NOTE_NAMES[project.key]} ${project.scale}` : '♩ Scale'}
+        </button>
 
         <div style={{ flex: 1 }} />
 
@@ -564,10 +747,52 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         </div>
       </div>
 
-      {/* Body */}
+      {/* ── Chord palette row ── */}
+      <div style={{
+        height: CHORD_ROW_H, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
+        background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0,
+        overflowX: 'auto',
+      }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em', flexShrink: 0, marginRight: 2 }}>CHORD</span>
+        <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, marginRight: 2 }} />
+        {Object.keys(CHORD_INTERVALS).map(chord => (
+          <button
+            key={chord}
+            onClick={() => setChordType(chordType === chord ? null : chord)}
+            style={{
+              ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
+              background: chordType === chord ? 'rgba(61,143,239,0.18)' : 'transparent',
+              color: chordType === chord ? '#3d8fef' : 'var(--text-muted)',
+              border: chordType === chord ? '1px solid rgba(61,143,239,0.45)' : '1px solid transparent',
+            }}
+          >
+            {chord}
+          </button>
+        ))}
+        {chordType && (
+          <>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={() => setChordType(null)}
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', color: '#555', flexShrink: 0 }}
+            >
+              Clear
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* ── Body ── */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         {/* Piano keys */}
-        <PianoKeys scrollTop={scrollTop} hoverPitch={hoverPitch} onPlayNote={playNote} trackColor={color} />
+        <PianoKeys
+          scrollTop={scrollTop}
+          hoverPitch={hoverPitch}
+          onPlayNote={playNote}
+          trackColor={color}
+          scaleLock={scaleLock}
+          inScalePitches={inScalePitches}
+        />
 
         {/* Note grid + velocity */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -655,6 +880,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             beatW={beatW}
             scrollLeft={scrollLeft}
             trackColor={color}
+            selectedNotes={selectedNotes}
             onVelocityChange={(noteId, velocity) => dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { velocity } })}
           />
         </div>

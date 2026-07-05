@@ -1,6 +1,6 @@
 'use client'
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams } from './daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams } from './daw-types'
 import { createSidechainProcessor } from './sidechain'
 
 // Live Web Audio node handle for a single effect
@@ -397,6 +397,277 @@ export function buildLfo(ctx: AudioContext, params: LfoParams): EffectHandle {
   }
 }
 
+export function buildNoiseGate(ctx: AudioContext, params: NoiseGateParams): EffectHandle {
+  const input  = ctx.createGain()
+  const output = ctx.createGain()
+  const proc   = ctx.createScriptProcessor(256, 2, 2)
+
+  let _p = { ...params }
+  let envDb = -100
+  let holdTimer = 0
+  let phase: 'open' | 'hold' | 'close' = 'close'
+
+  proc.onaudioprocess = (e) => {
+    const sr = e.inputBuffer.sampleRate
+    const bufLen = e.inputBuffer.length
+
+    for (let ch = 0; ch < Math.min(2, e.inputBuffer.numberOfChannels); ch++) {
+      const inData  = e.inputBuffer.getChannelData(ch)
+      const outData = e.outputBuffer.getChannelData(ch)
+
+      if (!_p.enabled) { outData.set(inData); continue }
+
+      for (let i = 0; i < bufLen; i++) {
+        const sample = inData[i]
+        const sampleDb = 20 * Math.log10(Math.max(0.000001, Math.abs(sample)))
+
+        if (sampleDb > _p.threshold) {
+          phase = 'open'
+          holdTimer = Math.floor(_p.hold * sr)
+          const attackSamples = Math.max(1, _p.attack * sr)
+          envDb = Math.min(0, envDb + (0 - envDb) / attackSamples)
+        } else if (phase === 'open') {
+          if (holdTimer > 0) { holdTimer-- }
+          else { phase = 'close' }
+        }
+
+        if (phase === 'close') {
+          const releaseSamples = Math.max(1, _p.release * sr)
+          envDb = Math.max(_p.reduction, envDb + (_p.reduction - envDb) / releaseSamples)
+        }
+
+        const gainLinear = Math.pow(10, envDb / 20)
+        outData[i] = sample * gainLinear
+      }
+    }
+  }
+
+  input.connect(proc)
+  proc.connect(output)
+
+  return {
+    input, output,
+    setParam(key, value) { _p = { ..._p, [key]: value } },
+    dispose() { input.disconnect(); proc.disconnect(); proc.onaudioprocess = null as never; output.disconnect() },
+  }
+}
+
+export function buildDeEsser(ctx: AudioContext, params: DeEsserParams): EffectHandle {
+  const input    = ctx.createGain()
+  const output   = ctx.createGain()
+  const dryGain  = ctx.createGain()
+  const bandPass = ctx.createBiquadFilter()
+  const compress = ctx.createDynamicsCompressor()
+  const reduct   = ctx.createGain()
+  const inverter = ctx.createGain()
+
+  bandPass.type = 'bandpass'
+  bandPass.frequency.value = params.frequency
+  bandPass.Q.value = 1 / params.bandwidth
+
+  compress.threshold.value = params.enabled ? params.threshold : 0
+  compress.ratio.value = 8
+  compress.attack.value = 0.001
+  compress.release.value = 0.08
+
+  reduct.gain.value = params.enabled ? params.reduction / 24 : 0
+  inverter.gain.value = -1
+
+  input.connect(dryGain)
+  dryGain.connect(output)
+
+  input.connect(bandPass)
+  bandPass.connect(compress)
+  compress.connect(reduct)
+  reduct.connect(inverter)
+  inverter.connect(output)
+
+  let _p = { ...params }
+
+  return {
+    input, output,
+    setParam(key, value) {
+      _p = { ..._p, [key]: value }
+      bandPass.frequency.value = _p.frequency
+      bandPass.Q.value = 1 / _p.bandwidth
+      compress.threshold.value = _p.enabled ? _p.threshold : 0
+      reduct.gain.value = _p.enabled ? _p.reduction / 24 : 0
+    },
+    dispose() {
+      input.disconnect(); dryGain.disconnect(); output.disconnect()
+      bandPass.disconnect(); compress.disconnect(); reduct.disconnect(); inverter.disconnect()
+    },
+  }
+}
+
+export function buildChorus(ctx: AudioContext, params: ChorusParams): EffectHandle {
+  const input    = ctx.createGain()
+  const output   = ctx.createGain()
+  const dryGain  = ctx.createGain()
+  const wetGain  = ctx.createGain()
+  const delay    = ctx.createDelay(0.05)
+  const feedback = ctx.createGain()
+  const lfo      = ctx.createOscillator()
+  const lfoGain  = ctx.createGain()
+
+  lfo.type = 'sine'
+  lfo.frequency.value = params.rate
+
+  const baseDelay = params.type === 'flanger' ? 0.003 : params.type === 'chorus' ? 0.015 : 0.001
+  const depthMs   = params.type === 'flanger' ? 0.003 : params.type === 'chorus' ? 0.01  : 0.0005
+
+  delay.delayTime.value = baseDelay
+  lfoGain.gain.value = params.enabled ? depthMs * params.depth : 0
+  feedback.gain.value = params.feedback
+
+  dryGain.gain.value = 1
+  wetGain.gain.value = params.enabled ? params.mix : 0
+
+  lfo.connect(lfoGain)
+  lfoGain.connect(delay.delayTime)
+  lfo.start()
+
+  input.connect(dryGain)
+  input.connect(delay)
+  delay.connect(feedback)
+  feedback.connect(delay)
+  delay.connect(wetGain)
+  dryGain.connect(output)
+  wetGain.connect(output)
+
+  let _p = { ...params }
+
+  return {
+    input, output,
+    setParam(key, value) {
+      _p = { ..._p, [key]: value }
+      lfo.frequency.value = _p.rate
+      const bd = _p.type === 'flanger' ? 0.003 : _p.type === 'chorus' ? 0.015 : 0.001
+      const dm = _p.type === 'flanger' ? 0.003 : _p.type === 'chorus' ? 0.01  : 0.0005
+      delay.delayTime.value = bd
+      lfoGain.gain.value = _p.enabled ? dm * _p.depth : 0
+      feedback.gain.value = _p.feedback
+      wetGain.gain.value = _p.enabled ? _p.mix : 0
+    },
+    dispose() {
+      try { lfo.stop() } catch { /* ok */ }
+      lfo.disconnect(); lfoGain.disconnect(); delay.disconnect()
+      feedback.disconnect(); dryGain.disconnect(); wetGain.disconnect()
+      input.disconnect(); output.disconnect()
+    },
+  }
+}
+
+export function buildTransientShaper(ctx: AudioContext, params: TransientShaperParams): EffectHandle {
+  const input   = ctx.createGain()
+  const output  = ctx.createGain()
+  const proc    = ctx.createScriptProcessor(512, 2, 2)
+  const outGain = ctx.createGain()
+
+  let _p = { ...params }
+  let envFast = 0
+  let envSlow = 0
+
+  proc.onaudioprocess = (e) => {
+    for (let ch = 0; ch < Math.min(2, e.inputBuffer.numberOfChannels); ch++) {
+      const inData  = e.inputBuffer.getChannelData(ch)
+      const outData = e.outputBuffer.getChannelData(ch)
+      const sr = e.inputBuffer.sampleRate
+
+      if (!_p.enabled) { outData.set(inData); continue }
+
+      const fastCoeff  = Math.exp(-1 / (sr * 0.005))
+      const slowCoeff  = Math.exp(-1 / (sr * 0.15))
+      const attackGain  = Math.pow(10, _p.attack / 20)
+      const sustainGain = Math.pow(10, _p.sustain / 20)
+
+      for (let i = 0; i < inData.length; i++) {
+        const abs = Math.abs(inData[i])
+        envFast = Math.max(abs, envFast * fastCoeff)
+        envSlow = Math.max(abs, envSlow * slowCoeff)
+
+        const transient = Math.max(0, envFast - envSlow)
+        const sustained = envSlow
+        const denom = Math.max(envFast, 0.00001)
+
+        const shaping = 1 + (attackGain - 1) * (transient / denom)
+                         + (sustainGain - 1) * (sustained / denom)
+
+        outData[i] = inData[i] * Math.max(0, shaping)
+      }
+    }
+  }
+
+  outGain.gain.value = params.enabled ? Math.pow(10, params.gain / 20) : 1
+
+  input.connect(proc)
+  proc.connect(outGain)
+  outGain.connect(output)
+
+  return {
+    input, output,
+    setParam(key, value) {
+      _p = { ..._p, [key]: value }
+      outGain.gain.value = _p.enabled ? Math.pow(10, _p.gain / 20) : 1
+    },
+    dispose() { input.disconnect(); proc.disconnect(); proc.onaudioprocess = null as never; outGain.disconnect(); output.disconnect() },
+  }
+}
+
+export function buildMultibandComp(ctx: AudioContext, params: MultibandCompParams): EffectHandle {
+  const input  = ctx.createGain()
+  const output = ctx.createGain()
+
+  const lpLow  = ctx.createBiquadFilter(); lpLow.type  = 'lowpass'
+  const compLow = ctx.createDynamicsCompressor()
+  const gainLow = ctx.createGain()
+
+  const hpMid  = ctx.createBiquadFilter(); hpMid.type  = 'highpass'
+  const lpMid  = ctx.createBiquadFilter(); lpMid.type  = 'lowpass'
+  const compMid = ctx.createDynamicsCompressor()
+  const gainMid = ctx.createGain()
+
+  const hpHigh = ctx.createBiquadFilter(); hpHigh.type = 'highpass'
+  const compHigh = ctx.createDynamicsCompressor()
+  const gainHigh = ctx.createGain()
+
+  compLow.knee.value = 6;  compLow.attack.value = 0.005;  compLow.release.value = 0.1
+  compMid.knee.value = 6;  compMid.attack.value = 0.005;  compMid.release.value = 0.1
+  compHigh.knee.value = 6; compHigh.attack.value = 0.003; compHigh.release.value = 0.08
+
+  function applyParams(p: MultibandCompParams) {
+    const en = p.enabled
+    lpLow.frequency.value  = p.lowMid
+    hpMid.frequency.value  = p.lowMid;  lpMid.frequency.value  = p.midHigh
+    hpHigh.frequency.value = p.midHigh
+    compLow.threshold.value  = en ? p.lowThreshold  : 0; compLow.ratio.value  = p.lowRatio
+    compMid.threshold.value  = en ? p.midThreshold  : 0; compMid.ratio.value  = p.midRatio
+    compHigh.threshold.value = en ? p.highThreshold : 0; compHigh.ratio.value = p.highRatio
+    gainLow.gain.value  = en ? Math.pow(10, p.lowGain  / 20) : 1
+    gainMid.gain.value  = en ? Math.pow(10, p.midGain  / 20) : 1
+    gainHigh.gain.value = en ? Math.pow(10, p.highGain / 20) : 1
+  }
+
+  applyParams(params)
+
+  input.connect(lpLow);  lpLow.connect(compLow);   compLow.connect(gainLow);   gainLow.connect(output)
+  input.connect(hpMid);  hpMid.connect(lpMid);     lpMid.connect(compMid);     compMid.connect(gainMid);   gainMid.connect(output)
+  input.connect(hpHigh); hpHigh.connect(compHigh); compHigh.connect(gainHigh); gainHigh.connect(output)
+
+  let _p = { ...params }
+
+  return {
+    input, output,
+    setParam(key, value) { _p = { ..._p, [key]: value }; applyParams(_p) },
+    dispose() {
+      input.disconnect(); output.disconnect()
+      lpLow.disconnect();  compLow.disconnect();  gainLow.disconnect()
+      hpMid.disconnect();  lpMid.disconnect();    compMid.disconnect();  gainMid.disconnect()
+      hpHigh.disconnect(); compHigh.disconnect(); gainHigh.disconnect()
+    },
+  }
+}
+
 // ── Build a full effects chain for one track ──────────────────────────────────
 
 export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tempo: number): {
@@ -423,7 +694,12 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
       case 'redux':      handle = buildRedux(ctx, effect.params as ReduxParams); break
       case 'autopan':    handle = buildAutoPan(ctx, effect.params as AutoPanParams); break
       case 'utility':    handle = buildUtility(ctx, effect.params as UtilityParams); break
-      case 'lfo':        handle = buildLfo(ctx, effect.params as LfoParams); break
+      case 'lfo':            handle = buildLfo(ctx, effect.params as LfoParams); break
+      case 'noisegate':      handle = buildNoiseGate(ctx, effect.params as NoiseGateParams); break
+      case 'deesser':        handle = buildDeEsser(ctx, effect.params as DeEsserParams); break
+      case 'chorus':         handle = buildChorus(ctx, effect.params as ChorusParams); break
+      case 'transientshaper': handle = buildTransientShaper(ctx, effect.params as TransientShaperParams); break
+      case 'multibandcomp':  handle = buildMultibandComp(ctx, effect.params as MultibandCompParams); break
       default: continue
     }
     prev.connect(handle.input)

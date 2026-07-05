@@ -190,7 +190,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -199,6 +199,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   foldedGroups?: Set<string>
   onToggleFold?: () => void
   onGroupTracks?: () => void
+  rippleEdit?: boolean
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
@@ -219,6 +220,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
   const inputBtnRef        = useRef<HTMLButtonElement>(null)
   const multiDragOrigins   = useRef<Record<string, number>>({})
+  const rippleOriginsRef   = useRef<Record<string, number>>({})
   const [showLibraryPicker, setShowLibraryPicker] = useState(false)
 
   // Keep a ref to project for stable closures in event listeners
@@ -714,6 +716,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       if (selectedClipIds.has(c.id)) origins[c.id] = c.startBeat
                     }
                     multiDragOrigins.current = origins
+                    // Capture original positions of all clips for ripple editing
+                    if (rippleEdit) {
+                      const rOrigins: Record<string, number> = {}
+                      for (const c of project.arrangementClips) rOrigins[c.id] = c.startBeat
+                      rippleOriginsRef.current = rOrigins
+                    }
                   }}
                   isCropping={croppingClipId === clip.id}
                   onDoubleClick={() => setExpandedPianoRollClipId(expandedPianoRollClipId === clip.id ? null : clip.id)}
@@ -738,7 +746,21 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOrigin + snappedDelta), trackId: c.trackId })
                       }
                     } else {
-                      dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum), trackId: tid })
+                      const snappedSb = snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum)
+                      dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: Math.max(0, snappedSb), trackId: tid })
+                      // Ripple: shift all clips on same track that originally started after this clip
+                      if (rippleEdit && tid === track.id) {
+                        const originalBeat = rippleOriginsRef.current[clip.id] ?? clip.startBeat
+                        const delta = snappedSb - originalBeat
+                        if (delta !== 0) {
+                          for (const c of project.arrangementClips) {
+                            if (c.id === clip.id || c.trackId !== track.id) continue
+                            const cOriginal = rippleOriginsRef.current[c.id]
+                            if (cOriginal === undefined || cOriginal <= originalBeat) continue
+                            dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOriginal + delta) })
+                          }
+                        }
+                      }
                     }
                   }}
                   onResize={(db, alt) => {

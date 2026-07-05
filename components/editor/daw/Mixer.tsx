@@ -79,6 +79,15 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
   const [editing, setEditing]   = useState(false)
   const [nameDraft, setNameDraft] = useState(track?.name ?? 'MASTER')
 
+  // LUFS metering (master only)
+  const [lufsValue, setLufsValue] = useState<number | null>(null)
+  const lufsBufferRef = useRef<number[]>([])
+  const lufsRafRef    = useRef<number>(0)
+
+  // Spectrum analyser canvas (track channels only)
+  const specRef    = useRef<HTMLCanvasElement>(null)
+  const specRafRef = useRef<number>(0)
+
   const volume  = isMaster ? project.masterVolume : (track?.volume ?? 0.8)
   const pan     = track?.pan ?? 0
   const muted   = track?.mute ?? false
@@ -92,6 +101,89 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
     ? (track.instrument.type === 'drum' ? 'DR' : track.instrument.type === 'none' ? 'AU' : 'MI')
     : ''
   const panLabel = pan === 0 ? 'C' : pan < 0 ? `L${Math.round(-pan * 100)}` : `R${Math.round(pan * 100)}`
+
+  // Sync mixer EQ UI state from engine when switching to a different track
+  useEffect(() => {
+    if (!track) return
+    const eq = engine.getMixerEq(track.id)
+    setEqLo(eq.low)
+    setEqMid(eq.mid)
+    setEqHi(eq.hi)
+  }, [track?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // LUFS metering loop for master strip
+  useEffect(() => {
+    if (!isMaster) return
+    const fftSize = engine.masterAnalyser.fftSize
+    const dataArray = new Float32Array(fftSize)
+
+    function measure() {
+      engine.masterAnalyser.getFloatTimeDomainData(dataArray)
+      let sum = 0
+      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i]
+      const rms = Math.sqrt(sum / dataArray.length)
+      const dbfs = rms > 0.000001 ? 20 * Math.log10(rms) : -100
+      const momentary = dbfs - 0.691  // approximate LUFS offset
+
+      lufsBufferRef.current.push(momentary)
+      if (lufsBufferRef.current.length > 30) lufsBufferRef.current.shift()
+
+      if (lufsBufferRef.current.length > 0) {
+        const avg = lufsBufferRef.current.reduce((a, b) => a + b, 0) / lufsBufferRef.current.length
+        setLufsValue(Math.round(avg * 10) / 10)
+      }
+
+      lufsRafRef.current = requestAnimationFrame(measure)
+    }
+
+    lufsRafRef.current = requestAnimationFrame(measure)
+    return () => cancelAnimationFrame(lufsRafRef.current)
+  }, [isMaster, engine])
+
+  // Mini spectrum analyzer for regular track strips
+  useEffect(() => {
+    if (isMaster || !track || !specRef.current) return
+    const canvas = specRef.current
+    const ctx2 = canvas.getContext('2d')
+    if (!ctx2) return
+    const analyser = engine.getTrackAnalyser(track.id)
+    if (!analyser) return
+
+    const fftData = new Uint8Array(analyser.frequencyBinCount)
+
+    function draw() {
+      analyser!.getByteFrequencyData(fftData)
+      ctx2!.clearRect(0, 0, canvas.width, canvas.height)
+      ctx2!.fillStyle = '#111'
+      ctx2!.fillRect(0, 0, canvas.width, canvas.height)
+
+      const barW = canvas.width / 16
+      for (let i = 0; i < 16; i++) {
+        const idx = Math.floor(i * fftData.length / 32)
+        const v = fftData[idx] / 255
+        const h = v * canvas.height
+        ctx2!.fillStyle = `hsl(${200 + i * 10}, 70%, 50%)`
+        ctx2!.fillRect(i * barW, canvas.height - h, barW - 1, h)
+      }
+
+      specRafRef.current = requestAnimationFrame(draw)
+    }
+    draw()
+    return () => cancelAnimationFrame(specRafRef.current)
+  }, [track?.id, engine, isMaster]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // LUFS color coding: blue=quiet, green=good, yellow=hot, red=too loud
+  const lufsColor = lufsValue === null ? '#555'
+    : lufsValue > -8 ? '#ef4444'
+    : lufsValue > -12 ? '#eab308'
+    : lufsValue >= -18 ? '#22c55e'
+    : '#3b82f6'
+
+  const lufsDisplay = lufsValue === null
+    ? '—'
+    : lufsValue < -70
+      ? '-∞'
+      : lufsValue.toFixed(1)
 
   return (
     <div
@@ -131,11 +223,39 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         </div>
       )}
 
+      {/* Mini spectrum analyzer (track channels only, above EQ knobs) */}
+      {!isMaster && track && (
+        <canvas
+          ref={specRef}
+          width={64}
+          height={28}
+          style={{ width: 64, height: 28, borderRadius: 2, display: 'block' }}
+        />
+      )}
+
       {/* EQ knobs */}
       <div style={{ display: 'flex', gap: 2 }}>
-        <Knob value={eqLo}  min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="LO"  onChange={setEqLo} />
-        <Knob value={eqMid} min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID" onChange={setEqMid} />
-        <Knob value={eqHi}  min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="HI"  onChange={setEqHi} />
+        <Knob
+          value={eqLo} min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="LO"
+          onChange={v => {
+            setEqLo(v)
+            if (track) engine.setMixerEq(track.id, v, eqMid, eqHi)
+          }}
+        />
+        <Knob
+          value={eqMid} min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID"
+          onChange={v => {
+            setEqMid(v)
+            if (track) engine.setMixerEq(track.id, eqLo, v, eqHi)
+          }}
+        />
+        <Knob
+          value={eqHi} min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="HI"
+          onChange={v => {
+            setEqHi(v)
+            if (track) engine.setMixerEq(track.id, eqLo, eqMid, v)
+          }}
+        />
       </div>
 
       {/* Pan */}
@@ -173,6 +293,16 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         />
         <LevelMeter trackId={isMaster ? undefined : track?.id} width={6} height={110} />
       </div>
+
+      {/* LUFS display (master only) */}
+      {isMaster && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, marginTop: 2 }}>
+          <span style={{ fontSize: 11, fontFamily: 'monospace', color: lufsColor, fontWeight: 700, letterSpacing: '-0.02em' }}>
+            {lufsDisplay}
+          </span>
+          <span style={{ fontSize: 7, color: '#666', letterSpacing: '0.08em', textTransform: 'uppercase' }}>LUFS</span>
+        </div>
+      )}
 
       {/* Arm */}
       {!isMaster && track && (

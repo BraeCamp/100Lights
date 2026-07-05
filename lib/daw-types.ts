@@ -1,5 +1,14 @@
 // Core DAW types shared across engine and UI
 
+import type { FMPatch, FMAlgorithm, FMOperator } from './fm-synth'
+import type { WavetablePatch } from './wavetable-synth'
+
+// Re-exported synth engine patch types, used as instrument params
+export type Fm4OpInstrumentParams     = FMPatch
+export type Fm4OpAlgorithm            = FMAlgorithm
+export type Fm4OpOperator             = FMOperator
+export type WavetableInstrumentParams = WavetablePatch
+
 export type TrackType = 'audio'
 
 export type CrossfaderSide = 'A' | 'B' | 'none'
@@ -8,7 +17,7 @@ export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last'
 
 // ── Effects ───────────────────────────────────────────────────────────────────
 
-export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo'
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp'
 
 export interface Eq3Params {
   enabled: boolean
@@ -94,7 +103,56 @@ export interface LfoParams {
   filterFreqMax: number   // Hz
 }
 
-export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams
+export interface NoiseGateParams {
+  enabled: boolean
+  threshold: number   // dB -80..0 (default -40)
+  attack: number      // s 0..0.5 (default 0.01)
+  hold: number        // s 0..0.5 (default 0.05)
+  release: number     // s 0..2 (default 0.2)
+  reduction: number   // dB how much to cut -80..-20 (default -60)
+}
+
+export interface DeEsserParams {
+  enabled: boolean
+  frequency: number   // Hz 4000..16000 (default 7500)
+  bandwidth: number   // octaves 0.5..3 (default 1)
+  threshold: number   // dB -60..0 (default -20)
+  reduction: number   // dB 0..24 (default 12)
+}
+
+export interface ChorusParams {
+  enabled: boolean
+  type: 'chorus' | 'flanger' | 'phaser'
+  rate: number        // Hz 0.1..10 (default 0.5)
+  depth: number       // 0..1 (default 0.5)
+  feedback: number    // 0..0.9 (default 0.3)
+  mix: number         // 0..1 wet (default 0.5)
+  stages: number      // phaser stages 2..12 (default 4)
+}
+
+export interface TransientShaperParams {
+  enabled: boolean
+  attack: number      // -12..+12 dB attack emphasis (default 0)
+  sustain: number     // -12..+12 dB sustain shaping (default 0)
+  gain: number        // -6..+6 dB output (default 0)
+}
+
+export interface MultibandCompParams {
+  enabled: boolean
+  lowMid: number          // Hz crossover low/mid (default 250)
+  midHigh: number         // Hz crossover mid/high (default 4000)
+  lowThreshold: number    // dB (default -24)
+  midThreshold: number    // dB (default -24)
+  highThreshold: number   // dB (default -24)
+  lowRatio: number        // (default 4)
+  midRatio: number        // (default 4)
+  highRatio: number       // (default 4)
+  lowGain: number         // dB makeup (default 0)
+  midGain: number         // dB makeup (default 0)
+  highGain: number        // dB makeup (default 0)
+}
+
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams
 
 export interface TrackEffect {
   id: string
@@ -132,6 +190,11 @@ export function defaultUtility(): UtilityParams {
 export function defaultLfo(): LfoParams {
   return { enabled: true, rate: 1, depth: 0.5, waveform: 'sine', target: 'pan', filterFreqMin: 200, filterFreqMax: 8000 }
 }
+export function defaultNoiseGate(): NoiseGateParams { return { enabled: true, threshold: -40, attack: 0.01, hold: 0.05, release: 0.2, reduction: -60 } }
+export function defaultDeEsser(): DeEsserParams { return { enabled: true, frequency: 7500, bandwidth: 1, threshold: -20, reduction: 12 } }
+export function defaultChorus(): ChorusParams { return { enabled: true, type: 'chorus', rate: 0.5, depth: 0.5, feedback: 0.3, mix: 0.5, stages: 4 } }
+export function defaultTransientShaper(): TransientShaperParams { return { enabled: true, attack: 0, sustain: 0, gain: 0 } }
+export function defaultMultibandComp(): MultibandCompParams { return { enabled: true, lowMid: 250, midHigh: 4000, lowThreshold: -24, midThreshold: -24, highThreshold: -24, lowRatio: 4, midRatio: 4, highRatio: 4, lowGain: 0, midGain: 0, highGain: 0 } }
 
 /** Returns a fresh voice-optimized effects chain for podcast/voice recording. */
 export function voiceChainEffects(): TrackEffect[] {
@@ -187,7 +250,7 @@ export function defaultArpMidi(): ArpMidiParams { return { enabled: true, style:
 
 // ── Instruments ───────────────────────────────────────────────────────────────
 
-export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler'
+export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler' | 'fm4op' | 'wavetable'
 
 export interface DrumPadSettings {
   sampleId?: string   // library preset id or custom sample id
@@ -230,7 +293,7 @@ export interface PolyInstrumentParams {
   lfoWaveform: OscillatorType
 }
 
-export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | PolyInstrumentParams | Record<string, never>
+export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | PolyInstrumentParams | Fm4OpInstrumentParams | WavetableInstrumentParams | Record<string, never>
 
 export interface TrackInstrument {
   type: InstrumentType
@@ -255,6 +318,35 @@ export function defaultPolyInstrument(): TrackInstrument {
       lfoEnabled: false, lfoRate: 4, lfoDepth: 0.3, lfoTarget: 'filter', lfoWaveform: 'sine',
     } as PolyInstrumentParams,
   }
+}
+
+export function defaultFm4opInstrument(): TrackInstrument {
+  const p: Fm4OpInstrumentParams = {
+    name: 'Electric Piano 1',
+    algorithm: 3,
+    masterGain: 0.65,
+    pitchEgRate: 0,
+    operators: [
+      { ratio: 14, level: 0.28, attack: 0.001, decay: 0.55, sustain: 0.0,  release: 0.50, feedback: 0.55, detune: 0 },
+      { ratio: 1,  level: 0.90, attack: 0.001, decay: 2.5,  sustain: 0.6,  release: 0.60, feedback: 0,    detune: 0 },
+      { ratio: 14, level: 0.22, attack: 0.001, decay: 0.45, sustain: 0.0,  release: 0.40, feedback: 0,    detune: 0 },
+      { ratio: 1,  level: 0.80, attack: 0.001, decay: 2.0,  sustain: 0.55, release: 0.55, feedback: 0,    detune: 0 },
+    ],
+  }
+  return { type: 'fm4op', params: p }
+}
+
+export function defaultWavetableInstrument(): TrackInstrument {
+  const p: WavetableInstrumentParams = {
+    oscAWavetable: 'strings', oscAPosition: 0.5,  oscADetune: 0,  oscAGain: 0.75,
+    oscBWavetable: 'strings', oscBPosition: 0.55, oscBDetune: -7, oscBGain: 0.6,
+    filterType: 'lowpass', filterCutoff: 900, filterResonance: 1, filterEnvAmount: 0.3,
+    attack: 0.6, decay: 1.0, sustain: 0.75, release: 1.5,
+    fAttack: 0.5, fDecay: 0.8, fSustain: 0.6, fRelease: 1.2,
+    lfoShape: 'sine', lfoRate: 0.4, lfoDepth: 0.04, lfoTarget: 'pitch',
+    masterGain: 0.7, polyphony: 4,
+  }
+  return { type: 'wavetable', params: p }
 }
 
 // ── Clip Effects ─────────────────────────────────────────────────────────────

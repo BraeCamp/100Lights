@@ -1,8 +1,10 @@
 'use client'
 
-import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams } from './daw-types'
+import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, Fm4OpInstrumentParams, WavetableInstrumentParams } from './daw-types'
 import { playDrumHit } from './drum-samples'
 import type { BeatType } from './beat-analyzer'
+import { playFMNote } from './fm-synth'
+import { playWavetableNote } from './wavetable-synth'
 
 // General MIDI drum map (pitch → drum type)
 const GM_DRUM: Record<number, BeatType> = {
@@ -217,6 +219,22 @@ export function playInstrumentNote(
 
   if (instrument.type === 'poly') {
     playPolyVoice(ctx, dest, instrument.params as PolyInstrumentParams, pitch, velocity, when, duration)
+    return
+  }
+
+  if (instrument.type === 'fm4op') {
+    const patch = instrument.params as Fm4OpInstrumentParams
+    const stop  = playFMNote(ctx, patch, pitch, velocity / 127, when, dest)
+    const ms    = Math.max(0, (when + duration - ctx.currentTime) * 1000)
+    setTimeout(stop, ms)
+    return
+  }
+
+  if (instrument.type === 'wavetable') {
+    const patch = instrument.params as WavetableInstrumentParams
+    const stop  = playWavetableNote(ctx, patch, pitch, velocity / 127, when, dest)
+    const ms    = Math.max(0, (when + duration - ctx.currentTime) * 1000)
+    setTimeout(stop, ms)
     return
   }
 }

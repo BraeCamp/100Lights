@@ -6,9 +6,13 @@ import { useState } from 'react'
 import type {
   TrackInstrument, InstrumentType,
   FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, DrumPadSettings,
+  Fm4OpInstrumentParams, Fm4OpOperator, Fm4OpAlgorithm,
+  WavetableInstrumentParams,
 } from '@/lib/daw-types'
-import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument } from '@/lib/daw-types'
+import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument, defaultFm4opInstrument, defaultWavetableInstrument } from '@/lib/daw-types'
 import { previewNote } from '@/lib/daw-instruments'
+import { FM_ALGORITHMS, FM_PRESETS } from '@/lib/fm-synth'
+import { WAVETABLE_PRESETS } from '@/lib/wavetable-synth'
 
 const C = {
   bgBase:      '#141414',
@@ -299,13 +303,294 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
   )
 })
 
+// ── FM 4-op panel ─────────────────────────────────────────────────────────────
+
+const ALGO_TEXT: Record<number, string> = {
+  1: 'Op1→Op2→Op3→Op4',
+  2: 'Op1→Op2, Op1→Op4, Op3→Op4',
+  3: '(Op1→Op2) + (Op3→Op4)',
+  4: 'Op1→Op2→Op3 + Op4',
+  5: 'Op1→Op2, Op1→Op3, Op1→Op4',
+  6: 'Op1→Op2→Op3→Op4 + Op1→Op4',
+  7: 'Op1→Op4, Op2→Op4, Op3→Op4',
+  8: 'Op1+Op2+Op3+Op4 (additive)',
+}
+
+const Fm4OpPanel = memo(function Fm4OpPanel({ instrument, onSet }: {
+  instrument: TrackInstrument
+  onSet: (changes: Partial<Fm4OpInstrumentParams>) => void
+}) {
+  const { engine } = useDaw()
+  const p = instrument.params as Fm4OpInstrumentParams
+  const [selectedOp, setSelectedOp] = useState(0)
+
+  function updateOp(idx: number, changes: Partial<Fm4OpOperator>) {
+    const newOps = p.operators.map((o, i) => i === idx ? { ...o, ...changes } : o) as Fm4OpInstrumentParams['operators']
+    onSet({ operators: newOps })
+  }
+
+  const op  = p.operators[selectedOp]
+  const def = FM_ALGORITHMS[p.algorithm as Fm4OpAlgorithm]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Presets */}
+      <Section title="Preset">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {Object.keys(FM_PRESETS).map(k => (
+            <button key={k}
+              onClick={e => { e.stopPropagation(); onSet({ ...FM_PRESETS[k] }) }}
+              style={{
+                padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+                border: `1px solid ${p.name === k ? C.accent : C.border}`,
+                background: p.name === k ? `${C.accent}22` : C.bgCard,
+                color: p.name === k ? C.accent : C.textMuted,
+              }}>{k}</button>
+          ))}
+        </div>
+      </Section>
+
+      {/* Algorithm */}
+      <Section title="Algorithm">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {([1, 2, 3, 4, 5, 6, 7, 8] as const).map(a => (
+            <TypeBtn key={a} label={String(a)} active={p.algorithm === a} onClick={() => onSet({ algorithm: a })} />
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>
+          {def.name} — {ALGO_TEXT[p.algorithm]}
+        </div>
+        {/* Operator role indicators */}
+        <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
+          {[0, 1, 2, 3].map(i => {
+            const isCarrier = def.carriers.includes(i)
+            return (
+              <div key={i} style={{
+                flex: 1, textAlign: 'center', fontSize: 9, padding: '2px 0', borderRadius: 3,
+                border: `1px solid ${isCarrier ? C.accent : C.border}`,
+                background: isCarrier ? `${C.accent}22` : C.bgCard,
+                color: isCarrier ? C.accent : C.textMuted,
+                fontWeight: isCarrier ? 700 : 400,
+              }}>Op{i + 1} {isCarrier ? 'C' : 'M'}</div>
+            )
+          })}
+        </div>
+      </Section>
+
+      <SliderRow label="Master Gain" value={p.masterGain} min={0} max={1} step={0.01}
+        fmt={v => `${Math.round(v * 100)}%`} onChange={v => onSet({ masterGain: v })} />
+
+      {/* Per-operator editor */}
+      <Section title="Operator">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[0, 1, 2, 3].map(i => (
+            <TypeBtn key={i} label={`Op${i + 1}`} active={selectedOp === i} onClick={() => setSelectedOp(i)} />
+          ))}
+        </div>
+        <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 4, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+          <SliderRow label="Ratio"   value={op.ratio}   min={0.25} max={16}   step={0.25} fmt={v => v.toFixed(2)} onChange={v => updateOp(selectedOp, { ratio: v })} />
+          <SliderRow label="Level"   value={op.level}   min={0}    max={1}    step={0.01} fmt={v => v.toFixed(2)} onChange={v => updateOp(selectedOp, { level: v })} />
+          <SliderRow label="Attack"  value={op.attack}  min={0.001} max={5}   step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => updateOp(selectedOp, { attack: v })} />
+          <SliderRow label="Decay"   value={op.decay}   min={0.001} max={5}   step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => updateOp(selectedOp, { decay: v })} />
+          <SliderRow label="Sustain" value={op.sustain} min={0}    max={1}    step={0.01}  fmt={v => v.toFixed(2)}       onChange={v => updateOp(selectedOp, { sustain: v })} />
+          <SliderRow label="Release" value={op.release} min={0.001} max={5}   step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => updateOp(selectedOp, { release: v })} />
+          <SliderRow label="Detune"  value={op.detune}  min={-100} max={100}  step={1}     fmt={v => `${v}¢`}            onChange={v => updateOp(selectedOp, { detune: v })} />
+          {selectedOp === 0 && (
+            <SliderRow label="Feedback" value={op.feedback} min={0} max={1}   step={0.01} fmt={v => v.toFixed(2)} onChange={v => updateOp(selectedOp, { feedback: v })} />
+          )}
+        </div>
+      </Section>
+
+      <button onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, 60) }}
+        style={{ alignSelf: 'flex-start', padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+        Preview ▶
+      </button>
+    </div>
+  )
+})
+
+// ── Wavetable panel ────────────────────────────────────────────────────────────
+
+type WtType = WavetableInstrumentParams['oscAWavetable']
+const WT_TYPES: WtType[] = ['analog', 'digital', 'vocal', 'strings', 'brass', 'custom']
+
+function WtTypeRow({ label, value, onChange }: { label: string; value: WtType; onChange: (v: WtType) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ width: 72, fontSize: 11, color: C.textMuted, flexShrink: 0 }}>{label}</span>
+      <div style={{ display: 'flex', gap: 3, flex: 1, flexWrap: 'wrap' }}>
+        {WT_TYPES.map(t => (
+          <button key={t}
+            onClick={e => { e.stopPropagation(); onChange(t) }}
+            style={{
+              padding: '2px 6px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+              border: `1px solid ${value === t ? C.accent : C.border}`,
+              background: value === t ? `${C.accent}22` : C.bgCard,
+              color: value === t ? C.accent : C.textMuted,
+              textTransform: 'capitalize',
+            }}>{t}</button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+type LfoShape = WavetableInstrumentParams['lfoShape']
+const LFO_SHAPES: { label: string; value: LfoShape }[] = [
+  { label: 'Sin', value: 'sine' }, { label: 'Tri', value: 'triangle' },
+  { label: 'Sqr', value: 'square' }, { label: 'Saw', value: 'sawtooth' },
+]
+
+type WtLfoTarget = WavetableInstrumentParams['lfoTarget']
+const WT_LFO_TARGETS: { label: string; value: WtLfoTarget }[] = [
+  { label: 'Pitch',  value: 'pitch'     },
+  { label: 'Filter', value: 'filter'    },
+  { label: 'Wave',   value: 'wavetable' },
+  { label: 'Pan',    value: 'pan'       },
+]
+
+const WavetablePanel = memo(function WavetablePanel({ instrument, onSet }: {
+  instrument: TrackInstrument
+  onSet: (changes: Partial<WavetableInstrumentParams>) => void
+}) {
+  const { engine } = useDaw()
+  const p = instrument.params as WavetableInstrumentParams
+  const FILTER_TYPES: WavetableInstrumentParams['filterType'][] = ['lowpass', 'highpass', 'bandpass']
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Presets */}
+      <Section title="Preset">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {Object.keys(WAVETABLE_PRESETS).map(k => (
+            <button key={k}
+              onClick={e => { e.stopPropagation(); onSet({ ...WAVETABLE_PRESETS[k] }) }}
+              style={{
+                padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+                border: `1px solid ${C.border}`,
+                background: C.bgCard, color: C.textMuted,
+              }}>{k}</button>
+          ))}
+        </div>
+      </Section>
+
+      {/* Oscillator A */}
+      <Section title="Oscillator A">
+        <WtTypeRow label="Wavetable" value={p.oscAWavetable} onChange={v => onSet({ oscAWavetable: v })} />
+        <SliderRow label="Position" value={p.oscAPosition} min={0} max={1} step={0.01} fmt={v => v.toFixed(2)} onChange={v => onSet({ oscAPosition: v })} />
+        <SliderRow label="Detune"   value={p.oscADetune}   min={-24} max={24} step={1} fmt={v => `${v > 0 ? '+' : ''}${v}st`} onChange={v => onSet({ oscADetune: v })} />
+        <SliderRow label="Gain"     value={p.oscAGain}     min={0} max={1} step={0.01} fmt={v => v.toFixed(2)} onChange={v => onSet({ oscAGain: v })} />
+      </Section>
+
+      {/* Oscillator B */}
+      <Section title="Oscillator B">
+        <WtTypeRow label="Wavetable" value={p.oscBWavetable} onChange={v => onSet({ oscBWavetable: v })} />
+        <SliderRow label="Position" value={p.oscBPosition} min={0} max={1} step={0.01} fmt={v => v.toFixed(2)} onChange={v => onSet({ oscBPosition: v })} />
+        <SliderRow label="Detune"   value={p.oscBDetune}   min={-24} max={24} step={1} fmt={v => `${v > 0 ? '+' : ''}${v}st`} onChange={v => onSet({ oscBDetune: v })} />
+        <SliderRow label="Gain"     value={p.oscBGain}     min={0} max={1} step={0.01} fmt={v => v.toFixed(2)} onChange={v => onSet({ oscBGain: v })} />
+      </Section>
+
+      {/* Filter */}
+      <Section title="Filter">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 72, fontSize: 11, color: C.textMuted, flexShrink: 0 }}>Type</span>
+          <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+            {FILTER_TYPES.map(t => (
+              <button key={t}
+                onClick={e => { e.stopPropagation(); onSet({ filterType: t }) }}
+                style={{
+                  flex: 1, padding: '3px 0', borderRadius: 3,
+                  border: `1px solid ${p.filterType === t ? C.accent : C.border}`,
+                  background: p.filterType === t ? `${C.accent}22` : C.bgCard,
+                  color: p.filterType === t ? C.accent : C.textMuted,
+                  fontSize: 9, cursor: 'pointer', textTransform: 'uppercase',
+                }}>{t.slice(0, 4)}</button>
+            ))}
+          </div>
+        </div>
+        <SliderRow label="Cutoff"    value={p.filterCutoff}    min={20} max={20000} step={10}
+          fmt={v => v >= 1000 ? `${(v / 1000).toFixed(1)}kHz` : `${Math.round(v)}Hz`}
+          onChange={v => onSet({ filterCutoff: v })} />
+        <SliderRow label="Resonance" value={p.filterResonance} min={0} max={30} step={0.1}
+          fmt={v => v.toFixed(1)} onChange={v => onSet({ filterResonance: v })} />
+        <SliderRow label="Env Amt"   value={p.filterEnvAmount} min={-1} max={1} step={0.01}
+          fmt={v => v.toFixed(2)} onChange={v => onSet({ filterEnvAmount: v })} />
+      </Section>
+
+      {/* Amplitude envelope */}
+      <Section title="Amplitude">
+        <SliderRow label="Attack"  value={p.attack}  min={0.001} max={4}   step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => onSet({ attack: v })} />
+        <SliderRow label="Decay"   value={p.decay}   min={0.001} max={4}   step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => onSet({ decay: v })} />
+        <SliderRow label="Sustain" value={p.sustain} min={0}     max={1}   step={0.01}  fmt={v => v.toFixed(2)}       onChange={v => onSet({ sustain: v })} />
+        <SliderRow label="Release" value={p.release} min={0.001} max={8}   step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => onSet({ release: v })} />
+      </Section>
+
+      {/* Filter envelope */}
+      <Section title="Filter Env">
+        <SliderRow label="Attack"  value={p.fAttack}  min={0.001} max={4}  step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => onSet({ fAttack: v })} />
+        <SliderRow label="Decay"   value={p.fDecay}   min={0.001} max={4}  step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => onSet({ fDecay: v })} />
+        <SliderRow label="Sustain" value={p.fSustain} min={0}     max={1}  step={0.01}  fmt={v => v.toFixed(2)}       onChange={v => onSet({ fSustain: v })} />
+        <SliderRow label="Release" value={p.fRelease} min={0.001} max={8}  step={0.001} fmt={v => `${v.toFixed(3)}s`} onChange={v => onSet({ fRelease: v })} />
+      </Section>
+
+      {/* LFO */}
+      <Section title="LFO">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 72, fontSize: 11, color: C.textMuted, flexShrink: 0 }}>Shape</span>
+          <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+            {LFO_SHAPES.map(s => (
+              <button key={s.value}
+                onClick={e => { e.stopPropagation(); onSet({ lfoShape: s.value }) }}
+                style={{
+                  flex: 1, padding: '3px 0', borderRadius: 3,
+                  border: `1px solid ${p.lfoShape === s.value ? C.accent : C.border}`,
+                  background: p.lfoShape === s.value ? `${C.accent}22` : C.bgCard,
+                  color: p.lfoShape === s.value ? C.accent : C.textMuted,
+                  fontSize: 10, cursor: 'pointer',
+                }}>{s.label}</button>
+            ))}
+          </div>
+        </div>
+        <SliderRow label="Rate"  value={p.lfoRate}  min={0.1} max={20}  step={0.1}  fmt={v => `${v.toFixed(1)}Hz`} onChange={v => onSet({ lfoRate: v })} />
+        <SliderRow label="Depth" value={p.lfoDepth} min={0}   max={1}   step={0.01} fmt={v => `${Math.round(v * 100)}%`} onChange={v => onSet({ lfoDepth: v })} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 72, fontSize: 11, color: C.textMuted, flexShrink: 0 }}>Target</span>
+          <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+            {WT_LFO_TARGETS.map(t => (
+              <button key={t.value}
+                onClick={e => { e.stopPropagation(); onSet({ lfoTarget: t.value }) }}
+                style={{
+                  flex: 1, padding: '3px 0', borderRadius: 3,
+                  border: `1px solid ${p.lfoTarget === t.value ? C.accent : C.border}`,
+                  background: p.lfoTarget === t.value ? `${C.accent}22` : C.bgCard,
+                  color: p.lfoTarget === t.value ? C.accent : C.textMuted,
+                  fontSize: 10, cursor: 'pointer',
+                }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+      </Section>
+
+      <SliderRow label="Master Gain" value={p.masterGain} min={0} max={1} step={0.01}
+        fmt={v => `${Math.round(v * 100)}%`} onChange={v => onSet({ masterGain: v })} />
+
+      <button onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, 60) }}
+        style={{ alignSelf: 'flex-start', padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+        Preview ▶
+      </button>
+    </div>
+  )
+})
+
 // ── Main export ────────────────────────────────────────────────────────────────
 
 const TYPE_BUTTONS: { label: string; value: InstrumentType }[] = [
-  { label: 'None',       value: 'none' },
-  { label: 'Drum',       value: 'drum' },
-  { label: 'FM Synth',   value: 'fm'   },
-  { label: 'Poly Synth', value: 'poly' },
+  { label: 'None',       value: 'none'      },
+  { label: 'Drum',       value: 'drum'      },
+  { label: 'FM',         value: 'fm'        },
+  { label: 'FM 4-Op',    value: 'fm4op'     },
+  { label: 'Wavetable',  value: 'wavetable' },
+  { label: 'Poly',       value: 'poly'      },
 ]
 
 export default memo(function InstrumentPicker({ trackId }: { trackId: string }) {
@@ -319,9 +604,11 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
 
   const setType = useCallback((next: InstrumentType) => {
     let newInstr: TrackInstrument
-    if (next === 'drum') newInstr = defaultDrumInstrument()
-    else if (next === 'fm') newInstr = defaultFmInstrument()
+    if (next === 'drum')      newInstr = defaultDrumInstrument()
+    else if (next === 'fm')   newInstr = defaultFmInstrument()
     else if (next === 'poly') newInstr = defaultPolyInstrument()
+    else if (next === 'fm4op')     newInstr = defaultFm4opInstrument()
+    else if (next === 'wavetable') newInstr = defaultWavetableInstrument()
     else newInstr = { type: 'none', params: {} }
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: newInstr })
   }, [dispatch, trackId])
@@ -343,20 +630,34 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'drum', params: { ...prev, ...changes } } })
   }, [dispatch, trackId, instrType, instrument.params])
 
+  const setFm4op = useCallback((changes: Partial<Fm4OpInstrumentParams>) => {
+    if (instrType !== 'fm4op') return
+    const params = instrument.params as Fm4OpInstrumentParams
+    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'fm4op', params: { ...params, ...changes } } })
+  }, [dispatch, trackId, instrType, instrument.params])
+
+  const setWavetable = useCallback((changes: Partial<WavetableInstrumentParams>) => {
+    if (instrType !== 'wavetable') return
+    const params = instrument.params as WavetableInstrumentParams
+    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'wavetable', params: { ...params, ...changes } } })
+  }, [dispatch, trackId, instrType, instrument.params])
+
   return (
     <div style={{
       background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 6,
-      padding: 16, display: 'flex', flexDirection: 'column', gap: 16, minWidth: 360,
+      padding: 16, display: 'flex', flexDirection: 'column', gap: 16, minWidth: 380,
     }}>
-      <div style={{ display: 'flex', gap: 4 }}>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {TYPE_BUTTONS.map(btn => (
           <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
         ))}
       </div>
 
-      {instrType === 'drum' && <DrumPanel instrument={instrument} onSet={setDrum} />}
-      {instrType === 'fm'   && <FmPanel   instrument={instrument} trackId={trackId} onSet={setFm} />}
-      {instrType === 'poly' && <PolyPanel instrument={instrument} onSet={setPoly} />}
+      {instrType === 'drum'      && <DrumPanel      instrument={instrument} onSet={setDrum} />}
+      {instrType === 'fm'        && <FmPanel        instrument={instrument} trackId={trackId} onSet={setFm} />}
+      {instrType === 'poly'      && <PolyPanel      instrument={instrument} onSet={setPoly} />}
+      {instrType === 'fm4op'     && <Fm4OpPanel     instrument={instrument} onSet={setFm4op} />}
+      {instrType === 'wavetable' && <WavetablePanel instrument={instrument} onSet={setWavetable} />}
     </div>
   )
 })

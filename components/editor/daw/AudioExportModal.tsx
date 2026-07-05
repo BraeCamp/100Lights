@@ -6,6 +6,7 @@ import { X, Download, Loader2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
+import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
 
 interface Props {
   onClose: () => void
@@ -13,15 +14,57 @@ interface Props {
   podcastMeta?: PodcastMeta
 }
 
+type ExportFormat  = 'webm' | 'wav'
+type StatusMessage = 'recording' | 'converting' | 'normalizing' | 'done'
+
 function slugify(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || ''
 }
 
+async function normalizeAudioBuffer(buffer: AudioBuffer, targetLufs = -16): Promise<AudioBuffer> {
+  // Calculate RMS power across all channels
+  let sumSquares = 0
+  let count = 0
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const data = buffer.getChannelData(ch)
+    for (let i = 0; i < data.length; i++) {
+      sumSquares += data[i] * data[i]
+      count++
+    }
+  }
+  const rms    = Math.sqrt(sumSquares / (count || 1))
+  const rmsDb  = 20 * Math.log10(rms || 0.00001)
+
+  // Target RMS for the given LUFS (rough LUFS→RMS approximation, +3 dB offset)
+  const targetDb   = targetLufs + 3
+  const gainDb     = targetDb - rmsDb
+  const gainLinear = Math.pow(10, gainDb / 20)
+
+  // Apply gain via OfflineAudioContext
+  const offlineCtx = new OfflineAudioContext(
+    buffer.numberOfChannels,
+    buffer.length,
+    buffer.sampleRate,
+  )
+  const source   = offlineCtx.createBufferSource()
+  source.buffer  = buffer
+  const gainNode = offlineCtx.createGain()
+  gainNode.gain.value = Math.min(gainLinear, 4)  // cap at +12 dB
+  source.connect(gainNode)
+  gainNode.connect(offlineCtx.destination)
+  source.start(0)
+
+  return offlineCtx.startRendering()
+}
+
 export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Props) {
   const { project, engine } = useDaw()
-  const [phase, setPhase] = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
-  const [progress, setProgress] = useState(0)
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [phase, setPhase]                 = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
+  const [progress, setProgress]           = useState(0)
+  const [downloadUrl, setDownloadUrl]     = useState<string | null>(null)
+  const [format, setFormat]               = useState<ExportFormat>('webm')
+  const [normalize, setNormalize]         = useState(false)
+  const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const endBeat = Math.max(
@@ -38,6 +81,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
 
   async function startExport() {
     setPhase('recording')
+    setStatusMessage('recording')
     setProgress(0)
     engine.seek(0)
     await engine.startRecording()
@@ -50,15 +94,39 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
         clearInterval(ivRef.current!)
         ivRef.current = null
         engine.stop()
-        void engine.stopRecording().then(blob => {
+        void engine.stopRecording().then(async (blob) => {
           if (!blob) { setPhase('error'); return }
-          setDownloadUrl(URL.createObjectURL(blob))
-          setProgress(1)
-          setPhase('done')
+          try {
+            let finalBlob: Blob
+
+            if (format === 'wav') {
+              setStatusMessage('converting')
+              const audioBuffer = await blobToAudioBuffer(blob)
+
+              let finalBuffer = audioBuffer
+              if (normalize && audioMode === 'podcast') {
+                setStatusMessage('normalizing')
+                finalBuffer = await normalizeAudioBuffer(audioBuffer)
+              }
+
+              finalBlob = audioBufferToWav(finalBuffer)
+            } else {
+              finalBlob = blob
+            }
+
+            setDownloadUrl(URL.createObjectURL(finalBlob))
+            setProgress(1)
+            setStatusMessage('done')
+            setPhase('done')
+          } catch (_err: unknown) {
+            setPhase('error')
+          }
         })
       }
     }, 100)
   }
+
+  const ext = format === 'wav' ? 'wav' : 'webm'
 
   // Filename: slug from podcast metadata or project name
   const filename = (() => {
@@ -66,13 +134,20 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
       const showSlug = slugify(podcastMeta.showName)
       const epPart   = podcastMeta.episodeNumber != null ? `ep-${podcastMeta.episodeNumber}` : null
       const parts    = [showSlug, epPart].filter((p): p is string => Boolean(p))
-      return parts.length > 0 ? `${parts.join('-')}.webm` : 'podcast-export.webm'
+      return parts.length > 0 ? `${parts.join('-')}.${ext}` : `podcast-export.${ext}`
     }
     const safeName = (project.name ?? 'export').replace(/[^a-z0-9_\-\s]/gi, '').trim() || 'export'
-    return `${safeName}.webm`
+    return `${safeName}.${ext}`
   })()
 
   const isPodcast = audioMode === 'podcast'
+
+  const statusLabel: Record<StatusMessage, string> = {
+    recording:   'Recording… do not close this window',
+    converting:  'Converting to WAV…',
+    normalizing: 'Normalizing for podcast delivery…',
+    done:        'Done',
+  }
 
   const overlay = (
     <div
@@ -107,9 +182,56 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
         <div style={{ padding: '20px 18px 22px' }}>
           {phase === 'idle' && (
             <>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 18, lineHeight: 1.5 }}>
-                Plays your project from beat 1 to the end while capturing the master output. Exports as <strong style={{ color: 'var(--text-primary)' }}>WebM/Opus</strong>.
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.5 }}>
+                Plays your project from beat 1 to the end while capturing the master output.
               </p>
+
+              {/* Format selector */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Format
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {(['webm', 'wav'] as ExportFormat[]).map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setFormat(f)}
+                      style={{
+                        flex: 1, padding: '7px 0', borderRadius: 6,
+                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        border: format === f ? '1px solid var(--accent)' : '1px solid var(--border)',
+                        background: format === f ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'transparent',
+                        color: format === f ? 'var(--accent)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      {f === 'webm' ? 'WebM / Opus' : 'WAV (lossless)'}
+                    </button>
+                  ))}
+                </div>
+                {format === 'wav' && (
+                  <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
+                    Converts after recording — slightly slower, lossless 16-bit PCM
+                  </p>
+                )}
+              </div>
+
+              {/* Normalize — podcast + WAV only */}
+              {isPodcast && format === 'wav' && (
+                <label
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 14, cursor: 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={normalize}
+                    onChange={e => setNormalize(e.target.checked)}
+                    style={{ marginTop: 2, accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    Normalize for podcast delivery (~-16 LUFS)
+                  </span>
+                </label>
+              )}
+
               <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text-muted)', marginBottom: 22 }}>
                 <span>Duration: ~{Math.ceil(engine.beatsToSeconds(endBeat))}s</span>
                 <span>·</span>
@@ -131,18 +253,22 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                 <Loader2 size={16} color="var(--accent-light)" style={{ animation: 'spin 1s linear infinite' }} />
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Rendering… do not close this window</span>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {statusLabel[statusMessage]}
+                </span>
               </div>
               <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%', borderRadius: 3,
-                  background: 'var(--accent)',
-                  width: `${Math.round(progress * 100)}%`,
+                  background: statusMessage === 'normalizing' ? '#f97316'
+                    : statusMessage !== 'recording' ? '#22c55e'
+                    : 'var(--accent)',
+                  width: statusMessage === 'recording' ? `${Math.round(progress * 100)}%` : '100%',
                   transition: 'width 0.1s linear',
                 }} />
               </div>
               <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, textAlign: 'right' }}>
-                {Math.round(progress * 100)}%
+                {statusMessage === 'recording' ? `${Math.round(progress * 100)}%` : statusLabel[statusMessage]}
               </p>
             </>
           )}
@@ -191,7 +317,9 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Pr
                 <Download size={14} /> {isPodcast ? 'Download Podcast Episode' : `Download ${filename}`}
               </a>
               <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.5 }}>
-                Exported as WebM/Opus. For MP3, re-encode with any converter.
+                {format === 'wav'
+                  ? `Exported as 16-bit PCM WAV.${normalize && isPodcast ? ' Normalized to approximate -16 LUFS.' : ''}`
+                  : 'Exported as WebM/Opus. For MP3, re-encode with any converter.'}
               </p>
             </>
           )}

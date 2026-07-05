@@ -268,6 +268,8 @@ export default function ArrangementView() {
   const [foldedGroups, setFoldedGroups] = useState<Set<string>>(new Set())
   // Multi-track selection for grouping
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set())
+  // Ripple editing: moving a clip shifts subsequent clips on the same track
+  const [rippleEdit, setRippleEdit] = useState(false)
   const outerRef    = useRef<HTMLDivElement>(null)
   const laneRef     = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
@@ -497,6 +499,19 @@ export default function ArrangementView() {
           style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}
           title="Increase waveform zoom"
         >+</button>
+        <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
+        {/* Ripple edit toggle */}
+        <button
+          onClick={() => setRippleEdit(r => !r)}
+          title={rippleEdit ? 'Ripple Edit: ON — moving a clip shifts all clips to its right' : 'Ripple Edit: OFF — click to enable'}
+          style={{
+            ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
+            border: `1px solid ${rippleEdit ? '#f59e0b' : 'var(--border)'}`,
+            background: rippleEdit ? 'rgba(245,158,11,0.18)' : 'transparent',
+            color: rippleEdit ? '#f59e0b' : 'var(--text-muted)',
+            letterSpacing: '0.04em',
+          }}
+        >RIPPLE</button>
         <div style={{ flex: 1 }} />
         {audioMode !== 'podcast' && (
           <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
@@ -606,6 +621,7 @@ export default function ArrangementView() {
               return next
             })}
             onGroupTracks={handleGroupTracks}
+            rippleEdit={rippleEdit}
           />
         ))}
 

@@ -38,6 +38,7 @@ export default function Transport() {
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
+  const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
 
   // Inject pulse keyframe for recording indicator (once per page)
   useEffect(() => {
@@ -500,6 +501,35 @@ export default function Transport() {
         <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', minWidth: 26, textAlign: 'right' }}>
           {Math.round((project.swing ?? 0) * 100)}%
         </span>
+      </div>
+
+      <div style={divider} />
+
+      {/* Varispeed (tape mode) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em' }}>SPEED</span>
+        <input
+          type="range" min={25} max={200} step={1}
+          value={varispeed}
+          onChange={e => {
+            const pct = parseInt(e.target.value)
+            setVarispeed(pct)
+            engine.setPlaybackRate(pct / 100)
+          }}
+          className="cf-slider"
+          style={{ width: 56, accentColor: varispeed !== 100 ? '#f59e0b' : 'var(--accent)' }}
+          title={`Varispeed: ${varispeed}% — tape mode (pitch follows speed). Drag to adjust.`}
+        />
+        <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', fontFamily: 'monospace', minWidth: 30, textAlign: 'right' }}>
+          {varispeed}%
+        </span>
+        {varispeed !== 100 && (
+          <button
+            onClick={() => { setVarispeed(100); engine.setPlaybackRate(1.0) }}
+            style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', letterSpacing: '0.05em', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b' }}
+            title="Reset speed to 100%"
+          >100%</button>
+        )}
       </div>
 
       <div style={divider} />

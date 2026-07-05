@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>100Lights — Early Access Pricing Strategy</title>
+<style>
+:root {
+  --bg:       #fafaf8;
+  --surface:  #ffffff;
+  --border:   #e4e2db;
+  --text:     #1c1c1e;
+  --muted:    #737270;
+  --navy:     #1e3a5f;
+  --navy-dim: #eef2f7;
+  --green:    #166534;
+  --green-bg: #f0fdf4;
+  --amber:    #92400e;
+  --amber-bg: #fffbeb;
+  --rule:     #d4d2cb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:       #111113;
+    --surface:  #1a1a1e;
+    --border:   #2a2a30;
+    --text:     #e8e6e1;
+    --muted:    #888580;
+    --navy:     #93b4d8;
+    --navy-dim: #1a2330;
+    --green:    #4ade80;
+    --green-bg: #0d2016;
+    --amber:    #fbbf24;
+    --amber-bg: #1c1500;
+    --rule:     #2e2e34;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:       #111113;
+  --surface:  #1a1a1e;
+  --border:   #2a2a30;
+  --text:     #e8e6e1;
+  --muted:    #888580;
+  --navy:     #93b4d8;
+  --navy-dim: #1a2330;
+  --green:    #4ade80;
+  --green-bg: #0d2016;
+  --amber:    #fbbf24;
+  --amber-bg: #1c1500;
+  --rule:     #2e2e34;
+}
+:root[data-theme="light"] {
+  --bg:       #fafaf8;
+  --surface:  #ffffff;
+  --border:   #e4e2db;
+  --text:     #1c1c1e;
+  --muted:    #737270;
+  --navy:     #1e3a5f;
+  --navy-dim: #eef2f7;
+  --green:    #166534;
+  --green-bg: #f0fdf4;
+  --amber:    #92400e;
+  --amber-bg: #fffbeb;
+  --rule:     #d4d2cb;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 15px;
+  line-height: 1.7;
+  padding: 60px 24px 80px;
+}
+
+.doc {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+/* ── Document header ── */
+.doc-header {
+  margin-bottom: 48px;
+  padding-bottom: 24px;
+  border-bottom: 2px solid var(--navy);
+}
+.doc-eyebrow {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin-bottom: 10px;
+}
+.doc-title {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text);
+  text-wrap: balance;
+  margin-bottom: 8px;
+}
+.doc-meta {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+/* ── Sections ── */
+section { margin-bottom: 44px; }
+
+.section-label {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--text);
+  margin-bottom: 10px;
+  text-wrap: balance;
+}
+
+p {
+  color: var(--text);
+  margin-bottom: 14px;
+}
+p:last-child { margin-bottom: 0; }
+
+/* ── Pricing table ── */
+.pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  margin: 20px 0;
+}
+.pricing-table thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 12px 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.pricing-table thead th:last-child { text-align: right; }
+.pricing-table tbody td {
+  padding: 11px 12px 11px 0;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.pricing-table tbody tr:last-child td { border-bottom: none; }
+.pricing-table tbody td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.tier-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.tier-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+.badge-navy { background: var(--navy-dim); color: var(--navy); }
+.badge-green { background: var(--green-bg); color: var(--green); }
+
+/* ── Milestone table ── */
+.milestone-list {
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.milestone {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  align-items: start;
+}
+.milestone:last-child { border-bottom: none; }
+.milestone-trigger {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--navy);
+  font-size: 13px;
+  padding-top: 1px;
+}
+.milestone-action { color: var(--text); line-height: 1.5; }
+.milestone-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* ── Callout boxes ── */
+.callout {
+  border-radius: 6px;
+  padding: 16px 18px;
+  margin: 20px 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.callout-green {
+  background: var(--green-bg);
+  border-left: 3px solid var(--green);
+  color: var(--text);
+}
+.callout-amber {
+  background: var(--amber-bg);
+  border-left: 3px solid var(--amber);
+  color: var(--text);
+}
+.callout strong { color: var(--green); }
+.callout-amber strong { color: var(--amber); }
+
+/* ── Feedback criteria list ── */
+.criteria-list {
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.criterion {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.criterion-num {
+  font-weight: 800;
+  color: var(--navy);
+  font-size: 13px;
+  padding-top: 1px;
+}
+.criterion-text { color: var(--text); line-height: 1.5; }
+.criterion-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.criterion-reward {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  white-space: nowrap;
+  text-align: right;
+  padding-top: 2px;
+}
+
+/* ── Revenue snapshot ── */
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 20px 0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+.snapshot-cell {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+.snapshot-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.snapshot-val {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.snapshot-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.col-navy { color: var(--navy); }
+.col-green { color: var(--green); }
+.col-muted { color: var(--muted); }
+
+/* ── Principles ── */
+.principles {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 16px 0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+.principle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.principle-marker {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--navy-dim);
+  color: var(--navy);
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.principle-text {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.principle-text strong { color: var(--navy); font-weight: 700; }
+
+/* ── Footer ── */
+.doc-footer {
+  margin-top: 56px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 560px) {
+  .doc-title { font-size: 24px; }
+  .snapshot-grid { grid-template-columns: 1fr 1fr; }
+  .milestone { grid-template-columns: 1fr; gap: 4px; }
+  .criterion { grid-template-columns: 28px 1fr; }
+  .criterion-reward { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- Header -->
+  <header class="doc-header">
+    <div class="doc-eyebrow">100Lights · Internal Strategy</div>
+    <div class="doc-title">Early Access Pricing &amp; Growth Plan</div>
+    <div class="doc-meta">
+      <span>Prepared July 2026</span>
+      <span>Brae Campbell, Founder</span>
+      <span>Confidential</span>
+    </div>
+  </header>
+
+  <!-- Summary -->
+  <section>
+    <div class="section-label">Overview</div>
+    <p>
+      100Lights launches with a deliberately low early-access price designed to do two things simultaneously: attract the first paying users needed to break even quickly, and create a motivated group of testers who give real feedback in exchange for real benefits. As the product matures, pricing rises for new users only — early adopters keep their rate for life.
+    </p>
+    <p>
+      This document captures the pricing structure, milestone triggers, feedback reward program, and the principles behind each decision.
+    </p>
+  </section>
+
+  <!-- Pricing tiers -->
+  <section>
+    <div class="section-label">Pricing Structure</div>
+    <table class="pricing-table">
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th style="text-align:right">Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="tier-name">Free</div>
+            <div class="tier-desc">3 transcriptions/mo · 10 AI generations · 500MB storage · 5 projects</div>
+          </td>
+          <td>$0 / mo</td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tier-name">
+              Early Access Pro <span class="badge badge-navy">Grandfathered</span>
+            </div>
+            <div class="tier-desc">
+              Per module, per month. Locked for life — survives all future price increases as long as the subscription stays active. Applies to all users who sign up before the 100-user milestone.
+            </div>
+          </td>
+          <td style="color: var(--navy)">$5 / module / mo</td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tier-name">Pro — Phase 2 <span class="badge badge-green">Post-100 users</span></div>
+            <div class="tier-desc">Same features. New users only. Framed as reflecting a more complete product, not a simple price increase.</div>
+          </td>
+          <td style="color: var(--green)">$8 / module / mo</td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tier-name">Studio Storage Add-on</div>
+            <div class="tier-desc">+50GB media storage on Cloudflare R2. Stacks with any Pro tier. Available from launch.</div>
+          </td>
+          <td>+$5 / mo</td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tier-name">Annual Billing</div>
+            <div class="tier-desc">Equivalent to ~$4.17/module/mo (early access) or ~$6.67 (Phase 2). Cash upfront reduces churn and secures runway.</div>
+          </td>
+          <td>$50 / module / yr</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-green">
+      <strong>Why $5 and not lower:</strong> Below $5/module, you attract users who are primarily price-sensitive and will resist any future increase. At $5, the product still feels accessible during beta while self-selecting for people who genuinely value it. Free users handle curiosity; paid users handle commitment.
+    </div>
+  </section>
+
+  <!-- Break-even -->
+  <section>
+    <div class="section-label">Break-Even &amp; Revenue</div>
+    <p>Fixed monthly costs (Vercel, Neon, services) run ~$49/month. Variable cost per pro user is approximately $2.21 in realistic usage. Stripe takes 2.9% + $0.30 per payment.</p>
+
+    <div class="snapshot-grid">
+      <div class="snapshot-cell">
+        <div class="snapshot-label">Break-even</div>
+        <div class="snapshot-val col-navy">~21</div>
+        <div class="snapshot-sub">paying users at $5/mo</div>
+      </div>
+      <div class="snapshot-cell">
+        <div class="snapshot-label">At 50 users</div>
+        <div class="snapshot-val col-green">$139</div>
+        <div class="snapshot-sub">net monthly profit</div>
+      </div>
+      <div class="snapshot-cell">
+        <div class="snapshot-label">At 100 users</div>
+        <div class="snapshot-val col-green">$328</div>
+        <div class="snapshot-sub">before price increase</div>
+      </div>
+    </div>
+
+    <p style="font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:var(--muted)">
+      Note: break-even assumes all 21 users are paying. Feedback-reward recipients receiving free months reduce effective paying user count, so the real break-even is closer to 25–28 users accounting for ~15% of slots being comped at any given time.
+    </p>
+  </section>
+
+  <!-- Milestone triggers -->
+  <section>
+    <div class="section-label">Price Increase Milestones</div>
+    <p>
+      Prices for new users rise at specific user-count milestones. Internally, these are triggered by user count. Externally, they are communicated as reflecting a more capable, stable product — not simply demand pricing.
+    </p>
+
+    <div class="milestone-list">
+      <div class="milestone">
+        <div class="milestone-trigger">Launch → 100 users</div>
+        <div class="milestone-action">
+          Early Access pricing: $5/module/mo
+          <div class="milestone-note">Goal is beta testers and feedback, not revenue maximization. Every user who signs up here is grandfathered at $5 for life.</div>
+        </div>
+      </div>
+      <div class="milestone">
+        <div class="milestone-trigger">100 → 500 users</div>
+        <div class="milestone-action">
+          New user price rises to $8/module/mo
+          <div class="milestone-note">Message to new users: "We've shipped stems, export, mobile support, and the product is substantially more complete." Early users keep $5 permanently.</div>
+        </div>
+      </div>
+      <div class="milestone">
+        <div class="milestone-trigger">500 → 2,000 users</div>
+        <div class="milestone-action">
+          New user price rises to $12/module/mo (evaluate based on feature set at the time)
+          <div class="milestone-note">By this point the product should be shipping near-daily and the price should feel self-evident. Offer annual billing prominently to lock in users at the current rate.</div>
+        </div>
+      </div>
+      <div class="milestone">
+        <div class="milestone-trigger">2,000+ users</div>
+        <div class="milestone-action">
+          Full market pricing — evaluate quarterly
+          <div class="milestone-note">Comparables: Ableton (one-time $400), Descript ($24/mo), Figma ($12/mo). At this scale, $15–20/module/mo is defensible for a full DAW.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-amber">
+      <strong>Key rule:</strong> Never raise prices on existing subscribers without at least 90 days' notice and a clear explanation tied to product capability, not business metrics. Grandfathered users should never see a price increase — if a subscription lapses and they re-subscribe, they re-enter at the current rate.
+    </div>
+  </section>
+
+  <!-- Feedback reward program -->
+  <section>
+    <div class="section-label">Feedback Reward Program</div>
+    <p>
+      Early users who actively contribute to improving the product receive concrete rewards. Criteria are specific and verifiable — "good feedback" is never used as a subjective bar, because that creates resentment.
+    </p>
+
+    <div class="criteria-list">
+      <div class="criterion">
+        <div class="criterion-num">A</div>
+        <div>
+          <div class="criterion-text"><strong>Bug reports:</strong> Submit 3 confirmed bugs (reproducible, accepted by dev)</div>
+          <div class="criterion-note">Via GitHub Issues or a dedicated feedback form. "Accepted" means it's been reproduced and triaged — not just acknowledged.</div>
+        </div>
+        <div class="criterion-reward">1 module free for 2 months</div>
+      </div>
+      <div class="criterion">
+        <div class="criterion-num">B</div>
+        <div>
+          <div class="criterion-text"><strong>User interview:</strong> Complete a 20-minute recorded video call</div>
+          <div class="criterion-note">Questions focus on workflow, friction points, and what they wish existed. Session recorded (with consent) for async review.</div>
+        </div>
+        <div class="criterion-reward">1 module free for 3 months</div>
+      </div>
+      <div class="criterion">
+        <div class="criterion-num">C</div>
+        <div>
+          <div class="criterion-text"><strong>Refer a paying user:</strong> Someone they referred signs up and pays for 2 months</div>
+          <div class="criterion-note">Tracked via referral code. Both users must remain active for the reward to apply — prevents gaming.</div>
+        </div>
+        <div class="criterion-reward">1 month free per referral</div>
+      </div>
+      <div class="criterion">
+        <div class="criterion-num">D</div>
+        <div>
+          <div class="criterion-text"><strong>Beta tester designation:</strong> Qualify via A + B above, opt in to pre-release builds</div>
+          <div class="criterion-note">Gets early access to new modules and features before public release. No extra cost. This is the highest-value reward — costs nothing, creates evangelists.</div>
+        </div>
+        <div class="criterion-reward">Early access + recognition</div>
+      </div>
+    </div>
+
+    <div class="callout callout-green">
+      <strong>Why this works:</strong> Free months are time-limited and cost you very little (COGS per free user ≈ $0.18/mo). Beta access costs nothing and turns your most engaged users into advocates. Referrals reduce your customer acquisition cost to zero for that cohort.
+    </div>
+  </section>
+
+  <!-- Annual billing -->
+  <section>
+    <div class="section-label">Annual Billing</div>
+    <p>
+      Offer annual billing from day one alongside monthly. Early access annual rate: $50/module/year (equivalent to $4.17/mo — a ~17% discount). This should be presented as the default option on the pricing page.
+    </p>
+
+    <div class="principles">
+      <div class="principle">
+        <div class="principle-marker">1</div>
+        <div class="principle-text"><strong>Cash upfront:</strong> Annual payers give you 12 months of revenue on day one — critical for covering fixed costs during the growth phase.</div>
+      </div>
+      <div class="principle">
+        <div class="principle-marker">2</div>
+        <div class="principle-text"><strong>Dramatically lower churn:</strong> Monthly subscribers cancel during slow periods; annual subscribers forget they're subscribed and keep renewing. Expect 3–4× better retention on annual plans.</div>
+      </div>
+      <div class="principle">
+        <div class="principle-marker">3</div>
+        <div class="principle-text"><strong>Locks in the early-access price for a full year:</strong> Annual payers feel like they're getting a deal and securing their rate. This is a genuine benefit, not a manufactured one.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Principles -->
+  <section>
+    <div class="section-label">Guiding Principles</div>
+    <div class="principles">
+      <div class="principle">
+        <div class="principle-marker">·</div>
+        <div class="principle-text"><strong>Grandfathering is permanent and unconditional.</strong> If an early user's subscription lapses — even briefly — they re-enter at the current public price. Make this clear upfront so it isn't a surprise later.</div>
+      </div>
+      <div class="principle">
+        <div class="principle-marker">·</div>
+        <div class="principle-text"><strong>Price increases are tied to capability, not demand.</strong> Every public price increase should accompany a changelog. Users should be able to look at what shipped and feel the new price is fair, even if they personally don't benefit from the new features.</div>
+      </div>
+      <div class="principle">
+        <div class="principle-marker">·</div>
+        <div class="principle-text"><strong>Give 90 days' notice before any price change.</strong> For grandfathered users this is moot. For others, adequate notice is both respectful and strategically smart — it often triggers a wave of annual upgrades from users who want to lock in the current rate.</div>
+      </div>
+      <div class="principle">
+        <div class="principle-marker">·</div>
+        <div class="principle-text"><strong>The goal of early access is great feedback, not revenue.</strong> Revenue is a side effect. Every product decision during this phase should be filtered through: "does this help us learn what to build next?"</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="doc-footer">
+    All cost figures are estimates based on current service pricing as of July 2026: Deepgram Nova-3 at $0.0043/min, Anthropic Claude Haiku 4.5 at $0.80/$4.00 per MTok, Cloudflare R2 at $0.015/GB, Neon Scale plan at $69/mo, Vercel Pro at $20/mo. Figures should be revisited at each pricing milestone. This document is internal and not for distribution.
+  </footer>
+
+</div>
+</body>
+</html>

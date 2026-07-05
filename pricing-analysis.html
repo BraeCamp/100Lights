@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>100Lights — Cost & Pricing Analysis</title>
+<style>
+/* ── Tokens ── */
+:root {
+  --bg:         #0d1117;
+  --surface:    #161b27;
+  --surface2:   #1d2435;
+  --border:     #252e42;
+  --text:       #dce4f0;
+  --muted:      #5d6f8a;
+  --green:      #22c55e;
+  --green-dim:  #166534;
+  --amber:      #f59e0b;
+  --red:        #f87171;
+  --blue:       #60a5fa;
+  --stripe:     #635bff;
+  --font-mono:  'SF Mono', 'Cascadia Code', 'Fira Mono', ui-monospace, monospace;
+  --font-sans:  system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:        #f1f4f9;
+    --surface:   #ffffff;
+    --surface2:  #f8fafc;
+    --border:    #d8e0ed;
+    --text:      #1a2540;
+    --muted:     #7083a4;
+  }
+}
+:root[data-theme="light"] {
+  --bg:        #f1f4f9;
+  --surface:   #ffffff;
+  --surface2:  #f8fafc;
+  --border:    #d8e0ed;
+  --text:      #1a2540;
+  --muted:     #7083a4;
+}
+:root[data-theme="dark"] {
+  --bg:         #0d1117;
+  --surface:    #161b27;
+  --surface2:   #1d2435;
+  --border:     #252e42;
+  --text:       #dce4f0;
+  --muted:      #5d6f8a;
+  --green:      #22c55e;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 32px 24px 64px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* ── Header ── */
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 36px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.page-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.page-subtitle {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  margin-top: 4px;
+}
+.page-date {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* ── KPI row ── */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+.kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.kpi-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.green  { color: var(--green); }
+.amber  { color: var(--amber); }
+.red    { color: var(--red);   }
+.blue   { color: var(--blue);  }
+
+/* ── Main grid ── */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+
+/* ── Card ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+/* ── Cost breakdown table ── */
+.cost-table { width: 100%; border-collapse: collapse; }
+.cost-table th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.cost-table th:not(:first-child) { text-align: right; }
+.cost-table td {
+  padding: 10px 0 0;
+  vertical-align: top;
+}
+.cost-table td:not(:first-child) {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.cost-table tr + tr td { padding-top: 10px; }
+.cost-row-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cost-service {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.cost-note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.cost-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+.cost-bar-bg {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  min-width: 60px;
+}
+.cost-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--amber);
+  transition: width 0.3s ease;
+}
+.cost-bar-fill.green { background: var(--green); }
+.cost-bar-fill.blue  { background: var(--blue); }
+.divider-row td { padding-top: 14px; padding-bottom: 4px; border-top: 1px solid var(--border); margin-top: 4px; }
+.total-row td {
+  padding-top: 14px;
+  font-weight: 700;
+  border-top: 1px solid var(--border);
+}
+.total-row td:not(:first-child) {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.range { color: var(--muted); font-size: 11px; }
+
+/* ── Slider calculator ── */
+.slider-group { margin-bottom: 20px; }
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.slider-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.slider-val {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--blue);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--blue);
+  cursor: pointer;
+  box-shadow: 0 0 0 3px var(--bg);
+}
+input[type=range].green-range { accent-color: var(--green); }
+input[type=range].green-range::-webkit-slider-thumb { background: var(--green); }
+
+.calc-result {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-top: 16px;
+}
+.calc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.calc-row-label { color: var(--muted); }
+.calc-row-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.calc-divider { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+.calc-big {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 0 0;
+}
+.calc-big-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.calc-big-val {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Toggle ── */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.toggle-label { font-size: 13px; font-weight: 500; }
+.toggle-desc { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.toggle {
+  position: relative;
+  width: 40px; height: 22px;
+  flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle input:checked + .toggle-track { background: var(--green); }
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+}
+.toggle input:checked + .toggle-track::after { transform: translateX(18px); }
+
+/* ── Storage section ── */
+.storage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 20px;
+}
+.storage-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+}
+.storage-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.storage-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.storage-line:last-of-type { border-bottom: none; }
+.storage-line-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* ── Recommendation box ── */
+.rec-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  margin-top: 20px;
+}
+.rec-plans {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.plan-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  position: relative;
+}
+.plan-card.featured {
+  border-color: var(--green);
+  border-width: 1.5px;
+}
+.plan-badge {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--green);
+  color: #0d2010;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.plan-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.plan-price {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.plan-period { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+.plan-margin {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+.plan-margin-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.plan-features { margin-top: 10px; }
+.plan-feature {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.plan-feature::before { content: '·'; color: var(--green); font-size: 16px; line-height: 1; }
+
+/* ── Assumption footnote ── */
+.footnote {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
+
+@media (max-width: 800px) {
+  .main-grid { grid-template-columns: 1fr; }
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .rec-plans { grid-template-columns: 1fr; }
+  .storage-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <div>
+    <div class="page-title">100Lights · Internal</div>
+    <div class="page-subtitle">Cost & Pricing Analysis</div>
+  </div>
+  <div class="page-date">July 2026</div>
+</header>
+
+<!-- KPI Row (filled by JS) -->
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-label">COGS / pro user</div>
+    <div class="kpi-value amber" id="kpi-cogs">$2.30</div>
+    <div class="kpi-sub">realistic usage</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Break-even price</div>
+    <div class="kpi-value blue" id="kpi-bep">$3.80</div>
+    <div class="kpi-sub">zero fixed-cost share</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">At $19/mo gross margin</div>
+    <div class="kpi-value green" id="kpi-margin">83%</div>
+    <div class="kpi-sub">after Stripe fees</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Monthly fixed costs</div>
+    <div class="kpi-value" style="color:var(--muted)">~$49</div>
+    <div class="kpi-sub">Vercel + Neon base</div>
+  </div>
+</div>
+
+<div class="main-grid">
+
+  <!-- Left: cost table -->
+  <div class="card">
+    <div class="card-title">Per-user variable costs — Pro plan</div>
+    <table class="cost-table">
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Realistic</th>
+          <th>Max (limits hit)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Neon -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Neon PostgreSQL</span>
+              <span class="cost-note">Project JSON storage + compute. ~50MB/user avg.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill blue" style="width:4%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="blue">$0.10</td>
+          <td class="blue">$0.20</td>
+        </tr>
+        <!-- R2 -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Cloudflare R2</span>
+              <span class="cost-note">Media files at $0.015/GB. 0 egress fee. ~5GB pro avg.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill" style="width:7%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="amber">$0.08</td>
+          <td class="amber">$0.30</td>
+        </tr>
+        <!-- Deepgram -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Deepgram Nova-3</span>
+              <span class="cost-note">$0.0043/min. 30 transcriptions × ~10 min avg = 300 min.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill" style="width:56%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="amber">$1.29</td>
+          <td class="red">$3.87</td>
+        </tr>
+        <!-- Replicate -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Replicate · Demucs</span>
+              <span class="cost-note">~$0.14/separation. ~30% of pro users use stems.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill" style="width:7%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="amber">$0.15</td>
+          <td class="amber">$0.50</td>
+        </tr>
+        <!-- Anthropic -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Anthropic · Haiku 4.5</span>
+              <span class="cost-note">$0.0056/call. 100 AI generations/mo × avg usage.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill" style="width:24%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="amber">$0.56</td>
+          <td class="amber">$0.56</td>
+        </tr>
+        <!-- Vercel -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Vercel</span>
+              <span class="cost-note">$20/mo Pro amortized. Negligible per-user functions.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill blue" style="width:2%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="blue">$0.03</td>
+          <td class="blue">$0.05</td>
+        </tr>
+        <!-- Clerk -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Clerk Auth</span>
+              <span class="cost-note">Free to 10,000 MAU. $0 until you're well past launch.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill green" style="width:1%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="blue">$0.00</td>
+          <td class="blue">$0.02</td>
+        </tr>
+        <!-- Stripe -->
+        <tr>
+          <td>
+            <div class="cost-row-name">
+              <span class="cost-service">Stripe (2.9% + $0.30)</span>
+              <span class="cost-note">Applied to subscription price — not fixed.</span>
+              <div class="cost-bar-wrap">
+                <div class="cost-bar-bg"><div class="cost-bar-fill" style="width:5%"></div></div>
+              </div>
+            </div>
+          </td>
+          <td class="amber">varies</td>
+          <td class="amber">varies</td>
+        </tr>
+        <!-- Total -->
+        <tr class="total-row">
+          <td><span style="font-size:13px;font-weight:700">Total variable COGS</span></td>
+          <td class="green">$2.21</td>
+          <td class="red">$5.50</td>
+        </tr>
+        <tr>
+          <td colspan="3" style="padding-top:6px">
+            <span class="range">Realistic = typical usage patterns. Max = every user hits every daily/monthly limit.</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Right: interactive calculator -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+
+    <div class="card">
+      <div class="card-title">Margin Calculator</div>
+
+      <div class="slider-group">
+        <div class="slider-label">
+          <span class="slider-name">Subscription price</span>
+          <span class="slider-val green" id="price-val">$19</span>
+        </div>
+        <input type="range" class="green-range" id="price-slider" min="5" max="49" value="19" step="1" />
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">
+          <span class="slider-name">Active pro users</span>
+          <span class="slider-val blue" id="users-val">100</span>
+        </div>
+        <input type="range" id="users-slider" min="10" max="5000" value="100" step="10" />
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Storage as add-on</div>
+          <div class="toggle-desc">Separate 20GB bundle from core plan</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="storage-toggle" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="calc-result">
+        <div class="calc-row">
+          <span class="calc-row-label">Monthly revenue</span>
+          <span class="calc-row-val blue" id="cr-revenue">$1,900</span>
+        </div>
+        <div class="calc-row">
+          <span class="calc-row-label">− Stripe fees</span>
+          <span class="calc-row-val red" id="cr-stripe">−$85</span>
+        </div>
+        <div class="calc-row">
+          <span class="calc-row-label">− Variable COGS</span>
+          <span class="calc-row-val red" id="cr-cogs">−$221</span>
+        </div>
+        <div class="calc-row">
+          <span class="calc-row-label">− Fixed costs</span>
+          <span class="calc-row-val red">−$49</span>
+        </div>
+        <hr class="calc-divider" />
+        <div class="calc-big">
+          <span class="calc-big-label">Net monthly</span>
+          <span class="calc-big-val green" id="cr-net">$1,545</span>
+        </div>
+        <div class="calc-big" style="padding-top:2px">
+          <span class="calc-big-label">Gross margin</span>
+          <span class="calc-big-val" id="cr-margin">83%</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Storage detail -->
+<div class="storage-grid">
+  <div class="storage-card">
+    <div class="storage-card-title">Database cost breakdown (Neon)</div>
+    <div class="storage-line">
+      <span>Launch plan base ($19/mo) @ 100 users</span>
+      <span class="storage-line-val blue">$0.19/user</span>
+    </div>
+    <div class="storage-line">
+      <span>Scale plan ($69/mo) @ 1,000 users</span>
+      <span class="storage-line-val blue">$0.07/user</span>
+    </div>
+    <div class="storage-line">
+      <span>Extra storage beyond plan: $0.18/GB</span>
+      <span class="storage-line-val muted">variable</span>
+    </div>
+    <div class="storage-line">
+      <span>Compute autoscaling per request</span>
+      <span class="storage-line-val blue">~$0.04/user</span>
+    </div>
+    <div class="storage-line" style="border-top:1px solid var(--border);margin-top:4px;padding-top:8px">
+      <span style="font-weight:600">Effective @ 1,000 users</span>
+      <span class="storage-line-val green">~$0.10/user</span>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.5">
+      Project data is JSON blobs — a typical project is 200KB–2MB. 1,000 pro users storing 20 projects each ≈ 40GB total, covered by Neon's Scale plan. DB cost is mostly the plan fee, not storage.
+    </div>
+  </div>
+
+  <div class="storage-card">
+    <div class="storage-card-title">Storage bundle recommendation</div>
+    <div class="storage-line">
+      <span>R2 storage per user (5GB avg)</span>
+      <span class="storage-line-val amber">$0.075/mo</span>
+    </div>
+    <div class="storage-line">
+      <span>R2 storage per user (20GB full)</span>
+      <span class="storage-line-val amber">$0.30/mo</span>
+    </div>
+    <div class="storage-line">
+      <span>Bundle: 50GB extra at $5/mo</span>
+      <span class="storage-line-val">cost $0.75, sell $5</span>
+    </div>
+    <div class="storage-line">
+      <span>Bundle gross margin</span>
+      <span class="storage-line-val green">85%</span>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.5">
+      <strong style="color:var(--text)">Recommended:</strong> Core Pro includes 5GB. Sell a "Studio Storage" add-on at $5/mo for 50GB. This lowers the base price while keeping upsell margin healthy. R2 has zero egress — scaling storage doesn't hurt.
+    </div>
+  </div>
+</div>
+
+<!-- Pricing recommendation -->
+<div class="rec-box">
+  <div class="card-title">Pricing recommendation</div>
+  <div style="font-size:13px;color:var(--muted);margin-bottom:4px">
+    Starting points — you can always raise prices as the product matures.
+  </div>
+  <div class="rec-plans">
+
+    <div class="plan-card">
+      <div class="plan-name">Free</div>
+      <div class="plan-price">$0</div>
+      <div class="plan-period">forever</div>
+      <div class="plan-margin-label">COGS</div>
+      <div class="plan-margin amber">~$0.18</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">Per active user</div>
+      <div class="plan-features">
+        <div class="plan-feature">3 transcriptions/mo</div>
+        <div class="plan-feature">10 AI generations</div>
+        <div class="plan-feature">500MB storage</div>
+        <div class="plan-feature">5 projects</div>
+      </div>
+    </div>
+
+    <div class="plan-card featured">
+      <div class="plan-badge">Recommended start</div>
+      <div class="plan-name">Pro</div>
+      <div class="plan-price">$19</div>
+      <div class="plan-period">per month</div>
+      <div class="plan-margin-label">Gross margin</div>
+      <div class="plan-margin green">~83%</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">After Stripe fees</div>
+      <div class="plan-features">
+        <div class="plan-feature">30 transcriptions/mo</div>
+        <div class="plan-feature">100 AI generations</div>
+        <div class="plan-feature">5GB storage</div>
+        <div class="plan-feature">Unlimited projects</div>
+      </div>
+    </div>
+
+    <div class="plan-card">
+      <div class="plan-name">Studio Storage</div>
+      <div class="plan-price">+$5</div>
+      <div class="plan-period">add-on to Pro</div>
+      <div class="plan-margin-label">Gross margin</div>
+      <div class="plan-margin green">~85%</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">On the add-on alone</div>
+      <div class="plan-features">
+        <div class="plan-feature">+50GB media storage</div>
+        <div class="plan-feature">R2 at $0.015/GB cost</div>
+        <div class="plan-feature">No egress charges</div>
+        <div class="plan-feature">Stacks with Pro</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="margin-top:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">The math at launch (50 pro users)</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;font-size:12px">
+      <div>
+        <div style="color:var(--muted);margin-bottom:2px">Revenue</div>
+        <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums">$950/mo</div>
+      </div>
+      <div>
+        <div style="color:var(--muted);margin-bottom:2px">All costs (realistic)</div>
+        <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--amber);font-variant-numeric:tabular-nums">$188/mo</div>
+      </div>
+      <div>
+        <div style="color:var(--muted);margin-bottom:2px">Net (after Stripe)</div>
+        <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--green);font-variant-numeric:tabular-nums">$707/mo</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footnote">
+  <strong>Assumptions:</strong> Realistic COGS = avg user consumes ~35% of their monthly limits.
+  Deepgram Nova-3 at $0.0043/min · Replicate Demucs at $0.0023/GPU-sec · Claude Haiku 4.5 at $0.80/$4.00 per MTok in/out ·
+  Cloudflare R2 at $0.015/GB storage (zero egress) · Neon Scale plan at $69/mo ·
+  Vercel Pro at $20/mo. Fixed costs ($49/mo) not included in per-user margin calculation above.
+  Stripe fees computed as 2.9% + $0.30 per monthly subscription.
+</div>
+
+<script>
+const priceSlider = document.getElementById('price-slider')
+const usersSlider = document.getElementById('users-slider')
+const storageToggle = document.getElementById('storage-toggle')
+
+const COGS_BASE = 2.21   // realistic without storage bundle consideration
+const COGS_STORAGE = 0.075  // R2 at 5GB avg (when storage is included in plan)
+const ADDON_PRICE = 5
+const ADDON_COST  = 0.75
+const FIXED = 49
+
+function fmt(n) {
+  if (Math.abs(n) >= 1000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  return '$' + n.toFixed(0)
+}
+function fmtPct(n) { return Math.round(n) + '%' }
+
+function update() {
+  const price  = parseInt(priceSlider.value)
+  const users  = parseInt(usersSlider.value)
+  const bundle = storageToggle.checked
+
+  // When storage is part of core plan (not bundle), add storage cost to COGS
+  const cogsPerUser = bundle ? COGS_BASE : COGS_BASE + COGS_STORAGE
+  const effectivePrice = bundle ? price + ADDON_PRICE * 0.4 : price // assume 40% take add-on
+
+  const revenue    = price * users
+  const stripeFee  = revenue * 0.029 + users * 0.30
+  const totalCogs  = cogsPerUser * users
+  const net        = revenue - stripeFee - totalCogs - FIXED
+  const grossPct   = ((revenue - stripeFee - totalCogs) / revenue) * 100
+  const bep        = (cogsPerUser + 0.30) / (1 - 0.029)
+
+  document.getElementById('price-val').textContent = '$' + price
+  document.getElementById('users-val').textContent = users.toLocaleString()
+  document.getElementById('cr-revenue').textContent = fmt(revenue)
+  document.getElementById('cr-stripe').textContent = '−' + fmt(stripeFee)
+  document.getElementById('cr-cogs').textContent   = '−' + fmt(totalCogs)
+  document.getElementById('cr-net').textContent    = fmt(net)
+
+  const marginEl = document.getElementById('cr-margin')
+  marginEl.textContent = fmtPct(grossPct)
+  marginEl.className = 'calc-big-val ' + (grossPct > 75 ? 'green' : grossPct > 50 ? 'amber' : 'red')
+
+  document.getElementById('kpi-cogs').textContent   = '$' + cogsPerUser.toFixed(2)
+  document.getElementById('kpi-bep').textContent    = '$' + bep.toFixed(2)
+  document.getElementById('kpi-margin').textContent = fmtPct(grossPct)
+}
+
+priceSlider.addEventListener('input', update)
+usersSlider.addEventListener('input', update)
+storageToggle.addEventListener('change', update)
+update()
+</script>
+</body>
+</html>
