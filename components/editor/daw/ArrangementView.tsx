@@ -2,11 +2,12 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, Scissors } from 'lucide-react'
 import { useDaw, makeMidiClip } from '@/lib/daw-state'
-import { isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
-import type { ReturnTrack } from '@/lib/daw-types'
+import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
+import type { ReturnTrack, AudioClip } from '@/lib/daw-types'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
+import { detectTransients } from './ClipView'
 import dynamic from 'next/dynamic'
 
 const AudioExportModal = dynamic(() => import('./AudioExportModal'), { ssr: false })
@@ -261,6 +262,12 @@ export default function ArrangementView() {
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
   // Group track fold state: set of group track IDs that are folded
   const [showExport, setShowExport] = useState(false)
+  const [exportDefaultFormat, setExportDefaultFormat] = useState<'webm' | 'wav'>('webm')
+  const [showExportDropdown, setShowExportDropdown] = useState(false)
+  const exportDropdownRef = useRef<HTMLDivElement>(null)
+  const [arrangeTransientDialog, setArrangeTransientDialog] = useState<{
+    sensitivity: number; transients: number[]; buf: AudioBuffer; clip: AudioClip
+  } | null>(null)
   const [showPublish, setShowPublish] = useState(false)
   const [publishFeedUrl, setPublishFeedUrl] = useState<string | null>(null)
   const [publishLoading, setPublishLoading] = useState(false)
@@ -302,6 +309,60 @@ export default function ArrangementView() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [tsPopover])
+
+  useEffect(() => {
+    if (!showExportDropdown) return
+    function onDown(e: MouseEvent) {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target as Node)) {
+        setShowExportDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showExportDropdown])
+
+  async function handleSplitAtTransientsFromToolbar() {
+    if (!selectedClipId) return
+    const clip = project.arrangementClips.find(c => c.id === selectedClipId)
+    if (!clip || !isAudioClip(clip)) return
+    const ac = clip as AudioClip
+    let buf = engine.bufferCache.get(ac.id)
+    if (!buf) buf = (await engine.loadClipBuffer(ac)) ?? undefined
+    if (!buf) return
+    const sensitivity = 2.0
+    const transients = detectTransients(buf, ac.startBeat, project.tempo, sensitivity, ac.trimStart ?? 0)
+      .filter(b => b > ac.startBeat + 0.01 && b < ac.startBeat + ac.durationBeats - 0.01)
+    setArrangeTransientDialog({ sensitivity, transients, buf, clip: ac })
+  }
+
+  function applyArrangeTransientSplit() {
+    if (!arrangeTransientDialog) return
+    const { transients, buf, clip: ac } = arrangeTransientDialog
+    if (transients.length === 0) { setArrangeTransientDialog(null); return }
+    const secPerBeat = 60 / project.tempo
+    const splitBeats = [ac.startBeat, ...transients, ac.startBeat + ac.durationBeats]
+    dispatch({ type: 'REMOVE_CLIP', clipId: ac.id })
+    for (let i = 0; i < splitBeats.length - 1; i++) {
+      const s = splitBeats[i]
+      const e = splitBeats[i + 1]
+      const dur = e - s
+      const offsetSec = (s - ac.startBeat) * secPerBeat
+      const newId = crypto.randomUUID()
+      const newClip: AudioClip = {
+        ...ac,
+        id: newId,
+        startBeat: s,
+        durationBeats: dur,
+        trimStart: Math.max(0, (ac.trimStart ?? 0) + offsetSec),
+        trimEnd: Math.max(0, (ac.trimEnd ?? 0) + ((ac.startBeat + ac.durationBeats - e) * secPerBeat)),
+        name: splitBeats.length > 2 ? `${ac.name} ${i + 1}` : ac.name,
+        waveformPeaks: ac.waveformPeaks,
+      }
+      engine.bufferCache.set(newId, buf)
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+    }
+    setArrangeTransientDialog(null)
+  }
 
   function handleEditTimeSig(e: React.MouseEvent) {
     setTsDraftNum(project.timeSignatureNum)
@@ -512,6 +573,25 @@ export default function ArrangementView() {
             letterSpacing: '0.04em',
           }}
         >RIPPLE</button>
+        {/* Split at Transients toolbar button */}
+        {(() => {
+          const selClip = selectedClipId ? project.arrangementClips.find(c => c.id === selectedClipId) : null
+          const canSplit = !!(selClip && isAudioClip(selClip))
+          return (
+            <button
+              onClick={() => { if (canSplit) void handleSplitAtTransientsFromToolbar() }}
+              disabled={!canSplit}
+              title={canSplit ? 'Split at Transients' : 'Select an audio clip to split at transients'}
+              style={{
+                ...toolBtn,
+                opacity: canSplit ? 1 : 0.4,
+                cursor: canSplit ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <Scissors size={13} />
+            </button>
+          )
+        })()}
         <div style={{ flex: 1 }} />
         {audioMode !== 'podcast' && (
           <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
@@ -522,15 +602,52 @@ export default function ArrangementView() {
             letterSpacing: '0.04em',
           }}>PIANO ROLL</button>
         )}
-        <button
-          onClick={() => setShowExport(true)}
-          title="Export project audio"
-          style={{
-            ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
-            border: '1px solid var(--border)', background: 'transparent',
-            color: 'var(--text-muted)', letterSpacing: '0.04em', marginLeft: 4,
-          }}
-        >EXPORT</button>
+        {/* Export split button */}
+        <div ref={exportDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
+          <button
+            onClick={() => setShowExport(true)}
+            title="Export project audio"
+            style={{
+              ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
+              border: '1px solid var(--border)', background: 'transparent',
+              color: 'var(--text-muted)', letterSpacing: '0.04em',
+              borderRadius: '3px 0 0 3px', borderRight: 'none',
+            }}
+          >EXPORT</button>
+          <button
+            onClick={() => setShowExportDropdown(d => !d)}
+            title="Choose export format"
+            style={{
+              ...toolBtn, width: 14, padding: 0, fontSize: 9,
+              border: '1px solid var(--border)',
+              background: showExportDropdown ? 'var(--bg-card)' : 'transparent',
+              color: 'var(--text-muted)', borderRadius: '0 3px 3px 0',
+            }}
+          >▾</button>
+          {showExportDropdown && (
+            <div style={{
+              position: 'absolute', top: '100%', right: 0, marginTop: 2,
+              background: '#1e1e1e', border: '1px solid var(--border)',
+              borderRadius: 4, zIndex: 1000, minWidth: 130, overflow: 'hidden',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            }}>
+              {(['webm', 'wav'] as const).map((f, fi) => (
+                <button
+                  key={f}
+                  onClick={() => { setExportDefaultFormat(f); setShowExportDropdown(false); setShowExport(true) }}
+                  style={{
+                    display: 'block', width: '100%', padding: '6px 10px',
+                    textAlign: 'left', background: 'transparent', border: 'none',
+                    borderBottom: fi === 0 ? '1px solid var(--border)' : 'none',
+                    color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer',
+                  }}
+                >
+                  {f === 'wav' ? 'WAV (lossless)' : 'WebM/Opus'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {audioMode === 'podcast' && (
           <>
             <button
@@ -711,7 +828,68 @@ export default function ArrangementView() {
         </div>,
         document.body
       )}
-      {showExport && <AudioExportModal onClose={() => setShowExport(false)} audioMode={audioMode} podcastMeta={podcastMeta} />}
+      {showExport && <AudioExportModal onClose={() => { setShowExport(false); setExportDefaultFormat('webm') }} audioMode={audioMode} podcastMeta={podcastMeta} defaultFormat={exportDefaultFormat} />}
+      {/* Split at Transients dialog (toolbar-triggered) */}
+      {arrangeTransientDialog && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)' }}
+          onClick={e => { if (e.target === e.currentTarget) setArrangeTransientDialog(null) }}
+        >
+          <div style={{
+            background: '#1e1e1e', border: '1px solid var(--border)', borderRadius: 8,
+            padding: '20px 22px', width: 340, maxWidth: '90vw',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Split at Transients</div>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+              {arrangeTransientDialog.transients.length === 0
+                ? 'No transients detected at this sensitivity.'
+                : `Detected ${arrangeTransientDialog.transients.length} split point${arrangeTransientDialog.transients.length !== 1 ? 's' : ''}. Proceed?`}
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>Sensitivity</span>
+              <input
+                type="range" min={0.5} max={5.0} step={0.1}
+                value={arrangeTransientDialog.sensitivity}
+                onChange={e => {
+                  const sens = parseFloat(e.target.value)
+                  const { buf, clip: ac } = arrangeTransientDialog
+                  const newTransients = detectTransients(buf, ac.startBeat, project.tempo, sens, ac.trimStart ?? 0)
+                    .filter(b => b > ac.startBeat + 0.01 && b < ac.startBeat + ac.durationBeats - 0.01)
+                  setArrangeTransientDialog(d => d ? { ...d, sensitivity: sens, transients: newTransients } : null)
+                }}
+                className="cf-slider"
+                style={{ flex: 1, accentColor: 'var(--accent)' }}
+              />
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', minWidth: 28, textAlign: 'right' }}>
+                {arrangeTransientDialog.sensitivity.toFixed(1)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                disabled={arrangeTransientDialog.transients.length === 0}
+                onClick={applyArrangeTransientSplit}
+                style={{
+                  flex: 1, padding: '7px 0', borderRadius: 4, border: 'none',
+                  background: arrangeTransientDialog.transients.length === 0 ? '#333' : 'var(--accent)',
+                  color: arrangeTransientDialog.transients.length === 0 ? '#555' : '#fff',
+                  fontSize: 12, fontWeight: 600,
+                  cursor: arrangeTransientDialog.transients.length === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Proceed ({arrangeTransientDialog.transients.length} cuts)
+              </button>
+              <button
+                onClick={() => setArrangeTransientDialog(null)}
+                style={{ padding: '7px 14px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
       {showPublish && createPortal(
         <div
           style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}

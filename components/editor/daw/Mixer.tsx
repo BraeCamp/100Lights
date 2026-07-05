@@ -234,28 +234,31 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
       )}
 
       {/* EQ knobs */}
-      <div style={{ display: 'flex', gap: 2 }}>
-        <Knob
-          value={eqLo} min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="LO"
-          onChange={v => {
-            setEqLo(v)
-            if (track) engine.setMixerEq(track.id, v, eqMid, eqHi)
-          }}
-        />
-        <Knob
-          value={eqMid} min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID"
-          onChange={v => {
-            setEqMid(v)
-            if (track) engine.setMixerEq(track.id, eqLo, v, eqHi)
-          }}
-        />
-        <Knob
-          value={eqHi} min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="HI"
-          onChange={v => {
-            setEqHi(v)
-            if (track) engine.setMixerEq(track.id, eqLo, eqMid, v)
-          }}
-        />
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+        <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Mix EQ</span>
+        <div style={{ display: 'flex', gap: 2 }}>
+          <Knob
+            value={eqLo} min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="LO"
+            onChange={v => {
+              setEqLo(v)
+              if (track) engine.setMixerEq(track.id, v, eqMid, eqHi)
+            }}
+          />
+          <Knob
+            value={eqMid} min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID"
+            onChange={v => {
+              setEqMid(v)
+              if (track) engine.setMixerEq(track.id, eqLo, v, eqHi)
+            }}
+          />
+          <Knob
+            value={eqHi} min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="HI"
+            onChange={v => {
+              setEqHi(v)
+              if (track) engine.setMixerEq(track.id, eqLo, eqMid, v)
+            }}
+          />
+        </div>
       </div>
 
       {/* Pan */}

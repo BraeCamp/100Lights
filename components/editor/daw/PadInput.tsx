@@ -169,7 +169,7 @@ function StepCellPopover({
       }}
     >
       <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 9 }}>
-        Step Options
+        Step Properties
       </div>
 
       {/* Probability */}

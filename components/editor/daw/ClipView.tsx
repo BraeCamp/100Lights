@@ -15,7 +15,7 @@ function gainToDb(gain: number): string {
   return `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`
 }
 
-function detectTransients(
+export function detectTransients(
   audioBuffer: AudioBuffer,
   startBeat: number,
   tempo: number,

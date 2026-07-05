@@ -305,15 +305,92 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
 
 // ── FM 4-op panel ─────────────────────────────────────────────────────────────
 
-const ALGO_TEXT: Record<number, string> = {
-  1: 'Op1→Op2→Op3→Op4',
-  2: 'Op1→Op2, Op1→Op4, Op3→Op4',
-  3: '(Op1→Op2) + (Op3→Op4)',
-  4: 'Op1→Op2→Op3 + Op4',
-  5: 'Op1→Op2, Op1→Op3, Op1→Op4',
-  6: 'Op1→Op2→Op3→Op4 + Op1→Op4',
-  7: 'Op1→Op4, Op2→Op4, Op3→Op4',
-  8: 'Op1+Op2+Op3+Op4 (additive)',
+// Operator center positions [cx, cy] for each algorithm (viewBox 0 0 80 52, box 16×12)
+const ALGO_OP_POSITIONS: Record<number, [number, number][]> = {
+  1: [[11,26],[28,26],[45,26],[62,26]],  // series chain: all horizontal
+  2: [[11,13],[28,13],[11,40],[62,26]],  // Y-branch
+  3: [[18,13],[18,40],[54,13],[54,40]],  // twin stacks
+  4: [[11,26],[28,26],[45,26],[62,26]],  // cascade+free (carriers idx 2,3)
+  5: [[12,26],[58,10],[58,26],[58,42]],  // fan-out
+  6: [[11,30],[28,30],[45,30],[62,30]],  // series+skip
+  7: [[12,10],[12,26],[12,42],[60,26]],  // triple mod
+  8: [[11,26],[28,26],[45,26],[62,26]],  // additive
+}
+
+function AlgorithmDiagram({ algo }: { algo: number }) {
+  const def = FM_ALGORITHMS[algo as Fm4OpAlgorithm]
+  const positions = ALGO_OP_POSITIONS[algo]
+  if (!positions || !def) return null
+  const BW = 16, BH = 12, W = 80, H = 52
+  const markerId = `fm-arr-${algo}`
+
+  function boxEdgePoint(fromIdx: number, toIdx: number, isStart: boolean): [number, number] {
+    const [fx, fy] = positions[fromIdx]
+    const [tx, ty] = positions[toIdx]
+    const dx = tx - fx, dy = ty - fy
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len === 0) return [fx, fy]
+    const ux = dx / len, uy = dy / len
+    const tScale = Math.min(
+      Math.abs(ux) > 0.001 ? BW / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 0.001 ? BH / 2 / Math.abs(uy) : Infinity,
+    )
+    if (isStart) return [fx + ux * tScale, fy + uy * tScale]
+    return [tx - ux * (tScale + 2), ty - uy * (tScale + 2)]
+  }
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', flexShrink: 0 }}>
+      <defs>
+        <marker id={markerId} markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+          <polygon points="0,0 5,2.5 0,5" fill="#555" />
+        </marker>
+      </defs>
+      {/* Arrows */}
+      {def.modulators.map(({ from, to }, i) => {
+        // Skip arrow for algo 6: Op1→Op4 arcs over the top
+        if (algo === 6 && from === 0 && to === 3) {
+          const [sx, sy] = positions[from]
+          const [ex, ey] = positions[to]
+          const midX = (sx + ex) / 2
+          return (
+            <path key={i}
+              d={`M${sx},${sy - BH / 2} Q${midX},${sy - 22} ${ex},${ey - BH / 2 - 2}`}
+              stroke="#555" strokeWidth={1} fill="none"
+              markerEnd={`url(#${markerId})`}
+            />
+          )
+        }
+        const [sx, sy] = boxEdgePoint(from, to, true)
+        const [ex, ey] = boxEdgePoint(from, to, false)
+        return (
+          <line key={i} x1={sx} y1={sy} x2={ex} y2={ey}
+            stroke="#555" strokeWidth={1}
+            markerEnd={`url(#${markerId})`}
+          />
+        )
+      })}
+      {/* Operator boxes */}
+      {positions.map(([cx, cy], i) => {
+        const isCarrier = def.carriers.includes(i)
+        return (
+          <g key={i}>
+            <rect
+              x={cx - BW / 2} y={cy - BH / 2} width={BW} height={BH} rx={2}
+              fill={isCarrier ? `${C.accent}22` : C.bgCard}
+              stroke={isCarrier ? C.accent : '#555'}
+              strokeWidth={isCarrier ? 1.5 : 1}
+            />
+            <text
+              x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+              fontSize={8} fill={isCarrier ? C.accent : '#999'}
+              fontWeight={isCarrier ? 700 : 400}
+            >{i + 1}</text>
+          </g>
+        )
+      })}
+    </svg>
+  )
 }
 
 const Fm4OpPanel = memo(function Fm4OpPanel({ instrument, onSet }: {
@@ -357,8 +434,9 @@ const Fm4OpPanel = memo(function Fm4OpPanel({ instrument, onSet }: {
             <TypeBtn key={a} label={String(a)} active={p.algorithm === a} onClick={() => onSet({ algorithm: a })} />
           ))}
         </div>
-        <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>
-          {def.name} — {ALGO_TEXT[p.algorithm]}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+          <AlgorithmDiagram algo={p.algorithm} />
+          <span style={{ fontSize: 10, color: C.textMuted }}>{def.name}</span>
         </div>
         {/* Operator role indicators */}
         <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>

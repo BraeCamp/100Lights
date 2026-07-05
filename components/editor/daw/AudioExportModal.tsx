@@ -12,6 +12,7 @@ interface Props {
   onClose: () => void
   audioMode?: 'music' | 'podcast'
   podcastMeta?: PodcastMeta
+  defaultFormat?: ExportFormat
 }
 
 type ExportFormat  = 'webm' | 'wav'
@@ -57,12 +58,12 @@ async function normalizeAudioBuffer(buffer: AudioBuffer, targetLufs = -16): Prom
   return offlineCtx.startRendering()
 }
 
-export default function AudioExportModal({ onClose, audioMode, podcastMeta }: Props) {
+export default function AudioExportModal({ onClose, audioMode, podcastMeta, defaultFormat }: Props) {
   const { project, engine } = useDaw()
   const [phase, setPhase]                 = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
   const [progress, setProgress]           = useState(0)
   const [downloadUrl, setDownloadUrl]     = useState<string | null>(null)
-  const [format, setFormat]               = useState<ExportFormat>('webm')
+  const [format, setFormat]               = useState<ExportFormat>(defaultFormat ?? 'webm')
   const [normalize, setNormalize]         = useState(false)
   const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)

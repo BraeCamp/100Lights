@@ -592,193 +592,203 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       tabIndex={-1}
       onKeyDown={handleKeyDown}
     >
-      {/* ── Main toolbar ── */}
+      {/* ── Toolbar (two rows) ── */}
       <div style={{
-        height: TOOLBAR_H, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
         background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0,
       }}>
-        <button onClick={() => { setEditTarget(null); setExpandedPianoRollClipId(null) }} style={{ ...prBtn, width: 22, height: 22 }} title="Close piano roll"><X size={12} /></button>
-        <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 2, marginRight: 4 }}>{clip.name}</span>
+        {/* Row 1: EDIT */}
+        <div style={{
+          height: TOOLBAR_H, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
+        }}>
+          <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', marginRight: 2, flexShrink: 0, userSelect: 'none' }}>EDIT</span>
+          <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
+          <button onClick={() => { setEditTarget(null); setExpandedPianoRollClipId(null) }} style={{ ...prBtn, width: 22, height: 22 }} title="Close piano roll"><X size={12} /></button>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 2, marginRight: 4 }}>{clip.name}</span>
 
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        {(['draw', 'select', 'erase'] as Tool[]).map(t => (
-          <button key={t} onClick={() => setTool(t)}
-            style={{ ...prBtn, background: tool === t ? 'var(--bg-surface)' : 'transparent', color: tool === t ? 'var(--text-primary)' : 'var(--text-muted)', border: tool === t ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+          {(['draw', 'select', 'erase'] as Tool[]).map(t => (
+            <button key={t} onClick={() => setTool(t)}
+              style={{ ...prBtn, background: tool === t ? 'var(--bg-surface)' : 'transparent', color: tool === t ? 'var(--text-primary)' : 'var(--text-muted)', border: tool === t ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
+              {t.charAt(0).toUpperCase() + t.slice(1)}
+            </button>
+          ))}
 
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        {(Object.entries(QUANT_LABELS) as [string, string][]).map(([q, label]) => (
-          <button key={q} onClick={() => setQuant(Number(q) as Quant)}
-            style={{ ...prBtn, background: quant === Number(q) ? 'var(--bg-surface)' : 'transparent', color: quant === Number(q) ? 'var(--text-primary)' : 'var(--text-muted)', border: quant === Number(q) ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 5px' }}>
-            {label}
-          </button>
-        ))}
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+          {(Object.entries(QUANT_LABELS) as [string, string][]).map(([q, label]) => (
+            <button key={q} onClick={() => setQuant(Number(q) as Quant)}
+              style={{ ...prBtn, background: quant === Number(q) ? 'var(--bg-surface)' : 'transparent', color: quant === Number(q) ? 'var(--text-primary)' : 'var(--text-muted)', border: quant === Number(q) ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 5px' }}>
+              {label}
+            </button>
+          ))}
 
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        <button onClick={() => setBeatW(w => Math.min(200, w * 1.3))} style={prBtn} title="Zoom in"><ZoomIn size={12} /></button>
-        <button onClick={() => setBeatW(w => Math.max(20, w * 0.77))} style={prBtn} title="Zoom out"><ZoomOut size={12} /></button>
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+          <button onClick={() => setBeatW(w => Math.min(200, w * 1.3))} style={prBtn} title="Zoom in"><ZoomIn size={12} /></button>
+          <button onClick={() => setBeatW(w => Math.max(20, w * 0.77))} style={prBtn} title="Zoom out"><ZoomOut size={12} /></button>
 
-        {/* Scale lock */}
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        <button
-          onClick={() => setScaleLock(v => !v)}
-          title={`Lock new notes to: ${NOTE_NAMES[project.key]} ${project.scale}`}
-          style={{
-            ...prBtn, fontSize: 9, padding: '2px 6px',
-            background: scaleLock ? 'rgba(167,139,250,0.15)' : 'transparent',
-            color: scaleLock ? '#a78bfa' : 'var(--text-muted)',
-            border: scaleLock ? '1px solid rgba(167,139,250,0.4)' : '1px solid transparent',
-          }}
-        >
-          {scaleLock ? `♩ ${NOTE_NAMES[project.key]} ${project.scale}` : '♩ Scale'}
-        </button>
+          <div style={{ flex: 1 }} />
 
-        <div style={{ flex: 1 }} />
-
-        {/* Preset picker */}
-        <div style={{ position: 'relative' }} ref={presetPickerRef}>
-          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-            {clip.presetId && (
+          {/* Preset picker */}
+          <div style={{ position: 'relative' }} ref={presetPickerRef}>
+            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+              {clip.presetId && (
+                <button
+                  onClick={() => previewMiddleC(clip.presetId!)}
+                  disabled={previewing}
+                  title="Preview middle C of this preset"
+                  style={{ ...prBtn, fontSize: 10, padding: '2px 5px', border: '1px solid rgba(167,139,250,0.4)', background: previewing ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.10)', color: '#a78bfa' }}
+                >▶</button>
+              )}
               <button
-                onClick={() => previewMiddleC(clip.presetId!)}
-                disabled={previewing}
-                title="Preview middle C of this preset"
-                style={{ ...prBtn, fontSize: 10, padding: '2px 5px', border: '1px solid rgba(167,139,250,0.4)', background: previewing ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.10)', color: '#a78bfa' }}
-              >▶</button>
-            )}
-            <button
-              onClick={() => setShowPresetPicker(v => !v)}
-              style={{
-                ...prBtn, fontSize: 9, padding: '2px 8px', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                border: `1px solid ${clip.presetId ? 'rgba(167,139,250,0.5)' : 'var(--border)'}`,
-                background: clip.presetId ? 'rgba(124,58,237,0.15)' : 'transparent',
-                color: clip.presetId ? '#a78bfa' : 'var(--text-muted)',
-              }}
-              title={clip.presetId ? `Preset: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'}` : 'Assign a preset to this clip'}
-            >
-              {clip.presetId ? (presets.find(p => p.id === clip.presetId)?.name ?? 'Preset') : '+ Preset'}
-            </button>
-          </div>
+                onClick={() => setShowPresetPicker(v => !v)}
+                style={{
+                  ...prBtn, fontSize: 9, padding: '2px 8px', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  border: `1px solid ${clip.presetId ? 'rgba(167,139,250,0.5)' : 'var(--border)'}`,
+                  background: clip.presetId ? 'rgba(124,58,237,0.15)' : 'transparent',
+                  color: clip.presetId ? '#a78bfa' : 'var(--text-muted)',
+                }}
+                title={clip.presetId ? `Preset: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'}` : 'Assign a preset to this clip'}
+              >
+                {clip.presetId ? (presets.find(p => p.id === clip.presetId)?.name ?? 'Preset') : '+ Preset'}
+              </button>
+            </div>
 
-          {showPresetPicker && createPortal(
-            (() => {
-              const btn = presetPickerRef.current?.getBoundingClientRect()
-              if (!btn) return null
-              const spaceBelow = window.innerHeight - btn.bottom
-              const menuH = Math.min(presets.length * 28 + 48, 260)
-              const top = spaceBelow > menuH + 8 ? btn.bottom + 4 : btn.top - menuH - 4
-              return (
-                <div style={{
-                  position: 'fixed', top, right: window.innerWidth - btn.right,
-                  width: 220, zIndex: 9999,
-                  background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
-                  padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
-                  maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
-                }}>
-                  <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP PRESET</div>
-                  {clip.presetId && (
-                    <button onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: undefined } }); setShowPresetPicker(false) }}
-                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#666', cursor: 'pointer' }}>
-                      ✕ Remove preset
-                    </button>
-                  )}
-                  {getGroupedPresets(presets).map(({ group, presets: gp }) => (
-                    <div key={group}>
-                      <div style={{ padding: '5px 10px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
-                      {gp.map(p => (
-                        <button key={p.id}
-                          onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); setShowPresetPicker(false) }}
-                          style={{
-                            display: 'block', width: '100%', textAlign: 'left', padding: '4px 10px 4px 16px', fontSize: 10, cursor: 'pointer', border: 'none',
-                            background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
-                            color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
-                          }}>
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                  <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
-                  {!showNewPreset ? (
-                    <button onClick={() => setShowNewPreset(true)}
-                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
-                      + New Preset
-                    </button>
-                  ) : (
-                    <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
-                        style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
-                      <div style={{ fontSize: 9, color: '#666' }}>Upload soundfont (.js):</div>
-                      <input type="file" accept=".js" onChange={handleSoundfontFile}
-                        style={{ fontSize: 9, color: '#aaa', width: '100%' }} />
-                      {npSfText && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Soundfont loaded — note range auto-detected</div>}
-                      {!npSfText && (<>
-                        <div style={{ fontSize: 9, color: '#666' }}>Or: library folder name</div>
-                        <input placeholder="Folder" value={npFolder} onChange={e => setNpFolder(e.target.value)}
-                          style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
-                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                          <span style={{ fontSize: 9, color: '#666' }}>Lo</span>
-                          <input type="number" min={0} max={127} value={npLo} onChange={e => setNpLo(Number(e.target.value))}
-                            style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
-                          <span style={{ fontSize: 9, color: '#666' }}>Hi</span>
-                          <input type="number" min={0} max={127} value={npHi} onChange={e => setNpHi(Number(e.target.value))}
-                            style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
-                        </div>
-                      </>)}
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button onClick={handleCreatePreset} disabled={npLoading || !npName.trim()}
-                          style={{ flex: 1, padding: '4px 0', fontSize: 10, background: '#7c3aed', border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>
-                          {npLoading ? '…' : 'Create'}
-                        </button>
-                        <button onClick={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null) }}
-                          style={{ padding: '4px 6px', fontSize: 10, background: 'transparent', border: '1px solid #333', borderRadius: 3, color: '#666', cursor: 'pointer' }}>
-                          Cancel
-                        </button>
+            {showPresetPicker && createPortal(
+              (() => {
+                const btn = presetPickerRef.current?.getBoundingClientRect()
+                if (!btn) return null
+                const spaceBelow = window.innerHeight - btn.bottom
+                const menuH = Math.min(presets.length * 28 + 48, 260)
+                const top = spaceBelow > menuH + 8 ? btn.bottom + 4 : btn.top - menuH - 4
+                return (
+                  <div style={{
+                    position: 'fixed', top, right: window.innerWidth - btn.right,
+                    width: 220, zIndex: 9999,
+                    background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+                    padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
+                    maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
+                  }}>
+                    <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP PRESET</div>
+                    {clip.presetId && (
+                      <button onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: undefined } }); setShowPresetPicker(false) }}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#666', cursor: 'pointer' }}>
+                        ✕ Remove preset
+                      </button>
+                    )}
+                    {getGroupedPresets(presets).map(({ group, presets: gp }) => (
+                      <div key={group}>
+                        <div style={{ padding: '5px 10px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
+                        {gp.map(p => (
+                          <button key={p.id}
+                            onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); setShowPresetPicker(false) }}
+                            style={{
+                              display: 'block', width: '100%', textAlign: 'left', padding: '4px 10px 4px 16px', fontSize: 10, cursor: 'pointer', border: 'none',
+                              background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
+                              color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
+                            }}>
+                            {p.name}
+                          </button>
+                        ))}
                       </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })(),
-            document.body
-          )}
+                    ))}
+                    <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
+                    {!showNewPreset ? (
+                      <button onClick={() => setShowNewPreset(true)}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
+                        + New Preset
+                      </button>
+                    ) : (
+                      <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
+                          style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
+                        <div style={{ fontSize: 9, color: '#666' }}>Upload soundfont (.js):</div>
+                        <input type="file" accept=".js" onChange={handleSoundfontFile}
+                          style={{ fontSize: 9, color: '#aaa', width: '100%' }} />
+                        {npSfText && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Soundfont loaded — note range auto-detected</div>}
+                        {!npSfText && (<>
+                          <div style={{ fontSize: 9, color: '#666' }}>Or: library folder name</div>
+                          <input placeholder="Folder" value={npFolder} onChange={e => setNpFolder(e.target.value)}
+                            style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
+                          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <span style={{ fontSize: 9, color: '#666' }}>Lo</span>
+                            <input type="number" min={0} max={127} value={npLo} onChange={e => setNpLo(Number(e.target.value))}
+                              style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                            <span style={{ fontSize: 9, color: '#666' }}>Hi</span>
+                            <input type="number" min={0} max={127} value={npHi} onChange={e => setNpHi(Number(e.target.value))}
+                              style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                          </div>
+                        </>)}
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={handleCreatePreset} disabled={npLoading || !npName.trim()}
+                            style={{ flex: 1, padding: '4px 0', fontSize: 10, background: '#7c3aed', border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>
+                            {npLoading ? '…' : 'Create'}
+                          </button>
+                          <button onClick={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null) }}
+                            style={{ padding: '4px 6px', fontSize: 10, background: 'transparent', border: '1px solid #333', borderRadius: 3, color: '#666', cursor: 'pointer' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })(),
+              document.body
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* ── Chord palette row ── */}
-      <div style={{
-        height: CHORD_ROW_H, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
-        background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0,
-        overflowX: 'auto',
-      }}>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em', flexShrink: 0, marginRight: 2 }}>CHORD</span>
-        <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, marginRight: 2 }} />
-        {Object.keys(CHORD_INTERVALS).map(chord => (
-          <button
-            key={chord}
-            onClick={() => setChordType(chordType === chord ? null : chord)}
-            style={{
-              ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
-              background: chordType === chord ? 'rgba(61,143,239,0.18)' : 'transparent',
-              color: chordType === chord ? '#3d8fef' : 'var(--text-muted)',
-              border: chordType === chord ? '1px solid rgba(61,143,239,0.45)' : '1px solid transparent',
-            }}
-          >
-            {chord}
-          </button>
-        ))}
-        {chordType && (
-          <>
-            <div style={{ flex: 1 }} />
+        {/* Row 2: MUSICAL — only visible in draw mode */}
+        {tool === 'draw' && (
+          <div style={{
+            height: CHORD_ROW_H, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
+            borderTop: '1px solid var(--border)', overflowX: 'auto',
+          }}>
+            <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', marginRight: 2, flexShrink: 0, userSelect: 'none' }}>MUSICAL</span>
+            <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, marginRight: 2 }} />
+
+            {/* Scale lock */}
             <button
-              onClick={() => setChordType(null)}
-              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', color: '#555', flexShrink: 0 }}
+              onClick={() => setScaleLock(v => !v)}
+              title={`Lock new notes to: ${NOTE_NAMES[project.key]} ${project.scale}`}
+              style={{
+                ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
+                background: scaleLock ? 'rgba(167,139,250,0.15)' : 'transparent',
+                color: scaleLock ? '#a78bfa' : 'var(--text-muted)',
+                border: scaleLock ? '1px solid rgba(167,139,250,0.4)' : '1px solid transparent',
+              }}
             >
-              Clear
+              {scaleLock ? `♩ ${NOTE_NAMES[project.key]} ${project.scale}` : '♩ Scale'}
             </button>
-          </>
+
+            <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
+
+            {/* Chord stamp buttons */}
+            {Object.keys(CHORD_INTERVALS).map(chord => (
+              <button
+                key={chord}
+                onClick={() => setChordType(chordType === chord ? null : chord)}
+                style={{
+                  ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
+                  background: chordType === chord ? 'rgba(61,143,239,0.18)' : 'transparent',
+                  color: chordType === chord ? '#3d8fef' : 'var(--text-muted)',
+                  border: chordType === chord ? '1px solid rgba(61,143,239,0.45)' : '1px solid transparent',
+                }}
+              >
+                {chord}
+              </button>
+            ))}
+            {chordType && (
+              <>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => setChordType(null)}
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', color: '#555', flexShrink: 0 }}
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
 

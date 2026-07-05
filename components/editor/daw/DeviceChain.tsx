@@ -249,14 +249,14 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
 
   return (
     <>
-      {/* XY Pad: X = room size (preDelay), Y = brightness/decay */}
+      {/* XY Pad: X = pre-delay, Y = decay */}
       <div
         ref={padRef}
         style={{
           position: 'relative', width: '100%', height: 68,
           background: 'linear-gradient(to top right, #0d1520, #1a1030)',
           border: '1px solid var(--border)', borderRadius: 3,
-          cursor: 'crosshair', marginBottom: 6, userSelect: 'none', overflow: 'hidden',
+          cursor: 'crosshair', marginBottom: 2, userSelect: 'none', overflow: 'hidden',
         }}
         onPointerDown={e => {
           e.stopPropagation()
@@ -265,8 +265,8 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
         }}
         onPointerMove={e => { if (e.buttons === 0) return; e.stopPropagation(); applyPosition(e.clientX, e.clientY) }}
       >
-        <span style={{ position: 'absolute', bottom: 2, left: 4, fontSize: 8, color: 'rgba(255,255,255,0.28)', pointerEvents: 'none' }}>Room →</span>
-        <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 8, color: 'rgba(255,255,255,0.28)', pointerEvents: 'none' }}>Bright</span>
+        <span style={{ position: 'absolute', bottom: 2, left: 4, fontSize: 8, color: 'rgba(255,255,255,0.28)', pointerEvents: 'none' }}>Pre-delay →</span>
+        <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 8, color: 'rgba(255,255,255,0.28)', pointerEvents: 'none' }}>Decay ↑</span>
         <div style={{
           position: 'absolute',
           left: `calc(${dotX}% - 5px)`, top: `calc(${dotY}% - 5px)`,
@@ -275,14 +275,17 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
           pointerEvents: 'none',
         }} />
       </div>
+      {/* Numeric readouts for XY axes */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: 8, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+          Pre: {Math.round(p.preDelay * 1000)}ms
+        </span>
+        <span style={{ fontSize: 8, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+          Decay: {p.decay.toFixed(1)}s
+        </span>
+      </div>
       <CtrlRow label="Wet">
         <RangeCtrl value={p.wet} min={0} max={1} step={0.01} onChange={v => up({ wet: v })} />
-      </CtrlRow>
-      <CtrlRow label="Decay">
-        <RangeCtrl value={p.decay} min={0.1} max={10} step={0.1} onChange={v => up({ decay: v })} />
-      </CtrlRow>
-      <CtrlRow label="Pre-delay">
-        <RangeCtrl value={p.preDelay} min={0} max={0.5} step={0.001} onChange={v => up({ preDelay: v })} />
       </CtrlRow>
     </>
   )
@@ -656,13 +659,20 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         padding: '5px 6px 4px',
         borderBottom: '1px solid var(--border)',
       }}>
-        <span style={{
-          color: 'var(--text-primary)', fontSize: 11, fontWeight: 600,
-          letterSpacing: '0.02em', flex: 1, overflow: 'hidden',
-          textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          {EFFECT_LABELS[effect.type]}
-        </span>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <span style={{
+            color: 'var(--text-primary)', fontSize: 11, fontWeight: 600,
+            letterSpacing: '0.02em', display: 'block',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {EFFECT_LABELS[effect.type]}
+          </span>
+          {effect.type === 'eq3' && (
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              Precision EQ — insert on device chain
+            </span>
+          )}
+        </div>
         {/* Bypass LED */}
         <button
           title={enabled ? 'Bypass' : 'Enable'}
@@ -709,7 +719,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         {effect.type === 'chorus'         && <ChorusControls          effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'transientshaper' && <TransientShaperControls effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'multibandcomp'  && <MultibandCompControls   effect={effect} trackId={trackId} returnId={returnId} />}
-        {/* Auto-gain bypass */}
+        {/* Honest bypass */}
         <div style={{ borderTop: '1px solid var(--border)', marginTop: 6, paddingTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
           <input
             type="checkbox"
@@ -718,14 +728,14 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
             onChange={e => { e.stopPropagation(); setAutoGain(e.target.checked) }}
             onClick={e => e.stopPropagation()}
             style={{ accentColor: 'var(--accent)', cursor: 'pointer', margin: 0 }}
-            title="Level-match bypass for honest A/B comparison"
+            title="Matches output level to input when bypassed, for fair A/B comparison"
           />
           <label
             htmlFor={`ag-${effect.id}`}
             style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}
-            title="Level-match bypass for honest A/B comparison"
+            title="Matches output level to input when bypassed, for fair A/B comparison"
           >
-            Auto-gain
+            Honest bypass
           </label>
         </div>
       </div>
