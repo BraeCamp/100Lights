@@ -217,6 +217,12 @@ function openProjectWindow(url: string): void {
 }
 
 async function createLauncherWindow(): Promise<void> {
+  // Grant mic + camera permission to the app — required for getUserMedia in the renderer.
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    const allowed = ['media', 'microphone', 'camera', 'audioCapture', 'desktopCapture']
+    callback(allowed.includes(permission))
+  })
+
   // Patch COOP/COEP headers so SharedArrayBuffer (used by FFmpeg.wasm) works
   // in Electron. The production server sets these; this ensures they're present
   // in dev and as a safety net.

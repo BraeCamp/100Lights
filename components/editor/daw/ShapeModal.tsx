@@ -131,6 +131,7 @@ export default function ShapeModal({
   const [recording, setRecording] = useState(false)
   const [status,   setStatus]   = useState<'idle' | 'processing' | 'ready' | 'error'>('idle')
   const [level,    setLevel]    = useState(0)
+  const [errMsg,   setErrMsg]   = useState('')
   const waveRef  = useRef<HTMLCanvasElement>(null)
   const envRef   = useRef<HTMLCanvasElement>(null)
   const recRef   = useRef<MediaRecorder | null>(null)
@@ -202,7 +203,13 @@ export default function ShapeModal({
       recorder.start()
       recRef.current = recorder
       setRecording(true)
-    } catch { setStatus('error') }
+    } catch (err) {
+      const msg = err instanceof DOMException && err.name === 'NotAllowedError'
+        ? 'Microphone permission denied — allow access in your browser or system settings'
+        : err instanceof Error ? err.message : 'Microphone access failed'
+      setStatus('error')
+      setErrMsg(msg)
+    }
   }
 
   function stopRec() { recRef.current?.stop(); recRef.current = null }
@@ -267,7 +274,7 @@ export default function ShapeModal({
           )}
 
           {status === 'processing' && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Processing…</span>}
-          {status === 'error'      && <span style={{ fontSize: 10, color: '#ef4444' }}>Could not decode audio</span>}
+          {status === 'error'      && <span style={{ fontSize: 10, color: '#ef4444' }}>{errMsg || 'Could not decode audio'}</span>}
         </div>
 
         {/* Visualisations */}
