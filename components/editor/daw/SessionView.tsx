@@ -280,6 +280,22 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current) }
   }, [displayState, engine, track.id])
 
+  // Save recorded blob to this session slot when recording completes
+  useEffect(() => {
+    if (!isRecordingHere) return
+    function onDone(e: Event) {
+      const { blob, durationBeats } = (e as CustomEvent<{ blob: Blob; startBeat: number; durationBeats: number }>).detail
+      if (blob && blob.size > 0) {
+        const audioUrl = URL.createObjectURL(blob)
+        const clip = makeAudioClip(track.id, 'Recording', 0, durationBeats, { audioUrl })
+        dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip })
+      }
+      setSlotRecording(null)
+    }
+    engine.addEventListener('recording-complete', onDone)
+    return () => engine.removeEventListener('recording-complete', onDone)
+  }, [engine, isRecordingHere, track.id, sceneIndex, dispatch, setSlotRecording])
+
   // ── Blink for queued state ──────────────────────────────────────────────────
   const [blink, setBlink] = useState(true)
   useEffect(() => {
@@ -365,13 +381,22 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
     if (trackHasPlaying) engine.stopSessionTrack(track.id)
   }
 
-  function handleStartRecord(bars: number) {
+  async function handleStartRecord(bars: number) {
     setSlotRecording({ trackId: track.id, sceneIndex, bars })
-    void engine.startRecording()
+    try {
+      if (track.armed) {
+        await engine.startMicInput(track.id, track.inputSource ?? 'mic')
+      }
+      void engine.startRecording()
+    } catch (err) {
+      console.error('Recording failed to start:', err)
+      setSlotRecording(null)
+    }
   }
 
+  // Don't clear slotRecording here — let the recording-complete handler do it
+  // so the clip listener is still registered when the blob arrives.
   function handleStopRecord() {
-    setSlotRecording(null)
     void engine.stopRecording()
   }
 
@@ -862,12 +887,16 @@ export default function SessionView() {
     setSessionRecording(false)
   }
 
-  function handleSessionRecord() {
+  async function handleSessionRecord() {
     if (!project.tracks.some(t => t.armed)) return
     if (sessionRecording) {
       void engine.stopRecording()
       setSessionRecording(false)
     } else {
+      const armedTracks = project.tracks.filter(t => t.armed)
+      if (armedTracks.length > 0) {
+        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+      }
       void engine.startRecording()
       setSessionRecording(true)
     }

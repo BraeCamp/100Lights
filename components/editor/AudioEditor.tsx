@@ -284,10 +284,10 @@ export default function AudioEditor(props: AudioEditorProps) {
         // Tracks sharing the same source reuse one MediaStream (avoid double permission prompt).
         ;(async () => {
           const armed = projectRef.current.tracks.filter(
-            t => t.type === 'audio' && t.armed && t.inputSource
+            t => t.type === 'audio' && t.armed
           )
           for (const track of armed) {
-            const src = track.inputSource as AudioInputSource
+            const src = (track.inputSource ?? 'mic') as AudioInputSource
             try {
               let stream = inputStreamsRef.current.get(src)
               if (!stream) {

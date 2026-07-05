@@ -100,9 +100,9 @@ export default function Transport() {
       if (playing) engine.stop()
       engine.stopRecording()
     } else {
-      const armedTracks = project.tracks.filter(t => t.armed && t.inputSource)
+      const armedTracks = project.tracks.filter(t => t.armed)
       if (armedTracks.length > 0) {
-        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource!)))
+        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
       }
       if (!playing) engine.play()
       engine.startRecording()
