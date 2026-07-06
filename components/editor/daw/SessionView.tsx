@@ -388,7 +388,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
       if (track.armed) {
         await engine.startMicInput(track.id, track.inputSource ?? 'mic')
       }
-      void engine.startRecording()
+      await engine.startRecording()
       setMicError('')
     } catch (err) {
       const msg = err instanceof DOMException && err.name === 'NotAllowedError'
@@ -402,8 +402,13 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
 
   // Don't clear slotRecording here — let the recording-complete handler do it
   // so the clip listener is still registered when the blob arrives.
+  // Exception: if the engine never started (startRecording failed), clear immediately.
   function handleStopRecord() {
-    void engine.stopRecording()
+    if (engine.isRecording) {
+      void engine.stopRecording()
+    } else {
+      setSlotRecording(null)
+    }
   }
 
   // ── Derived display values ─────────────────────────────────────────────────
@@ -902,12 +907,16 @@ export default function SessionView() {
       void engine.stopRecording()
       setSessionRecording(false)
     } else {
-      const armedTracks = project.tracks.filter(t => t.armed)
-      if (armedTracks.length > 0) {
-        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+      try {
+        const armedTracks = project.tracks.filter(t => t.armed)
+        if (armedTracks.length > 0) {
+          await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+        }
+        await engine.startRecording()
+        setSessionRecording(true)
+      } catch (err) {
+        console.error('Session record failed:', err)
       }
-      void engine.startRecording()
-      setSessionRecording(true)
     }
   }
 

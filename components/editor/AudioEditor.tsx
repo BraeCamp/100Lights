@@ -295,9 +295,9 @@ export default function AudioEditor(props: AudioEditorProps) {
                 inputStreamsRef.current.set(src, stream)
               }
               const chunks: Blob[] = []
-              const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? 'audio/webm;codecs=opus' : 'audio/webm'
-              const recorder = new MediaRecorder(stream, { mimeType: mime })
+              const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+              const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
+              const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
               recorder.ondataavailable = (ev: BlobEvent) => {
                 if (ev.data.size > 0) chunks.push(ev.data)
               }

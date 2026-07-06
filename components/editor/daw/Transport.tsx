@@ -107,7 +107,7 @@ export default function Transport() {
           await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
         }
         if (!playing) engine.play()
-        engine.startRecording()
+        await engine.startRecording()
         setMicError('')
       } catch (err) {
         const msg = err instanceof DOMException && err.name === 'NotAllowedError'

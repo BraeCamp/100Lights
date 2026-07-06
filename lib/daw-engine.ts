@@ -1676,8 +1676,9 @@ export class DawEngine extends EventTarget {
     this.masterCompressor.connect(this._captureNode)
     this._recChunks    = []
     this._recStartBeat = this.currentBeat
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
-    this._mediaRecorder = new MediaRecorder(this._captureNode.stream, { mimeType: mime })
+    const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+    const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
+    this._mediaRecorder = new MediaRecorder(this._captureNode.stream, mime ? { mimeType: mime } : undefined)
     this._mediaRecorder.ondataavailable = e => { if (e.data.size > 0) this._recChunks.push(e.data) }
     this._mediaRecorder.start(100)
     this.isRecording = true
