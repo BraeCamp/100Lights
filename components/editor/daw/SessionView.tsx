@@ -219,6 +219,19 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
   const rafRef    = useRef<number | undefined>(undefined)
   const prevState = useRef<SlotDisplayState>('idle')
   const [micError, setMicError] = useState('')
+  const [micPerm, setMicPerm] = useState<'unknown' | 'granted' | 'denied'>('unknown')
+
+  // Check mic permission state when track becomes armed so the slot can explain failures
+  useEffect(() => {
+    if (!track.armed) return
+    const perm = navigator.permissions as Permissions & { query?: (d: { name: string }) => Promise<PermissionStatus> }
+    perm?.query?.({ name: 'microphone' })
+      .then(s => {
+        setMicPerm(s.state === 'denied' ? 'denied' : s.state === 'granted' ? 'granted' : 'unknown')
+        s.onchange = () => setMicPerm(s.state === 'denied' ? 'denied' : s.state === 'granted' ? 'granted' : 'unknown')
+      })
+      .catch(() => {})
+  }, [track.armed])
 
   const audioClip = clip && isAudioClip(clip) ? clip : null
   const midiClip  = clip && isMidiClip(clip)  ? clip : null
@@ -593,7 +606,9 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
                 </div>
                 {micError
                   ? <span style={{ fontSize: 8, color: '#ef4444', textAlign: 'center', maxWidth: 140 }}>{micError}</span>
-                  : <span style={{ fontSize: 8, color: 'rgba(239,68,68,0.6)' }}>bars</span>
+                  : micPerm === 'denied'
+                    ? <span style={{ fontSize: 8, color: '#f97316', textAlign: 'center', maxWidth: 140 }}>Mic blocked — check browser settings</span>
+                    : <span style={{ fontSize: 8, color: 'rgba(239,68,68,0.6)' }}>bars</span>
                 }
               </div>
             ) : hovered && trackHasPlaying ? (

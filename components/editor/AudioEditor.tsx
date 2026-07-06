@@ -55,10 +55,45 @@ const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 
 // ── Podcast Setup Panel ───────────────────────────────────────────────────────
 
+type MicPermState = 'checking' | 'granted' | 'denied' | 'prompt' | 'unavailable'
+
 function PodcastSetupPanel() {
   const { project, dispatch } = useDaw()
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
   const [openTrackId,  setOpenTrackId]  = useState<string | null>(null)
+  const [micPerm, setMicPerm] = useState<MicPermState>('checking')
+  const isElectron = typeof window !== 'undefined' && !!(window as Window & { electronAPI?: unknown }).electronAPI
+
+  // Detect permission state on mount, and watch for changes
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setMicPerm('unavailable')
+      return
+    }
+    const perm = navigator.permissions as Permissions & { query?: (d: { name: string }) => Promise<PermissionStatus> }
+    if (perm?.query) {
+      perm.query({ name: 'microphone' })
+        .then(status => {
+          setMicPerm(status.state as MicPermState)
+          status.onchange = () => setMicPerm(status.state as MicPermState)
+        })
+        .catch(() => setMicPerm('prompt'))
+    } else {
+      setMicPerm('prompt')
+    }
+  }, [])
+
+  async function requestMicAccess() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach(t => t.stop())
+      setMicPerm('granted')
+      const devs = await navigator.mediaDevices.enumerateDevices()
+      setAudioDevices(devs.filter(d => d.kind === 'audioinput'))
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotAllowedError') setMicPerm('denied')
+    }
+  }
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then(devs => {
@@ -128,7 +163,60 @@ function PodcastSetupPanel() {
           </div>
         )
       })}
-      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      {/* Mic permission diagnostic */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
+          Microphone Status
+        </div>
+
+        {micPerm === 'granted' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#4ade80' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', flexShrink: 0 }} />
+            Microphone access granted
+          </div>
+        )}
+
+        {micPerm === 'prompt' && (
+          <div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+              Microphone access hasn&apos;t been granted yet. Click below to allow it.
+            </div>
+            <button
+              onClick={requestMicAccess}
+              style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent)', background: 'rgba(61,143,239,0.15)', color: 'var(--accent-light)', cursor: 'pointer', width: '100%' }}
+            >
+              Grant Microphone Access
+            </button>
+          </div>
+        )}
+
+        {micPerm === 'denied' && (
+          <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 4, padding: '8px 10px', fontSize: 11, color: '#fca5a5', lineHeight: 1.6 }}>
+            <strong style={{ color: '#f87171' }}>Microphone blocked.</strong>
+            {isElectron ? (
+              <ol style={{ margin: '5px 0 0 14px', padding: 0 }}>
+                <li>Open <strong>System Settings → Privacy &amp; Security → Microphone</strong></li>
+                <li>Enable access for <strong>100Lights</strong></li>
+                <li>Restart the app</li>
+              </ol>
+            ) : (
+              <ol style={{ margin: '5px 0 0 14px', padding: 0 }}>
+                <li>Click the <strong>lock icon</strong> in your browser&apos;s address bar</li>
+                <li>Set <strong>Microphone</strong> to <em>Allow</em></li>
+                <li>Reload the page</li>
+              </ol>
+            )}
+          </div>
+        )}
+
+        {micPerm === 'unavailable' && (
+          <div style={{ fontSize: 11, color: '#f97316', lineHeight: 1.6 }}>
+            Your browser doesn&apos;t support microphone access. Use Chrome, Edge, or Safari.
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
           Quick Tips
         </div>
