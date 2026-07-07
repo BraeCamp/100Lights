@@ -262,21 +262,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     return () => document.removeEventListener('mousedown', onDown)
   }, [takeLaneCtx])
 
-  // Listen for recording-complete to auto-create take lanes
-  useEffect(() => {
-    function onDone(e: Event) {
-      const { blob, startBeat, durationBeats } = (e as CustomEvent).detail as { blob: Blob; startBeat: number; durationBeats: number }
-      const currentTrack = projectRef.current.tracks.find(t => t.id === track.id)
-      if (!currentTrack?.armed) return
-      const audioUrl = URL.createObjectURL(blob)
-      const clip = makeAudioClip(track.id, 'Recording', startBeat, durationBeats, { audioUrl })
-      const laneNum = projectRef.current.takeLanes.filter(l => l.trackId === track.id).length + 1
-      dispatch({ type: 'ADD_TAKE_LANE', lane: { id: crypto.randomUUID(), trackId: track.id, name: `Take ${laneNum}`, clips: [clip] } })
-      setTakesExpanded(true)
-    }
-    engine.addEventListener('recording-complete', onDone)
-    return () => engine.removeEventListener('recording-complete', onDone)
-  }, [track.id, engine, dispatch]) // eslint-disable-line
 
   function openDigitalMidi() {
     setSelectedTrackId(track.id)
