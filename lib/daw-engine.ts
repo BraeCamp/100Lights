@@ -1683,7 +1683,7 @@ export class DawEngine extends EventTarget {
     this._mediaRecorder.onerror = e => console.error('[rec] MediaRecorder error:', e)
     this._mediaRecorder.start(100)
     this.isRecording = true
-    console.debug('[rec] startRecording — beat:', this._recStartBeat, 'mime:', mime || '(default)', 'stream tracks:', this._captureNode.stream.getTracks().length)
+    console.log('[rec] startRecording — beat:', this._recStartBeat, 'mime:', mime || '(default)', 'stream tracks:', this._captureNode.stream.getTracks().length)
     this.dispatchEvent(new CustomEvent('recording', { detail: { recording: true } }))
   }
 
@@ -1696,7 +1696,7 @@ export class DawEngine extends EventTarget {
         const mime = this._mediaRecorder?.mimeType || 'audio/webm'
         const blob = new Blob(this._recChunks, { type: mime })
         const durationBeats = Math.max(0.25, endBeat - this._recStartBeat)
-        console.debug('[rec] stopRecording onstop — chunks:', this._recChunks.length, 'blobSize:', blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
+        console.log('[rec] stopRecording onstop — chunks:', this._recChunks.length, 'blobSize:', blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
         this._recChunks = []
         if (this._captureNode) {
           try { this.masterCompressor.disconnect(this._captureNode) } catch { /* ok */ }

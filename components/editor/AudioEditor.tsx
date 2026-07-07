@@ -378,7 +378,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           const armed = projectRef.current.tracks.filter(
             t => t.type === 'audio' && t.armed
           )
-          console.debug('[rec] onRecording(true) — armed audio tracks:', armed.map(t => t.name))
+          console.log('[rec] onRecording(true) — armed audio tracks:', armed.map(t => t.name))
           for (const track of armed) {
             const src = (track.inputSource ?? 'mic') as AudioInputSource
             try {
@@ -396,7 +396,7 @@ export default function AudioEditor(props: AudioEditorProps) {
               }
               recorder.start(100)
               const startBeat = engineRef.current!.currentBeat
-              console.debug('[rec] per-track recorder started for:', track.name, 'startBeat:', startBeat)
+              console.log('[rec] per-track recorder started for:', track.name, 'startBeat:', startBeat)
               inputRecsRef.current.set(track.id, {
                 recorder,
                 startBeat,
@@ -431,7 +431,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           recorder.onstop = () => {
             const mime = recorder.mimeType || 'audio/webm'
             const blob = new Blob(chunks, { type: mime })
-            console.debug('[rec] per-track onstop — trackId:', trackId, 'blobSize:', blob.size, 'chunks:', chunks.length, 'startBeat:', startBeat, 'endBeat:', endBeat)
+            console.log('[rec] per-track onstop — trackId:', trackId, 'blobSize:', blob.size, 'chunks:', chunks.length, 'startBeat:', startBeat, 'endBeat:', endBeat)
             if (blob.size > 0) {
               const url = URL.createObjectURL(blob)
               const dur = Math.max(0.25, endBeat - startBeat)
@@ -443,7 +443,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 { audioUrl: url },
               )
               dispatch({ type: 'ADD_CLIP', clip })
-              console.debug('[rec] per-track clip dispatched:', clip.id, 'at beat', startBeat)
+              console.log('[rec] per-track clip dispatched:', clip.id, 'at beat', startBeat)
             }
             pending--
             if (pending === 0) cleanup()
@@ -455,9 +455,9 @@ export default function AudioEditor(props: AudioEditorProps) {
 
     const onRecordingComplete = (e: Event) => {
       const { blob, startBeat, durationBeats } = (e as CustomEvent<{ blob: Blob; startBeat: number; durationBeats: number }>).detail
-      console.debug('[rec] onRecordingComplete — blobSize:', blob.size, 'startBeat:', startBeat, 'duration:', durationBeats)
+      console.log('[rec] onRecordingComplete — blobSize:', blob.size, 'startBeat:', startBeat, 'duration:', durationBeats)
       if (durationBeats < 0.1 || blob.size === 0) {
-        console.debug('[rec] onRecordingComplete — skipped (too short or empty blob)')
+        console.log('[rec] onRecordingComplete — skipped (too short or empty blob)')
         return
       }
       const url = URL.createObjectURL(blob)
@@ -468,11 +468,11 @@ export default function AudioEditor(props: AudioEditorProps) {
         if (sel && p.tracks.find(t => t.id === sel && t.type === 'audio')) return sel
         return p.tracks.find(t => t.type === 'audio')?.id ?? null
       })()
-      console.debug('[rec] onRecordingComplete — trackId:', trackId, 'audioTracks:', p.tracks.filter(t => t.type === 'audio').map(t => t.name))
+      console.log('[rec] onRecordingComplete — trackId:', trackId, 'audioTracks:', p.tracks.filter(t => t.type === 'audio').map(t => t.name))
       if (!trackId) return
       const clip = makeAudioClip(trackId, 'Recording', startBeat, durationBeats, { audioUrl: url })
       dispatch({ type: 'ADD_CLIP', clip })
-      console.debug('[rec] master bus clip dispatched:', clip.id, 'at beat', startBeat)
+      console.log('[rec] master bus clip dispatched:', clip.id, 'at beat', startBeat)
     }
     engine.addEventListener('transport', onTransport)
     engine.addEventListener('recording', onRecording)
