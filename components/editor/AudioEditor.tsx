@@ -456,6 +456,9 @@ export default function AudioEditor(props: AudioEditorProps) {
     const onRecordingComplete = (e: Event) => {
       const { blob, startBeat, durationBeats } = (e as CustomEvent<{ blob: Blob; startBeat: number; durationBeats: number }>).detail
       console.log('[rec] onRecordingComplete — blobSize:', blob.size, 'startBeat:', startBeat, 'duration:', durationBeats)
+      // Per-track recorders handle clip creation when tracks are armed — skip
+      // master bus here to avoid duplicates.
+      if (projectRef.current.tracks.some(t => t.type === 'audio' && t.armed)) return
       if (durationBeats < 0.1 || blob.size === 0) {
         console.log('[rec] onRecordingComplete — skipped (too short or empty blob)')
         return
