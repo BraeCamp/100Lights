@@ -99,7 +99,7 @@ export default function Transport() {
   async function handleRecord() {
     if (recording) {
       if (playing) engine.stop()
-      engine.stopRecording()
+      await engine.stopRecording()
     } else {
       try {
         const armedTracks = project.tracks.filter(t => t.armed)

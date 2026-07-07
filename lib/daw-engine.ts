@@ -1668,8 +1668,8 @@ export class DawEngine extends EventTarget {
   }
 
   async startRecording(): Promise<void> {
+    if (this._mediaRecorder || this.isRecording) return
     if (this.ctx.state === 'suspended') await this.ctx.resume()
-    if (this._mediaRecorder) await this.stopRecording()
     // Tap the master bus — captures everything the engine plays,
     // including any mic inputs already routed through track effects chains.
     this._captureNode  = this.ctx.createMediaStreamDestination()
@@ -1680,8 +1680,10 @@ export class DawEngine extends EventTarget {
     const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
     this._mediaRecorder = new MediaRecorder(this._captureNode.stream, mime ? { mimeType: mime } : undefined)
     this._mediaRecorder.ondataavailable = e => { if (e.data.size > 0) this._recChunks.push(e.data) }
+    this._mediaRecorder.onerror = e => console.error('[rec] MediaRecorder error:', e)
     this._mediaRecorder.start(100)
     this.isRecording = true
+    console.debug('[rec] startRecording — beat:', this._recStartBeat, 'mime:', mime || '(default)', 'stream tracks:', this._captureNode.stream.getTracks().length)
     this.dispatchEvent(new CustomEvent('recording', { detail: { recording: true } }))
   }
 
@@ -1693,6 +1695,8 @@ export class DawEngine extends EventTarget {
       this._mediaRecorder!.onstop = () => {
         const mime = this._mediaRecorder?.mimeType || 'audio/webm'
         const blob = new Blob(this._recChunks, { type: mime })
+        const durationBeats = Math.max(0.25, endBeat - this._recStartBeat)
+        console.debug('[rec] stopRecording onstop — chunks:', this._recChunks.length, 'blobSize:', blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
         this._recChunks = []
         if (this._captureNode) {
           try { this.masterCompressor.disconnect(this._captureNode) } catch { /* ok */ }
@@ -1703,7 +1707,7 @@ export class DawEngine extends EventTarget {
         this.isRecording = false
         this.dispatchEvent(new CustomEvent('recording', { detail: { recording: false } }))
         this.dispatchEvent(new CustomEvent('recording-complete', {
-          detail: { blob, startBeat: this._recStartBeat, durationBeats: Math.max(0.25, endBeat - this._recStartBeat) },
+          detail: { blob, startBeat: this._recStartBeat, durationBeats },
         }))
         resolve(blob)
       }

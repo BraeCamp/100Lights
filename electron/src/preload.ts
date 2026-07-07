@@ -35,6 +35,9 @@ export interface ElectronAPI {
   focusModule: (moduleKey: string) => Promise<void>
   showLauncher: () => Promise<void>
 
+  // System audio capture — returns screen source IDs for getUserMedia
+  getDesktopSources: () => Promise<Array<{ id: string; name: string }>>
+
   // App metadata
   platform: NodeJS.Platform
   appVersion: string
@@ -46,6 +49,7 @@ const electronAPI: ElectronAPI = {
   saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),
   showItemInFolder: (filePath) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  getDesktopSources: () => ipcRenderer.invoke('desktopCapturer:getSources'),
   openModule: (moduleKey) => ipcRenderer.invoke('module:open', moduleKey),
   focusModule: (moduleKey) => ipcRenderer.invoke('module:focus', moduleKey),
   showLauncher: () => ipcRenderer.invoke('launcher:show'),

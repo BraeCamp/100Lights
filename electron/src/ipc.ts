@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell, app } from 'electron'
+import { ipcMain, dialog, shell, app, desktopCapturer } from 'electron'
 import type { OpenFileOptions, SaveFileOptions } from './preload'
 
 const AUDIO_FILTER = { name: 'Audio', extensions: ['mp3', 'wav', 'aiff', 'aif', 'flac', 'm4a', 'ogg', 'opus', 'wma'] }
@@ -34,6 +34,13 @@ export function setupIpc(): void {
   // Open a URL in the default system browser
   ipcMain.handle('shell:openExternal', (_event, url: string) => {
     return shell.openExternal(url)
+  })
+
+  // System audio capture — return screen source IDs so the renderer can call
+  // getUserMedia with chromeMediaSource:'desktop' without showing a screen picker
+  ipcMain.handle('desktopCapturer:getSources', async () => {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] })
+    return sources.map(s => ({ id: s.id, name: s.name }))
   })
 
   // Synchronous app version for preload (used before async bridge is ready)

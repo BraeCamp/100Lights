@@ -51,11 +51,9 @@ export async function listAudioInputDevices(requestPermission = true): Promise<A
 /**
  * Acquire a MediaStream from the selected input source.
  *
- * 'system' — getDisplayMedia with systemAudio: 'include'. The browser shows
- *             its own sharing picker; the user must choose a tab/window/screen
- *             AND check "Share system audio" (Chrome) or "Share audio" (Edge).
- *             Video tracks are discarded immediately after acquisition.
- *             Works even when the output volume is muted.
+ * 'system' — In Electron: desktopCapturer IPC → getUserMedia with
+ *             chromeMediaSource:'desktop' — no screen picker shown.
+ *             In browsers: getDisplayMedia fallback (requires sharing dialog).
  * 'mic'    — getUserMedia with the default device.
  * other    — getUserMedia with that exact deviceId.
  *
@@ -64,6 +62,51 @@ export async function listAudioInputDevices(requestPermission = true): Promise<A
  */
 export async function captureAudioInput(source: string): Promise<MediaStream> {
   if (source === 'system') {
+    type ElectronBridge = { getDesktopSources?: () => Promise<Array<{ id: string; name: string }>> }
+    const electronAPI = (typeof window !== 'undefined' && (window as Window & { electronAPI?: ElectronBridge }).electronAPI) || null
+
+    if (electronAPI?.getDesktopSources) {
+      // Electron path: get screen source ID from main process, then capture
+      // audio directly without showing any screen picker UI.
+      const sources = await electronAPI.getDesktopSources()
+      const screen = sources[0]
+      if (!screen) throw new Error('No screen source found for audio capture.')
+
+      type DesktopConstraints = MediaTrackConstraints & { mandatory: Record<string, string | number> }
+      const audioConstraint: DesktopConstraints = {
+        mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: screen.id },
+      }
+      const videoConstraint: DesktopConstraints = {
+        mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: screen.id, maxWidth: 1, maxHeight: 1 },
+      }
+
+      // Try audio-only first (works in Electron 28+ / Chromium 116+).
+      // Fall back to requesting a 1×1 video alongside audio and dropping it.
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraint,
+          video: false,
+        })
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraint,
+          video: videoConstraint,
+        })
+        stream.getVideoTracks().forEach(t => t.stop())
+      }
+
+      if (stream.getAudioTracks().length === 0) {
+        stream.getTracks().forEach(t => t.stop())
+        throw new Error(
+          'System audio unavailable. On macOS, allow Screen & System Audio Recording in System Settings > Privacy & Security.'
+        )
+      }
+
+      return stream
+    }
+
+    // Browser fallback: getDisplayMedia (requires the screen sharing dialog)
     const constraints = {
       audio: { systemAudio: 'include' } as MediaTrackConstraints,
       video: { width: 1, height: 1 }   as MediaTrackConstraints,
