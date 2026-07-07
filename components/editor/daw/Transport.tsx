@@ -103,6 +103,16 @@ export default function Transport() {
     } else {
       try {
         const armedTracks = project.tracks.filter(t => t.armed)
+        // Warn if no tracks are armed but some have inputs assigned — recording
+        // would be silent because the mic is only routed when a track is armed.
+        if (armedTracks.length === 0) {
+          const unarmedInputTracks = project.tracks.filter(t => t.type === 'audio' && t.inputSource)
+          if (unarmedInputTracks.length > 0) {
+            setMicError(`Arm a track to record input — click REC on "${unarmedInputTracks[0].name}"`)
+            setTimeout(() => setMicError(''), 6000)
+            return
+          }
+        }
         if (armedTracks.length > 0) {
           await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
         }
