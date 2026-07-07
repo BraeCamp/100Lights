@@ -433,7 +433,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s',
           }}
         >
-          {/* Name row */}
+          {/* Name row — identity + transport controls */}
           <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 2 }}>
             {/* Group fold toggle */}
             {isGroupParent && (
@@ -470,20 +470,23 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {audioMode === 'podcast' && track.type === 'audio' && (
               <VUMeter deviceId={track.inputSource} active={track.armed} />
             )}
-          </div>
-          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } })}
-              style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>M</button>
-            <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } })}
-              style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>S</button>
-            {track.instrument.type !== 'drum' && (<>
-              {/* Arm button */}
+            {/* M / S / ● — transport controls sit at the right of the name row */}
+            <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }) }}
+              style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>M</button>
+            <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) }}
+              style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>S</button>
+            {track.instrument.type !== 'drum' && (
               <button
                 title={track.armed ? (recording ? 'Recording…' : 'Disarm track') : 'Arm for recording'}
                 onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { armed: !track.armed } }) }}
-                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0 }}>
+                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>
                 ●
               </button>
+            )}
+          </div>
+          {/* Tools row — routing + utilities */}
+          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            {track.instrument.type !== 'drum' && (<>
               {/* Input source — opens settings card */}
               <button
                 ref={inputBtnRef}
@@ -494,7 +497,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
                   background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
                   color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
-                  cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap',
+                  cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
                 }}>
                 {!track.inputSource ? (audioMode === 'podcast' ? 'MIC' : '·IN') : track.inputSource === 'system' ? 'SYS' : 'MIC'}
               </button>
@@ -516,7 +519,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
               style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
             >FX</button>
-            {/* Takes expand button — visible when take lanes exist */}
             {takeLanes.length > 0 && (
               <button
                 title={takesExpanded ? 'Hide takes' : 'Show takes'}
