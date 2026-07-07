@@ -67,13 +67,19 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
       analyser.fftSize = 512
       srcNode.connect(analyser)
       const data = new Float32Array(analyser.frequencyBinCount)
+      let smoothed = 0
 
       function tick() {
         if (!monitorRef.current) return
         analyser.getFloatTimeDomainData(data)
         let sum = 0
         for (const v of data) sum += v * v
-        setLevel(Math.min(1, Math.sqrt(sum / data.length) * 10))
+        const rms = Math.sqrt(sum / data.length)
+        // Noise gate + scale: silence below ~60 dBFS reads as 0
+        const target = rms > 0.005 ? Math.min(1, rms * 25) : 0
+        // Fast attack, slow decay (~0.4 s to fall from peak to zero)
+        smoothed = target > smoothed ? target : Math.max(0, smoothed * 0.88)
+        setLevel(smoothed)
         monitorRef.current.raf = requestAnimationFrame(tick)
       }
       const raf = requestAnimationFrame(tick)
@@ -175,7 +181,7 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
                 <div style={{
                   height: '100%', width: `${level * 100}%`,
                   background: level > 0.8 ? '#ef4444' : level > 0.5 ? '#eab308' : '#22c55e',
-                  transition: 'width 0.04s ease-out', borderRadius: 3,
+                  borderRadius: 3,
                 }} />
               </div>
             )}
