@@ -182,6 +182,9 @@ export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; 
         <Row label="">
           <Toggle on={clip.reverse} label="Reverse" onChange={v => patch({ reverse: v })} />
         </Row>
+        <Row label="">
+          <Toggle on={clip.boomerang ?? false} label="Boomerang" onChange={v => { engine.clearBoomerangCache(clip.id); patch({ boomerang: v }) }} />
+        </Row>
 
         {/* ── WARP ─────────────────────────────── */}
         <Section title="Warp" />

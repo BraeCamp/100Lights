@@ -5,7 +5,13 @@ import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
 import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
-import type { ReturnTrack, AudioClip } from '@/lib/daw-types'
+import type { ReturnTrack, AudioClip, DawClip } from '@/lib/daw-types'
+
+// Module-level clipboards — persist across renders in the same session
+interface ClipboardEntry { clips: DawClip[]; originBeat: number; buffers: [string, AudioBuffer][] }
+let _clipboard: ClipboardEntry | null = null
+let _effectClipboard: import('@/lib/daw-types').ClipEffect[] | null = null
+let _lastCopied: 'clips' | 'effects' | null = null
 import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 import { detectTransients } from './ClipView'
@@ -254,7 +260,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, onSave, isSaving, audioMode, podcastMeta, blinkIds } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -574,6 +580,264 @@ export default function ArrangementView() {
     document.addEventListener('mouseup', onUp)
   }
 
+  // ── Copy / Paste ─────────────────────────────────────────────────────────────
+
+  function handleCopyClips(ids: Set<string>) {
+    const clipsToCopy = project.arrangementClips.filter(c => ids.has(c.id))
+    if (clipsToCopy.length === 0) return
+    const originBeat = Math.min(...clipsToCopy.map(c => c.startBeat))
+    const buffers: [string, AudioBuffer][] = []
+    for (const c of clipsToCopy) {
+      const buf = engine.bufferCache.get(c.id)
+      if (buf) buffers.push([c.id, buf])
+    }
+    _clipboard = { clips: clipsToCopy, originBeat, buffers }
+    _lastCopied = 'clips'
+  }
+
+  function handlePasteClips() {
+    if (!_clipboard) return
+    const { clips, originBeat, buffers } = _clipboard
+    const pasteAt = engine.currentBeat
+    const delta = pasteAt - originBeat
+    const bufMap = new Map(buffers)
+    const newIds = new Set<string>()
+    for (const clip of clips) {
+      const newId = crypto.randomUUID()
+      const newClip: DawClip = { ...clip, id: newId, startBeat: Math.max(0, clip.startBeat + delta) }
+      if (isAudioClip(clip)) {
+        const buf = bufMap.get(clip.id)
+        if (buf) engine.bufferCache.set(newId, buf)
+      }
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+      newIds.add(newId)
+    }
+    setSelectedClipIds(newIds)
+    if (newIds.size === 1) setSelectedClipId([...newIds][0])
+  }
+
+  function handleCopyEffects(ids: Set<string>) {
+    const toCopy = (project.clipEffects ?? []).filter(e => ids.has(e.id))
+    if (toCopy.length === 0) return
+    _effectClipboard = toCopy
+    _lastCopied = 'effects'
+  }
+
+  function handlePasteEffects() {
+    if (!_effectClipboard || _effectClipboard.length === 0) return
+    const pasteAt = engine.currentBeat
+    const originBeat = Math.min(..._effectClipboard.map(e => e.startBeat))
+    const delta = pasteAt - originBeat
+    const newIds = new Set<string>()
+    for (const eff of _effectClipboard) {
+      const newEff = { ...eff, id: crypto.randomUUID(), startBeat: Math.max(0, eff.startBeat + delta) }
+      dispatch({ type: 'ADD_CLIP_EFFECT', effect: newEff })
+      newIds.add(newEff.id)
+    }
+    setSelectedEffectIds(newIds)
+    setSelectedClipIds(new Set())
+    setSelectedClipId(null)
+  }
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────────
+  // Refs for values used in the keyboard handler that change frequently — avoids
+  // re-registering the document listener on every snap/ripple change.
+  const snapRef = useRef(snap); snapRef.current = snap
+  const rippleEditRef = useRef(rippleEdit); rippleEditRef.current = rippleEdit
+  const fitToWindowRef = useRef(fitToWindow); fitToWindowRef.current = fitToWindow
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+
+      const meta = e.metaKey || e.ctrlKey
+
+      // ← → : nudge selected clips (capture phase blocks AudioEditor's seek when clips are selected)
+      if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
+        if (ids.length === 0) return  // no clips selected → let AudioEditor move playhead
+        e.preventDefault()
+        e.stopPropagation()  // prevent AudioEditor's bubble-phase seek handler
+        const dir = e.code === 'ArrowLeft' ? -1 : 1
+        const curSnap = snapRef.current
+        const sigNum = project.timeSignatureNum
+        const delta = e.shiftKey ? dir                               // Shift = 1 beat
+          : curSnap === 'bar'  ? dir * sigNum
+          : curSnap === '1/8'  ? dir * 0.5
+          : curSnap === '1/16' ? dir * 0.25
+          : dir                                                       // off / beat = 1 beat
+        for (const clipId of ids) {
+          const clip = project.arrangementClips.find(c => c.id === clipId)
+          if (!clip) continue
+          dispatch({ type: 'MOVE_CLIP', clipId, startBeat: Math.max(0, clip.startBeat + delta), trackId: clip.trackId })
+        }
+        return
+      }
+
+      // ↑ ↓ : move selected clips to prev / next track lane
+      if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
+        if (ids.length === 0) return
+        e.preventDefault()
+        const refClip = project.arrangementClips.find(c => c.id === ids[0])
+        if (!refClip) return
+        const trackIdx = project.tracks.findIndex(t => t.id === refClip.trackId)
+        const targetIdx = trackIdx + (e.code === 'ArrowUp' ? -1 : 1)
+        if (targetIdx < 0 || targetIdx >= project.tracks.length) return
+        const targetTrackId = project.tracks[targetIdx].id
+        for (const clipId of ids) {
+          const clip = project.arrangementClips.find(c => c.id === clipId)
+          if (!clip) continue
+          dispatch({ type: 'MOVE_CLIP', clipId, startBeat: clip.startBeat, trackId: targetTrackId })
+        }
+        return
+      }
+
+      if (meta && e.key === 'c') {
+        e.preventDefault()
+        if (selectedEffectIds.size > 0) {
+          handleCopyEffects(selectedEffectIds)
+        } else {
+          const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
+          handleCopyClips(ids)
+        }
+        return
+      }
+
+      if (meta && e.key === 'v') {
+        e.preventDefault()
+        if (_lastCopied === 'effects') {
+          handlePasteEffects()
+        } else {
+          handlePasteClips()
+        }
+        return
+      }
+
+      // Cmd+D = duplicate selected clips immediately after their current position
+      if (meta && e.key === 'd') {
+        e.preventDefault()
+        const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
+        const clipsToDup = project.arrangementClips.filter(c => ids.has(c.id))
+        if (clipsToDup.length === 0) return
+        const minStart = Math.min(...clipsToDup.map(c => c.startBeat))
+        const maxEnd   = Math.max(...clipsToDup.map(c => c.startBeat + c.durationBeats))
+        const span = maxEnd - minStart
+        const newIds = new Set<string>()
+        for (const clip of clipsToDup) {
+          const newId = crypto.randomUUID()
+          const newClip: DawClip = { ...clip, id: newId, startBeat: clip.startBeat + span }
+          if (isAudioClip(clip)) {
+            const buf = engine.bufferCache.get(clip.id)
+            if (buf) engine.bufferCache.set(newId, buf)
+          }
+          dispatch({ type: 'ADD_CLIP', clip: newClip })
+          newIds.add(newId)
+        }
+        setSelectedClipIds(newIds)
+        if (newIds.size === 1) setSelectedClipId([...newIds][0])
+        return
+      }
+
+      // Cmd+A = select all clips
+      if (meta && e.key === 'a') {
+        e.preventDefault()
+        setSelectedClipIds(new Set(project.arrangementClips.map(c => c.id)))
+        return
+      }
+
+      if (e.key === 'Escape') {
+        setSelectedClipIds(new Set())
+        setSelectedClipId(null)
+        setSelectedEffectIds(new Set())
+        return
+      }
+
+      if (e.key === 'Home') {
+        e.preventDefault()
+        engine.seek(0)
+        setPosition(0)
+        return
+      }
+
+      // S = splice selected clip at playhead
+      if (!meta && e.key === 's') {
+        e.preventDefault()
+        const clipId = selectedClipId ?? (selectedClipIds.size === 1 ? [...selectedClipIds][0] : null)
+        if (!clipId) return
+        const clip = project.arrangementClips.find(c => c.id === clipId)
+        if (!clip || !isAudioClip(clip) || !clip.bufferDuration) return
+        const playhead = engine.currentBeat
+        if (playhead <= clip.startBeat || playhead >= clip.startBeat + clip.durationBeats) return
+        const beatOffset = playhead - clip.startBeat
+        const bufDur = clip.bufferDuration
+        const nativeDur = bufDur - clip.trimStart - clip.trimEnd
+        const frac = beatOffset / clip.durationBeats
+        const splitSec = clip.warpEnabled
+          ? (clip.trimStart ?? 0) + frac * nativeDur
+          : (clip.trimStart ?? 0) + engine.beatsToSeconds(beatOffset)
+        const leftClip  = { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, trimEnd: Math.max(0, bufDur - splitSec) }
+        const rightClip = { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, trimStart: splitSec }
+        dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+        dispatch({ type: 'ADD_CLIP', clip: leftClip })
+        dispatch({ type: 'ADD_CLIP', clip: rightClip })
+        return
+      }
+
+      // L = toggle loop
+      if (!meta && e.key === 'l') {
+        e.preventDefault()
+        dispatch({ type: 'SET_LOOP_ENABLED', enabled: !project.loopEnabled })
+        return
+      }
+
+      // P = set loop region to span selected clips and enable loop
+      if (!meta && e.key === 'p') {
+        e.preventDefault()
+        const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
+        const clips = project.arrangementClips.filter(c => ids.has(c.id))
+        if (clips.length === 0) return
+        dispatch({ type: 'SET_LOOP', start: Math.min(...clips.map(c => c.startBeat)), end: Math.max(...clips.map(c => c.startBeat + c.durationBeats)) })
+        dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
+        return
+      }
+
+      // G = toggle ripple edit
+      if (!meta && e.key === 'g') {
+        e.preventDefault()
+        rippleEditRef.current  // read; actual toggle via setter
+        setRippleEdit(r => !r)
+        return
+      }
+
+      // F = fit arrangement to window
+      if (!meta && e.key === 'f') {
+        e.preventDefault()
+        fitToWindowRef.current()
+        return
+      }
+
+      // 1–5 = snap mode (Off / 1/16 / 1/8 / Beat / Bar)
+      if (!meta && ['1', '2', '3', '4', '5'].includes(e.key)) {
+        const modes: SnapMode[] = ['off', '1/16', '1/8', 'beat', 'bar']
+        setSnap(modes[parseInt(e.key) - 1])
+        return
+      }
+
+      // Delete / Backspace for selected effects (clips handled in AudioEditor)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEffectIds.size > 0) {
+        e.preventDefault()
+        for (const id of selectedEffectIds) dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: id })
+        setSelectedEffectIds(new Set())
+        return
+      }
+    }
+    document.addEventListener('keydown', onKey, true)  // capture: fires before AudioEditor's handlers
+    return () => document.removeEventListener('keydown', onKey, true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClipId, selectedClipIds, selectedEffectIds, project.arrangementClips, project.clipEffects, project.tracks, project.loopEnabled, project.timeSignatureNum, engine, dispatch, setSelectedClipIds, setSelectedClipId, setSelectedEffectIds, setPosition, setSnap, setRippleEdit])
+
   // Visible tracks: filter out children of folded group parents
   const visibleTracks = project.tracks.filter(track => {
     if (!track.groupId) return true
@@ -837,6 +1101,10 @@ export default function ArrangementView() {
             })}
             onGroupTracks={handleGroupTracks}
             rippleEdit={rippleEdit}
+            onCopyClips={handleCopyClips}
+            onPasteClips={handlePasteClips}
+            onCopyEffects={handleCopyEffects}
+            onPasteEffects={handlePasteEffects}
           />
         ))}
 

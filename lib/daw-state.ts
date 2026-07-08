@@ -526,6 +526,8 @@ export interface DawContextValue {
   setSelectedClipId: (id: string | null) => void
   selectedClipIds: Set<string>
   setSelectedClipIds: React.Dispatch<React.SetStateAction<Set<string>>>
+  selectedEffectIds: Set<string>
+  setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
   // Pad/voice MIDI card
   showPads: boolean
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void

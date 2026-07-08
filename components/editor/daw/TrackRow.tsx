@@ -110,6 +110,21 @@ export function snapBeat(beat: number, mode: SnapMode, beatsPerBar = 4): number 
   return beat
 }
 
+// Snap beat to nearest clip start/end edge across all tracks (within threshold beats).
+// excludeIds: clip IDs being dragged (skip to avoid self-snap).
+function snapToClipEdges(beat: number, excludeIds: Set<string>, thresholdBeats: number, clips: import('@/lib/daw-types').DawClip[]): number {
+  let nearest = beat
+  let nearestDist = thresholdBeats
+  for (const c of clips) {
+    if (excludeIds.has(c.id)) continue
+    const dStart = Math.abs(beat - c.startBeat)
+    const dEnd   = Math.abs(beat - (c.startBeat + c.durationBeats))
+    if (dStart < nearestDist) { nearest = c.startBeat; nearestDist = dStart }
+    if (dEnd   < nearestDist) { nearest = c.startBeat + c.durationBeats; nearestDist = dEnd }
+  }
+  return nearest
+}
+
 function AddAutoButton({ track }: { track: DawTrack }) {
   const { project, dispatch } = useDaw()
   const [open, setOpen]       = useState(false)
@@ -190,7 +205,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -200,8 +215,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onToggleFold?: () => void
   onGroupTracks?: () => void
   rippleEdit?: boolean
+  onCopyClips?: (ids: Set<string>) => void
+  onPasteClips?: () => void
+  onCopyEffects?: (ids: Set<string>) => void
+  onPasteEffects?: () => void
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
@@ -689,7 +708,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onFadeChange={isAudioClip(clip) ? (fadeIn, fadeOut) => {
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fadeIn, fadeOut } })
                   } : undefined}
-                  onSelect={() => { setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])) }}
+                  onSelect={() => { setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])); setSelectedEffectIds(new Set()) }}
                   onShiftSelect={() => {
                     setSelectedClipIds(prev => {
                       const next = new Set(prev)
@@ -723,10 +742,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onReplaceSample={() => setShowLibraryPicker(true)}
                   onMove={(sb, tid, alt) => {
                     if (frozen) return
+                    const CLIP_SNAP_PX = 8
+                    const clipThreshold = CLIP_SNAP_PX / beatW
                     if (selectedClipIds.has(clip.id) && selectedClipIds.size > 1) {
                       const origin = multiDragOrigins.current[clip.id] ?? clip.startBeat
                       const delta  = sb - origin
-                      const snappedNew = snapBeat(Math.max(0, origin + delta), alt ? 'off' : snap, project.timeSignatureNum)
+                      let snappedNew = alt ? Math.max(0, origin + delta) : snapBeat(Math.max(0, origin + delta), snap, project.timeSignatureNum)
+                      if (!alt) snappedNew = snapToClipEdges(snappedNew, selectedClipIds, clipThreshold, project.arrangementClips)
                       const snappedDelta = snappedNew - origin
                       for (const c of project.arrangementClips) {
                         if (!selectedClipIds.has(c.id)) continue
@@ -734,7 +756,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOrigin + snappedDelta), trackId: c.trackId })
                       }
                     } else {
-                      const snappedSb = snapBeat(sb, alt ? 'off' : snap, project.timeSignatureNum)
+                      let snappedSb = alt ? sb : snapBeat(sb, snap, project.timeSignatureNum)
+                      if (!alt) snappedSb = snapToClipEdges(snappedSb, new Set([clip.id]), clipThreshold, project.arrangementClips)
                       dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: Math.max(0, snappedSb), trackId: tid })
                       // Ripple: shift all clips on same track that originally started after this clip
                       if (rippleEdit && tid === track.id) {
@@ -753,8 +776,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   }}
                   onResize={(db, alt) => {
                     if (frozen) return
-                    const endBeat     = clip.startBeat + db
-                    const snappedEnd  = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
+                    const endBeat = clip.startBeat + db
+                    let snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
+                    if (!alt) snappedEnd = snapToClipEdges(snappedEnd, new Set([clip.id]), 8 / beatW, project.arrangementClips)
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
                     const patch: Record<string, unknown> = { durationBeats: newDurBeats }
                     if (isAudioClip(clip) && clip.bufferDuration) {
@@ -781,7 +805,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       const bufDur    = clip.bufferDuration
                       const nativeDur = bufDur - clip.trimStart - clip.trimEnd
                       const frac      = beatOffset / clip.durationBeats
-                      const splitSec  = clip.trimStart + frac * nativeDur
+                      // Warped clips stretch audio to fill durationBeats — use frac of nativeDur.
+                      // Unwarped clips play at native speed — use actual elapsed seconds.
+                      const splitSec  = clip.warpEnabled
+                        ? (clip.trimStart ?? 0) + frac * nativeDur
+                        : (clip.trimStart ?? 0) + engine.beatsToSeconds(beatOffset)
                       const leftClip  = { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, trimEnd: Math.max(0, bufDur - splitSec) }
                       const rightClip = { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, trimStart: splitSec }
                       dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
@@ -797,6 +825,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     }
                   }}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
+                  onCopy={() => onCopyClips?.(selectedClipIds.has(clip.id) ? selectedClipIds : new Set([clip.id]))}
+                  onPaste={onPasteClips}
                   onScrollBy={onScrollBy}
                 />
               )
@@ -982,6 +1012,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             beatW={beatW}
             scrollLeft={scrollLeft}
             viewWidth={viewWidth}
+            onCopyEffects={onCopyEffects}
+            onPasteEffects={onPasteEffects}
           />
         </div>
       )}

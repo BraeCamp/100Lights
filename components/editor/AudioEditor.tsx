@@ -574,6 +574,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const setSelectedReturnId = useCallback((id: string | null) => { setSelectedReturnId_(id); if (id) setSelectedTrackId_(null)  }, [])
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
+  const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -735,6 +736,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setSelectedClipId,
     selectedClipIds,
     setSelectedClipIds,
+    selectedEffectIds,
+    setSelectedEffectIds,
     playing,
     recording,
     position,
@@ -754,6 +757,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   }), [
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
+    selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
     expandedPianoRollClipId, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
   ])

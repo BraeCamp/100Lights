@@ -485,6 +485,7 @@ export interface AudioClip {
   warpMode?: 'repitch' | 'stretch'
   pitchSemitones?: number
   pitchCents?: number
+  boomerang?: boolean
   color?: string
   launchQuantization?: LaunchQuantization
   followAction?: FollowAction

@@ -88,6 +88,7 @@ export class DawEngine extends EventTarget {
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
   private pitchShiftCache      = new Map<string, AudioBuffer>()
+  private boomerangCache       = new Map<string, AudioBuffer>()
 
   private scheduledSources: ScheduledSource[] = []
   private schedulerHandle: ReturnType<typeof setInterval> | null = null
@@ -1216,6 +1217,30 @@ export class DawEngine extends EventTarget {
     let playTrimEnd       = clip.trimEnd
     let effectiveDuration = 0
     let basePlaybackRate  = 1.0
+    let boomerangActive   = false
+
+    // Boomerang (ping-pong): build [forward + reversed] buffer, cached per clip
+    if (clip.boomerang && !clip.warpEnabled && !clip.reverse) {
+      const bKey = `${clip.id}:boom`
+      let boomBuf = this.boomerangCache.get(bKey)
+      if (!boomBuf) {
+        const trimmed = extractTrimmed(buf, clip.trimStart, clip.trimEnd)
+        const nCh = trimmed.numberOfChannels
+        const fwdLen = trimmed.length
+        boomBuf = this.ctx.createBuffer(nCh, fwdLen * 2, trimmed.sampleRate)
+        for (let ch = 0; ch < nCh; ch++) {
+          const src = trimmed.getChannelData(ch)
+          const dst = boomBuf.getChannelData(ch)
+          dst.set(src, 0)
+          for (let i = 0; i < fwdLen; i++) dst[fwdLen + i] = src[fwdLen - 1 - i]
+        }
+        this.boomerangCache.set(bKey, boomBuf)
+      }
+      playBuf = boomBuf
+      playTrimStart = 0
+      playTrimEnd   = 0
+      boomerangActive = true
+    }
 
     if (clip.warpEnabled && !clip.reverse) {
       const nativeDur = buf.duration - clip.trimStart - clip.trimEnd
@@ -1250,17 +1275,18 @@ export class DawEngine extends EventTarget {
         source.start(startAt, seekOffset, effectiveDuration)
       }
     } else {
-      // Normal playback
-      source.buffer = buf
+      // Normal playback (also handles boomerang — playBuf is ping-pong buffer when active)
+      source.buffer = playBuf
+      const trimStartForSeek = boomerangActive ? 0 : clip.trimStart
       const seekOffset    = now > clip.startBeat
-        ? this.beatsToSeconds(now - clip.startBeat) + clip.trimStart
-        : clip.trimStart
-      const totalDuration = buf.duration - playTrimStart - playTrimEnd
+        ? this.beatsToSeconds(now - clip.startBeat) + trimStartForSeek
+        : trimStartForSeek
+      const totalDuration = playBuf.duration - playTrimStart - playTrimEnd
 
-      if (clip.loopEnabled && !clip.reverse) {
+      if ((clip.loopEnabled || boomerangActive) && !clip.reverse) {
         source.loop      = true
         source.loopStart = playTrimStart
-        source.loopEnd   = Math.max(playTrimStart + 0.001, buf.duration - playTrimEnd)
+        source.loopEnd   = Math.max(playTrimStart + 0.001, playBuf.duration - playTrimEnd)
         const loopLen    = source.loopEnd - source.loopStart
         const wrapped    = loopLen > 0
           ? source.loopStart + ((Math.max(0, seekOffset - source.loopStart)) % loopLen)
@@ -1271,7 +1297,7 @@ export class DawEngine extends EventTarget {
       } else if (clip.reverse) {
         basePlaybackRate = -1.0
         // Reversed playback starts from the trim-end boundary and goes backward
-        const revSeekOffset = Math.max(0, buf.duration - playTrimEnd - alreadyPlayed)
+        const revSeekOffset = Math.max(0, playBuf.duration - playTrimEnd - alreadyPlayed)
         effectiveDuration   = Math.max(0, Math.min(totalDuration, clipDuration) - alreadyPlayed)
         source.start(startAt, revSeekOffset, effectiveDuration)
       } else {
@@ -1313,12 +1339,16 @@ export class DawEngine extends EventTarget {
       this._applyPitchEffect(eff, source, effContextStart, effectiveDetune, effSeekOffsetSec)
     }
 
+    // Always ramp from 0 to clip.gain at startAt — prevents pop/static from non-zero
+    // first sample at any seekOffset.  5 ms is inaudible as a fade but eliminates the click.
+    const ANTI_CLICK_S = 0.005
     if (clip.fadeIn > 0) {
       const fs = this.beatsToSeconds(clip.fadeIn)
       fadeGain.gain.setValueAtTime(0, startAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, startAt + fs)
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, startAt + Math.max(fs, ANTI_CLICK_S))
     } else {
-      fadeGain.gain.value = clip.gain
+      fadeGain.gain.setValueAtTime(0, startAt)
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, startAt + ANTI_CLICK_S)
     }
     if (clip.fadeOut > 0 && effectiveDuration > 0) {
       const fs        = this.beatsToSeconds(clip.fadeOut)
@@ -1557,11 +1587,17 @@ export class DawEngine extends EventTarget {
   }
 
   private _killAllSources() {
+    const now      = this.ctx.currentTime
+    const stopAt   = now + 0.015  // 15 ms fade window — inaudible but click-free
     for (const { source, gainNode, tailNodes, tailOscs, tailTimerId } of this.scheduledSources) {
-      try { source.stop(); source.disconnect(); gainNode.disconnect() } catch { /* ok */ }
+      try {
+        gainNode.gain.cancelScheduledValues(now)
+        gainNode.gain.setTargetAtTime(0, now, 0.003)  // ~15 ms time constant
+        source.stop(stopAt)
+      } catch { /* ok */ }
       if (tailTimerId !== undefined) clearTimeout(tailTimerId)
       if (tailNodes) for (const n of tailNodes) { try { n.disconnect() } catch { /* ok */ } }
-      if (tailOscs)  for (const o of tailOscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
+      if (tailOscs)  for (const o of tailOscs)  { try { o.stop(stopAt); o.disconnect() } catch { /* ok */ } }
     }
     this.scheduledSources = []
   }
@@ -1583,6 +1619,14 @@ export class DawEngine extends EventTarget {
       }
     } else {
       this.pitchShiftCache.clear()
+    }
+  }
+
+  clearBoomerangCache(clipId?: string) {
+    if (clipId) {
+      this.boomerangCache.delete(`${clipId}:boom`)
+    } else {
+      this.boomerangCache.clear()
     }
   }
 

@@ -61,7 +61,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onScrollBy, waveformZoom, onFadeChange }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -78,6 +78,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onScrollBy?(delta: number): void
   waveformZoom?: number
   onFadeChange?(fadeIn: number, fadeOut: number): void
+  onCopy?(): void
+  onPaste?(): void
 }) {
   const { engine, project, dispatch } = useDaw()
   const clipDivRef = useRef<HTMLDivElement>(null)
@@ -346,6 +348,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
 
   const isMulti = multiSelected && !!onDeleteAll
   const menuItems = [
+    { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
+    ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     isMulti
       ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
       : { label: 'Delete', fn: onDelete },
@@ -550,6 +554,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         <div style={{ position: 'absolute', top: 2, left: 12, right: 12, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 5 }}>
           {clip.name}
           {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
+          {isAudioClip(clip) && clip.boomerang && <span style={{ marginLeft: 4, opacity: 0.7 }}>⇄</span>}
         </div>
 
         <div onMouseDown={onMouseDownResize} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 7 }} />

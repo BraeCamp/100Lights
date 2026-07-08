@@ -215,6 +215,8 @@ function EffectRow({
   rowIndex, trackId, beatW, scrollLeft, viewWidth,
   effects, isLast,
   expandedEffectId,
+  selectedEffectIds,
+  onSelect,
   onEditTarget, onCtxMenu, onShapeTarget, onExpand,
 }: {
   rowIndex: number
@@ -225,6 +227,8 @@ function EffectRow({
   effects: ClipEffect[]
   isLast: boolean
   expandedEffectId: string | null
+  selectedEffectIds: Set<string>
+  onSelect: (id: string, shift: boolean) => void
   onEditTarget: (t: { effect: ClipEffect; x: number; y: number }) => void
   onCtxMenu: (t: { effect: ClipEffect; x: number; y: number }) => void
   onShapeTarget: (t: { effect: ClipEffect; mode: 'volume' | 'pitch' }) => void
@@ -268,21 +272,38 @@ function EffectRow({
             const color = EFFECT_COLORS[eff.type]
             const isExpanded = eff.id === expandedEffectId
 
+            const isSelected = selectedEffectIds.has(eff.id)
             return (
               <div key={eff.id}
+                data-effect-id={eff.id}
                 style={{
                   position: 'absolute', left, width, top: 3, bottom: 3,
-                  background: isExpanded ? `${color}50` : `${color}30`,
-                  border: `1px solid ${isExpanded ? color : color + '99'}`,
+                  background: isExpanded ? `${color}50` : isSelected ? `${color}45` : `${color}30`,
+                  border: `1px solid ${isExpanded ? color : isSelected ? '#fff' : color + '99'}`,
                   borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none',
+                  boxShadow: isSelected ? `0 0 0 1px ${color}80` : undefined,
                 }}
                 onMouseDown={e => {
                   if (e.button !== 0) return
                   e.stopPropagation()
+                  onSelect(eff.id, e.shiftKey || e.altKey)
+                  // If already selected and multiple are selected, drag all selected; else just this one
+                  const dragIds = (selectedEffectIds.has(eff.id) && selectedEffectIds.size > 1)
+                    ? [...selectedEffectIds]
+                    : [eff.id]
+                  const origins: Record<string, number> = {}
+                  for (const id of dragIds) {
+                    const e2 = effects.find(x => x.id === id)
+                    if (e2) origins[id] = e2.startBeat
+                  }
                   dragRef.current = { effectId: eff.id, startX: e.clientX, startBeat: eff.startBeat }
                   function mm(ev: MouseEvent) {
                     if (!dragRef.current) return
-                    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: dragRef.current.effectId, patch: { startBeat: Math.max(0, dragRef.current.startBeat + (ev.clientX - dragRef.current.startX) / beatW) } })
+                    const dx = (ev.clientX - dragRef.current.startX) / beatW
+                    for (const id of dragIds) {
+                      const orig = origins[id] ?? 0
+                      dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: id, patch: { startBeat: Math.max(0, orig + dx) } })
+                    }
                   }
                   function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
                   document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
@@ -301,7 +322,7 @@ function EffectRow({
                   if (clickTimer.current) { clearTimeout(clickTimer.current.timer); clickTimer.current = null }
                   onExpand(isExpanded ? null : eff)
                 }}
-                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onSelect(eff.id, false); onCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
               >
                 {/* Mini waveform: volume shapeEnvelope */}
                 {eff.type === 'volume' && eff.params.shapeEnvelope?.length && !eff.automation?.points.length && (
@@ -347,17 +368,18 @@ function EffectRow({
 // ── Lane (all rows) ───────────────────────────────────────────────────────────
 
 export default function EffectLaneView({
-  trackId, beatW, scrollLeft, viewWidth,
-}: { trackId: string; beatW: number; scrollLeft: number; viewWidth: number }) {
-  const { project, dispatch } = useDaw()
+  trackId, beatW, scrollLeft, viewWidth, onCopyEffects, onPasteEffects,
+}: { trackId: string; beatW: number; scrollLeft: number; viewWidth: number; onCopyEffects?: (ids: Set<string>) => void; onPasteEffects?: () => void }) {
+  const { project, dispatch, selectedEffectIds, setSelectedEffectIds, setSelectedClipIds, setSelectedClipId } = useDaw()
   const effects = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
 
-  const [numRows,        setNumRows]        = useState(1)
-  const [addMenu,        setAddMenu]        = useState<{ x: number; y: number; beat: number; row: number } | null>(null)
-  const [editTarget,     setEditTarget]     = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
-  const [ctxMenu,        setCtxMenu]        = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
-  const [shapeTarget,    setShapeTarget]    = useState<{ effect: ClipEffect; mode: 'volume' | 'pitch' } | null>(null)
+  const [numRows,          setNumRows]          = useState(1)
+  const [addMenu,          setAddMenu]          = useState<{ x: number; y: number; beat: number; row: number } | null>(null)
+  const [editTarget,       setEditTarget]       = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const [ctxMenu,          setCtxMenu]          = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+  const [shapeTarget,      setShapeTarget]      = useState<{ effect: ClipEffect; mode: 'volume' | 'pitch' } | null>(null)
   const [expandedEffectId, setExpandedEffectId] = useState<string | null>(null)
+  const [rubberBand,       setRubberBand]       = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const laneRef = useRef<HTMLDivElement>(null)
 
   function beatFromClientX(clientX: number) {
@@ -379,12 +401,67 @@ export default function EffectLaneView({
     dispatch({ type: 'ADD_CLIP_EFFECT', effect })
   }
 
+  function selectEffect(effId: string, shift: boolean) {
+    setSelectedClipIds(new Set())
+    setSelectedClipId(null)
+    if (shift) {
+      setSelectedEffectIds(prev => {
+        const next = new Set(prev)
+        if (next.has(effId)) next.delete(effId)
+        else next.add(effId)
+        return next
+      })
+    } else {
+      setSelectedEffectIds(new Set([effId]))
+    }
+  }
+
+  function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    // If clicking on an effect clip itself, don't start rubber-band
+    if ((e.target as HTMLElement).closest('[data-effect-id]')) return
+    const sx = e.clientX, sy = e.clientY
+    setRubberBand({ x1: sx, y1: sy, x2: sx, y2: sy })
+    function onMove(ev: MouseEvent) { setRubberBand({ x1: sx, y1: sy, x2: ev.clientX, y2: ev.clientY }) }
+    function onUp(ev: MouseEvent) {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      setRubberBand(null)
+      const dx = Math.abs(ev.clientX - sx), dy = Math.abs(ev.clientY - sy)
+      if (dx < 5 && dy < 5) { if (!e.shiftKey) { setSelectedEffectIds(new Set()) }; return }
+      const selL = Math.min(sx, ev.clientX), selR = Math.max(sx, ev.clientX)
+      const selT = Math.min(sy, ev.clientY), selB = Math.max(sy, ev.clientY)
+      const rect = laneRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const newIds = new Set<string>()
+      for (const eff of effects) {
+        const effLeft  = rect.left + eff.startBeat * beatW - scrollLeft
+        const effRight = effLeft + Math.max(8, eff.durationBeats * beatW)
+        const effRow   = eff.row ?? 0
+        const effTop   = rect.top + effRow * EFFECT_H + 3
+        const effBot   = effTop + EFFECT_H - 6
+        if (effRight < selL || effLeft > selR || effBot < selT || effTop > selB) continue
+        newIds.add(eff.id)
+      }
+      setSelectedClipIds(new Set())
+      setSelectedClipId(null)
+      if (e.shiftKey) setSelectedEffectIds(prev => new Set([...prev, ...newIds]))
+      else setSelectedEffectIds(newIds)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
   return (
+    <>
     <div
       ref={laneRef}
-      style={{ flex: 1, display: 'flex', flexDirection: 'column', cursor: 'crosshair', overflow: 'hidden', borderBottom: '1px solid var(--border)' }}
+      style={{ flex: 1, display: 'flex', flexDirection: 'column', cursor: 'crosshair', overflow: 'hidden', borderBottom: '1px solid var(--border)', position: 'relative' }}
       onClick={() => { setAddMenu(null); setEditTarget(null) }}
+      onMouseDown={onLaneMouseDown}
       onContextMenu={e => {
+        // Only open add-menu when not right-clicking on an effect
+        if ((e.target as HTMLElement).closest('[data-effect-id]')) return
         e.preventDefault()
         const rect = laneRef.current?.getBoundingClientRect()
         const row  = rect ? Math.floor((e.clientY - rect.top) / EFFECT_H) : 0
@@ -402,12 +479,29 @@ export default function EffectLaneView({
           effects={effects}
           isLast={rowIndex === numRows - 1}
           expandedEffectId={expandedEffectId}
+          selectedEffectIds={selectedEffectIds}
+          onSelect={selectEffect}
           onEditTarget={t => { setCtxMenu(null); setEditTarget(t) }}
           onCtxMenu={t => { setEditTarget(null); setCtxMenu(t) }}
           onShapeTarget={setShapeTarget}
           onExpand={eff => setExpandedEffectId(eff?.id ?? null)}
         />
       ))}
+
+      {/* Rubber-band */}
+      {rubberBand && (
+        <div style={{
+          position: 'fixed',
+          left: Math.min(rubberBand.x1, rubberBand.x2),
+          top:  Math.min(rubberBand.y1, rubberBand.y2),
+          width:  Math.abs(rubberBand.x2 - rubberBand.x1),
+          height: Math.abs(rubberBand.y2 - rubberBand.y1),
+          border: '1px solid rgba(61,143,239,0.7)',
+          background: 'rgba(61,143,239,0.08)',
+          pointerEvents: 'none',
+          zIndex: 200,
+        }} />
+      )}
 
       {/* Right-click dropdown */}
       {addMenu && createPortal(
@@ -456,6 +550,34 @@ export default function EffectLaneView({
           style={{ position: 'fixed', zIndex: 1500, left: ctxMenu.x, top: ctxMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
           onMouseLeave={() => setCtxMenu(null)}
         >
+          {/* Copy / Paste */}
+          {(() => {
+            const ctxId = ctxMenu.effect.id
+            const copyIds = selectedEffectIds.has(ctxId) && selectedEffectIds.size > 1
+              ? selectedEffectIds
+              : new Set([ctxId])
+            const copyLabel = copyIds.size > 1 ? `Copy Selected (${copyIds.size})` : 'Copy'
+            return (
+              <>
+                <button
+                  onClick={() => { onCopyEffects?.(copyIds); setCtxMenu(null) }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                >{copyLabel}</button>
+                {onPasteEffects && (
+                  <button
+                    onClick={() => { onPasteEffects(); setCtxMenu(null) }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  >Paste</button>
+                )}
+                <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+              </>
+            )
+          })()}
+
           {SHAPEABLE[ctxMenu.effect.type] && (
             <button
               onClick={() => { setShapeTarget({ effect: ctxMenu.effect, mode: SHAPEABLE[ctxMenu.effect.type]! }); setCtxMenu(null) }}
@@ -486,12 +608,19 @@ export default function EffectLaneView({
           </button>
           <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
           <button
-            onClick={() => { dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: ctxMenu.effect.id }); setCtxMenu(null) }}
+            onClick={() => {
+              const toDelete = selectedEffectIds.has(ctxMenu.effect.id) && selectedEffectIds.size > 1
+                ? [...selectedEffectIds]
+                : [ctxMenu.effect.id]
+              for (const id of toDelete) dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: id })
+              setSelectedEffectIds(new Set())
+              setCtxMenu(null)
+            }}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: '#ef4444' }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
           >
-            Delete
+            {selectedEffectIds.has(ctxMenu.effect.id) && selectedEffectIds.size > 1 ? `Delete Selected (${selectedEffectIds.size})` : 'Delete'}
           </button>
         </div>,
         document.body
@@ -501,5 +630,6 @@ export default function EffectLaneView({
         <ShapeModal effect={shapeTarget.effect} mode={shapeTarget.mode} onClose={() => setShapeTarget(null)} />
       )}
     </div>
+    </>
   )
 }
