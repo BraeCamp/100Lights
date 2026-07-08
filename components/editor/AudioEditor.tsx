@@ -323,6 +323,13 @@ export default function AudioEditor(props: AudioEditorProps) {
   // Actions that shouldn't be synced to collaborators (view/UI preferences)
   const NO_BROADCAST = new Set<DawAction['type']>(['LOAD_PROJECT', 'SET_WAVEFORM_ZOOM', 'SET_CROSSFADER'])
 
+  // ── Blink guidance — local only, never broadcast ─────────────────────────────
+  const [blinkIds, setBlinkIds] = useState<Set<string>>(new Set())
+  const triggerBlink = useCallback((ids: string[]) => {
+    setBlinkIds(new Set(ids))
+    setTimeout(() => setBlinkIds(new Set()), 1400)
+  }, [])
+
   // ── Per-track external input recording ──────────────────────────────────────
   type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
@@ -735,11 +742,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     isSaving,
     audioMode: props.audioMode,
     podcastMeta,
+    blinkIds,
+    triggerBlink,
   }), [
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     playing, recording, position, setPosition, metronome, showPads,
-    expandedPianoRollClipId, onSave, isSaving, podcastMeta,
+    expandedPianoRollClipId, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────

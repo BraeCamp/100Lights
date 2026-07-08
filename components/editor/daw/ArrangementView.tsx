@@ -253,7 +253,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, setSelectedClipIds, onSave, isSaving, audioMode, podcastMeta } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, setSelectedClipIds, onSave, isSaving, audioMode, podcastMeta, blinkIds } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -761,7 +761,7 @@ export default function ArrangementView() {
         <div style={{ display: 'flex', height: 36 }}>
           <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
             <button onClick={() => dispatch({ type: 'ADD_TRACK' })}
-              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', animation: blinkIds.has('add-track') ? 'dawBlink 0.45s ease-in-out 3' : undefined }}>
               +Track
             </button>
             <button

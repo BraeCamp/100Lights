@@ -545,6 +545,9 @@ export interface DawContextValue {
   setPosition: (b: number) => void
   metronome: boolean
   setMetronome: (on: boolean) => void
+  // Blink guidance — purely local UI, never synced to collaborators
+  blinkIds: Set<string>
+  triggerBlink: (ids: string[]) => void
 }
 
 export const DawContext = createContext<DawContextValue | null>(null)

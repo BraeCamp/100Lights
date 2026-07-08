@@ -201,7 +201,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onGroupTracks?: () => void
   rippleEdit?: boolean
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
@@ -464,7 +464,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <button
                 title={track.armed ? (recording ? 'Recording…' : 'Disarm track') : 'Arm for recording'}
                 onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { armed: !track.armed } }) }}
-                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>
+                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0, animation: blinkIds.has(`arm:${track.id}`) ? 'dawBlink 0.45s ease-in-out 3' : undefined }}>
                 ●
               </button>
             )}
@@ -483,6 +483,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
                   color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
                   cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
+                  animation: blinkIds.has(`input:${track.id}`) ? 'dawBlink 0.45s ease-in-out 3' : undefined,
                 }}>
                 {!track.inputSource ? (audioMode === 'podcast' ? 'MIC' : '·IN') : track.inputSource === 'system' ? 'SYS' : 'MIC'}
               </button>

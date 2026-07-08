@@ -16,7 +16,7 @@ function fmtHMS(secs: number): string {
 }
 
 export default function Transport() {
-  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode } = useDaw()
+  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink } = useDaw()
   const [isElectronMac, setIsElectronMac] = useState(false)
   useEffect(() => {
     setIsElectronMac(!!window.electronAPI && navigator.platform.startsWith('Mac'))
@@ -41,13 +41,16 @@ export default function Transport() {
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
   const [micError, setMicError] = useState('')
 
-  // Inject pulse keyframe for recording indicator (once per page)
+  // Inject keyframes for recording pulse + guide blink (once per page)
   useEffect(() => {
-    const id = 'daw-rec-pulse-style'
+    const id = 'daw-anim-styles'
     if (typeof document !== 'undefined' && !document.getElementById(id)) {
       const style = document.createElement('style')
       style.id = id
-      style.textContent = '@keyframes dawRecPulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }'
+      style.textContent = [
+        '@keyframes dawRecPulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }',
+        '@keyframes dawBlink { 0%, 100% { box-shadow: 0 0 0 0 rgba(250,204,21,0); } 50% { box-shadow: 0 0 0 3px rgba(250,204,21,0.9); } }',
+      ].join('\n')
       document.head.appendChild(style)
     }
   }, [])
@@ -102,20 +105,35 @@ export default function Transport() {
       await engine.stopRecording()
     } else {
       try {
-        const armedTracks = project.tracks.filter(t => t.armed)
-        // Warn if no tracks are armed but some have inputs assigned — recording
-        // would be silent because the mic is only routed when a track is armed.
+        const audioTracks = project.tracks.filter(t => t.type === 'audio')
+        const armedTracks = audioTracks.filter(t => t.armed)
+
+        // No tracks at all → blink the +Track button
+        if (project.tracks.length === 0) {
+          triggerBlink(['add-track'])
+          return
+        }
+
+        // Tracks exist but none armed → blink all arm buttons
         if (armedTracks.length === 0) {
-          const unarmedInputTracks = project.tracks.filter(t => t.type === 'audio' && t.inputSource)
-          if (unarmedInputTracks.length > 0) {
-            setMicError(`Arm a track to record input — click REC on "${unarmedInputTracks[0].name}"`)
-            setTimeout(() => setMicError(''), 6000)
-            return
-          }
+          const inputTracks = audioTracks.filter(t => t.inputSource)
+          triggerBlink(
+            (inputTracks.length > 0 ? inputTracks : audioTracks).map(t => `arm:${t.id}`)
+          )
+          setMicError(inputTracks.length > 0
+            ? `Arm a track to record — click ● on "${inputTracks[0].name}"`
+            : 'Arm a track to record — click ● on a track')
+          setTimeout(() => setMicError(''), 5000)
+          return
         }
-        if (armedTracks.length > 0) {
-          await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+
+        // Armed tracks with no input → blink their input buttons
+        const armedWithoutInput = armedTracks.filter(t => !t.inputSource)
+        if (armedWithoutInput.length === armedTracks.length) {
+          triggerBlink(armedWithoutInput.map(t => `input:${t.id}`))
         }
+
+        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
         if (!playing) engine.play()
         await engine.startRecording()
         setMicError('')
