@@ -36,11 +36,27 @@ const SHAPEABLE: Partial<Record<ClipEffectType, 'volume' | 'pitch'>> = {
 
 const EFFECT_TYPES: ClipEffectType[] = ['volume', 'pitch', 'reverb', 'delay', 'filter', 'tremolo', 'distortion']
 
+// ── Note name helpers ─────────────────────────────────────────────────────────
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+function hzToNoteName(hz: number): string {
+  const midi = 69 + 12 * Math.log2(hz / 440)
+  const rounded = Math.round(midi)
+  const name = NOTE_NAMES[((rounded % 12) + 12) % 12]
+  const octave = Math.floor(rounded / 12) - 1
+  return `${name}${octave}`
+}
+
 // ── Param editor popover ──────────────────────────────────────────────────────
 
 function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: () => void }) {
   const { dispatch } = useDaw()
+  const [liveSemitones, setLiveSemitones] = useState(
+    (effect.params as Record<string, number>).semitones ?? 0
+  )
   function set(key: string, val: number) {
+    if (key === 'semitones') setLiveSemitones(val)
     dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { [key]: val } } })
   }
   function Slider({ label, k, min, max, log = false }: { label: string; k: string; min: number; max: number; log?: boolean }) {
@@ -78,7 +94,19 @@ function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: (
         {effect.type === 'filter'     && <><Slider label="Freq" k="frequency" min={40} max={18000} log /><Slider label="Q" k="filterQ" min={0.1} max={20} log /></>}
         {effect.type === 'tremolo'    && <><Slider label="Rate" k="tremoloRate" min={0.1} max={15} /><Slider label="Depth" k="tremoloDepth" min={0} max={1} /></>}
         {effect.type === 'distortion' && <Slider label="Amount" k="distortion" min={0} max={1} />}
-        {effect.type === 'pitch'      && <Slider label="Semitones" k="semitones" min={-24} max={24} />}
+        {effect.type === 'pitch'      && (
+          <>
+            <Slider label="Semitones" k="semitones" min={-24} max={24} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', paddingTop: 2 }}>
+              <span style={{ width: 60, flexShrink: 0 }}>Note</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 9 }}>A4</span>
+              <span style={{ fontSize: 9 }}>→</span>
+              <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 12, color: EFFECT_COLORS.pitch }}>
+                {hzToNoteName(440 * Math.pow(2, liveSemitones / 12))}
+              </span>
+            </div>
+          </>
+        )}
         {effect.automation?.points.length ? (
           <div style={{ fontSize: 9, color: EFFECT_COLORS[effect.type], marginTop: 2 }}>
             automation: {effect.automation.points.length} pts  (dbl-click clip to edit)
