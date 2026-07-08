@@ -1,8 +1,6 @@
 import { sql } from '@/lib/db'
-import dynamicImport from 'next/dynamic'
 import AdminLogout from './AdminLogout'
-
-const UsersPanel = dynamicImport(() => import('./UsersPanel'), { ssr: false })
+import UsersPanel from './UsersPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
