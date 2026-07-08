@@ -391,7 +391,17 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                     <Waveform peaks={clip.waveformPeaks!} color={color} width={loopPx} height={56} verticalZoom={waveformZoom} />
                   </div>
                 ))
-              ) : (
+              ) : bufDur && bufDur > 0 ? (() => {
+                // Render at the waveform's natural pixel width so shortening the clip
+                // clips the waveform on the right rather than compressing it.
+                const naturalWidth = (bufDur / secPerBeat) * beatW
+                const offsetPx = (trimS / secPerBeat) * beatW
+                return (
+                  <div style={{ position: 'absolute', top: 0, left: -offsetPx, width: naturalWidth, bottom: 0 }}>
+                    <Waveform peaks={clip.waveformPeaks!} color={color} width={naturalWidth} height={56} verticalZoom={waveformZoom} />
+                  </div>
+                )
+              })() : (
                 <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={56} verticalZoom={waveformZoom} />
               )}
             </div>
