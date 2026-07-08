@@ -162,6 +162,12 @@ export default function HelpButton() {
     document.head.appendChild(style)
   }, [])
 
+  // Glow the help button itself when the editor opens so users learn where it is
+  useEffect(() => {
+    const t = window.setTimeout(() => highlightHelpTargets(['help']), 600)
+    return () => window.clearTimeout(t)
+  }, [])
+
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
@@ -206,6 +212,7 @@ export default function HelpButton() {
       <button
         onClick={() => setOpen(v => !v)}
         title="Help — shortcuts & features"
+        data-help-id="help"
         style={{
           width: 24, height: 24, borderRadius: 6, border: 'none', cursor: 'pointer',
           background: open ? 'rgba(99,102,241,0.12)' : 'transparent',
