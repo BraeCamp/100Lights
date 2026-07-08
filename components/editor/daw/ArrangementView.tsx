@@ -1135,12 +1135,14 @@ export default function ArrangementView() {
         <div style={{ display: 'flex', height: 36 }}>
           <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
             <button onClick={() => dispatch({ type: 'ADD_TRACK' })}
+              data-help-id="add-track"
               style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', animation: blinkIds.has('add-track') ? 'dawBlink 0.45s ease-in-out 3' : undefined }}>
               +Track
             </button>
             <button
               onClick={addReturnTrack}
               title="Add return track"
+              data-help-id="add-return"
               style={{ padding: '3px 6px', fontSize: 9, borderRadius: 3, border: '1px solid #7c5fa8', background: 'rgba(100,60,150,0.12)', color: '#a78bfa', cursor: 'pointer', flexShrink: 0 }}
             >+Ret</button>
           </div>

@@ -839,6 +839,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                         else { setLeftTab(tab); setSidebarOpen(true) }
                       }}
                       title={label}
+                      data-help-id={`rail-${tab}`}
                       style={{
                         width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
                         background: isActive ? 'rgba(99,102,241,0.12)' : 'transparent',
@@ -869,6 +870,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   <button
                     onClick={handleAddGuest}
                     title="Add a new guest track with voice processing"
+                    data-help-id="add-guest"
                     style={{
                       flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 4,
                       border: '1px solid var(--border)', background: 'transparent',
@@ -958,6 +960,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                     <button
                       key={tab}
                       onClick={() => setBottomTab(tab)}
+                      data-help-id={`bottom-${tab}`}
                       style={{ background: bottomTab === tab ? 'var(--bg-card)' : 'transparent', border: bottomTab === tab ? '1px solid var(--border)' : '1px solid transparent', borderRadius: 4, color: bottomTab === tab ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 10px', textTransform: 'capitalize' }}
                     >
                       {tab === 'devices' ? 'Devices' : 'Instrument'}
@@ -982,6 +985,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                       <button
                         onClick={() => setShowPads(v => !v)}
                         title="Open pad / keyboard input"
+                        data-help-id="pads"
                         style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
                       >⌨ Pads</button>
                     ) : null

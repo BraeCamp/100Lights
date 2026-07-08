@@ -1039,6 +1039,7 @@ export default function SessionView() {
             if (!next) captureMapRef.current.clear()
           }}
           title="Capture to Arrangement — stamps session clips into the arrangement timeline as you play them"
+          data-help-id="capture-arrangement"
           style={{
             display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
             borderRadius: 3, border: `1px solid ${capturing ? '#22c55e' : 'var(--border)'}`, cursor: 'pointer',
@@ -1054,6 +1055,7 @@ export default function SessionView() {
         <button
           onClick={() => setOverdub(v => !v)}
           title="MIDI Overdub — layer MIDI input onto playing clips"
+          data-help-id="midi-overdub"
           style={{
             padding: '3px 8px', fontSize: 10, borderRadius: 3, border: '1px solid var(--border)', cursor: 'pointer',
             background: overdub ? 'rgba(168,85,247,0.2)' : 'var(--bg-card)',
@@ -1066,6 +1068,7 @@ export default function SessionView() {
           <button
             onClick={stopAll}
             title="Stop all session clips and return to arrangement"
+            data-help-id="stop-all"
             style={{
               display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
               borderRadius: 3, border: '1px solid #22c55e', cursor: 'pointer',
@@ -1117,6 +1120,7 @@ export default function SessionView() {
               onClick={() => dispatch({ type: 'ADD_SCENE' })}
               style={{ flexShrink: 0, width: 28, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16 }}
               title="Add scene"
+              data-help-id="add-scene"
             >+</button>
           </div>
 
@@ -1180,6 +1184,7 @@ export default function SessionView() {
           <button
             onClick={() => { for (const t of project.tracks) engine.stopSessionTrack(t.id) }}
             title="Stop all clips"
+            data-help-id="stop-all"
             style={{
               width: SCENE_W, height: 32, flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,

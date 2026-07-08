@@ -20,6 +20,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
     <button
       onClick={copyLink}
       title="Copy invite link"
+      data-help-id="invite"
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,

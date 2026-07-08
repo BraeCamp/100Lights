@@ -860,6 +860,7 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
         ref={btnRef}
         onClick={handleOpen}
         title="Add device"
+        data-help-id="add-device"
         style={{
           alignSelf: 'flex-start', flexShrink: 0,
           background: 'var(--bg-card)', border: '1px dashed var(--border)',
