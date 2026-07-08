@@ -82,6 +82,8 @@ export class DawEngine extends EventTarget {
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private mixerEqNodes = new Map<string, { low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
+  private maskingAnalysers = new Map<string, AnalyserNode>()
+  private maskingBridges   = new Map<string, GainNode>()
   varispeedRate = 1.0
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
@@ -138,6 +140,14 @@ export class DawEngine extends EventTarget {
   private _tickBuf: AudioBuffer | null = null
   private _tockBuf: AudioBuffer | null = null
   private _nextMetronomeBeat = 0
+
+  // Jam buffer (rolling ~35s of master output)
+  isJamActive = false
+  private _jamCaptureNode: MediaStreamAudioDestinationNode | null = null
+  private _jamRecorder: MediaRecorder | null = null
+  private _jamChunks: Array<{ blob: Blob; ts: number }> = []
+  private _jamHeaderChunk: Blob | null = null
+  private _jamMime = ''
 
   constructor() {
     super()
@@ -207,6 +217,17 @@ export class DawEngine extends EventTarget {
       }
 
       this.trackNodes.set(id, { gain, panner, analyser, effectsInput, effectsOutput, sendGains, preSendGains, sendModes })
+
+      // High-res analyser for masking detection — separate from VU meter analyser
+      const maskingAnalyser = this.ctx.createAnalyser()
+      maskingAnalyser.fftSize = 2048
+      const maskBridge = this.ctx.createGain()
+      maskBridge.gain.value = 0
+      panner.connect(maskingAnalyser)
+      maskingAnalyser.connect(maskBridge)
+      maskBridge.connect(this.ctx.destination)
+      this.maskingAnalysers.set(id, maskingAnalyser)
+      this.maskingBridges.set(id, maskBridge)
     }
 
     // (Re)build effects chain when effects array is provided
@@ -277,6 +298,10 @@ export class DawEngine extends EventTarget {
     nodes.effectsInput.disconnect()
     nodes.effectsOutput.disconnect()
     this.trackNodes.delete(id)
+    const masking = this.maskingAnalysers.get(id)
+    if (masking) { try { masking.disconnect() } catch { /* ok */ } this.maskingAnalysers.delete(id) }
+    const maskBridge = this.maskingBridges.get(id)
+    if (maskBridge) { try { maskBridge.disconnect() } catch { /* ok */ } this.maskingBridges.delete(id) }
   }
 
   ensureReturnTrack(id: string, volume: number, pan: number, mute: boolean, effects?: ReturnTrack['effects']) {
@@ -483,6 +508,7 @@ export class DawEngine extends EventTarget {
     this._nextMetronomeBeat = Math.ceil(this._startBeat)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear()
     this._startScheduler()
+    this.startJamBuffer()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: true, beat: this._startBeat } }))
   }
 
@@ -1730,12 +1756,74 @@ export class DawEngine extends EventTarget {
     return Math.max(40, Math.min(300, Math.round(60000 / avg)))
   }
 
+  // ── Jam buffer ────────────────────────────────────────────────────────────
+
+  startJamBuffer() {
+    if (this.isJamActive || this.ctx.state === 'closed') return
+    this.isJamActive = true
+    this._jamCaptureNode = this.ctx.createMediaStreamDestination()
+    this.masterCompressor.connect(this._jamCaptureNode)
+    const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+    this._jamMime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
+    this._jamRecorder = new MediaRecorder(
+      this._jamCaptureNode.stream,
+      this._jamMime ? { mimeType: this._jamMime } : undefined
+    )
+    this._jamRecorder.ondataavailable = e => {
+      if (e.data.size === 0) return
+      if (!this._jamHeaderChunk) {
+        this._jamHeaderChunk = e.data
+        return
+      }
+      const ts = Date.now()
+      this._jamChunks.push({ blob: e.data, ts })
+      const cutoff = ts - 40_000
+      while (this._jamChunks.length > 1 && this._jamChunks[0].ts < cutoff) this._jamChunks.shift()
+    }
+    this._jamRecorder.start(500)
+  }
+
+  stopJamBuffer() {
+    if (!this.isJamActive) return
+    this.isJamActive = false
+    if (this._jamCaptureNode) {
+      try { this.masterCompressor.disconnect(this._jamCaptureNode) } catch { /* ok */ }
+      this._jamCaptureNode = null
+    }
+    if (this._jamRecorder && this._jamRecorder.state !== 'inactive') {
+      try { this._jamRecorder.stop() } catch { /* ok */ }
+    }
+    this._jamRecorder = null
+    this._jamChunks = []
+    this._jamHeaderChunk = null
+  }
+
+  captureJam(durationSeconds = 30): Blob | null {
+    if (!this._jamHeaderChunk || this._jamChunks.length === 0) return null
+    const cutoff = Date.now() - durationSeconds * 1000
+    const recent = this._jamChunks.filter(c => c.ts >= cutoff)
+    if (recent.length === 0) return null
+    const mime = this._jamMime || 'audio/webm'
+    return new Blob([this._jamHeaderChunk, ...recent.map(c => c.blob)], { type: mime })
+  }
+
+  // ── Masking detection ─────────────────────────────────────────────────────
+
+  getTrackFrequencyData(trackId: string): Float32Array | null {
+    const analyser = this.maskingAnalysers.get(trackId)
+    if (!analyser) return null
+    const data = new Float32Array(analyser.frequencyBinCount)
+    analyser.getFloatFrequencyData(data)
+    return data
+  }
+
   // ── Cleanup ────────────────────────────────────────────────────────────────
 
   dispose() {
     this.stop()
     this.setMetronome(false)
     void this.stopRecording()
+    this.stopJamBuffer()
     this.ctx.close()
   }
 }

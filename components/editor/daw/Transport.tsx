@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2 } from 'lucide-react'
-import { useDaw, formatBeat } from '@/lib/daw-state'
+import { useDaw, formatBeat, makeAudioClip } from '@/lib/daw-state'
 import dynamic from 'next/dynamic'
 
-const PadTuner = dynamic(() => import('./PadTuner'), { ssr: false })
+const PadTuner    = dynamic(() => import('./PadTuner'),    { ssr: false })
+const MaskingPanel = dynamic(() => import('./MaskingPanel'), { ssr: false })
 
 function fmtHMS(secs: number): string {
   const h = Math.floor(secs / 3600)
@@ -40,6 +41,7 @@ export default function Transport() {
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
   const [micError, setMicError] = useState('')
+  const [showMask, setShowMask] = useState(false)
 
   // Inject keyframes for recording pulse + guide blink (once per page)
   useEffect(() => {
@@ -190,6 +192,29 @@ export default function Transport() {
   function handleTimeSigCommit() {
     dispatch({ type: 'SET_TIME_SIG', num: tsDraft.num, den: tsDraft.den })
     setEditingTimeSig(false)
+  }
+
+  function handleCapture() {
+    const blob = engine.captureJam(30)
+    if (!blob) {
+      setMicError('No buffer yet — press Play first to fill the jam buffer')
+      setTimeout(() => setMicError(''), 3000)
+      return
+    }
+    const audioTracks = project.tracks.filter(t => t.type === 'audio')
+    if (audioTracks.length === 0) {
+      setMicError('Add an audio track to capture to')
+      setTimeout(() => setMicError(''), 3000)
+      return
+    }
+    const target = audioTracks.find(t => t.armed) ?? audioTracks[0]
+    const url = URL.createObjectURL(blob)
+    const durationBeats = 30 * (project.tempo / 60)
+    const startBeat = Math.max(0, engine.currentBeat - durationBeats)
+    dispatch({
+      type: 'ADD_CLIP',
+      clip: makeAudioClip(target.id, 'Jam Capture', startBeat, durationBeats, { audioUrl: url }),
+    })
   }
 
   // ── Podcast-only handlers ───────────────────────────────────────────────────
@@ -410,6 +435,21 @@ export default function Transport() {
         title="Record"
       >
         <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
+      </button>
+
+      <button
+        onClick={handleCapture}
+        title="Capture last 30s from jam buffer (starts on first Play)"
+        style={{
+          ...base,
+          width: 'auto', padding: '0 8px',
+          fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.06em',
+          color: engine.isJamActive ? '#a78bfa' : 'var(--text-muted)',
+          border: engine.isJamActive ? '1px solid rgba(167,139,250,0.4)' : '1px solid var(--border)',
+          background: engine.isJamActive ? 'rgba(167,139,250,0.08)' : '#1e1e1e',
+        }}
+      >
+        JAM
       </button>
 
       <button
@@ -642,6 +682,22 @@ export default function Transport() {
         ♩
       </button>
 
+      {/* Masking detector toggle */}
+      <button
+        onClick={() => setShowMask(v => !v)}
+        title="Frequency masking detector — shows which tracks compete in the same bands"
+        style={{
+          ...base,
+          width: 'auto', padding: '0 8px',
+          fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.06em',
+          background: showMask ? 'rgba(239,68,68,0.15)' : '#1e1e1e',
+          border: showMask ? '1px solid rgba(239,68,68,0.5)' : '1px solid var(--border)',
+          color: showMask ? '#ef4444' : 'var(--text-secondary)',
+        }}
+      >
+        MASK
+      </button>
+
       {/* Floating tuner panel */}
       {showTuner && typeof document !== 'undefined' && createPortal(
         <div style={{
@@ -658,6 +714,26 @@ export default function Transport() {
             <button onClick={() => setShowTuner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>
           <PadTuner />
+        </div>,
+        document.body
+      )}
+
+      {/* Floating masking panel */}
+      {showMask && typeof document !== 'undefined' && createPortal(
+        <div style={{
+          position: 'fixed', top: 56, right: showTuner ? 314 : 12, zIndex: 9997,
+          width: 290, background: '#111', border: '1px solid #2a2a2a',
+          borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '7px 12px', borderBottom: '1px solid #1e1e1e', background: '#171717',
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Masking Detector</span>
+            <button onClick={() => setShowMask(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+          </div>
+          <MaskingPanel />
         </div>,
         document.body
       )}
