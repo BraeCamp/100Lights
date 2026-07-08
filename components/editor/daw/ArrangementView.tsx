@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ZoomIn, ZoomOut, Maximize2, Scissors } from 'lucide-react'
-import { useDaw, makeMidiClip } from '@/lib/daw-state'
+import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
+import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
 import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip } from '@/lib/daw-types'
+import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 import { detectTransients } from './ClipView'
 import dynamic from 'next/dynamic'
@@ -253,7 +254,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, setSelectedClipIds, onSave, isSaving, audioMode, podcastMeta, blinkIds } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, onSave, isSaving, audioMode, podcastMeta, blinkIds } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -277,6 +278,10 @@ export default function ArrangementView() {
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set())
   // Ripple editing: moving a clip shifts subsequent clips on the same track
   const [rippleEdit, setRippleEdit] = useState(false)
+  // Spectral morph
+  const [morphDuration, setMorphDuration] = useState(3)
+  const [morphing, setMorphing] = useState(false)
+  const [morphError, setMorphError] = useState('')
   const outerRef    = useRef<HTMLDivElement>(null)
   const laneRef     = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
@@ -320,6 +325,50 @@ export default function ArrangementView() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [showExportDropdown])
+
+  async function handleMorph() {
+    const ids = [...selectedClipIds]
+    if (ids.length !== 2) return
+    const clips = ids.map(id => project.arrangementClips.find(c => c.id === id)).filter(Boolean) as AudioClip[]
+    if (clips.length !== 2 || !isAudioClip(clips[0]) || !isAudioClip(clips[1])) return
+
+    setMorphing(true)
+    setMorphError('')
+    try {
+      const [bufA, bufB] = await Promise.all([
+        engine.loadClipBuffer(clips[0]),
+        engine.loadClipBuffer(clips[1]),
+      ])
+      if (!bufA || !bufB) throw new Error('Could not load audio for one or both clips')
+
+      const sr = engine.ctx.sampleRate
+      const result = await runSpectralMorph(
+        bufA.getChannelData(0),
+        bufB.getChannelData(0),
+        sr,
+        morphDuration
+      )
+
+      // Build an AudioBuffer from the morph result
+      const audioBuf = engine.ctx.createBuffer(1, result.samples.length, result.sampleRate)
+      audioBuf.copyToChannel(result.samples as Float32Array<ArrayBuffer>, 0)
+
+      // Sort clips chronologically; place morph at start of the earlier one
+      const sorted  = [...clips].sort((a, b) => a.startBeat - b.startBeat)
+      const durationBeats = morphDuration * (project.tempo / 60)
+      const newClip = makeAudioClip(sorted[0].trackId, 'Morph', sorted[0].startBeat, durationBeats)
+
+      // Pre-load into engine cache — loadClipBuffer will find it before trying the URL
+      engine.bufferCache.set(newClip.id, audioBuf)
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+      setSelectedClipIds(new Set([newClip.id]))
+    } catch (err) {
+      setMorphError(err instanceof Error ? err.message : 'Morph failed')
+      setTimeout(() => setMorphError(''), 5000)
+    } finally {
+      setMorphing(false)
+    }
+  }
 
   async function handleSplitAtTransientsFromToolbar() {
     if (!selectedClipId) return
@@ -592,6 +641,53 @@ export default function ArrangementView() {
             </button>
           )
         })()}
+
+        {/* Spectral Morph — visible when exactly 2 audio clips are selected */}
+        {(() => {
+          const ids = [...selectedClipIds]
+          const twoAudio = ids.length === 2 &&
+            ids.every(id => {
+              const c = project.arrangementClips.find(x => x.id === id)
+              return c && isAudioClip(c)
+            })
+          if (!twoAudio) return null
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+              <button
+                onClick={() => void handleMorph()}
+                disabled={morphing}
+                title="Spectral Morph — blend two selected audio clips into a new clip"
+                style={{
+                  ...toolBtn, width: 'auto', padding: '2px 8px',
+                  fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+                  background: morphing ? 'rgba(139,92,246,0.18)' : 'rgba(139,92,246,0.08)',
+                  border: '1px solid rgba(139,92,246,0.5)',
+                  color: morphing ? '#c4b5fd' : '#a78bfa',
+                  cursor: morphing ? 'wait' : 'pointer',
+                  gap: 5, display: 'flex', alignItems: 'center',
+                }}
+              >
+                <Blend size={11} />
+                {morphing ? 'MORPHING…' : 'MORPH'}
+              </button>
+              <input
+                type="number" min={0.5} max={30} step={0.5}
+                value={morphDuration}
+                onChange={e => setMorphDuration(Math.max(0.5, parseFloat(e.target.value) || 3))}
+                title="Morph duration in seconds"
+                style={{
+                  width: 40, background: '#111', border: '1px solid var(--border)',
+                  borderRadius: 3, color: 'var(--text-primary)', fontSize: 10,
+                  fontFamily: 'monospace', padding: '1px 4px', textAlign: 'center',
+                }}
+              />
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>s</span>
+              {morphError && <span style={{ fontSize: 9, color: '#ef4444', maxWidth: 120 }}>{morphError}</span>}
+            </div>
+          )
+        })()}
+
         <div style={{ flex: 1 }} />
         {audioMode !== 'podcast' && (
           <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
