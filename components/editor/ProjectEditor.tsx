@@ -370,7 +370,14 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(project),
     })
-    if (!res.ok) throw new Error('Save failed')
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const body = await res.json()
+        if (body?.error) detail = body.error
+      } catch { /* ignore parse errors */ }
+      throw new Error(detail)
+    }
     setLocalName(name)
     if (patch.outputs)      setOutputs(outs)
     if (patch.captions)     setCaptions(caps)

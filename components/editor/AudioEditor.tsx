@@ -580,6 +580,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
+  const [saveError,  setSaveError]  = useState('')
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
 
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
@@ -615,10 +616,14 @@ export default function AudioEditor(props: AudioEditorProps) {
           })
         await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta })
         setSaveStatus('saved')
+        setSaveError('')
         setTimeout(() => setSaveStatus(null), 2500)
-      } catch {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error'
+        console.error('[save]', msg)
+        setSaveError(msg)
         setSaveStatus('error')
-        setTimeout(() => setSaveStatus(null), 4000)
+        setTimeout(() => { setSaveStatus(null); setSaveError('') }, 6000)
       } finally {
         setIsSaving(false)
       }
@@ -999,15 +1004,19 @@ export default function AudioEditor(props: AudioEditorProps) {
       {(saveStatus === 'saved' || saveStatus === 'error') && (
         <div style={{
           position: 'fixed', bottom: 24, right: 24, zIndex: 100,
-          display: 'flex', alignItems: 'center', gap: 8,
+          display: 'flex', flexDirection: 'column', gap: 2,
           padding: '10px 16px', borderRadius: 10,
           background: saveStatus === 'saved' ? '#18251a' : '#250f0f',
           border: `1px solid ${saveStatus === 'saved' ? '#166534' : '#7f1d1d'}`,
           color: saveStatus === 'saved' ? '#4ade80' : '#f87171',
           fontSize: 13, fontWeight: 500,
           boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+          maxWidth: 320,
         }}>
           {saveStatus === 'saved' ? '✓ Project saved' : '✗ Save failed'}
+          {saveStatus === 'error' && saveError && (
+            <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8, wordBreak: 'break-word' }}>{saveError}</span>
+          )}
         </div>
       )}
     </DawContext.Provider>
