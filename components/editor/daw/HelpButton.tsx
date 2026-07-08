@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { HelpCircle, X } from 'lucide-react'
+import { HelpCircle, Search, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 
 // ── Feature highlight ──────────────────────────────────────────────────────────
@@ -139,6 +139,7 @@ export default function HelpButton() {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'shortcuts' | 'features'>('shortcuts')
   const [hintFor, setHintFor] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   // Only rendered inside the modal, which opens post-hydration — no SSR mismatch
   const [isMac] = useState(() => typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac'))
 
@@ -171,11 +172,16 @@ export default function HelpButton() {
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false) }
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        // First Esc clears an active search; second closes the modal
+        if (query) setQuery('')
+        else setOpen(false)
+      }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [open])
+  }, [open, query])
 
   function renderKeys(keys: string) {
     return isMac ? keys : keys.replace(/⌘/g, 'Ctrl+').replace(/⌥/g, 'Alt ').replace(/⇧/g, 'Shift ')
@@ -191,8 +197,16 @@ export default function HelpButton() {
     }
   }
 
-  const visibleGroups = SHORTCUT_GROUPS.filter(g => !g.modes || g.modes.includes(mode))
-  const visibleFeatures = FEATURES.filter(f => !f.modes || f.modes.includes(mode))
+  const q = query.trim().toLowerCase()
+  const matches = (...texts: string[]) => !q || texts.some(t => t.toLowerCase().includes(q))
+
+  const visibleGroups = SHORTCUT_GROUPS
+    .filter(g => !g.modes || g.modes.includes(mode))
+    .map(g => ({ ...g, items: g.items.filter(sc => matches(sc.keys, renderKeys(sc.keys), sc.action)) }))
+    .filter(g => g.items.length > 0)
+  const visibleFeatures = FEATURES
+    .filter(f => !f.modes || f.modes.includes(mode))
+    .filter(f => matches(f.name, f.description))
 
   const tabBtn = (t: 'shortcuts' | 'features', label: string) => (
     <button
@@ -210,7 +224,7 @@ export default function HelpButton() {
   return (
     <>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => { setQuery(''); setOpen(v => !v) }}
         title="Help — shortcuts & features"
         data-help-id="help"
         style={{
@@ -260,8 +274,58 @@ export default function HelpButton() {
               </button>
             </div>
 
+            {/* Search */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '8px 14px', borderBottom: '1px solid #232323', background: '#161616',
+              flexShrink: 0,
+            }}>
+              <Search size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              <input
+                autoFocus
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={`Search ${tab === 'shortcuts' ? 'shortcuts' : 'features'}…`}
+                style={{
+                  flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                  color: 'var(--text-primary)', fontSize: 12,
+                }}
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery('')}
+                  title="Clear search"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', padding: 2 }}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
             {/* Body */}
             <div style={{ overflowY: 'auto', padding: '12px 14px' }}>
+              {tab === 'shortcuts' && visibleGroups.length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>
+                  No shortcuts match “{query.trim()}”.
+                  {visibleFeatures.length > 0 && (
+                    <button
+                      onClick={() => setTab('features')}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 12, padding: 0, marginLeft: 5, textDecoration: 'underline' }}
+                    >{visibleFeatures.length} match{visibleFeatures.length === 1 ? '' : 'es'} in Features</button>
+                  )}
+                </div>
+              )}
+              {tab === 'features' && visibleFeatures.length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>
+                  No features match “{query.trim()}”.
+                  {visibleGroups.length > 0 && (
+                    <button
+                      onClick={() => setTab('shortcuts')}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 12, padding: 0, marginLeft: 5, textDecoration: 'underline' }}
+                    >{visibleGroups.reduce((n, g) => n + g.items.length, 0)} match{visibleGroups.reduce((n, g) => n + g.items.length, 0) === 1 ? '' : 'es'} in Shortcuts</button>
+                  )}
+                </div>
+              )}
               {tab === 'shortcuts' ? (
                 visibleGroups.map(group => (
                   <div key={group.label} style={{ marginBottom: 16 }}>
@@ -287,9 +351,11 @@ export default function HelpButton() {
                 ))
               ) : (
                 <>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
-                    Click a feature to light up its button in the editor.
-                  </div>
+                  {visibleFeatures.length > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+                      Click a feature to light up its button in the editor.
+                    </div>
+                  )}
                   {visibleFeatures.map(f => (
                     <div key={f.name}>
                       <button
