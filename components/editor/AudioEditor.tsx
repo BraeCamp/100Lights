@@ -313,6 +313,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   // ── Undo history ────────────────────────────────────────────────────────────
   const historyRef = useRef<DawProject[]>([])
+  const redoRef    = useRef<DawProject[]>([])
   const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
   const voiceChainAppliedRef = useRef(false)
@@ -338,6 +339,25 @@ export default function AudioEditor(props: AudioEditorProps) {
   // Seed default samples once per browser (no-op if already done)
   useEffect(() => { seedDefaultSamples().catch(() => {}) }, [])
 
+  // Prefetch lazy view chunks once the editor is idle, so the first switch to
+  // Mixer / Session / Piano Roll / device panels doesn't pause on a network fetch
+  useEffect(() => {
+    const prefetch = () => {
+      void import('./daw/SessionView')
+      void import('./daw/Mixer')
+      void import('./daw/PianoRoll')
+      void import('./daw/DeviceChain')
+      void import('./daw/InstrumentPicker')
+    }
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void }
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(prefetch, { timeout: 4000 })
+      return () => w.cancelIdleCallback?.(id)
+    }
+    const t = window.setTimeout(prefetch, 2500)
+    return () => window.clearTimeout(t)
+  }, [])
+
   // Keep engine in sync with available MIDI presets
   useEffect(() => { engineRef.current?.setPresets(getPresets()) }, [])
 
@@ -346,6 +366,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const dispatch = useCallback((action: DawAction) => {
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
+      redoRef.current = []
     }
     rawDispatch(action)
     if (!isRemoteRef.current && !NO_BROADCAST.has(action.type)) {
@@ -690,7 +711,20 @@ export default function AudioEditor(props: AudioEditorProps) {
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) {
         e.preventDefault()
         const prev = historyRef.current.pop()
-        if (prev) rawDispatch({ type: 'LOAD_PROJECT', project: prev })
+        if (prev) {
+          redoRef.current = [...redoRef.current.slice(-49), projectRef.current]
+          rawDispatch({ type: 'LOAD_PROJECT', project: prev })
+        }
+        return
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.shiftKey) {
+        e.preventDefault()
+        const next = redoRef.current.pop()
+        if (next) {
+          historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
+          rawDispatch({ type: 'LOAD_PROJECT', project: next })
+        }
         return
       }
 

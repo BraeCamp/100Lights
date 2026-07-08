@@ -557,6 +557,44 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           {isAudioClip(clip) && clip.boomerang && <span style={{ marginLeft: 4, opacity: 0.7 }}>⇄</span>}
         </div>
 
+        {/* Quick actions — visible on the selected clip so the context-menu tools are discoverable */}
+        {selected && !isCropping && width > 110 && (
+          <div
+            onMouseDown={e => e.stopPropagation()}
+            onDoubleClick={e => e.stopPropagation()}
+            onContextMenu={e => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: 1, right: 8, zIndex: 9,
+              display: 'flex', gap: 1, alignItems: 'center',
+              background: 'rgba(0,0,0,0.6)', borderRadius: 3, padding: '0 2px',
+            }}
+          >
+            {(isAudioClip(clip)
+              ? [
+                  { glyph: '⚙', label: 'Clip Settings', fn: () => onSettings?.() },
+                  { glyph: '⌗', label: 'Crop', fn: () => onCrop() },
+                  { glyph: '◎', label: 'Isolate on Playhead', fn: () => onIsolate(clip.startBeat) },
+                  { glyph: '⇄', label: 'Replace Sample', fn: () => onReplaceSample?.() },
+                ]
+              : [
+                  { glyph: '🎹', label: 'Open Piano Roll', fn: () => onDoubleClick() },
+                ]
+            ).map(a => (
+              <button
+                key={a.label}
+                title={a.label}
+                onClick={e => { e.stopPropagation(); a.fn() }}
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#ddd', fontSize: 10, lineHeight: 1, padding: '2px 3px',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#fff' }}
+                onMouseLeave={e => { e.currentTarget.style.color = '#ddd' }}
+              >{a.glyph}</button>
+            ))}
+          </div>
+        )}
+
         <div onMouseDown={onMouseDownResize} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 7 }} />
       </div>
 

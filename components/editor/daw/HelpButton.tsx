@@ -45,6 +45,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: 'M', action: 'Toggle metronome' },
       { keys: '← / →', action: 'Move playhead ±1 beat (no clips selected)' },
       { keys: '⌘Z', action: 'Undo' },
+      { keys: '⇧⌘Z', action: 'Redo' },
       { keys: '⌘S', action: 'Save project' },
       { keys: 'Delete', action: 'Delete selected clips' },
       { keys: '?', action: 'Open this help menu' },

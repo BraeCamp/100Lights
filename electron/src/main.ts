@@ -77,6 +77,44 @@ const oauthPopupOptions = {
   },
 }
 
+
+// ── Offline handling ───────────────────────────────────────────────────────────
+// The app shell is loaded from the remote URL, so with no connection a window
+// would sit blank (ready-to-show never fires). Instead we swap in a local
+// offline page with a retry button, and auto-retry when the network comes back.
+
+function offlinePageUrl(retryUrl: string): string {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>100Lights</title><style>
+    html,body{margin:0;height:100%;background:#0d0d14;color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-app-region:drag}
+    .wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:0 32px}
+    h1{font-size:20px;font-weight:700;margin:0}
+    p{font-size:13px;color:#9a9aa5;margin:0;max-width:420px;line-height:1.6}
+    button{-webkit-app-region:no-drag;margin-top:6px;font-size:13px;font-weight:600;padding:9px 22px;border-radius:8px;border:1px solid #3d8fef;background:rgba(61,143,239,.15);color:#7ab5f7;cursor:pointer}
+    button:hover{background:rgba(61,143,239,.25)}
+    .dot{width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;margin-right:6px}
+  </style></head><body><div class="wrap">
+    <h1><span class="dot"></span>You&rsquo;re offline</h1>
+    <p>100Lights couldn&rsquo;t reach the server. Check your internet connection &mdash; the app will reconnect automatically, or you can retry now.</p>
+    <button onclick="retry()">Retry</button>
+  </div><script>
+    const target = ${JSON.stringify(retryUrl)}
+    function retry(){ location.href = target }
+    window.addEventListener('online', retry)
+    setInterval(() => { if (navigator.onLine) retry() }, 10000)
+  <\/script></body></html>`
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
+}
+
+function attachOfflineHandler(win: BrowserWindow, fallbackUrl: () => string): void {
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 = ERR_ABORTED: fired by intercepted/cancelled navigations, not real failures
+    if (!isMainFrame || errorCode === -3) return
+    const retryUrl = validatedURL && isInternal(validatedURL) ? validatedURL : fallbackUrl()
+    log.warn('Main-frame load failed', errorCode, errorDescription, validatedURL, '— showing offline page')
+    void win.loadURL(offlinePageUrl(retryUrl))
+  })
+}
+
 let launcherWindow: BrowserWindow | null = null
 const moduleWindows = new Map<string, BrowserWindow>()
 
@@ -158,6 +196,7 @@ function openModuleWindow(moduleKey: string): void {
   })
 
   moduleWindows.set(moduleKey, win)
+  attachOfflineHandler(win, () => `${APP_URL}/apps/${moduleKey}`)
   void win.loadURL(`${APP_URL}/apps/${moduleKey}`)
   log.info('Opening module window:', moduleKey)
 }
@@ -214,6 +253,7 @@ function openProjectWindow(url: string): void {
     }
   })
 
+  attachOfflineHandler(win, () => url)
   void win.loadURL(url)
   log.info('Opening project window:', url)
 }
@@ -338,7 +378,12 @@ async function createLauncherWindow(): Promise<void> {
     launcherWindow = null
   })
 
-  await launcherWindow.loadURL(`${APP_URL}/launcher`)
+  attachOfflineHandler(launcherWindow, () => `${APP_URL}/launcher`)
+  // loadURL rejects when offline — did-fail-load above swaps in the offline page,
+  // so don't let the rejection abort launcher setup (menu, updater)
+  await launcherWindow.loadURL(`${APP_URL}/launcher`).catch(err => {
+    log.warn('Launcher initial load failed (offline?)', String(err))
+  })
   log.info('Loaded launcher', `${APP_URL}/launcher`)
 }
 
