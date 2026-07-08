@@ -16,6 +16,9 @@ import Transport from './daw/Transport'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import GuestPanel from './daw/GuestPanel'
+import { RoomProvider } from '@/lib/liveblocks.config'
+import { CollabBridge, CollabAvatars, CollabSelfPresence } from './daw/CollabPresence'
+import { CollabInvite } from './daw/CollabInvite'
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getPresets } from '@/lib/midi-presets'
 
@@ -313,6 +316,13 @@ export default function AudioEditor(props: AudioEditorProps) {
   const selectedTrackIdRef = useRef<string | null>(null)
   const voiceChainAppliedRef = useRef(false)
 
+  // ── Collab broadcast refs ────────────────────────────────────────────────────
+  const broadcastRef  = useRef<((action: DawAction) => void) | null>(null)
+  const isRemoteRef   = useRef(false)
+
+  // Actions that shouldn't be synced to collaborators (view/UI preferences)
+  const NO_BROADCAST = new Set<DawAction['type']>(['LOAD_PROJECT', 'SET_WAVEFORM_ZOOM', 'SET_CROSSFADER'])
+
   // ── Per-track external input recording ──────────────────────────────────────
   type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
@@ -330,7 +340,10 @@ export default function AudioEditor(props: AudioEditorProps) {
       historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
     }
     rawDispatch(action)
-  }, [])
+    if (!isRemoteRef.current && !NO_BROADCAST.has(action.type)) {
+      broadcastRef.current?.(action)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-apply voice chain to Host and Guest 1 tracks on new podcast projects
   useEffect(() => {
@@ -730,7 +743,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────
-  return (
+  const editorContent = (
     <DawContext.Provider value={contextValue}>
       <div
         data-editor="true"
@@ -742,6 +755,24 @@ export default function AudioEditor(props: AudioEditorProps) {
           overflow: 'hidden',
         }}
       >
+        {/* Collab bar — only visible when at least one other user is connected */}
+        {props.projectId && (
+          <>
+            <CollabSelfPresence
+              selectedTrackId={selectedTrackId}
+              selectedClipId={selectedClipId}
+              view={view}
+            />
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+              gap: 8, padding: '4px 10px', borderBottom: '1px solid var(--border)',
+              background: 'var(--bg-surface)', minHeight: 32, flexShrink: 0,
+            }}>
+              <CollabAvatars />
+              <CollabInvite projectId={props.projectId} />
+            </div>
+          </>
+        )}
         <Transport />
 
         {/* Body */}
@@ -928,5 +959,17 @@ export default function AudioEditor(props: AudioEditorProps) {
         </div>
       )}
     </DawContext.Provider>
+  )
+
+  if (!props.projectId) return editorContent
+
+  return (
+    <RoomProvider
+      id={`project-${props.projectId}`}
+      initialPresence={{ name: '', color: '#3d8fef', imageUrl: null, selectedTrackId: null, selectedClipId: null, view: 'arrangement' }}
+    >
+      <CollabBridge broadcastRef={broadcastRef} rawDispatch={rawDispatch} isRemoteRef={isRemoteRef} />
+      {editorContent}
+    </RoomProvider>
   )
 }
