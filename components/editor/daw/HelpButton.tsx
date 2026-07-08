@@ -241,6 +241,7 @@ export default function HelpButton() {
       {open && typeof document !== 'undefined' && createPortal(
         <div
           onClick={() => setOpen(false)}
+          className="electron-nodrag"  // punch out the title-bar drag region while the modal is open
           style={{
             position: 'fixed', inset: 0, zIndex: 10000,
             background: 'rgba(0,0,0,0.45)',
