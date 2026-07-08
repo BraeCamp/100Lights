@@ -1474,7 +1474,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   return createPortal(
     <>
-      <div ref={containerRef} style={containerStyle}>
+      <div ref={containerRef} className={isFullscreen ? 'electron-nodrag' : undefined} style={containerStyle}>
 
         {/* Header */}
         <div onMouseDown={onHeaderMouseDown} style={{

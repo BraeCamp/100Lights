@@ -6,6 +6,13 @@ import { useDaw } from '@/lib/daw-state'
 import type { AudioClip } from '@/lib/daw-types'
 
 export default function ClipCropModal({ clip, onClose }: { clip: AudioClip; onClose: () => void }) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const { dispatch, engine } = useDaw()
   const canvasRef  = useRef<HTMLCanvasElement>(null)
   const bufRef     = useRef<AudioBuffer | null>(null)
@@ -82,7 +89,9 @@ export default function ClipCropModal({ clip, onClose }: { clip: AudioClip; onCl
 
   const dur = bufRef.current?.duration ?? 0
   return createPortal(
-    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)' }}
+    <div
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div style={{ background: '#181828', border: '1px solid var(--border)', borderRadius: 8, padding: 16, width: 440, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
         <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>Crop: {clip.name}</div>

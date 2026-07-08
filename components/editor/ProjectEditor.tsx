@@ -192,7 +192,9 @@ function AudioSyncModal({
   const MODULE_COLOR = MODULE_DEFS.find(m => m.key === 'audio')!.color
 
   return (
-    <div style={{
+    <div
+className="electron-nodrag"
+style={{
       position: 'fixed', inset: 0, zIndex: 500,
       background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',

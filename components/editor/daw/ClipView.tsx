@@ -596,7 +596,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       {/* Split at transients dialog */}
       {transientDialog && typeof document !== 'undefined' && createPortal(
         <div
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)' }}
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)' }}
           onClick={e => { if (e.target === e.currentTarget) setTransientDialog(null) }}
         >
           <div style={{

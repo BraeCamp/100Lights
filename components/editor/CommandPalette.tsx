@@ -158,7 +158,8 @@ export default function CommandPalette({ open, onClose, actions }: CommandPalett
   return (
     <div
       onClick={onClose}
-      style={{
+className="electron-nodrag"
+style={{
         position: 'fixed',
         inset: 0,
         background: 'rgba(0,0,0,0.6)',

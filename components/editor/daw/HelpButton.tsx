@@ -47,6 +47,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: '⌘Z', action: 'Undo' },
       { keys: '⌘S', action: 'Save project' },
       { keys: 'Delete', action: 'Delete selected clips' },
+      { keys: '?', action: 'Open this help menu' },
     ],
   },
   {
@@ -267,6 +268,21 @@ export default function HelpButton() {
   useEffect(() => {
     const t = window.setTimeout(() => highlightHelpTargets(['help']), 600)
     return () => window.clearTimeout(t)
+  }, [])
+
+  // ? opens the help menu from anywhere (outside text fields)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        setQuery('')
+        setOpen(true)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
   }, [])
 
   useEffect(() => {

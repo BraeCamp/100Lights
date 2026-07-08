@@ -317,8 +317,13 @@ export default function ArrangementView() {
     function onDown(e: MouseEvent) {
       if (tsPopoverRef.current && !tsPopoverRef.current.contains(e.target as Node)) setTsPopover(null)
     }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setTsPopover(null) }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [tsPopover])
 
   useEffect(() => {
@@ -328,8 +333,13 @@ export default function ArrangementView() {
         setShowExportDropdown(false)
       }
     }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setShowExportDropdown(false) }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [showExportDropdown])
 
   async function handleMorph() {
@@ -1208,7 +1218,8 @@ export default function ArrangementView() {
       {/* Split at Transients dialog (toolbar-triggered) */}
       {arrangeTransientDialog && typeof document !== 'undefined' && createPortal(
         <div
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)' }}
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)' }}
           onClick={e => { if (e.target === e.currentTarget) setArrangeTransientDialog(null) }}
         >
           <div style={{
@@ -1268,7 +1279,8 @@ export default function ArrangementView() {
       )}
       {showPublish && createPortal(
         <div
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
           onClick={e => { if (e.target === e.currentTarget) setShowPublish(false) }}
         >
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, width: 380, maxWidth: '90vw' }}>

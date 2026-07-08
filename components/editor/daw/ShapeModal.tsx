@@ -126,6 +126,13 @@ export default function ShapeModal({
   onClose: () => void
 }) {
   const { dispatch, engine, playing, project } = useDaw()
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const [buf,      setBuf]      = useState<AudioBuffer | null>(null)
   const [envelope, setEnvelope] = useState<number[] | null>(null)
   const [recording, setRecording] = useState(false)
@@ -236,7 +243,9 @@ export default function ShapeModal({
   const hasExisting = !!(effect.params.shapeEnvelope?.length)
 
   return createPortal(
-    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
+    <div
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div style={{ background: '#181828', border: `1px solid ${color}44`, borderRadius: 10, padding: 20, width: 500, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
 

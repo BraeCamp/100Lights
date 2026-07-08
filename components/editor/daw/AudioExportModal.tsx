@@ -61,12 +61,24 @@ async function normalizeAudioBuffer(buffer: AudioBuffer, targetLufs = -16): Prom
 export default function AudioExportModal({ onClose, audioMode, podcastMeta, defaultFormat }: Props) {
   const { project, engine } = useDaw()
   const [phase, setPhase]                 = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
+  const phaseRef = useRef(phase)
+  useEffect(() => { phaseRef.current = phase }, [phase])
   const [progress, setProgress]           = useState(0)
   const [downloadUrl, setDownloadUrl]     = useState<string | null>(null)
   const [format, setFormat]               = useState<ExportFormat>(defaultFormat ?? 'webm')
   const [normalize, setNormalize]         = useState(false)
   const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Escape closes the modal — except mid-export, matching the overlay-click guard
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && phaseRef.current !== 'recording') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const endBeat = Math.max(
     project.arrangementClips.filter(isAudioClip).reduce((m, c) => Math.max(m, c.startBeat + c.durationBeats), 0),
@@ -152,7 +164,8 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
 
   const overlay = (
     <div
-      style={{
+className="electron-nodrag"
+style={{
         position: 'fixed', inset: 0, zIndex: 9999,
         background: 'rgba(0,0,0,0.65)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',

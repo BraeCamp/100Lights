@@ -58,6 +58,13 @@ export default function IsolateModal({
   onClose: () => void
 }) {
   const { project, dispatch, engine } = useDaw()
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const [beat,        setBeat]        = useState(initialBeat)
   const [windowBeats, setWindowBeats] = useState(1 / 16)
   const [boomerang,   setBoomerang]   = useState(false)
@@ -212,7 +219,8 @@ export default function IsolateModal({
 
   return createPortal(
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onClick={e => { if (e.target === e.currentTarget) { try { sourceRef.current?.stop() } catch {} fadeRef.current?.disconnect(); onClose() } }}
     >
       <div style={{ background: '#181828', border: '1px solid var(--border)', borderRadius: 10, padding: 20, width: 460, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>

@@ -829,8 +829,13 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
       if (btnRef.current?.contains(e.target as Node)) return
       setOpen(false)
     }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
   function handleOpen(e: React.MouseEvent) {
@@ -1026,8 +1031,13 @@ function AddMidiEffectButton({ trackId }: { trackId: string }) {
       if (btnRef.current?.contains(e.target as Node)) return
       setOpen(false)
     }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
   return (

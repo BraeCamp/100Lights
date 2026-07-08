@@ -146,8 +146,13 @@ function AddAutoButton({ track }: { track: DawTrack }) {
       if (btnRef.current?.contains(e.target as Node)) return
       setOpen(false)
     }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
   function handleToggle() {
@@ -1044,7 +1049,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       })()}
 
       {showLibraryPicker && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        <div
+className="electron-nodrag"
+style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onMouseDown={e => { if (e.target === e.currentTarget) setShowLibraryPicker(false) }}>
           <div style={{ width: 480, height: 620, background: '#1e1e1e', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>

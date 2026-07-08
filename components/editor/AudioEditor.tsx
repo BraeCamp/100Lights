@@ -18,9 +18,6 @@ import HelpButton from './daw/HelpButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import GuestPanel from './daw/GuestPanel'
-import { RoomProvider } from '@/lib/liveblocks.config'
-import { CollabBridge, CollabAvatars, CollabSelfPresence } from './daw/CollabPresence'
-import { CollabInvite } from './daw/CollabInvite'
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getPresets } from '@/lib/midi-presets'
 
@@ -57,6 +54,8 @@ const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
 const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
+// Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
+const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
 
 // ── Podcast Setup Panel ───────────────────────────────────────────────────────
 
@@ -776,23 +775,17 @@ export default function AudioEditor(props: AudioEditorProps) {
           overflow: 'hidden',
         }}
       >
-        {/* Collab bar — only visible when at least one other user is connected */}
+        {/* Collab layer (Liveblocks room + presence bar) — saved projects only, lazy-loaded */}
         {props.projectId && (
-          <>
-            <CollabSelfPresence
-              selectedTrackId={selectedTrackId}
-              selectedClipId={selectedClipId}
-              view={view}
-            />
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-              gap: 8, padding: '4px 10px', borderBottom: '1px solid var(--border)',
-              background: 'var(--bg-surface)', minHeight: 32, flexShrink: 0,
-            }}>
-              <CollabAvatars />
-              <CollabInvite projectId={props.projectId} />
-            </div>
-          </>
+          <CollabLayer
+            projectId={props.projectId}
+            broadcastRef={broadcastRef}
+            rawDispatch={rawDispatch}
+            isRemoteRef={isRemoteRef}
+            selectedTrackId={selectedTrackId}
+            selectedClipId={selectedClipId}
+            view={view}
+          />
         )}
         <Transport />
 
@@ -1035,15 +1028,5 @@ export default function AudioEditor(props: AudioEditorProps) {
     </DawContext.Provider>
   )
 
-  if (!props.projectId) return editorContent
-
-  return (
-    <RoomProvider
-      id={`project-${props.projectId}`}
-      initialPresence={{ name: '', color: '#3d8fef', imageUrl: null, selectedTrackId: null, selectedClipId: null, view: 'arrangement' }}
-    >
-      <CollabBridge broadcastRef={broadcastRef} rawDispatch={rawDispatch} isRemoteRef={isRemoteRef} />
-      {editorContent}
-    </RoomProvider>
-  )
+  return editorContent
 }
