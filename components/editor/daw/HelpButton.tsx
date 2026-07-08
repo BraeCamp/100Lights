@@ -201,6 +201,8 @@ const FEATURES: Feature[] = [
     description: 'Audition one slice of a clip in a focused loop to fine-tune exactly what it contains — great for checking a single hit inside a busy phrase.' },
   { group: 'Clips', name: 'Replace Sample', helpIds: [], hint: CLIP_HINT,
     description: 'Swap the audio inside a clip for a different sound while keeping its position, length, warp, and effects — perfect for auditioning drum sounds in context.' },
+  { group: 'Clips', name: 'Spectral Editor', helpIds: ['spectral'], hint: 'Select an audio clip first — the ▦ button appears in its quick-actions strip (also in the right-click menu).',
+    description: 'View a clip as a time × frequency image and edit the sound itself — select a region and attenuate, boost, or erase just that energy, like removing a cough or hum.' },
   { group: 'Clips', name: 'Boomerang', helpIds: [], hint: 'Right-click a clip → Clip Settings, then toggle Boomerang.',
     description: 'Make a clip play forward then backward in a continuous ping-pong loop — a one-click way to turn any sample into a hypnotic, evolving texture.' },
 

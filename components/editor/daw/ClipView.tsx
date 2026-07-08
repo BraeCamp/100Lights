@@ -61,7 +61,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -75,6 +75,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onDragStart?(): void
   onDeleteAll?(): void
   onReplaceSample?(): void
+  onSpectral?(): void
   onScrollBy?(delta: number): void
   waveformZoom?: number
   onFadeChange?(fadeIn: number, fadeOut: number): void
@@ -359,6 +360,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
       { label: 'Isolate on Playhead', fn: () => onIsolate(ctxPos?.beat ?? clip.startBeat) },
       { label: isMulti ? 'Replace Sample (All Selected)' : 'Replace Sample', fn: () => onReplaceSample?.() },
+      { label: 'Spectral Editor', fn: () => onSpectral?.() },
       { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
     ] : [
       { label: 'Open Piano Roll', fn: onDoubleClick },
@@ -575,6 +577,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                   { glyph: '⌗', label: 'Crop', fn: () => onCrop() },
                   { glyph: '◎', label: 'Isolate on Playhead', fn: () => onIsolate(clip.startBeat) },
                   { glyph: '⇄', label: 'Replace Sample', fn: () => onReplaceSample?.() },
+                  { glyph: '▦', label: 'Spectral Editor', fn: () => onSpectral?.() },
                 ]
               : [
                   { glyph: '🎹', label: 'Open Piano Roll', fn: () => onDoubleClick() },
@@ -583,6 +586,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
               <button
                 key={a.label}
                 title={a.label}
+                data-help-id={a.label === 'Spectral Editor' ? 'spectral' : undefined}
                 onClick={e => { e.stopPropagation(); a.fn() }}
                 style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',

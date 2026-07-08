@@ -15,6 +15,8 @@ import ClipView from './ClipView'
 import EffectLaneView, { EFFECT_H } from './EffectLane'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
+// Lazy: STFT worker + editor UI only load when the spectral editor is opened
+const SpectralEditorModal = dynamic(() => import('./SpectralEditorModal'), { ssr: false })
 import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
@@ -236,6 +238,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const cancelRenameRef = useRef(false)
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
+  const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
@@ -752,6 +755,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     setSelectedClipId(null)
                   }}
                   onReplaceSample={() => setShowLibraryPicker(true)}
+                  onSpectral={() => { if (isAudioClip(clip)) setSpectralTarget(clip) }}
                   onMove={(sb, tid, alt) => {
                     if (frozen) return
                     const CLIP_SNAP_PX = 8
@@ -1067,6 +1071,9 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)
         document.body
       )}
 
+      {spectralTarget && (
+        <SpectralEditorModal clip={spectralTarget} onClose={() => setSpectralTarget(null)} />
+      )}
       {settingsTarget && (
         <ClipSettingsModal
           clip={project.arrangementClips.find(c => c.id === settingsTarget.id && c.kind === 'audio') as AudioClip ?? settingsTarget}
