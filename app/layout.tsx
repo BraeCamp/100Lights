@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/nextjs"
 import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
 import ZoomBlock from "@/components/ZoomBlock"
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import "./globals.css"
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
@@ -58,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <body className="h-full">
           <a href="#main" className="skip-link">Skip to main content</a>
           <ZoomBlock />
+          <ServiceWorkerRegistrar />
           <Suspense>
             <PostHogProvider>{children}</PostHogProvider>
           </Suspense>

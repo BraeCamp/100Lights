@@ -19,6 +19,7 @@ import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import GuestPanel from './daw/GuestPanel'
 import { seedDefaultSamples } from '@/lib/default-samples'
+import { saveSnapshot, loadSnapshot, deleteSnapshot } from '@/lib/offline-store'
 import { getPresets } from '@/lib/midi-presets'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
@@ -332,6 +333,77 @@ export default function AudioEditor(props: AudioEditorProps) {
     setTimeout(() => setBlinkIds(new Set()), 1400)
   }, [])
 
+  // ── Offline persistence — IndexedDB autosave + crash/offline recovery ───────
+  const snapshotKey = props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`
+  const [restorePrompt, setRestorePrompt] = useState<{ savedAt: number; project: DawProject } | null>(null)
+  const [isOffline, setIsOffline] = useState(false)
+  const restoreResolvedRef = useRef(false)
+  const autosaveTimerRef = useRef<number | null>(null)
+
+  // Offer to restore a local snapshot that never made it to the server
+  useEffect(() => {
+    let cancelled = false
+    loadSnapshot(snapshotKey)
+      .then(rec => {
+        if (cancelled) return
+        const differs = rec && JSON.stringify(rec.project) !== JSON.stringify(projectRef.current)
+        if (rec && !rec.synced && differs) {
+          setRestorePrompt({ savedAt: rec.savedAt, project: rec.project })
+        } else {
+          restoreResolvedRef.current = true
+        }
+      })
+      .catch(() => { restoreResolvedRef.current = true })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshotKey])
+
+  // Debounced autosave — held until the restore prompt is resolved so the
+  // initial (empty) project can't clobber a recoverable snapshot
+  useEffect(() => {
+    if (!restoreResolvedRef.current) return
+    if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current)
+    autosaveTimerRef.current = window.setTimeout(() => {
+      void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+    }, 1500)
+    return () => { if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current) }
+  }, [project, snapshotKey])
+
+  // Flush immediately when the tab is hidden / window is closing
+  useEffect(() => {
+    function flush() {
+      if (!restoreResolvedRef.current) return
+      if (document.visibilityState === 'hidden') {
+        void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', flush)
+    return () => document.removeEventListener('visibilitychange', flush)
+  }, [snapshotKey])
+
+  // Online / offline indicator
+  useEffect(() => {
+    setIsOffline(!navigator.onLine)
+    const on = () => setIsOffline(false)
+    const off = () => setIsOffline(true)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+
+  function handleRestore() {
+    if (!restorePrompt) return
+    rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject(restorePrompt.project) })
+    restoreResolvedRef.current = true
+    setRestorePrompt(null)
+  }
+
+  function handleDiscardRestore() {
+    void deleteSnapshot(snapshotKey).catch(() => {})
+    restoreResolvedRef.current = true
+    setRestorePrompt(null)
+  }
+
   // ── Per-track external input recording ──────────────────────────────────────
   type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
@@ -637,6 +709,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             } satisfies AudioTrack
           })
         await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta })
+        void saveSnapshot(props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`, p, { synced: true }).catch(() => {})
         setSaveStatus('saved')
         setSaveError('')
         setTimeout(() => setSaveStatus(null), 2500)
@@ -966,6 +1039,14 @@ export default function AudioEditor(props: AudioEditorProps) {
                 </button>
               ))}
               <div style={{ flex: 1 }} />
+              {isOffline && (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, letterSpacing: '0.06em',
+                  padding: '2px 8px', borderRadius: 4, marginRight: 6,
+                  background: 'rgba(245,158,11,0.12)', color: '#f59e0b',
+                  border: '1px solid rgba(245,158,11,0.35)', whiteSpace: 'nowrap',
+                }}>OFFLINE — SAVING LOCALLY</span>
+              )}
               <HelpButton />
             </div>
 
@@ -1038,6 +1119,32 @@ export default function AudioEditor(props: AudioEditorProps) {
       {/* Floating pad / keyboard overlay */}
       {showPads && selectedTrackId && (
         <PadInput trackId={selectedTrackId} onClose={() => setShowPads(false)} />
+      )}
+
+      {/* Session-recovery prompt */}
+      {restorePrompt && (
+        <div className="electron-nodrag" style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 120,
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '12px 18px', borderRadius: 10,
+          background: '#1c1c26', border: '1px solid #3d8fef',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)', maxWidth: 520,
+        }}>
+          <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+            <strong>Unsaved session recovered</strong>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>
+              Local backup from {new Date(restorePrompt.savedAt).toLocaleString()} — restore it?
+            </span>
+          </div>
+          <button onClick={handleRestore} style={{
+            fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
+            border: '1px solid #3d8fef', background: 'rgba(61,143,239,0.18)', color: '#7ab5f7', whiteSpace: 'nowrap',
+          }}>Restore</button>
+          <button onClick={handleDiscardRestore} style={{
+            fontSize: 12, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+            border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', whiteSpace: 'nowrap',
+          }}>Discard</button>
+        </div>
       )}
 
       {/* Save toast */}
