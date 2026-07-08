@@ -6,6 +6,7 @@ import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
+import { Library, Settings, FileText, Users } from 'lucide-react'
 import { DawEngine } from '@/lib/daw-engine'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
@@ -574,7 +575,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
-  const [leftTab,   setLeftTab]   = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
+  const [leftTab,     setLeftTab]     = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
@@ -786,59 +788,100 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-          {/* Left sidebar: Library (always) + Episode (podcast only) */}
-          <div style={{
-            width: 240,
-            flexShrink: 0,
-            borderRight: '1px solid var(--border)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            background: 'var(--bg-surface)',
-          }}>
-            {isPodcast && (
-              <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)', height: 30 }}>
-                {(['setup', 'episode', 'guests'] as const).map((tab, i, arr) => (
-                  <button
-                    key={tab}
-                    onClick={() => setLeftTab(tab)}
-                    style={{
-                      flex: 1, background: leftTab === tab ? 'var(--bg-card)' : 'transparent',
-                      border: 'none', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
-                      color: leftTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
-                      fontSize: 11, cursor: 'pointer', fontWeight: leftTab === tab ? 500 : 400,
-                    }}
-                  >{tab === 'setup' ? 'Setup' : tab === 'episode' ? 'Episode' : 'Guests'}</button>
-                ))}
-              </div>
-            )}
-            {isPodcast && (
-              <div style={{ display: 'flex', padding: '5px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          {/* Left sidebar: file-cabinet rail + collapsible panel */}
+          <div style={{ display: 'flex', flexShrink: 0, borderRight: '1px solid var(--border)' }}>
+
+            {/* Rail — always visible */}
+            <div style={{
+              width: 40, flexShrink: 0,
+              display: 'flex', flexDirection: 'column',
+              alignItems: 'center', paddingTop: 8, gap: 2,
+              background: 'var(--bg-surface)',
+              borderRight: sidebarOpen ? '1px solid var(--border)' : 'none',
+            }}>
+              {!isPodcast ? (
                 <button
-                  onClick={handleAddGuest}
-                  title="Add a new guest track with voice processing"
+                  onClick={() => setSidebarOpen(v => !v)}
+                  title="Sound Library"
                   style={{
-                    flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 4,
-                    border: '1px solid var(--border)', background: 'transparent',
-                    color: 'var(--text-muted)', cursor: 'pointer',
+                    width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                    background: sidebarOpen ? 'rgba(99,102,241,0.12)' : 'transparent',
+                    color: sidebarOpen ? 'var(--accent)' : 'var(--text-muted)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'background 0.12s, color 0.12s',
                   }}
-                >+ Guest</button>
-              </div>
-            )}
-            {!isPodcast ? (
-              <SoundLibraryPanel embedded={true} />
-            ) : leftTab === 'setup' ? (
-              <PodcastSetupPanel />
-            ) : leftTab === 'guests' ? (
-              <div style={{ flex: 1, overflow: 'auto', padding: '0 12px' }}>
-                {props.projectId
-                  ? <GuestPanel projectId={props.projectId} onPullTrack={handlePullTrack} />
-                  : <p style={{ fontSize: 12, color: 'var(--text-muted)', padding: '16px 0' }}>Save the project first to invite guests.</p>
-                }
-              </div>
-            ) : (
-              <EpisodePanel meta={podcastMeta} onChange={setPodcastMeta} />
-            )}
+                >
+                  <Library size={14} />
+                </button>
+              ) : (
+                ([
+                  { tab: 'setup',   Icon: Settings, label: 'Setup'   },
+                  { tab: 'episode', Icon: FileText,  label: 'Episode' },
+                  { tab: 'guests',  Icon: Users,     label: 'Guests'  },
+                ] as const).map(({ tab, Icon, label }) => {
+                  const isActive = sidebarOpen && leftTab === tab
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => {
+                        if (isActive) setSidebarOpen(false)
+                        else { setLeftTab(tab); setSidebarOpen(true) }
+                      }}
+                      title={label}
+                      style={{
+                        width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: isActive ? 'rgba(99,102,241,0.12)' : 'transparent',
+                        color: isActive ? 'var(--accent)' : 'var(--text-muted)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'background 0.12s, color 0.12s',
+                      }}
+                    >
+                      <Icon size={14} />
+                    </button>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Collapsible panel */}
+            <div style={{
+              width: sidebarOpen ? 240 : 0,
+              flexShrink: 0,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              transition: 'width 0.15s ease',
+              background: 'var(--bg-surface)',
+            }}>
+              {isPodcast && (
+                <div style={{ display: 'flex', padding: '5px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                  <button
+                    onClick={handleAddGuest}
+                    title="Add a new guest track with voice processing"
+                    style={{
+                      flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 4,
+                      border: '1px solid var(--border)', background: 'transparent',
+                      color: 'var(--text-muted)', cursor: 'pointer',
+                    }}
+                  >+ Guest</button>
+                </div>
+              )}
+              {!isPodcast ? (
+                <SoundLibraryPanel embedded={true} />
+              ) : leftTab === 'setup' ? (
+                <PodcastSetupPanel />
+              ) : leftTab === 'guests' ? (
+                <div style={{ flex: 1, overflow: 'auto', padding: '0 12px' }}>
+                  {props.projectId
+                    ? <GuestPanel projectId={props.projectId} onPullTrack={handlePullTrack} />
+                    : <p style={{ fontSize: 12, color: 'var(--text-muted)', padding: '16px 0' }}>Save the project first to invite guests.</p>
+                  }
+                </div>
+              ) : (
+                <EpisodePanel meta={podcastMeta} onChange={setPodcastMeta} />
+              )}
+            </div>
+
           </div>
 
           {/* Main area */}
