@@ -14,6 +14,7 @@ import type { Caption } from '@/lib/types'
 import { captureAudioInput } from '@/lib/audio-capture'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
+import HelpButton from './daw/HelpButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import GuestPanel from './daw/GuestPanel'
@@ -812,6 +813,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 <button
                   onClick={() => setSidebarOpen(v => !v)}
                   title="Sound Library"
+                  data-help-id="sound-library"
                   style={{
                     width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
                     background: sidebarOpen ? 'rgba(99,102,241,0.12)' : 'transparent',
@@ -918,6 +920,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 <button
                   key={v}
                   onClick={() => setView(v)}
+                  data-help-id={`view-${v}`}
                   style={{
                     background: view === v ? 'var(--bg-card)' : 'transparent',
                     border: view === v ? '1px solid var(--border)' : '1px solid transparent',
@@ -933,6 +936,8 @@ export default function AudioEditor(props: AudioEditorProps) {
                   {v.charAt(0).toUpperCase() + v.slice(1)}
                 </button>
               ))}
+              <div style={{ flex: 1 }} />
+              <HelpButton />
             </div>
 
             {/* Active view */}

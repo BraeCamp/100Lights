@@ -849,13 +849,13 @@ export default function ArrangementView() {
 
       {/* Toolbar */}
       <div style={{ height: 30, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <button onClick={() => setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))} style={toolBtn} title="Zoom in"><ZoomIn size={13} /></button>
-        <button onClick={() => setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))} style={toolBtn} title="Zoom out"><ZoomOut size={13} /></button>
-        <button onClick={fitToWindow} style={toolBtn} title="Fit to window"><Maximize2 size={13} /></button>
+        <button onClick={() => setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))} style={toolBtn} title="Zoom in" data-help-id="zoom-in"><ZoomIn size={13} /></button>
+        <button onClick={() => setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))} style={toolBtn} title="Zoom out" data-help-id="zoom-out"><ZoomOut size={13} /></button>
+        <button onClick={fitToWindow} style={toolBtn} title="Fit to window" data-help-id="fit-window"><Maximize2 size={13} /></button>
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>SNAP</span>
         {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
-          <button key={m} onClick={() => setSnap(m)}
+          <button key={m} onClick={() => setSnap(m)} data-help-id="snap"
             style={{ ...toolBtn, background: snap === m ? 'var(--bg-card)' : 'transparent', color: snap === m ? 'var(--text-primary)' : 'var(--text-muted)', border: snap === m ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
             {m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m}
           </button>
@@ -868,18 +868,21 @@ export default function ArrangementView() {
           onClick={() => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.max(1, project.waveformZoom - 1) })}
           style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}
           title="Decrease waveform zoom"
+          data-help-id="wf-zoom"
         >−</button>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 10, textAlign: 'center', fontFamily: 'monospace' }}>{project.waveformZoom}</span>
         <button
           onClick={() => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.min(8, project.waveformZoom + 1) })}
           style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}
           title="Increase waveform zoom"
+          data-help-id="wf-zoom"
         >+</button>
         <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
         {/* Ripple edit toggle */}
         <button
           onClick={() => setRippleEdit(r => !r)}
           title={rippleEdit ? 'Ripple Edit: ON — moving a clip shifts all clips to its right' : 'Ripple Edit: OFF — click to enable'}
+          data-help-id="ripple"
           style={{
             ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
             border: `1px solid ${rippleEdit ? '#f59e0b' : 'var(--border)'}`,
@@ -897,6 +900,7 @@ export default function ArrangementView() {
               onClick={() => { if (canSplit) void handleSplitAtTransientsFromToolbar() }}
               disabled={!canSplit}
               title={canSplit ? 'Split at Transients' : 'Select an audio clip to split at transients'}
+              data-help-id="split-transients"
               style={{
                 ...toolBtn,
                 opacity: canSplit ? 1 : 0.4,
@@ -924,6 +928,7 @@ export default function ArrangementView() {
                 onClick={() => void handleMorph()}
                 disabled={morphing}
                 title="Spectral Morph — blend two selected audio clips into a new clip"
+                data-help-id="morph"
                 style={{
                   ...toolBtn, width: 'auto', padding: '2px 8px',
                   fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
@@ -956,7 +961,7 @@ export default function ArrangementView() {
 
         <div style={{ flex: 1 }} />
         {audioMode !== 'podcast' && (
-          <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" style={{
+          <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" data-help-id="piano-roll" style={{
             ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
             border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
             background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
@@ -969,6 +974,7 @@ export default function ArrangementView() {
           <button
             onClick={() => setShowExport(true)}
             title="Export project audio"
+            data-help-id="export"
             style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
               border: '1px solid var(--border)', background: 'transparent',
@@ -1019,6 +1025,7 @@ export default function ArrangementView() {
                 dispatch({ type: 'ADD_CUE_MARKER', marker: { id: `cue-${Date.now()}`, beat, name } })
               }}
               title="Add chapter marker at playhead position (or double-click ruler)"
+              data-help-id="chapter"
               style={{
                 ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
                 border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.1)',
@@ -1028,6 +1035,7 @@ export default function ArrangementView() {
             <button
               onClick={() => { setShowPublish(true); setPublishFeedUrl(null); setPublishError(null) }}
               title="Publish podcast RSS feed"
+              data-help-id="publish"
               style={{
                 ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
                 border: '1px solid var(--border)', background: 'transparent',
@@ -1037,7 +1045,7 @@ export default function ArrangementView() {
           </>
         )}
         {onSave && (
-          <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" style={{
+          <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" data-help-id="save" style={{
             ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
             border: '1px solid var(--border)',
             background: isSaving ? 'rgba(34,197,94,0.15)' : 'transparent',

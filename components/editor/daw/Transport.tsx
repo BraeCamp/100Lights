@@ -305,7 +305,7 @@ export default function Transport() {
     return (
       <div style={wrapStyle} className={wrapClass}>
         {/* Transport controls */}
-        <button style={base} onClick={handlePodcastRewind} title="Rewind to start">
+        <button style={base} onClick={handlePodcastRewind} title="Rewind to start" data-help-id="rewind">
           <SkipBack size={13} />
         </button>
 
@@ -313,6 +313,7 @@ export default function Transport() {
           style={playing ? active : base}
           onClick={handlePlayStop}
           title="Play / Stop (Space)"
+          data-help-id="play"
         >
           {playing
             ? <Square size={11} fill="currentColor" />
@@ -330,6 +331,7 @@ export default function Transport() {
           }}
           onClick={handleRecord}
           title="Record"
+          data-help-id="record"
         >
           <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
         </button>
@@ -342,6 +344,7 @@ export default function Transport() {
           style={project.loopEnabled ? active : base}
           onClick={handleLoopToggle}
           title="Toggle loop"
+          data-help-id="loop"
         >
           <Repeat size={13} />
         </button>
@@ -368,6 +371,7 @@ export default function Transport() {
         <button
           onClick={handleRecAllVoice}
           title="Arm / disarm all voice tracks for recording"
+          data-help-id="rec-all-voice"
           style={{
             ...base,
             width: 'auto',
@@ -386,7 +390,7 @@ export default function Transport() {
         <div style={{ flex: 1 }} />
 
         {/* Master volume */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} data-help-id="master-volume">
           <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <input
             type="range"
@@ -408,7 +412,7 @@ export default function Transport() {
   return (
     <div style={wrapStyle} className={wrapClass}>
       {/* Transport controls */}
-      <button style={base} onClick={handleRewind} title="Rewind to start">
+      <button style={base} onClick={handleRewind} title="Rewind to start" data-help-id="rewind">
         <SkipBack size={13} />
       </button>
 
@@ -416,6 +420,7 @@ export default function Transport() {
         style={playing ? active : base}
         onClick={handlePlayStop}
         title="Play / Stop (Space)"
+        data-help-id="play"
       >
         {playing
           ? <Square size={11} fill="currentColor" />
@@ -433,6 +438,7 @@ export default function Transport() {
         }}
         onClick={handleRecord}
         title="Record"
+        data-help-id="record"
       >
         <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
       </button>
@@ -440,6 +446,7 @@ export default function Transport() {
       <button
         onClick={handleCapture}
         title="Capture last 30s from jam buffer (starts on first Play)"
+        data-help-id="jam"
         style={{
           ...base,
           width: 'auto', padding: '0 8px',
@@ -456,6 +463,7 @@ export default function Transport() {
         style={project.loopEnabled ? active : base}
         onClick={handleLoopToggle}
         title="Toggle loop"
+        data-help-id="loop"
       >
         <Repeat size={13} />
       </button>
@@ -479,7 +487,7 @@ export default function Transport() {
       <div style={divider} />
 
       {/* BPM */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }} data-help-id="bpm">
         {editingBpm ? (
           <input
             autoFocus
@@ -516,7 +524,7 @@ export default function Transport() {
       </div>
 
       {/* Time signature */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} data-help-id="time-sig">
         {editingTimeSig ? (
           <>
             <input
@@ -563,6 +571,7 @@ export default function Transport() {
         style={metronome ? active : base}
         onClick={handleMetronomeToggle}
         title="Toggle metronome (M)"
+        data-help-id="metronome"
       >
         <Music2 size={13} />
       </button>
@@ -570,7 +579,7 @@ export default function Transport() {
       <div style={divider} />
 
       {/* Swing */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-help-id="swing">
         <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>SWING</span>
         <input
           type="range" min={0} max={0.5} step={0.01}
@@ -592,7 +601,7 @@ export default function Transport() {
       <div style={divider} />
 
       {/* Varispeed (tape mode) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-help-id="varispeed">
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
           <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em', lineHeight: 1 }}>SPEED</span>
           <span style={{ fontSize: 6, color: varispeed !== 100 ? 'rgba(245,158,11,0.6)' : 'var(--text-muted)', letterSpacing: '0.04em', lineHeight: 1.4, opacity: 0.7 }}>tape</span>
@@ -624,7 +633,7 @@ export default function Transport() {
       <div style={divider} />
 
       {/* Key / Scale */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }} data-help-id="key-scale">
         <select
           value={project.key ?? 0}
           onChange={e => dispatch({ type: 'SET_KEY_SCALE', key: parseInt(e.target.value), scale: project.scale ?? 'major' })}
@@ -650,7 +659,7 @@ export default function Transport() {
       <div style={divider} />
 
       {/* Master volume */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} data-help-id="master-volume">
         <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         <input
           type="range"
@@ -670,6 +679,7 @@ export default function Transport() {
       <button
         onClick={() => setShowTuner(v => !v)}
         title="Open tuner"
+        data-help-id="tuner"
         style={{
           ...base,
           width: 'auto', padding: '0 9px',
@@ -686,6 +696,7 @@ export default function Transport() {
       <button
         onClick={() => setShowMask(v => !v)}
         title="Frequency masking detector — shows which tracks compete in the same bands"
+        data-help-id="masking"
         style={{
           ...base,
           width: 'auto', padding: '0 8px',
