@@ -53,6 +53,57 @@ function Toggle({ on, label, onChange }: { on: boolean; label: string; onChange:
   )
 }
 
+// ── Pitch helpers ─────────────────────────────────────────────────────────────
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+function hzToNoteName(hz: number): string {
+  const midi = 69 + 12 * Math.log2(hz / 440)
+  const rounded = Math.round(midi)
+  const name = NOTE_NAMES[((rounded % 12) + 12) % 12]
+  const octave = Math.floor(rounded / 12) - 1
+  return `${name}${octave}`
+}
+
+function shiftHz(hz: number, semitones: number, cents: number): number {
+  return hz * Math.pow(2, (semitones + cents / 100) / 12)
+}
+
+// Simple autocorrelation pitch detector — runs synchronously on the raw buffer data.
+function detectBufferPitch(buffer: AudioBuffer, trimStartSec: number): number | null {
+  const data = buffer.getChannelData(0)
+  const sr   = buffer.sampleRate
+  const offset = Math.floor(trimStartSec * sr)
+  const N = 2048
+
+  // Skip if signal is too quiet
+  let rms = 0
+  for (let i = 0; i < N; i++) {
+    const s = (offset + i < data.length) ? data[offset + i] : 0
+    rms += s * s
+  }
+  if (Math.sqrt(rms / N) < 0.01) return null
+
+  const minLag = Math.floor(sr / 1200)
+  const maxLag = Math.min(Math.ceil(sr / 60), N >> 1)
+  let bestVal = -Infinity, bestLag = 0
+
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let sum = 0
+    for (let i = 0; i < N - lag; i++) {
+      const a = (offset + i < data.length) ? data[offset + i] : 0
+      const b = (offset + i + lag < data.length) ? data[offset + i + lag] : 0
+      sum += a * b
+    }
+    if (sum > bestVal) { bestVal = sum; bestLag = lag }
+  }
+
+  if (bestVal <= 0 || bestLag === 0) return null
+  return sr / bestLag
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; onClose: () => void }) {
   const { dispatch, engine } = useDaw()
 
@@ -80,6 +131,14 @@ export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; 
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  const [detectedPitch, setDetectedPitch] = useState<number | null>(null)
+
+  // Detect pitch once on open from the buffer cache
+  useEffect(() => {
+    const buf = engine.bufferCache.get(clip.id)
+    if (buf) setDetectedPitch(detectBufferPitch(buf, clip.trimStart ?? 0))
+  }, [clip.id, clip.trimStart, engine])
 
   const [nameVal, setNameVal] = useState(clip.name)
   // Sync nameVal when the clip prop changes identity (user switches to different clip)
@@ -188,6 +247,28 @@ export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; 
         <Row label="Fine">
           <Slider value={clip.pitchCents ?? 0} min={-100} max={100} step={1} onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchCents: v }) }} />
           <NumDisplay value={clip.pitchCents ?? 0} unit="¢" decimals={0} sign />
+        </Row>
+        <Row label="Note">
+          {detectedPitch ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                {hzToNoteName(detectedPitch)}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>→</span>
+              <span style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent-light)' }}>
+                {hzToNoteName(shiftHz(detectedPitch, clip.pitchSemitones ?? 0, clip.pitchCents ?? 0))}
+              </span>
+            </div>
+          ) : (
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              {(() => {
+                const st = (clip.pitchSemitones ?? 0)
+                if (st === 0 && (clip.pitchCents ?? 0) === 0) return 'no shift'
+                const target = hzToNoteName(shiftHz(440, st, clip.pitchCents ?? 0))
+                return `A4 → ${target}`
+              })()}
+            </span>
+          )}
         </Row>
 
         {/* ── FADE ─────────────────────────────── */}
