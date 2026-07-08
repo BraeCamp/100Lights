@@ -31,5 +31,11 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   plan               TEXT        NOT NULL DEFAULT 'free',
   status             TEXT        NOT NULL DEFAULT 'active',
   current_period_end TIMESTAMPTZ,
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  gift_plan          TEXT,                 -- admin-gifted plan (e.g. 'pro')
+  gift_until         TIMESTAMPTZ           -- NULL = indefinite; past date = expired
 );
+
+-- Migration: add gift columns to existing installs
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS gift_plan  TEXT;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS gift_until TIMESTAMPTZ;

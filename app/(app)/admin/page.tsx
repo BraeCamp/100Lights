@@ -1,5 +1,8 @@
 import { sql } from '@/lib/db'
+import dynamicImport from 'next/dynamic'
 import AdminLogout from './AdminLogout'
+
+const UsersPanel = dynamicImport(() => import('./UsersPanel'), { ssr: false })
 import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
@@ -106,14 +109,6 @@ async function getAiStats() {
   }
 }
 
-async function getRecentUsers() {
-  return sql`
-    SELECT stripe_customer_id, plan, status, updated_at
-    FROM subscriptions
-    ORDER BY updated_at DESC
-    LIMIT 10
-  `
-}
 
 function Stat({ label, value, sub, warn }: { label: string; value: number | string; sub?: string; warn?: boolean }) {
   return (
@@ -144,8 +139,8 @@ const ROUTE_LABELS: Record<string, string> = {
 }
 
 export default async function AdminPage() {
-  const [stats, aiStats, recentUsers, flags, weeklyReport] = await Promise.all([
-    getStats(), getAiStats(), getRecentUsers(), getFlags(), getWeeklyReport(),
+  const [stats, aiStats, flags, weeklyReport] = await Promise.all([
+    getStats(), getAiStats(), getFlags(), getWeeklyReport(),
   ])
   const conversionRate = stats.totalUsers > 0
     ? ((stats.proUsers / stats.totalUsers) * 100).toFixed(1)
@@ -185,38 +180,7 @@ export default async function AdminPage() {
           <Stat label="Projects this week"  value={stats.projectsThisWeek} />
         </div>
 
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Recent accounts</p>
-        <div className="rounded-xl border overflow-hidden mb-2" style={{ borderColor: 'var(--border)' }}>
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-                {['Stripe customer', 'Plan', 'Status', 'Last updated'].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {recentUsers.map((u, i) => (
-                <tr key={String(u.stripe_customer_id ?? i)}
-                  style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-surface)' }}>
-                  <td className="px-4 py-2.5 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{String(u.stripe_customer_id ?? '—')}</td>
-                  <td className="px-4 py-2.5">
-                    <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                      style={u.plan === 'pro'
-                        ? { background: 'rgba(139,92,246,0.15)', color: 'var(--accent-light)' }
-                        : { background: 'var(--bg-base)', color: 'var(--text-muted)' }}>
-                      {String(u.plan)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs" style={{ color: u.status === 'active' ? 'var(--success)' : 'var(--error)' }}>{String(u.status)}</td>
-                  <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {u.updated_at ? new Date(String(u.updated_at)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <UsersPanel />
 
         {/* ── AI Cost & Usage ───────────────────────────────────────────────── */}
         <SectionHeader title="AI Cost & Usage" description="This month's Anthropic spend, usage by feature, and users hitting limits." />

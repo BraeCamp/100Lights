@@ -72,12 +72,20 @@ self.onmessage = function(e) {
   const reB = new Float64Array(FFT), imB = new Float64Array(FFT);
   const reO = new Float64Array(FFT), imO = new Float64Array(FFT);
 
+  // Slide through the *tail* of A and the *head* of B as t advances.
+  // This way the output actually plays through the audio of both clips
+  // (rather than holding two static spectral snapshots and crossfading them).
+  const aWindowLen = Math.max(0, Math.min(outputLen, samplesA.length - FFT));
+  const bWindowLen = Math.max(0, Math.min(outputLen, samplesB.length - FFT));
+  const aStart = Math.max(0, samplesA.length - FFT - aWindowLen);
+
   for (let frame = 0; frame < numFrames; frame++) {
     const t = numFrames > 1 ? frame / (numFrames - 1) : 0;
 
-    // Read representative frame from each clip at the proportional position
-    const posA = Math.floor(t * Math.max(0, samplesA.length - FFT));
-    const posB = Math.floor(t * Math.max(0, samplesB.length - FFT));
+    // posA advances through the last outputDuration seconds of A
+    // posB advances through the first outputDuration seconds of B
+    const posA = aStart + Math.floor(t * aWindowLen);
+    const posB = Math.floor(t * bWindowLen);
 
     for (let i = 0; i < FFT; i++) {
       reA[i] = ((posA + i) < samplesA.length ? samplesA[posA + i] : 0) * win[i];

@@ -353,10 +353,12 @@ export default function ArrangementView() {
       const audioBuf = engine.ctx.createBuffer(1, result.samples.length, result.sampleRate)
       audioBuf.copyToChannel(result.samples as Float32Array<ArrayBuffer>, 0)
 
-      // Sort clips chronologically; place morph at start of the earlier one
+      // Sort clips chronologically; place morph starting at the end of clip A
       const sorted  = [...clips].sort((a, b) => a.startBeat - b.startBeat)
+      const clipA = sorted[0]
       const durationBeats = morphDuration * (project.tempo / 60)
-      const newClip = makeAudioClip(sorted[0].trackId, 'Morph', sorted[0].startBeat, durationBeats)
+      const morphStartBeat = clipA.startBeat + clipA.durationBeats
+      const newClip = makeAudioClip(clipA.trackId, 'Morph', morphStartBeat, durationBeats)
 
       // Pre-load into engine cache — loadClipBuffer will find it before trying the URL
       engine.bufferCache.set(newClip.id, audioBuf)
