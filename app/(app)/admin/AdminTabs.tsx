@@ -23,14 +23,19 @@ export default function AdminTabs({ tabs }: { tabs: AdminTab[] }) {
   const [tabId, setTabId] = useState(tabs[0].id)
   const [subId, setSubId] = useState(tabs[0].subtabs[0].id)
 
-  // Restore from the hash on mount
+  // Restore from the hash on mount and follow hash-only navigations
   useEffect(() => {
-    const [t, s] = window.location.hash.replace(/^#/, '').split('/')
-    const tab = tabs.find(x => x.id === t)
-    if (!tab) return
-    setTabId(tab.id)
-    const sub = tab.subtabs.find(x => x.id === s)
-    setSubId(sub ? sub.id : tab.subtabs[0].id)
+    function applyHash() {
+      const [t, s] = window.location.hash.replace(/^#/, '').split('/')
+      const tab = tabs.find(x => x.id === t)
+      if (!tab) return
+      setTabId(tab.id)
+      const sub = tab.subtabs.find(x => x.id === s)
+      setSubId(sub ? sub.id : tab.subtabs[0].id)
+    }
+    applyHash()
+    window.addEventListener('hashchange', applyHash)
+    return () => window.removeEventListener('hashchange', applyHash)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
