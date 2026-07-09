@@ -155,6 +155,15 @@ export default function DashboardPage() {
   const [ctxMenu, setCtxMenu] = useState<{ id: string; name: string; x: number; y: number } | null>(null)
   const ctxRef = useRef<HTMLDivElement>(null)
 
+  // Platform flags — modules hidden in admin never appear on the dashboard
+  const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
+  useEffect(() => {
+    fetch('/api/platform-flags')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { enabledModules?: string[] } | null) => { if (d?.enabledModules) setEnabledModules(d.enabledModules) })
+      .catch(() => {})
+  }, [])
+
   function startRename(id: string, currentName: string) {
     setRenamingId(id)
     setRenameValue(currentName)
@@ -235,7 +244,7 @@ export default function DashboardPage() {
             gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
             gap: 12,
           }}>
-            {MODULE_DEFS.map(mod => (
+            {MODULE_DEFS.filter(mod => enabledModules.includes(mod.key)).map(mod => (
               <AppCard key={mod.key} mod={mod} />
             ))}
           </div>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import {useParams, useRouter } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import {
   Film, AudioLines, Music2, Mic2, Palette,
@@ -73,6 +73,18 @@ export default function AppPage() {
   }
 
   useEffect(() => { loadProjects() }, [])
+
+  // Platform flags — a hidden module's app page bounces to the dashboard
+  const router = useRouter()
+  useEffect(() => {
+    fetch('/api/platform-flags')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { enabledModules?: string[] } | null) => {
+        if (d?.enabledModules && !d.enabledModules.includes(moduleKey)) router.replace('/dashboard')
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moduleKey])
 
   useEffect(() => {
     if (!ctxMenu) return

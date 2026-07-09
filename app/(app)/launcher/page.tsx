@@ -459,6 +459,17 @@ function LauncherInner() {
       .catch(() => {})
   }, [])
 
+  // Platform flags — modules hidden in admin never appear on the launcher
+  const [enabledModules, setEnabledModules] = useState<string[] | null>(null)
+  useEffect(() => {
+    fetch('/api/platform-flags')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { enabledModules?: string[] } | null) => {
+        setEnabledModules(d?.enabledModules ?? ['audio', 'video', 'image'])
+      })
+      .catch(() => setEnabledModules(['audio', 'video', 'image']))
+  }, [])
+
   // Fetch recent projects
   useEffect(() => {
     fetch('/api/projects')
@@ -467,11 +478,14 @@ function LauncherInner() {
       .catch(() => setProjects([]))
   }, [])
 
+  const visibleDefs = enabledModules
+    ? MODULE_DEFS.filter(m => enabledModules.includes(m.key))
+    : MODULE_DEFS
   const ownedMods = licenses
-    ? MODULE_DEFS.filter(m => licenses[m.key]?.owned)
+    ? visibleDefs.filter(m => licenses[m.key]?.owned)
     : []
   const unownedMods = licenses
-    ? MODULE_DEFS.filter(m => !licenses[m.key]?.owned)
+    ? visibleDefs.filter(m => !licenses[m.key]?.owned)
     : []
   const audioOwned = licenses?.audio?.owned ?? false
 
