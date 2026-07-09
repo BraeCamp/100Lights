@@ -996,6 +996,14 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   useEffect(() => { remapIdRef.current        = remapId        }, [remapId])
   useEffect(() => { quantizeEnabledRef.current = quantizeEnabled }, [quantizeEnabled])
 
+  // While the pad window is active, every keystroke is potential performance
+  // input — global single-key shortcuts (like H for help) check this flag.
+  useEffect(() => {
+    if (active) document.body.dataset.padInputActive = '1'
+    else delete document.body.dataset.padInputActive
+    return () => { delete document.body.dataset.padInputActive }
+  }, [active])
+
   // ── Hardware MIDI (Web MIDI API) — auto-connects every input, hot-plug aware ──
   const startNoteRef = useRef<(pitch: number, velocity?: number) => void>(() => {})
   const endNoteRef   = useRef<(pitch: number) => void>(() => {})

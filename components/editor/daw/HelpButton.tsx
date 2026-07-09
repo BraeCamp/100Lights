@@ -48,7 +48,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: '⇧⌘Z', action: 'Redo' },
       { keys: '⌘S', action: 'Save project' },
       { keys: 'Delete', action: 'Delete selected clips' },
-      { keys: '?', action: 'Open this help menu' },
+      { keys: 'H or ?', action: 'Open this help menu' },
     ],
   },
   {
@@ -275,12 +275,16 @@ export default function HelpButton() {
     return () => window.clearTimeout(t)
   }, [])
 
-  // ? opens the help menu from anywhere (outside text fields)
+  // H or ? opens the help menu from anywhere (outside text fields)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
-      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // Something else already consumed this key (e.g. the pad window playing notes)
+      if (e.defaultPrevented) return
+      // Pad window active → every key is potential performance input
+      if (document.body.dataset.padInputActive === '1') return
+      if ((e.key === '?' || e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         setQuery('')
         setOpen(true)
