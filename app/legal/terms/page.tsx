@@ -14,7 +14,7 @@ export default function TermsPage() {
           },
           {
             title: '2. Description of Service',
-            body: '100Lights is an AI-powered creative platform for podcast editing, video editing, and image creation. Features include a browser-based audio/video editor, chapter markers, RSS feed generation, image layering tools, and AI-assisted content generation.',
+            body: '100Lights is a creative platform for music production, podcast editing, video editing, and image creation. Features include a browser-based digital audio workstation, multi-camera video editor, chapter markers, RSS feed generation, and image layering tools.',
           },
           {
             title: '3. Account Registration',
@@ -26,7 +26,7 @@ export default function TermsPage() {
           },
           {
             title: '5. Your Content',
-            body: 'You retain all ownership rights to content you upload. By uploading content, you grant 100Lights a limited, non-exclusive licence to process and store that content solely to provide the Service to you. We do not use your content to train AI models.',
+            body: 'You retain all ownership rights to content you upload. By uploading content, you grant 100Lights a limited, non-exclusive licence to process and store that content solely to provide the Service to you. We do not use your content to train machine-learning models.',
           },
           {
             title: '6. Payment and Billing',
@@ -42,7 +42,7 @@ export default function TermsPage() {
           },
           {
             title: '9. Disclaimer of Warranties',
-            body: 'The Service is provided "as is" without warranties of any kind, express or implied. AI-generated content may contain errors; you are responsible for reviewing and verifying any output before use.',
+            body: 'The Service is provided "as is" without warranties of any kind, express or implied. Automated processing such as transcription may contain errors; you are responsible for reviewing and verifying any output before use.',
           },
           {
             title: '10. Limitation of Liability',

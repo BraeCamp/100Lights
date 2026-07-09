@@ -74,7 +74,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </Link>
         <div className="mb-6">
           <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>The Creator Mindset — Demo</h1>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>AI is processing your content…</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Processing your content…</p>
         </div>
         <div className="p-5 rounded-xl border mb-4" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
           <PipelineView steps={pipeline} />

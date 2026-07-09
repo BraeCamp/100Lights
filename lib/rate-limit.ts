@@ -9,16 +9,13 @@ interface RateLimitResult {
 
 export async function checkRateLimit(
   userId: string,
-  action: 'transcribe' | 'ai_generate',
+  action: 'transcribe',
   _legacyLimit?: number,
 ): Promise<RateLimitResult> {
   const sub = await getSubscription(userId)
   const limits = getPlanLimits(sub.plan)
 
-  const limitPerMonth =
-    action === 'transcribe'
-      ? limits.transcriptionsPerMonth
-      : limits.aiGenerationsPerMonth
+  const limitPerMonth = limits.transcriptionsPerMonth
 
   const now = new Date()
   const resetAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))

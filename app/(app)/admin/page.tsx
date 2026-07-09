@@ -4,19 +4,11 @@ import UsersPanel from './UsersPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
-import AdvisorPanel from './AdvisorPanel'
 import CollapsibleSection from './CollapsibleSection'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
-import { estimateCost } from '@/lib/ai-logger'
-import { getFlags, getWeeklyReport } from '@/lib/platform-flags'
+import { getFlags } from '@/lib/platform-flags'
 
 export const dynamic = 'force-dynamic'
-
-// Per-plan limits mirrored from stripe.ts (avoids circular import)
-const PLAN_LIMITS = {
-  free: { aiGenerationsPerMonth: 10 },
-  pro:  { aiGenerationsPerMonth: 100 },
-} as const
 
 async function getStats() {
   const [users, proUsers, newThisWeek, newThisMonth, projects, projectsThisWeek] = await Promise.all([
@@ -37,77 +29,6 @@ async function getStats() {
   }
 }
 
-async function getAiStats() {
-  // Per-route breakdown for the current month
-  const routeRows = await sql`
-    SELECT route, model, COUNT(*)::int AS calls, SUM(tokens_in)::bigint AS tokens_in, SUM(tokens_out)::bigint AS tokens_out
-    FROM ai_calls
-    WHERE called_at > DATE_TRUNC('month', NOW())
-    GROUP BY route, model
-    ORDER BY calls DESC
-  `.catch(() => [] as { route: string; model: string; calls: number; tokens_in: number; tokens_out: number }[])
-
-  // All-time totals
-  const totals = await sql`
-    SELECT SUM(tokens_in)::bigint AS tin, SUM(tokens_out)::bigint AS tout, COUNT(*)::int AS calls
-    FROM ai_calls
-    WHERE called_at > DATE_TRUNC('month', NOW())
-  `.catch(() => [{ tin: 0, tout: 0, calls: 0 }])
-
-  // Users who have hit their monthly AI limit
-  const limitHitRows = await sql`
-    SELECT COUNT(DISTINCT u.user_id)::int AS cnt
-    FROM usage u
-    JOIN subscriptions s ON s.user_id = u.user_id
-    WHERE u.action = 'ai_generate'
-      AND u.reset_at > NOW()
-      AND (
-        (s.plan = 'free' AND u.count >= ${PLAN_LIMITS.free.aiGenerationsPerMonth}) OR
-        (s.plan = 'pro'  AND u.count >= ${PLAN_LIMITS.pro.aiGenerationsPerMonth})
-      )
-  `.catch(() => [{ cnt: 0 }])
-
-  // Users near limit (>= 80% used)
-  const nearLimitRows = await sql`
-    SELECT COUNT(DISTINCT u.user_id)::int AS cnt
-    FROM usage u
-    JOIN subscriptions s ON s.user_id = u.user_id
-    WHERE u.action = 'ai_generate'
-      AND u.reset_at > NOW()
-      AND (
-        (s.plan = 'free' AND u.count >= ${Math.floor(PLAN_LIMITS.free.aiGenerationsPerMonth * 0.8)}) OR
-        (s.plan = 'pro'  AND u.count >= ${Math.floor(PLAN_LIMITS.pro.aiGenerationsPerMonth * 0.8)})
-      )
-  `.catch(() => [{ cnt: 0 }])
-
-  // Top users by AI calls this month
-  const topUsers = await sql`
-    SELECT user_id, COUNT(*)::int AS calls, SUM(tokens_in + tokens_out)::bigint AS tokens
-    FROM ai_calls
-    WHERE called_at > DATE_TRUNC('month', NOW())
-    GROUP BY user_id
-    ORDER BY calls DESC
-    LIMIT 5
-  `.catch(() => [] as { user_id: string; calls: number; tokens: number }[])
-
-  const rows = routeRows as { route: string; model: string; calls: number; tokens_in: number; tokens_out: number }[]
-  const totalRow = (totals as { tin: number; tout: number; calls: number }[])[0] ?? { tin: 0, tout: 0, calls: 0 }
-
-  const totalCost = rows.reduce((sum, r) => sum + estimateCost(r.model, Number(r.tokens_in), Number(r.tokens_out)), 0)
-
-  return {
-    routes:       rows,
-    totalCalls:   Number(totalRow.calls ?? 0),
-    totalTokensIn: Number(totalRow.tin ?? 0),
-    totalTokensOut: Number(totalRow.tout ?? 0),
-    totalCost,
-    usersAtLimit:  Number((limitHitRows as { cnt: number }[])[0]?.cnt ?? 0),
-    usersNearLimit: Number((nearLimitRows as { cnt: number }[])[0]?.cnt ?? 0),
-    topUsers:     (topUsers as { user_id: string; calls: number; tokens: number }[]),
-  }
-}
-
-
 function Stat({ label, value, sub, warn }: { label: string; value: number | string; sub?: string; warn?: boolean }) {
   return (
     <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: warn ? 'rgba(239,68,68,0.35)' : 'var(--border)' }}>
@@ -127,19 +48,8 @@ function SectionHeader({ title, description }: { title: string; description?: st
   )
 }
 
-const ROUTE_LABELS: Record<string, string> = {
-  'ai/generate':    'AI Generate (general)',
-  'beat/reflect':   'Beat Reflection',
-  'beat/reflection':'Beat Reflection',
-  'beat/classify':  'Beat Classifier',
-  'beat/adjust':    'Beat Adjust',
-  'synth/tune':     'Synth Tuner',
-}
-
 export default async function AdminPage() {
-  const [stats, aiStats, flags, weeklyReport] = await Promise.all([
-    getStats(), getAiStats(), getFlags(), getWeeklyReport(),
-  ])
+  const [stats, flags] = await Promise.all([getStats(), getFlags()])
   const conversionRate = stats.totalUsers > 0
     ? ((stats.proUsers / stats.totalUsers) * 100).toFixed(1)
     : '0'
@@ -179,114 +89,6 @@ export default async function AdminPage() {
         </div>
 
         <UsersPanel />
-
-        {/* ── AI Cost & Usage ───────────────────────────────────────────────── */}
-        <SectionHeader title="AI Cost & Usage" description="This month's Anthropic spend, usage by feature, and users hitting limits." />
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <Stat label="AI spend this month"  value={`$${aiStats.totalCost.toFixed(4)}`} sub={`${aiStats.totalCalls.toLocaleString()} calls`} />
-          <Stat label="Total tokens in"      value={aiStats.totalTokensIn.toLocaleString()} sub="input tokens" />
-          <Stat label="Total tokens out"     value={aiStats.totalTokensOut.toLocaleString()} sub="output tokens" />
-          <Stat label="Users at limit"       value={aiStats.usersAtLimit} sub={`${aiStats.usersNearLimit} near limit (≥80%)`} warn={aiStats.usersAtLimit > 0} />
-        </div>
-
-        {/* Per-route breakdown */}
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Spend by feature</p>
-        {aiStats.routes.length === 0 ? (
-          <p className="text-xs mb-6" style={{ color: 'var(--text-muted)' }}>No AI calls logged yet this month. Calls will appear here after users interact with AI features.</p>
-        ) : (
-          <div className="rounded-xl border overflow-hidden mb-6" style={{ borderColor: 'var(--border)' }}>
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-                  {['Feature', 'Model', 'Calls', 'Tokens in', 'Tokens out', 'Cost (est.)'].map(h => (
-                    <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {aiStats.routes.map((r, i) => {
-                  const cost = estimateCost(r.model, Number(r.tokens_in), Number(r.tokens_out))
-                  const modelShort = r.model.includes('sonnet') ? 'Sonnet' : r.model.includes('opus') ? 'Opus' : 'Haiku'
-                  return (
-                    <tr key={r.route} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-surface)' }}>
-                      <td className="px-4 py-2.5 text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{ROUTE_LABELS[r.route] ?? r.route}</td>
-                      <td className="px-4 py-2.5 text-xs">
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium"
-                          style={r.model.includes('sonnet') || r.model.includes('opus')
-                            ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444' }
-                            : { background: 'rgba(34,197,94,0.1)', color: '#22c55e' }}>
-                          {modelShort}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{Number(r.calls).toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-muted)' }}>{Number(r.tokens_in).toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-muted)' }}>{Number(r.tokens_out).toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-xs font-mono" style={{ color: cost > 0.01 ? '#f97316' : 'var(--text-secondary)' }}>${cost.toFixed(4)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Top users by AI usage */}
-        {aiStats.topUsers.length > 0 && (
-          <>
-            <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Heaviest AI users this month</p>
-            <div className="rounded-xl border overflow-hidden mb-2" style={{ borderColor: 'var(--border)' }}>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-                    {['User ID', 'Calls', 'Total tokens'].map(h => (
-                      <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {aiStats.topUsers.map((u, i) => (
-                    <tr key={u.user_id} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-surface)' }}>
-                      <td className="px-4 py-2.5 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{u.user_id}</td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-primary)' }}>{Number(u.calls).toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--text-muted)' }}>{Number(u.tokens).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-
-        {/* ── Weekly Report ─────────────────────────────────────────────────── */}
-        <SectionHeader
-          title="Weekly Growth Report"
-          description="Auto-generated every Monday at 9am UTC by the AI advisor. Run /api/cron/weekly-report manually to trigger."
-        />
-        {weeklyReport ? (
-          <div style={{
-            padding: '16px 20px', borderRadius: 10,
-            background: 'var(--bg-card)', border: '1px solid var(--border)',
-          }}>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12 }}>
-              Generated {new Date(weeklyReport.generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </p>
-            <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-              {weeklyReport.content}
-            </div>
-          </div>
-        ) : (
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            No report yet. It runs every Monday at 9am UTC, or you can trigger it manually via GET /api/cron/weekly-report with the correct Authorization header.
-          </p>
-        )}
-
-        {/* ── AI Advisor ────────────────────────────────────────────────────── */}
-        <SectionHeader
-          title="AI Business Advisor"
-          description="Claude Sonnet with live access to your platform metrics. Ask about marketing, growth, compliance, pricing, or user acquisition."
-        />
-        <AdvisorPanel />
 
         {/* ── Audio Editor ──────────────────────────────────────────────────── */}
         <SectionHeader

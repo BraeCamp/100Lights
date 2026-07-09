@@ -257,7 +257,7 @@ export async function synthesizeFromPitchCurve(
 // Always uses originalBuf as the audio source — never rebuilds from oscillators.
 // When harmProfile is provided, a per-harmonic peaking EQ chain reshapes the
 // voice's spectrum toward the reference's harmonic ratios before saturation.
-// The AI improves this function iteratively via the AI Conversion Tuner.
+// Tuned iteratively against reference recordings.
 export async function transformVoiceToSynth(
   originalBuf: AudioBuffer,
   pitchCurve: PitchFrame[],

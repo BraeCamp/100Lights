@@ -21,7 +21,7 @@ export interface Clip {
   title: string
   start: number   // seconds from start of source file
   end: number
-  reason: string  // why the AI selected this moment
+  reason: string  // why this moment was selected
   captions: Caption[]
 }
 

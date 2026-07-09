@@ -1,15 +1,14 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, Wand2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2 } from 'lucide-react'
+import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2 } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 import type { Caption, Output, ChapterMarker } from '@/lib/types'
 
 type TranscribeStatus = 'idle' | 'transcribing' | 'done' | 'error'
-type AiStatus = 'idle' | 'working' | 'done' | 'error'
-type ContentGenType = 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary' | 'key_quotes'
+type ActionStatus = 'idle' | 'working' | 'done' | 'error'
 
 interface Props {
   selectedItem: TimelineItem | null
@@ -26,19 +25,14 @@ interface Props {
   captions: Caption[]
   currentTime?: number
   onSeek?: (t: number) => void
-  silenceTrimStatus: AiStatus
+  silenceTrimStatus: ActionStatus
   silenceThreshold: number
   onSilenceThresholdChange: (v: number) => void
   onSilenceTrim: () => void
-  smartClipStatus: AiStatus
-  onSmartClip: () => void
-  genContentStatus: Record<string, AiStatus>
-  onGenerateContent: (type: ContentGenType) => void
   chapters: ChapterMarker[]
   onAddChapter: () => void
   onRenameChapter: (id: string, title: string) => void
   onDeleteChapter: (id: string) => void
-  onGenerateChapters: () => void
   onSpeedChange?: (id: string, speed: number) => void
   isAudioOnly?: boolean
   lutItems?: Array<{ id: string; name: string }>
@@ -46,7 +40,7 @@ interface Props {
   onAudioDuckingToggle?: () => void
 }
 
-type Tab = 'clip' | 'color' | 'outputs' | 'ai' | 'transcript'
+type Tab = 'clip' | 'color' | 'outputs' | 'tools' | 'transcript'
 
 const TRANSITIONS: { value: TransitionType | 'none'; label: string }[] = [
   { value: 'none',       label: 'Cut (none)' },
@@ -124,16 +118,16 @@ function Slider({ label, value, min, max, unit, step = 1, onChange }: {
   )
 }
 
-function statusIcon(status: AiStatus) {
+function statusIcon(status: ActionStatus) {
   if (status === 'working') return <Loader2 size={13} color="var(--accent-light)" style={{ animation: 'spin 1s linear infinite' }} />
   if (status === 'done')    return <CheckCircle size={13} color="var(--success, #10b981)" />
   if (status === 'error')   return <AlertCircle size={13} color="#ef4444" />
   return <ChevronRight size={11} color="var(--text-muted)" />
 }
 
-function AiActionRow({ icon: Icon, label, description, badge, status, onClick, disabled, children }: {
+function ActionRow({ icon: Icon, label, description, badge, status, onClick, disabled, children }: {
   icon: React.ElementType; label: string; description: string; badge?: string
-  status?: AiStatus; onClick?: () => void; disabled?: boolean; children?: React.ReactNode
+  status?: ActionStatus; onClick?: () => void; disabled?: boolean; children?: React.ReactNode
 }) {
   const isWorking = status === 'working'
   const isDisabled = disabled || isWorking
@@ -303,23 +297,21 @@ export default function Inspector({
   importedFile, transcribeStatus, transcribeProgress = 0, transcribeError, onTranscribe,
   captions, currentTime = 0, onSeek,
   silenceTrimStatus, silenceThreshold, onSilenceThresholdChange, onSilenceTrim,
-  smartClipStatus, onSmartClip,
-  genContentStatus, onGenerateContent,
-  chapters, onAddChapter, onRenameChapter, onDeleteChapter, onGenerateChapters,
+  chapters, onAddChapter, onRenameChapter, onDeleteChapter,
   onSpeedChange,
   isAudioOnly,
   lutItems = [],
   audioDuckingEnabled = false,
   onAudioDuckingToggle,
 }: Props) {
-  const [tab, setTab] = useState<Tab>('ai')
+  const [tab, setTab] = useState<Tab>('tools')
   const [transcriptSearch, setTranscriptSearch] = useState('')
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null)
   const [editingChapterTitle, setEditingChapterTitle] = useState('')
   const activeCaptionRef = useRef<HTMLDivElement>(null)
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'ai',         label: 'AI' },
+    { id: 'tools',      label: 'Tools' },
     { id: 'transcript', label: 'Transcript' },
     { id: 'clip',       label: 'Clip' },
     ...(!isAudioOnly ? [{ id: 'color' as Tab, label: 'Color' }] : []),
@@ -352,7 +344,7 @@ export default function Inspector({
 
   // Switch to clip tab when a clip is selected
   useEffect(() => {
-    if (selectedItem && tab === 'ai') { /* stay on ai */ }
+    if (selectedItem && tab === 'tools') { /* stay on tools */ }
   }, [selectedItem]) // eslint-disable-line
 
   function patchClip(patch: Partial<TimelineItem>) {
@@ -391,8 +383,8 @@ export default function Inspector({
 
       <div className="flex-1 overflow-y-auto p-3">
 
-        {/* ── AI Tab ─────────────────────────────────────── */}
-        {tab === 'ai' && (
+        {/* ── Tools Tab ──────────────────────────────────── */}
+        {tab === 'tools' && (
           <div className="flex flex-col gap-5">
 
             <div>
@@ -448,7 +440,7 @@ export default function Inspector({
             <div>
               <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>AUTO-EDIT</p>
               <div className="flex flex-col gap-1.5">
-                <AiActionRow icon={Sparkles} label="Auto-Silence Trim"
+                <ActionRow icon={Sparkles} label="Auto-Silence Trim"
                   description={captions.length ? `Remove pauses >${silenceThreshold}s` : transcriptRequired}
                   status={silenceTrimStatus} onClick={onSilenceTrim}
                   disabled={needsTranscript || silenceTrimStatus === 'working'}>
@@ -461,12 +453,8 @@ export default function Inspector({
                       <span className="text-xs font-mono shrink-0" style={{ color: 'var(--text-muted)', minWidth: 28 }}>{silenceThreshold.toFixed(1)}s</span>
                     </div>
                   )}
-                </AiActionRow>
-                <AiActionRow icon={Wand2} label="Smart Clip"
-                  description={captions.length ? 'Pick highlight moments with AI' : transcriptRequired}
-                  status={smartClipStatus} onClick={onSmartClip}
-                  disabled={needsTranscript || smartClipStatus === 'working'} />
-                <AiActionRow icon={Scissors} label="Detect Scenes" description="Find cut points automatically" badge="soon" disabled />
+                </ActionRow>
+                <ActionRow icon={Scissors} label="Detect Scenes" description="Find cut points automatically" badge="soon" disabled />
               </div>
             </div>
 
@@ -480,18 +468,10 @@ export default function Inspector({
                     title="Mark chapter at current playhead">
                     <Flag size={9} /> Mark
                   </button>
-                  <button onClick={onGenerateChapters}
-                    disabled={needsTranscript || genContentStatus['chapters'] === 'working'}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs"
-                    style={{ background: needsTranscript ? 'var(--border)' : 'var(--accent-subtle)', border: '1px solid var(--border)', color: needsTranscript ? 'var(--text-muted)' : 'var(--accent-light)', opacity: needsTranscript ? 0.5 : 1 }}>
-                    {genContentStatus['chapters'] === 'working'
-                      ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} />
-                      : <Sparkles size={9} />} AI
-                  </button>
                 </div>
               </div>
               {chapters.length === 0 ? (
-                <p className="text-xs py-2 text-center" style={{ color: 'var(--text-muted)' }}>No chapters yet. Mark or generate with AI.</p>
+                <p className="text-xs py-2 text-center" style={{ color: 'var(--text-muted)' }}>No chapters yet. Press Mark at the playhead.</p>
               ) : (
                 <div className="flex flex-col gap-0.5">
                   {chapters.map(ch => (
@@ -517,20 +497,6 @@ export default function Inspector({
                 </div>
               )}
             </div>
-
-            <div>
-              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>GENERATE CONTENT</p>
-              <div className="flex flex-col gap-1.5">
-                <AiActionRow icon={FileText}      label="Write Article"         description={needsTranscript ? transcriptRequired : 'Long-form from transcript'}         status={genContentStatus['article']}          onClick={() => onGenerateContent('article')}          disabled={needsTranscript || genContentStatus['article'] === 'working'} />
-                <AiActionRow icon={Newspaper}     label="Blog Post"             description={needsTranscript ? transcriptRequired : 'SEO-ready summary'}                  status={genContentStatus['blog_post']}        onClick={() => onGenerateContent('blog_post')}        disabled={needsTranscript || genContentStatus['blog_post'] === 'working'} />
-                <AiActionRow icon={AlignLeft}     label="Show Notes"            description={needsTranscript ? transcriptRequired : 'Podcast episode notes'}             status={genContentStatus['show_notes']}       onClick={() => onGenerateContent('show_notes')}       disabled={needsTranscript || genContentStatus['show_notes'] === 'working'} />
-                <AiActionRow icon={PlaySquare}    label="YouTube Description"   description={needsTranscript ? transcriptRequired : chapters.length ? 'With your chapters' : 'With auto chapters'} status={genContentStatus['youtube_desc']} onClick={() => onGenerateContent('youtube_desc')} disabled={needsTranscript || genContentStatus['youtube_desc'] === 'working'} />
-                <AiActionRow icon={MessageSquare} label="Social Captions"       description={needsTranscript ? transcriptRequired : 'Twitter, LinkedIn, Instagram'}      status={genContentStatus['social_caption']}   onClick={() => onGenerateContent('social_caption')}   disabled={needsTranscript || genContentStatus['social_caption'] === 'working'} />
-                <AiActionRow icon={Mail}          label="Email Newsletter"      description={needsTranscript ? transcriptRequired : 'Ready-to-send digest'}              status={genContentStatus['email_newsletter']} onClick={() => onGenerateContent('email_newsletter')} disabled={needsTranscript || genContentStatus['email_newsletter'] === 'working'} />
-                <AiActionRow icon={BookOpen}      label="Summary"               description={needsTranscript ? transcriptRequired : 'Key points at a glance'}            status={genContentStatus['summary']}          onClick={() => onGenerateContent('summary')}          disabled={needsTranscript || genContentStatus['summary'] === 'working'} />
-                <AiActionRow icon={Quote}         label="Key Quotes"            description={needsTranscript ? transcriptRequired : '5–8 most shareable moments'}        status={genContentStatus['key_quotes']}       onClick={() => onGenerateContent('key_quotes')}       disabled={needsTranscript || genContentStatus['key_quotes'] === 'working'} />
-              </div>
-            </div>
           </div>
         )}
 
@@ -541,7 +507,7 @@ export default function Inspector({
               <div className="flex flex-col items-center gap-2 py-12 px-4 text-center">
                 <Mic size={22} color="rgba(255,255,255,0.08)" />
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Transcribe your media to see the transcript here.</p>
-                <button onClick={() => setTab('ai')} className="text-xs mt-1 underline" style={{ color: 'var(--accent-light)' }}>Go to AI tab →</button>
+                <button onClick={() => setTab('tools')} className="text-xs mt-1 underline" style={{ color: 'var(--accent-light)' }}>Go to Tools tab →</button>
               </div>
             ) : (
               <>
@@ -981,7 +947,7 @@ export default function Inspector({
           <div className="flex flex-col gap-2">
             <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>GENERATED CONTENT</p>
             {outputs.filter(o => o.type !== 'clips').length === 0 ? (
-              <p className="text-xs text-center py-8" style={{ color: 'var(--text-muted)' }}>No outputs yet. Use the AI tab to generate content.</p>
+              <p className="text-xs text-center py-8" style={{ color: 'var(--text-muted)' }}>No documents yet.</p>
             ) : (
               outputs.filter(o => o.type !== 'clips').map((output) => {
                 const Icon = outputIcons[output.type] ?? FileText

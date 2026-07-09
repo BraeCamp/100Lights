@@ -31,10 +31,6 @@ const VideoEditor = dynamic(
   { ssr: false, loading: () => <EditorSpinner label="Loading video editor…" /> }
 )
 
-const ContentEditor = dynamic(
-  () => import('./ContentEditor'),
-  { ssr: false, loading: () => <EditorSpinner label="Loading content editor…" /> }
-)
 
 const AudioEditor = dynamic(
   () => import('./AudioEditor'),
@@ -519,7 +515,6 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const hasVideo      = activeModules.includes('video')
   const hasAudio      = activeModules.includes('audio')
   const hasImage      = (activeModules as string[]).includes('image')
-  const hasContent    = (activeModules as string[]).includes('content')
   const hasTranscript = (activeModules as string[]).includes('transcript')
 
   // ── Props factories ───────────────────────────────────────
@@ -529,15 +524,6 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onModulesChange: handleModulesChange,
   }
 
-  const contentProps = {
-    projectId,
-    projectName: localName,
-    captions,
-    initialOutputs: outputs,
-    onSave: async (docs: Output[]) => save({ outputs: docs }),
-    onProjectNameCommit: commitName,
-    ...sharedModuleProps,
-  }
 
   const transcriptProps = {
     projectId,
@@ -594,43 +580,6 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
   // ── Non-video layouts — only what the active modules need ──
 
-  // Transcript + Content — side by side
-  if (hasTranscript && hasContent && !hasAudio) {
-    return (
-      <>
-        <SplitLayout
-          left={<TranscriptEditor {...transcriptProps} />}
-          right={<ContentEditor   {...contentProps}    />}
-        />
-        {syncItems && (
-          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
-        )}
-      </>
-    )
-  }
-
-  // Audio + Transcript + Content — audio on top, transcript + content side by side below
-  if (hasAudio && hasTranscript && hasContent) {
-    return (
-      <>
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <div style={{ flex: '0 0 50%', overflow: 'hidden' }}>
-            <AudioEditor {...audioProps} />
-          </div>
-          <div style={{ flex: '0 0 50%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
-            <SplitLayout
-              left={<TranscriptEditor {...transcriptProps} hideHeader />}
-              right={<ContentEditor   {...contentProps}    hideHeader />}
-            />
-          </div>
-        </div>
-        {syncItems && (
-          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
-        )}
-      </>
-    )
-  }
-
   // Audio + Transcript — audio top, live-synced transcript below
   if (hasAudio && hasTranscript) {
     return (
@@ -650,29 +599,6 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     )
   }
 
-  // Audio + Content — waveform left, writing space right
-  if (hasAudio && hasContent) {
-    return (
-      <>
-        <SplitLayout
-          defaultSplit={480}
-          left={<AudioEditor   {...audioProps}   />}
-          right={<ContentEditor {...contentProps} />}
-        />
-        {syncItems && (
-          <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />
-        )}
-      </>
-    )
-  }
-
-  // Single modules
-  if (hasContent)    return (
-    <>
-      <ContentEditor {...contentProps} />
-      {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
-    </>
-  )
   if (hasAudio)      return (
     <>
       <AudioEditor {...audioProps} />

@@ -23,7 +23,6 @@ export async function GET() {
 
   return Response.json({
     plan: sub.plan,
-    aiGenerations: { used: getCount('ai_generate'), limit: limits.aiGenerationsPerMonth },
     transcriptions: { used: getCount('transcribe'), limit: limits.transcriptionsPerMonth },
   })
 }

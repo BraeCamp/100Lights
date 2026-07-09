@@ -18,11 +18,11 @@ export default function PrivacyPage() {
           },
           {
             title: '3. Your Uploaded Content',
-            body: 'Files you upload are stored securely in Cloudflare R2 and are only accessible to you via time-limited signed URLs. We process your content through third-party AI services (Anthropic for AI generation) solely to deliver features you request. These providers are bound by data processing agreements.',
+            body: 'Files you upload are stored securely in Cloudflare R2 and are only accessible to you via time-limited signed URLs. When you request transcription, audio is processed by a third-party speech-to-text service (Deepgram) solely to deliver that feature. These providers are bound by data processing agreements.',
           },
           {
             title: '4. Third-Party Services',
-            body: 'We use the following sub-processors: Clerk (authentication), Neon (database), Cloudflare R2 (file storage), Anthropic (AI generation), Stripe (payments), Sentry (error monitoring). Each operates under its own privacy policy.',
+            body: 'We use the following sub-processors: Clerk (authentication), Neon (database), Cloudflare R2 (file storage), Deepgram (speech-to-text transcription), Stripe (payments), Sentry (error monitoring). Each operates under its own privacy policy.',
           },
           {
             title: '5. Data Retention',

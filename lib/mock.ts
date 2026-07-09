@@ -79,7 +79,7 @@ export const MOCK_OUTPUTS: Output[] = [
   {
     id: 'clips-1',
     type: 'clips',
-    title: 'AI-Selected Clips',
+    title: 'Highlight Clips',
     createdAt: new Date(),
     content: '',
     clips: MOCK_CLIPS,

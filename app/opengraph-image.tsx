@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 export const runtime = 'edge'
-export const alt = '100Lights — AI Content Repurposing'
+export const alt = '100Lights — Professional Audio & Video Editing'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -45,12 +45,12 @@ export default function OgImage() {
 
         {/* Tagline */}
         <div style={{ fontSize: 28, color: '#a1a1aa', textAlign: 'center', maxWidth: 720 }}>
-          Turn hours of video into minutes of content
+          A full DAW and video editor, built for the browser
         </div>
 
         {/* Pills */}
         <div style={{ display: 'flex', gap: 16, marginTop: 48 }}>
-          {['Podcast Editor', 'AI Writing', 'Image Editor', 'RSS Export'].map((label) => (
+          {['Music Studio', 'Podcast Editor', 'Video Editor', 'RSS Export'].map((label) => (
             <div
               key={label}
               style={{

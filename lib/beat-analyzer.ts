@@ -100,7 +100,7 @@
  * ── NOTE ON DEPLOYMENT ────────────────────────────────────────────────────────
  *   Once the classifier is trained sufficiently via the admin teaching interface,
  *   users should be able to beatbox uncalibrated with no pattern declaration.
- *   See also: app/api/classify-beats/route.ts for the AI correction layer and
+ *   Classification is fully local: spectral features + nearest-neighbour reference
  *   its roadmap note on moving the teaching UI to admin-only.
  * ══════════════════════════════════════════════════════════════════════════════
  */
@@ -169,7 +169,7 @@ export interface BeatHit {
   velocity: number   // 0–1
   note: number       // MIDI note — always set
   duration?: number  // seconds; undefined = short attack hit (~50ms default display)
-  spectral?: HitSpectral // stored during drum classification for AI review
+  spectral?: HitSpectral // stored during drum classification for later review
   // ── Enriched by detectLoopPeriod / annotatePitchDeltas before clustering ──
   loopPhase?: number  // 0–1, position within the detected repeating loop period
   pitchDelta?: number // 0–1, normalized absolute pitch change from the previous hit
@@ -303,7 +303,7 @@ export const NN_MAX_DIST = 0.38  // beyond this threshold, don't trust the neare
 // ── Standalone hit classifier ─────────────────────────────────────────────────
 // Classifies a single hit's spectral fingerprint against a set of reference sounds.
 // Returns { type, confidence } where confidence is 0–1 (1 = perfect match).
-// If no reference is within NN_MAX_DIST, type is null (caller should use Claude).
+// If no reference is within NN_MAX_DIST, type is null (caller falls back to rules).
 export function classifyHitLocally(
   spectral: HitSpectral,
   references: ReferenceSound[],
@@ -918,7 +918,7 @@ export async function analyzeBeats(
       const hiR     = spectral.hiMid + spectral.hi
 
       // Perceptual booleans derived from the full feature set.
-      // These give the hardcoded rules the same richness the AI classifier uses.
+      // These give the hardcoded rules full spectral richness.
       const isPitched      = spectral.harmonicRatio > 0.40   // clear harmonic structure → tom, rim
       const isSharp        = spectral.attackTime < 0.008     // impulsive transient → rim, clap, kick
       const isBuzzy        = spectral.roughness > 0.30       // rapid AM → snare wire, clap layers

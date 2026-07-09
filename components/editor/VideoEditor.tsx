@@ -669,11 +669,9 @@ export default function VideoEditor({
   const [audioLayout, setAudioLayout] = useState<'tab' | 'below'>('tab')
   const [audioSplitH, setAudioSplitH] = useState(160)
 
-  // AI feature state
+  // Edit tool state
   const [silenceTrimStatus, setSilenceTrimStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
   const [silenceThreshold, setSilenceThreshold] = useState(0.5)
-  const [smartClipStatus, setSmartClipStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
-  const [genContentStatus, setGenContentStatus] = useState<Record<string, 'idle' | 'working' | 'done' | 'error'>>({})
 
   // Playback speed
   const [playbackRate, setPlaybackRate] = useState(1)
@@ -2176,25 +2174,7 @@ export default function VideoEditor({
   }
 
 
-  // ── AI handlers ─────────────────────────────────────────────
-
-  async function callAi(prompt: string, system: string): Promise<string> {
-    const res = await fetch('/api/ai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, system }),
-    })
-    if (res.status === 429) {
-      posthog.capture('upgrade_shown', { trigger: 'ai_limit' })
-      showUpgrade('You\'ve used your free AI generations for this month. Upgrade to Pro for 100/month.')
-      throw new Error('Monthly AI limit reached — upgrade to continue.')
-    }
-    if (!res.ok) throw new Error(`AI request failed: ${res.status}`)
-    const data = await res.json() as { content: string; error?: string }
-    if (data.error) throw new Error(data.error)
-    posthog.capture('ai_content_generated')
-    return data.content
-  }
+  // ── Edit handlers ───────────────────────────────────────────
 
   async function handleSilenceTrim() {
     if (!localCaptions.length) return
@@ -2240,46 +2220,6 @@ export default function VideoEditor({
       setSilenceTrimStatus('done')
     } catch {
       setSilenceTrimStatus('error')
-    }
-  }
-
-  async function handleSmartClip() {
-    if (!localCaptions.length) return
-    setSmartClipStatus('working')
-    try {
-      const transcript = localCaptions.map(c => `[${c.start.toFixed(1)}s] ${c.text}`).join('\n')
-      const system = 'You are a video editing assistant. Return ONLY valid JSON — no markdown, no explanation, no code fences.'
-      const prompt = `Identify the 3 to 5 most compelling, self-contained highlight moments in this transcript. Each should be 20–120 seconds long.\n\nTranscript:\n${transcript}\n\nReturn a JSON array: [{"title": "string", "start": number, "end": number, "reason": "string"}]`
-      const raw = await callAi(prompt, system)
-      const moments = JSON.parse(raw) as { title: string; start: number; end: number; reason: string }[]
-
-      // Find a reference clip (first clip with a url) to copy media info from
-      const mediaTrack = tracks.find(t => t.type === 'media' || t.type === 'video' || t.type === 'audio')
-      if (!mediaTrack) throw new Error('No media track')
-      const refClip = timelineItems.find(i => i.url && i.trackId === mediaTrack.id)
-      if (!refClip) throw new Error('No media on timeline')
-
-      const videoTrack = mediaTrack
-
-      let cursor = timelineItems.reduce((max, i) => Math.max(max, i.startTime + (i.outPoint - i.inPoint)), 0) + 2
-      const newClips: TimelineItem[] = moments.map(m => ({
-        id: crypto.randomUUID(),
-        label: m.title,
-        startTime: cursor,
-        inPoint: m.start,
-        outPoint: m.end,
-        color: CLIP_COLORS[Math.floor(Math.random() * CLIP_COLORS.length)],
-        trackId: videoTrack.id,
-        url: refClip.url,
-        contentType: refClip.contentType,
-        captions: localCaptions.filter(c => c.start >= m.start && c.end <= m.end),
-      } satisfies TimelineItem)
-      ).map(clip => { cursor += clip.outPoint - clip.inPoint + 0.5; return clip })
-
-      setTimelineItems(prev => [...prev, ...newClips])
-      setSmartClipStatus('done')
-    } catch {
-      setSmartClipStatus('error')
     }
   }
 
@@ -2331,86 +2271,6 @@ export default function VideoEditor({
 
   function handleDeleteChapter(id: string) {
     setChapters(prev => prev.filter(c => c.id !== id))
-  }
-
-  async function handleGenerateChapters() {
-    if (!localCaptions.length) return
-    setGenContentStatus(prev => ({ ...prev, chapters: 'working' }))
-    try {
-      const timedTranscript = localCaptions.map(c => `[${c.start.toFixed(0)}s] ${c.text}`).join('\n')
-      const system = 'You are a content editor. Return ONLY valid JSON — no markdown, no code fences.'
-      const prompt = `Create chapter markers for this transcript. Cover distinct topics or segments. Generate 4–8 chapters.\n\nTranscript:\n${timedTranscript}\n\nReturn a JSON array: [{"time": number_seconds, "title": "string"}]`
-      const raw = await callAi(prompt, system)
-      const parsed = JSON.parse(raw) as { time: number; title: string }[]
-      setChapters(parsed.map(c => ({ id: crypto.randomUUID(), time: c.time, title: c.title })).sort((a, b) => a.time - b.time))
-      setGenContentStatus(prev => ({ ...prev, chapters: 'done' }))
-    } catch {
-      setGenContentStatus(prev => ({ ...prev, chapters: 'error' }))
-    }
-  }
-
-  async function handleGenerateContent(type: 'article' | 'blog_post' | 'show_notes' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'summary' | 'key_quotes') {
-    if (!localCaptions.length) return
-    setGenContentStatus(prev => ({ ...prev, [type]: 'working' }))
-    try {
-      const transcript = localCaptions.map(c => c.text).join(' ')
-      const timedTranscript = localCaptions.map(c => `[${c.start.toFixed(0)}s] ${c.text}`).join('\n')
-      const prompts: Record<string, { system: string; prompt: string }> = {
-        article: {
-          system: 'You are a professional content writer. Write in a clear, engaging style.',
-          prompt: `Write a comprehensive article based on this transcript. Include an engaging title (as a # heading), introduction, main points with ## subheadings, and conclusion.\n\nTranscript:\n${transcript}`,
-        },
-        blog_post: {
-          system: 'You are an SEO-savvy blog writer. Write in a conversational, engaging style.',
-          prompt: `Write an SEO-friendly blog post based on this transcript. Use an engaging hook as the opening, include ## subheadings, bullet points for key takeaways, and a call to action at the end.\n\nTranscript:\n${transcript}`,
-        },
-        show_notes: {
-          system: 'You are a podcast producer writing show notes.',
-          prompt: `Write podcast show notes for this transcript. Include: a 2–3 sentence summary, key topics covered (bullet list), 2–3 notable quotes with timestamps, and a brief resources/links section.\n\nTranscript:\n${timedTranscript}`,
-        },
-        youtube_desc: {
-          system: 'You are a YouTube creator writing video descriptions to maximise search and click-through.',
-          prompt: `Write a YouTube video description for this transcript. Include: a punchy 2-sentence hook, a paragraph summary, a chapters section with timestamps (format: 0:00 Intro), 5–10 relevant hashtags, and a subscribe CTA.\n\n${chapters.length > 0 ? `Use these chapters:\n${chapters.map(c => `${Math.floor(c.time / 60)}:${String(Math.floor(c.time % 60)).padStart(2, '0')} ${c.title}`).join('\n')}\n\n` : ''}Transcript:\n${timedTranscript}`,
-        },
-        social_caption: {
-          system: 'You are a social media strategist who writes platform-native content.',
-          prompt: `Write social media captions for this transcript. Provide 3 distinct captions:\n1. Twitter/X (max 280 chars, punchy, 2 hashtags)\n2. LinkedIn (professional tone, 3–5 sentences, 3 hashtags)\n3. Instagram (engaging, emojis welcome, storytelling hook, 5 hashtags)\n\nLabel each clearly.\n\nTranscript:\n${transcript}`,
-        },
-        email_newsletter: {
-          system: 'You are an email newsletter writer who writes compelling, scannable newsletters.',
-          prompt: `Write an email newsletter based on this transcript. Include: a subject line (labelled "Subject:"), a brief greeting, 3–5 key takeaways with short descriptions, a featured quote from the content, and a closing CTA. Keep it scannable with short paragraphs.\n\nTranscript:\n${transcript}`,
-        },
-        summary: {
-          system: 'You are an expert at summarising spoken content concisely and accurately.',
-          prompt: `Write a structured summary of this transcript. Include: a one-sentence TL;DR, 5 key points as bullet points, and the main conclusion or takeaway. Keep it under 300 words.\n\nTranscript:\n${transcript}`,
-        },
-        key_quotes: {
-          system: 'You are a content strategist finding the most shareable, standalone quotes from spoken content.',
-          prompt: `Extract the 5–8 most impactful, quotable moments from this transcript. Each should work as a standalone quote without needing surrounding context.\n\nFormat each exactly like this:\n[M:SS] "Quote text here"\n↳ One sentence of context\n\nTranscript:\n${timedTranscript}`,
-        },
-      }
-      const { system, prompt } = prompts[type]
-      const content = await callAi(prompt, system)
-
-      const typeLabels: Record<string, string> = {
-        article: 'Article', blog_post: 'Blog Post', show_notes: 'Show Notes',
-        youtube_desc: 'YouTube Description', social_caption: 'Social Captions',
-        email_newsletter: 'Email Newsletter', summary: 'Summary', key_quotes: 'Key Quotes',
-      }
-      const firstLine = content.split('\n').find(l => l.trim())?.replace(/^#+\s*/, '') ?? typeLabels[type]
-      const out: Output = {
-        id: crypto.randomUUID(),
-        type: type as Output['type'],
-        title: firstLine,
-        content,
-        wordCount: content.split(/\s+/).length,
-        createdAt: new Date(),
-      }
-      setLocalOutputs(prev => [out, ...prev])
-      setGenContentStatus(prev => ({ ...prev, [type]: 'done' }))
-    } catch {
-      setGenContentStatus(prev => ({ ...prev, [type]: 'error' }))
-    }
   }
 
   const clampLeft   = (d: number) => setLeftW(w => Math.max(MIN_LEFT, Math.min(MAX_LEFT, w + d)))
@@ -3039,15 +2899,10 @@ export default function VideoEditor({
                 silenceThreshold={silenceThreshold}
                 onSilenceThresholdChange={setSilenceThreshold}
                 onSilenceTrim={handleSilenceTrim}
-                smartClipStatus={smartClipStatus}
-                onSmartClip={handleSmartClip}
-                genContentStatus={genContentStatus}
-                onGenerateContent={handleGenerateContent}
                 chapters={chapters}
                 onAddChapter={handleAddChapter}
                 onRenameChapter={handleRenameChapter}
                 onDeleteChapter={handleDeleteChapter}
-                onGenerateChapters={handleGenerateChapters}
                 onSpeedChange={handleClipSpeedChange}
                 isAudioOnly={isAudioOnly}
                 lutItems={mediaItems.filter(m => m.contentType === 'lut').map(m => ({ id: m.id, name: m.name }))}

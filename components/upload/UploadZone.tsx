@@ -117,7 +117,7 @@ export default function UploadZone({ onSubmit }: Props) {
           cursor: file ? 'pointer' : 'not-allowed',
         }}
       >
-        Process with AI
+        Import & Process
       </button>
     </div>
   )
