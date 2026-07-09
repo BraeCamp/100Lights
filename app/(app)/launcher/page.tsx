@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, Suspense } from 'react'
+import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import { UserButton } from '@clerk/nextjs'
@@ -432,15 +433,8 @@ function LauncherInner() {
   const [licenses, setLicenses] = useState<LicenseMap | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [isElectronMac, setIsElectronMac] = useState(false)
+  const { padTrafficLights: isElectronMac } = useElectronChrome()
 
-  useEffect(() => {
-    setIsElectronMac(
-      typeof window !== 'undefined' &&
-      !!window.electronAPI &&
-      navigator.platform.startsWith('Mac')
-    )
-  }, [])
 
   // Show activation toast from URL param
   useEffect(() => {

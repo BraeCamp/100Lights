@@ -115,6 +115,13 @@ function attachOfflineHandler(win: BrowserWindow, fallbackUrl: () => string): vo
   })
 }
 
+// Notify the renderer when a window enters/leaves fullscreen so it can drop
+// the traffic-light padding (macOS hides the lights with the menu bar).
+function wireFullScreenEvents(win: BrowserWindow): void {
+  win.on('enter-full-screen', () => win.webContents.send('window:fullscreen-changed', true))
+  win.on('leave-full-screen', () => win.webContents.send('window:fullscreen-changed', false))
+}
+
 let launcherWindow: BrowserWindow | null = null
 const moduleWindows = new Map<string, BrowserWindow>()
 
@@ -196,6 +203,7 @@ function openModuleWindow(moduleKey: string): void {
   })
 
   moduleWindows.set(moduleKey, win)
+  wireFullScreenEvents(win)
   attachOfflineHandler(win, () => `${APP_URL}/apps/${moduleKey}`)
   void win.loadURL(`${APP_URL}/apps/${moduleKey}`)
   log.info('Opening module window:', moduleKey)
@@ -253,6 +261,7 @@ function openProjectWindow(url: string): void {
     }
   })
 
+  wireFullScreenEvents(win)
   attachOfflineHandler(win, () => url)
   void win.loadURL(url)
   log.info('Opening project window:', url)
@@ -281,7 +290,9 @@ async function createLauncherWindow(): Promise<void> {
   launcherWindow = new BrowserWindow({
     width: 960,
     height: 600,
-    resizable: false,
+    minWidth: 720,
+    minHeight: 480,
+    resizable: true,
     fullscreenable: true,
     center: true,
     backgroundColor: '#0d0d14',
@@ -340,7 +351,6 @@ async function createLauncherWindow(): Promise<void> {
 
     // Navigating into a module — expand the launcher window to editor size
     if (pathname.startsWith('/apps/')) {
-      launcherWindow!.setResizable(true)
       launcherWindow!.setMinimumSize(1080, 640)
       const [w, h] = launcherWindow!.getSize()
       if (w < 1080 || h < 640) {
@@ -350,12 +360,13 @@ async function createLauncherWindow(): Promise<void> {
       return
     }
 
-    // Returning to launcher — restore compact size
+    // Returning to launcher — restore compact size (stays resizable)
     if (pathname === '/launcher') {
-      launcherWindow!.setMinimumSize(960, 600)
-      launcherWindow!.setSize(960, 600, true)
-      launcherWindow!.setResizable(false)
-      launcherWindow!.center()
+      launcherWindow!.setMinimumSize(720, 480)
+      if (!launcherWindow!.isFullScreen()) {
+        launcherWindow!.setSize(960, 600, true)
+        launcherWindow!.center()
+      }
     }
   })
 
@@ -378,6 +389,7 @@ async function createLauncherWindow(): Promise<void> {
     launcherWindow = null
   })
 
+  wireFullScreenEvents(launcherWindow)
   attachOfflineHandler(launcherWindow, () => `${APP_URL}/launcher`)
   // loadURL rejects when offline — did-fail-load above swaps in the offline page,
   // so don't let the rejection abort launcher setup (menu, updater)
@@ -399,6 +411,9 @@ function setupModuleIpc(): void {
   ipcMain.handle('launcher:show', () => {
     launcherWindow?.show()
     launcherWindow?.focus()
+  })
+  ipcMain.handle('window:isFullScreen', (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
   })
 }
 

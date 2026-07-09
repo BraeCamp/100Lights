@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
 import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus } from 'lucide-react'
 import Link from 'next/link'
@@ -436,10 +437,7 @@ export default function VideoEditor({
   const focusRecordingRef    = useRef(false)
   const focusBufferRef       = useRef<Array<{ time: number; x: number; y: number }>>([])
   const lastFocusKfTimeRef   = useRef(0)
-  const [isElectronMac, setIsElectronMac] = useState(false)
-  useEffect(() => {
-    setIsElectronMac(!!window.electronAPI && navigator.platform.startsWith('Mac'))
-  }, [])
+  const { padTrafficLights: isElectronMac } = useElectronChrome()
 
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)

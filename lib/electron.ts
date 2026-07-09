@@ -27,6 +27,9 @@ export interface ElectronAPI {
   openModule: (moduleKey: string) => Promise<void>
   focusModule: (moduleKey: string) => Promise<void>
   showLauncher: () => Promise<void>
+  // Window state (absent in desktop builds older than 0.4.x)
+  isFullScreen?: () => Promise<boolean>
+  onFullScreenChanged?: (cb: (fullscreen: boolean) => void) => () => void
 }
 
 declare global {

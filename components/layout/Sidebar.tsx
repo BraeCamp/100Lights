@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
@@ -27,12 +28,10 @@ export default function Sidebar() {
   const [usage, setUsage] = useState<Usage | null>(null)
   const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
   const [isElectron, setIsElectron] = useState(false)
-  const [isElectronMac, setIsElectronMac] = useState(false)
+  const { padTrafficLights: isElectronMac } = useElectronChrome()
 
   useEffect(() => {
-    const electron = typeof window !== 'undefined' && !!window.electronAPI
-    setIsElectron(electron)
-    setIsElectronMac(electron && navigator.platform.startsWith('Mac'))
+    setIsElectron(typeof window !== 'undefined' && !!window.electronAPI)
   }, [])
 
   function fetchUsage() {

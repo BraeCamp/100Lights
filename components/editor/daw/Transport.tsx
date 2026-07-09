@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2 } from 'lucide-react'
 import { useDaw, formatBeat, makeAudioClip } from '@/lib/daw-state'
+import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
 
 const PadTuner    = dynamic(() => import('./PadTuner'),    { ssr: false })
@@ -18,10 +19,7 @@ function fmtHMS(secs: number): string {
 
 export default function Transport() {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink } = useDaw()
-  const [isElectronMac, setIsElectronMac] = useState(false)
-  useEffect(() => {
-    setIsElectronMac(!!window.electronAPI && navigator.platform.startsWith('Mac'))
-  }, [])
+  const { padTrafficLights } = useElectronChrome()
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const posRef = useRef<HTMLSpanElement>(null)
@@ -292,7 +290,7 @@ export default function Transport() {
     display: 'flex',
     alignItems: 'center',
     gap: 4,
-    paddingLeft: isElectronMac ? 80 : 10,
+    paddingLeft: padTrafficLights ? 80 : 10,
     paddingRight: 10,
     flexShrink: 0,
   }

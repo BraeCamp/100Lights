@@ -38,6 +38,10 @@ export interface ElectronAPI {
   // System audio capture — returns screen source IDs for getUserMedia
   getDesktopSources: () => Promise<Array<{ id: string; name: string }>>
 
+  // Window state — lets the renderer drop traffic-light padding in fullscreen
+  isFullScreen: () => Promise<boolean>
+  onFullScreenChanged: (cb: (fullscreen: boolean) => void) => () => void
+
   // App metadata
   platform: NodeJS.Platform
   appVersion: string
@@ -50,6 +54,12 @@ const electronAPI: ElectronAPI = {
   showItemInFolder: (filePath) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   getDesktopSources: () => ipcRenderer.invoke('desktopCapturer:getSources'),
+  isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
+  onFullScreenChanged: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, fullscreen: boolean) => cb(fullscreen)
+    ipcRenderer.on('window:fullscreen-changed', listener)
+    return () => ipcRenderer.removeListener('window:fullscreen-changed', listener)
+  },
   openModule: (moduleKey) => ipcRenderer.invoke('module:open', moduleKey),
   focusModule: (moduleKey) => ipcRenderer.invoke('module:focus', moduleKey),
   showLauncher: () => ipcRenderer.invoke('launcher:show'),
