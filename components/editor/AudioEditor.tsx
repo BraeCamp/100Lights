@@ -1089,7 +1089,9 @@ export default function AudioEditor(props: AudioEditorProps) {
                   {/* Pad Input toggle — only for MIDI / drum tracks */}
                   {selectedTrackId && (() => {
                     const t = project.tracks.find(tr => tr.id === selectedTrackId)
-                    return t && t.type !== 'audio' ? (
+                    // Show whenever the track has an instrument — track.type stays
+                    // 'audio' even after picking one, so gate on the instrument
+                    return t && (t.type !== 'audio' || t.instrument.type !== 'none') ? (
                       <button
                         onClick={() => setShowPads(v => !v)}
                         title="Open pad / keyboard input"

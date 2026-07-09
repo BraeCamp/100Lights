@@ -211,8 +211,10 @@ const FEATURES: Feature[] = [
     description: 'Stack effects and processors on a track in series — EQ, compression, delay, and more — then reorder, bypass, or remove devices as the sound develops.' },
   { group: 'Instruments & Effects', name: 'Instrument Picker', helpIds: ['bottom-instrument'], modes: ['music'], hint: DEVICE_HINT,
     description: 'Choose the synth, drum kit, or sampler a MIDI track plays, and browse through presets with instant middle-C preview before you commit to one.' },
-  { group: 'Instruments & Effects', name: 'Pads & Keyboard', helpIds: ['pads'], modes: ['music'], hint: 'Select a MIDI or drum track first — the ⌨ Pads button appears in the bottom panel’s tab bar.',
-    description: 'Play instruments live from clickable pads or your computer keyboard, tuned to the project key and scale, and record what you play straight into clips.' },
+  { group: 'Instruments & Effects', name: 'Pads & Keyboard', helpIds: ['pads'], modes: ['music'], hint: 'Pick an instrument for the selected track first — the ⌨ Pads button appears in the bottom panel’s tab bar.',
+    description: 'Play instruments live from clickable pads, your computer keyboard, or a plugged-in MIDI keyboard. Instrument notes record as editable MIDI; sample pads bounce audio.' },
+  { group: 'Instruments & Effects', name: 'Capture MIDI', helpIds: [], modes: ['music'], hint: 'Open the Pad Input window — CAPTURE sits next to the REC button.',
+    description: 'Everything you play while the transport runs is remembered for 30 seconds, even when not recording. One click on CAPTURE turns that great unrecorded take into a MIDI clip.' },
 
   // ── Collaboration ──
   { group: 'Collaboration', name: 'Invite Collaborators', helpIds: ['invite'], hint: 'Open a saved project — the invite button lives in the collaboration bar at the top.',

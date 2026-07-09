@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useDaw, makeAudioClip } from '@/lib/daw-state'
+import { useDaw, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { defaultReverb, defaultDelay, defaultFilter, defaultEq3, defaultCompressor, type EffectType } from '@/lib/daw-types'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
@@ -10,8 +10,22 @@ import type { LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import dynamic from 'next/dynamic'
 import { getPadPresets, savePadPreset, deletePadPreset, type PadPreset } from '@/lib/pad-presets'
+import { startWebMidi, onMidiNote, onMidiDevices, webMidiSupported } from '@/lib/web-midi'
+import type { MidiClip, MidiNote } from '@/lib/daw-types'
+import { isMidiClip } from '@/lib/daw-types'
 
 const PadVoice = dynamic(() => import('./PadVoice'), { ssr: false })
+
+// ── Capture MIDI — rolling note memory (like the JAM buffer, but for notes) ────
+// Every note played while the transport runs is remembered here, recording or
+// not, so a great unrecorded take can be pulled into a clip after the fact.
+const CAPTURE_WINDOW_SEC = 30
+interface CapturedNote { pitch: number; velocity: number; startBeat: number; endBeat: number; wallEnd: number }
+const _midiCapture: CapturedNote[] = []
+function pruneCapture() {
+  const cutoff = Date.now() - CAPTURE_WINDOW_SEC * 1000
+  while (_midiCapture.length && _midiCapture[0].wallEnd < cutoff) _midiCapture.shift()
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -924,6 +938,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [countdown,     setCountdown]     = useState<number | null>(null)
   const countdownIvRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [quantizeEnabled, setQuantizeEnabled] = useState(false)
+  const [midiDevices, setMidiDevices] = useState<string[]>([])
+  const [captureCount, setCaptureCount] = useState(() => _midiCapture.length)
   const [quantizeGrid,    setQuantizeGrid]    = useState<'1/1'|'1/2'|'1/4'|'1/8'|'1/16'>('1/8')
   const quantizeEnabledRef = useRef(false)
   const quantizeGridRef    = useRef<'1/1'|'1/2'|'1/4'|'1/8'|'1/16'>('1/8')
@@ -946,7 +962,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [, setSeqTick]                            = useState(0)
 
   const containerRef  = useRef<HTMLDivElement>(null)
-  const noteStarts    = useRef<Map<number, { beat: number; sounds: PadSound[] }>>(new Map())
+  const noteStarts = useRef<Map<number, { beat: number; sounds: PadSound[]; velocity: number }>>(new Map())
+  const captureStarts = useRef<Map<number, { beat: number; velocity: number }>>(new Map())
   const padTrackMap   = useRef<Map<number, string>>(new Map())
   const soundBuffers  = useRef<Map<string, AudioBuffer>>(new Map())
   const reversedBufs  = useRef<Map<string, AudioBuffer>>(new Map())
@@ -978,6 +995,25 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   useEffect(() => { tabRef.current            = tab            }, [tab])
   useEffect(() => { remapIdRef.current        = remapId        }, [remapId])
   useEffect(() => { quantizeEnabledRef.current = quantizeEnabled }, [quantizeEnabled])
+
+  // ── Hardware MIDI (Web MIDI API) — auto-connects every input, hot-plug aware ──
+  const startNoteRef = useRef<(pitch: number, velocity?: number) => void>(() => {})
+  const endNoteRef   = useRef<(pitch: number) => void>(() => {})
+  useEffect(() => {
+    if (!webMidiSupported) return
+    let unsubNote: (() => void) | undefined
+    let unsubDev: (() => void) | undefined
+    let cancelled = false
+    void startWebMidi().then(ok => {
+      if (!ok || cancelled) return
+      unsubDev = onMidiDevices(setMidiDevices)
+      unsubNote = onMidiNote(e => {
+        if (e.type === 'on') startNoteRef.current(e.pitch, e.velocity)
+        else endNoteRef.current(e.pitch)
+      })
+    })
+    return () => { cancelled = true; unsubNote?.(); unsubDev?.() }
+  }, [])
   useEffect(() => { quantizeGridRef.current    = quantizeGrid    }, [quantizeGrid])
 
   const track      = project.tracks.find(t => t.id === trackId)
@@ -1082,7 +1118,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   // ── Audio playback ────────────────────────────────────────────────────────────
 
-  const startNote = useCallback(async (pitch: number) => {
+  const startNote = useCallback(async (pitch: number, velocity = 100) => {
     const pad    = padsRef.current.find(p => p.pitch === pitch)
 
     // Effect-toggle mode — press toggles a track effect on/off
@@ -1192,19 +1228,39 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
     } else if (instrument) {
       await engine.ctx.resume()
-      playInstrumentNote(engine.ctx, engine.masterGain, instrument, pitch, 100, engine.ctx.currentTime, 0.25)
+      playInstrumentNote(engine.ctx, engine.masterGain, instrument, pitch, velocity, engine.ctx.currentTime, 0.25)
     }
 
     setPressing(prev => new Set([...prev, pitch]))
+
+    // Capture MIDI: remember every note while the transport runs
+    if (engine.isPlaying) {
+      captureStarts.current.set(pitch, { beat: engine.currentBeat, velocity })
+    }
+
     if (padRecording && engine.isPlaying) {
       const pad = padsRef.current.find(p => p.pitch === pitch)
       const QBEATS: Record<string, number> = { '1/1': 4, '1/2': 2, '1/4': 1, '1/8': 0.5, '1/16': 0.25 }
       const rawBeat = engine.currentBeat
       const g = QBEATS[quantizeGridRef.current] ?? 1
       const beat = quantizeEnabledRef.current ? Math.round(rawBeat / g) * g : rawBeat
-      noteStarts.current.set(pitch, { beat, sounds: pad?.customSounds ?? [] })
+      noteStarts.current.set(pitch, { beat, sounds: pad?.customSounds ?? [], velocity })
     }
   }, [instrument, engine, padRecording])
+
+  // Find (or create) the MIDI clip on this track that covers `beat`.
+  const getOrCreateMidiClip = useCallback((beat: number): MidiClip => {
+    const bar = projectRef.current.timeSignatureNum || 4
+    const existing = projectRef.current.arrangementClips.find(c =>
+      isMidiClip(c) && c.trackId === trackId && c.startBeat <= beat && beat < c.startBeat + c.durationBeats
+    ) as MidiClip | undefined
+    if (existing) return existing
+    const isDrumTrack = projectRef.current.tracks.find(t => t.id === trackId)?.instrument.type === 'drum'
+    const start = Math.floor(beat / bar) * bar
+    const clip = makeMidiClip(trackId, isDrumTrack ? 'Pad Beat' : 'Pad Take', start, bar, { isDrumClip: isDrumTrack })
+    dispatch({ type: 'ADD_CLIP', clip })
+    return clip
+  }, [trackId, dispatch])
 
   const endNote = useCallback((pitch: number) => {
     const sources = activeSources.current.get(pitch)
@@ -1232,13 +1288,46 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     }
 
     setPressing(prev => { const n = new Set(prev); n.delete(pitch); return n })
+
+    // Capture MIDI: close the remembered note
+    const cap = captureStarts.current.get(pitch)
+    if (cap) {
+      captureStarts.current.delete(pitch)
+      const endBeat = Math.max(cap.beat + 0.0625, engine.currentBeat)
+      _midiCapture.push({ pitch, velocity: cap.velocity, startBeat: cap.beat, endBeat, wallEnd: Date.now() })
+      pruneCapture()
+      setCaptureCount(_midiCapture.length)
+    }
+
     const started = noteStarts.current.get(pitch)
     if (!started) return
     noteStarts.current.delete(pitch)
 
     const pad     = padsRef.current.find(p => p.pitch === pitch)
     const sounds  = started.sounds
-    if (sounds.length === 0) return
+
+    // Instrument-backed note (no custom sounds) → record a real MIDI note the
+    // piano roll can edit afterwards. Sample pads keep the audio-bounce below.
+    if (sounds.length === 0) {
+      const target = getOrCreateMidiClip(started.beat)
+      const rel = started.beat - target.startBeat
+      const durationBeats = Math.max(0.125, engine.currentBeat - started.beat)
+      const note: MidiNote = {
+        id: crypto.randomUUID(),
+        pitch,
+        startBeat: rel,
+        durationBeats,
+        velocity: started.velocity,
+      }
+      dispatch({ type: 'ADD_MIDI_NOTE', clipId: target.id, note })
+      // Grow the clip when the note runs past its end (snap to whole bars)
+      const bar = projectRef.current.timeSignatureNum || 4
+      const noteEnd = rel + durationBeats
+      if (noteEnd > target.durationBeats) {
+        dispatch({ type: 'UPDATE_CLIP', clipId: target.id, patch: { durationBeats: Math.ceil(noteEnd / bar) * bar } })
+      }
+      return
+    }
 
     const padTrackId = getOrCreatePadTrack(pitch, pad?.drumLabel ?? `Pad ${pitch}`)
 
@@ -1255,7 +1344,41 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       const clip = makeAudioClip(padTrackId, `${pad?.drumLabel ?? 'Pad'} – ${entry.folder ? `${entry.folder} – ${entry.name}` : entry.name}`, started.beat, durationBeats, { audioUrl, bufferDuration: buf?.duration })
       dispatch({ type: 'ADD_CLIP', clip })
     }
-  }, [engine, dispatch, getOrCreatePadTrack])
+  }, [engine, dispatch, getOrCreatePadTrack, getOrCreateMidiClip])
+
+  // Latest handlers for the hardware-MIDI subscription
+  useEffect(() => { startNoteRef.current = (p, v) => { void startNote(p, v) } }, [startNote])
+  useEffect(() => { endNoteRef.current = endNote }, [endNote])
+
+  // ── Capture MIDI → clip ──────────────────────────────────────────────────────
+  function handleCaptureMidi() {
+    pruneCapture()
+    if (_midiCapture.length === 0) return
+    const bar = projectRef.current.timeSignatureNum || 4
+    const minStart = Math.min(..._midiCapture.map(n => n.startBeat))
+    const maxEnd   = Math.max(..._midiCapture.map(n => n.endBeat))
+    const clipStart = Math.floor(minStart / bar) * bar
+    const isDrumTrack = projectRef.current.tracks.find(t => t.id === trackId)?.instrument.type === 'drum'
+    const clip = makeMidiClip(
+      trackId,
+      'MIDI Capture',
+      clipStart,
+      Math.max(bar, Math.ceil((maxEnd - clipStart) / bar) * bar),
+      { isDrumClip: isDrumTrack },
+    )
+    dispatch({ type: 'ADD_CLIP', clip })
+    for (const n of _midiCapture) {
+      dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: {
+        id: crypto.randomUUID(),
+        pitch: n.pitch,
+        startBeat: n.startBeat - clipStart,
+        durationBeats: Math.max(0.0625, n.endBeat - n.startBeat),
+        velocity: n.velocity,
+      }})
+    }
+    _midiCapture.length = 0
+    setCaptureCount(0)
+  }
 
   // ── Step sequencer tick handler ───────────────────────────────────────────────
 
@@ -1556,6 +1679,25 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                 </>
               )}
             </button>
+            {/* Capture MIDI — pull the last 30s of played notes into a clip */}
+            <button
+              onClick={e => { e.stopPropagation(); handleCaptureMidi() }}
+              disabled={captureCount === 0}
+              title={captureCount > 0
+                ? `Capture the last ${captureCount} played note${captureCount === 1 ? '' : 's'} (up to 30s) into a MIDI clip`
+                : 'Play some notes while the transport runs, then capture them here'}
+              style={{ background: captureCount > 0 ? 'rgba(167,139,250,0.10)' : 'transparent', border: `1px solid ${captureCount > 0 ? 'rgba(167,139,250,0.5)' : C.border}`, color: captureCount > 0 ? '#a78bfa' : C.muted, cursor: captureCount > 0 ? 'pointer' : 'default', fontSize: 9, padding: '2px 6px', borderRadius: 3, fontWeight: 700, opacity: captureCount > 0 ? 1 : 0.55 }}>
+              CAPTURE
+            </button>
+            {/* Hardware MIDI status */}
+            {midiDevices.length > 0 && (
+              <span
+                title={`MIDI input: ${midiDevices.join(', ')}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 8, color: '#4ade80', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80', flexShrink: 0 }} />
+                {midiDevices[0]}{midiDevices.length > 1 ? ` +${midiDevices.length - 1}` : ''}
+              </span>
+            )}
             {/* BPM */}
             <button
               onClick={e => { e.stopPropagation(); const t = prompt('BPM:', String(project.tempo)); if (t) { const n = parseFloat(t); if (!isNaN(n) && n > 0) dispatch({ type: 'SET_TEMPO', tempo: n }) } }}

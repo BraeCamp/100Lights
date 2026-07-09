@@ -530,6 +530,61 @@ export default function PadVoice({ quantizeEnabled: quantizeEnabledProp, quantiz
     }
   }, [dispatch, engine])  // stable — no project dep
 
+  // ── Tidy pass — clean up the last take (MIDI mode) ──────────────────────────
+  // Snaps pitches to the project key/scale, drops blip notes, and merges
+  // same-pitch notes separated by tiny gaps (legato smoothing).
+  const SCALE_STEPS: Record<string, number[]> = {
+    'major': [0, 2, 4, 5, 7, 9, 11], 'minor': [0, 2, 3, 5, 7, 8, 10],
+    'penta-maj': [0, 2, 4, 7, 9], 'penta-min': [0, 3, 5, 7, 10],
+    'dorian': [0, 2, 3, 5, 7, 9, 10], 'chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  }
+  function tidyTake() {
+    const clipId = clipIdRef.current
+    if (!clipId || transcribed.length === 0) return
+    const clip = project.arrangementClips.find(c => c.id === clipId)
+    if (!clip || !isMidiClip(clip)) return
+    const takeIds = new Set(transcribed.map(t => t.id))
+    const take = clip.notes.filter(n => takeIds.has(n.id)).sort((a, b) => a.startBeat - b.startBeat)
+    if (take.length === 0) return
+
+    const steps = SCALE_STEPS[project.scale] ?? SCALE_STEPS['major']
+    const key = project.key ?? 0
+    const snapPitch = (p: number) => {
+      const oct = Math.floor(p / 12)
+      const rel = ((p % 12) - key + 12) % 12
+      let best = steps[0], dist = 12
+      for (const s of steps) { const d = Math.abs(rel - s); if (d < dist) { dist = d; best = s } }
+      return Math.max(0, Math.min(127, oct * 12 + ((best + key) % 12)))
+    }
+
+    const MIN_BEATS = engine.secondsToBeats(0.08)   // drop notes shorter than 80ms
+    const GAP_BEATS = engine.secondsToBeats(0.06)   // merge same-pitch gaps under 60ms
+
+    // 1. snap + drop blips
+    type T = { id: string; pitch: number; startBeat: number; durationBeats: number; velocity: number }
+    const cleaned: T[] = []
+    for (const n of take) {
+      if (n.durationBeats < MIN_BEATS) { dispatch({ type: 'REMOVE_MIDI_NOTE', clipId, noteId: n.id }); continue }
+      cleaned.push({ id: n.id, pitch: snapPitch(n.pitch), startBeat: n.startBeat, durationBeats: n.durationBeats, velocity: n.velocity })
+    }
+    // 2. legato-merge neighbors on the same (snapped) pitch
+    const kept: T[] = []
+    for (const n of cleaned) {
+      const prev = kept[kept.length - 1]
+      if (prev && prev.pitch === n.pitch && n.startBeat - (prev.startBeat + prev.durationBeats) < GAP_BEATS) {
+        prev.durationBeats = (n.startBeat + n.durationBeats) - prev.startBeat
+        dispatch({ type: 'REMOVE_MIDI_NOTE', clipId, noteId: n.id })
+      } else {
+        kept.push(n)
+      }
+    }
+    // 3. write back the survivors
+    for (const n of kept) {
+      dispatch({ type: 'UPDATE_MIDI_NOTE', clipId, noteId: n.id, patch: { pitch: n.pitch, durationBeats: n.durationBeats } })
+    }
+    setTranscribed(kept.map(n => ({ id: n.id, midi: n.pitch, startBeat: n.startBeat, durationBeats: n.durationBeats })))
+  }
+
   // ── Pitch frame processing ───────────────────────────────────────────────────
   // Always call via processFrameRef so the detector callback (captured once at
   // recording start) always calls the latest version — avoids stale closures.
@@ -1180,8 +1235,18 @@ export default function PadVoice({ quantizeEnabled: quantizeEnabledProp, quantiz
           <span style={{ fontSize: 10, color: '#eab308' }}>{renderStatus}</span>
         )}
 
-        <div style={{ marginLeft: 'auto', fontSize: 10, color: '#444', textAlign: 'right' }}>
-          {transcribed.length > 0 && `${transcribed.length} note${transcribed.length !== 1 ? 's' : ''}`}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {!isRecording && !selectedSample && !selectedPreset && transcribed.length > 0 && (
+            <button
+              onClick={tidyTake}
+              title="Clean up the take: snap pitches to the project key/scale, remove notes shorter than 80ms, and merge stuttered same-pitch notes"
+              style={{ padding: '3px 9px', borderRadius: 4, fontSize: 10, fontWeight: 700, border: '1px solid rgba(167,139,250,0.5)', background: 'rgba(167,139,250,0.1)', color: '#a78bfa', cursor: 'pointer' }}>
+              ✨ Tidy
+            </button>
+          )}
+          <span style={{ fontSize: 10, color: '#444', textAlign: 'right' }}>
+            {transcribed.length > 0 && `${transcribed.length} note${transcribed.length !== 1 ? 's' : ''}`}
+          </span>
         </div>
       </div>
 
