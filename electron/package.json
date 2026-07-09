@@ -24,7 +24,7 @@
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
     "@types/node": "^20.0.0",
-    "electron": "^34.0.0",
+    "electron": "^38.8.6",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.3"
   },
@@ -48,8 +48,20 @@
       "entitlements": "../build/entitlements.mac.plist",
       "entitlementsInherit": "../build/entitlements.mac.plist",
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] },
-        { "target": "zip", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ]
     },
     "dmg": {
@@ -57,8 +69,17 @@
       "icon": "../build/icons/icon.icns",
       "iconSize": 100,
       "contents": [
-        { "x": 380, "y": 240, "type": "link", "path": "/Applications" },
-        { "x": 140, "y": 240, "type": "file" }
+        {
+          "x": 380,
+          "y": 240,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 140,
+          "y": 240,
+          "type": "file"
+        }
       ]
     },
     "win": {
@@ -97,6 +118,6 @@
     "afterSign": "scripts/notarize.js"
   },
   "allowScripts": {
-    "electron@34.5.8": true
+    "electron@38.8.6": true
   }
 }

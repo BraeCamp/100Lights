@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, session, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, session, ipcMain, desktopCapturer } from 'electron'
 import path from 'path'
 import log from 'electron-log'
 import { setupMenu } from './menu'
@@ -272,6 +272,17 @@ async function createLauncherWindow(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     const allowed = ['media', 'microphone', 'camera', 'audioCapture', 'desktopCapture']
     callback(allowed.includes(permission))
+  })
+
+  // System-audio capture: intercept getDisplayMedia and answer with a screen
+  // source + OS loopback audio (Windows, and macOS 13+ via ScreenCaptureKit on
+  // Electron 36+). No picker UI — the renderer drops the video track and keeps
+  // the audio. macOS prompts once for Screen & System Audio Recording permission.
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then(sources => {
+      if (sources[0]) callback({ video: sources[0], audio: 'loopback' })
+      else callback(null as unknown as Parameters<typeof callback>[0])
+    }).catch(() => callback(null as unknown as Parameters<typeof callback>[0]))
   })
 
   // Patch COOP/COEP headers so SharedArrayBuffer (used by FFmpeg.wasm) works

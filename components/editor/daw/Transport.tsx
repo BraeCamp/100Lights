@@ -142,7 +142,7 @@ export default function Transport() {
           ? 'Mic permission denied — allow access in system settings'
           : err instanceof Error ? err.message : 'Microphone access failed'
         setMicError(msg)
-        setTimeout(() => setMicError(''), 5000)
+        setTimeout(() => setMicError(''), 12000)
       }
     }
   }
@@ -456,6 +456,13 @@ export default function Transport() {
       >
         JAM
       </button>
+
+      {micError && (
+        <span
+          title={micError}
+          style={{ fontSize: 9, color: '#ff3b3b', maxWidth: 260, lineHeight: 1.25, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}
+        >{micError}</span>
+      )}
 
       <button
         style={project.loopEnabled ? active : base}
