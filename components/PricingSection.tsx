@@ -7,15 +7,17 @@ import { Check, ArrowRight } from 'lucide-react'
 type Period = 'monthly' | 'annual'
 
 const FREE_FEATURES = [
-  '500 MB file storage',
-  'Unlimited projects',
-  'Full editor access',
+  'Full audio editor (DAW) — free forever',
+  '500 MB storage — your first few songs',
+  '5 projects',
+  '3 transcriptions / month',
 ]
 
 const PRO_FEATURES = [
-  '20 GB file storage',
+  'Every editor included — audio + video',
+  '20 GB storage — multitrack sessions, stems, video',
   'Unlimited projects',
-  'Full editor access',
+  '30 transcriptions / month',
   'Priority support',
 ]
 
@@ -31,7 +33,7 @@ export default function PricingSection() {
     <section id="pricing" aria-labelledby="pricing-heading" className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
       <div className="text-center mb-10 sm:mb-14">
         <h2 id="pricing-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Simple, transparent pricing</h2>
-        <p className="text-base mb-6" style={{ color: 'var(--text-secondary)' }}>Start free. Upgrade when you need more.</p>
+        <p className="text-base mb-6" style={{ color: 'var(--text-secondary)' }}>The audio editor is free forever. Upgrade when your library outgrows 500 MB — Pro adds space, unlimited projects, and every editor.</p>
 
         {/* Billing toggle */}
         <div className="inline-flex items-center gap-1 p-1 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>

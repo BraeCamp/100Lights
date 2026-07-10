@@ -191,14 +191,14 @@ export default async function LandingPage() {
               className="text-3xl sm:text-5xl font-bold leading-tight tracking-tight mb-6"
               style={{ color: 'var(--text-primary)' }}
             >
-              Audio and video editing —{' '}
+              Tools that{' '}
               <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                anywhere you create
+                train your ears
               </span>
             </h1>
 
             <p className="text-base sm:text-lg max-w-2xl mx-auto mb-10" style={{ color: 'var(--text-secondary)' }}>
-              100Lights is a professional creative suite — a full digital audio workstation and a live multi-camera session editor. Start in the browser today. Native apps for Mac, Windows, and mobile coming soon.
+              Most editors do the work for you. 100Lights is built so the work makes you better — a full digital audio workstation and live multi-camera session editor where every session sharpens your ear and your eye. In the browser today; native apps for Mac, Windows, and mobile coming soon.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -228,6 +228,25 @@ export default async function LandingPage() {
                   {item}
                 </div>
               ))}
+            </div>
+
+            {/* Demo loop — a real session: metronome, live JAM capture, mix tweaks */}
+            <div
+              className="mt-12 sm:mt-16 rounded-2xl border overflow-hidden mx-auto"
+              style={{ borderColor: 'var(--border)', background: 'var(--bg-card)', boxShadow: '0 24px 60px rgba(0,0,0,0.45)', maxWidth: 960 }}
+            >
+              <video
+                src="/demo/daw-loop.webm"
+                poster="/demo/daw-poster.jpg"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                aria-label="30-second loop of the 100Lights audio editor: adding tracks, capturing a live take with JAM, and riding a volume fader"
+                className="w-full block"
+                style={{ aspectRatio: '1280 / 800' }}
+              />
             </div>
           </section>
 
