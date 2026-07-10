@@ -105,6 +105,17 @@ export function getPresets(): MidiPreset[] {
   return [...builtIns, ...userPresets]
 }
 
+/**
+ * The default sound for piano-roll notes: the built-in Piano preset.
+ * Used when a MIDI clip has no preset and its track has no instrument,
+ * so drawn notes are never silent.
+ */
+export function defaultPresetId(): string | null {
+  if (typeof window === 'undefined') return null
+  const presets = getPresets()
+  return (presets.find(p => p.builtIn && p.name === 'Piano') ?? presets[0])?.id ?? null
+}
+
 /** Returns presets grouped in canonical display order. Groups with no presets are omitted. */
 export function getGroupedPresets(presets: MidiPreset[]): { group: string; presets: MidiPreset[] }[] {
   const order = [...PRESET_GROUPS]

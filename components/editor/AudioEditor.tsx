@@ -431,8 +431,10 @@ export default function AudioEditor(props: AudioEditorProps) {
     return () => window.clearTimeout(t)
   }, [])
 
-  // Keep engine in sync with available MIDI presets
-  useEffect(() => { engineRef.current?.setPresets(getPresets()) }, [])
+  // Keep engine in sync with available MIDI presets. engineForRender dep:
+  // after a StrictMode dispose the recreated engine starts with an empty
+  // preset list, which silences all preset-backed MIDI playback in dev.
+  useEffect(() => { engineForRender.setPresets(getPresets()) }, [engineForRender])
 
   useEffect(() => { projectRef.current = project }, [project])
 

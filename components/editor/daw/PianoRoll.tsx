@@ -6,7 +6,8 @@ import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
-import { getPresets, addPreset, getGroupedPresets, type MidiPreset } from '@/lib/midi-presets'
+import { getPresets, addPreset, getGroupedPresets, defaultPresetId, type MidiPreset } from '@/lib/midi-presets'
+import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
 
@@ -45,6 +46,11 @@ DRUM_LANES.forEach((l, row) => {
 })
 
 const QUANT_LABELS: Record<Quant, string> = { 0.25: '1/16', 0.5: '1/8', 1: '1/4', 2: '1/2' }
+
+const INSTRUMENT_LABELS: Record<string, string> = {
+  none: 'None', drum: 'Drum Kit', fm: 'FM', fm4op: 'FM 4-Op',
+  poly: 'Poly', sampler: 'Sampler', wavetable: 'Wavetable',
+}
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 function isBlack(pitch: number) { return [1, 3, 6, 8, 10].includes(pitch % 12) }
@@ -410,10 +416,26 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   useEffect(() => { setPresets(getPresets()) }, [])
 
+  // Default note sound: a clip with no preset on a track with no instrument
+  // would play silently — assign the built-in Piano preset so drawn notes
+  // always sound. (Clips on instrument tracks keep playing the instrument.)
+  useEffect(() => {
+    if (clip.presetId || clip.isDrumClip) return
+    if (track && track.instrument.type !== 'none') return
+    const id = defaultPresetId()
+    if (id) {
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: id } })
+      engine.setPresets(getPresets())
+    }
+  }, [clip.presetId, clip.isDrumClip, clip.id, track, dispatch, engine])
+
   useEffect(() => {
     if (!showPresetPicker) return
     function onDown(e: MouseEvent) {
-      if (presetPickerRef.current && !presetPickerRef.current.contains(e.target as Node)) setShowPresetPicker(false)
+      const t = e.target as Node
+      // The menu itself lives in a portal — a mousedown inside it is not "outside"
+      if (document.getElementById('pr-preset-menu')?.contains(t)) return
+      if (presetPickerRef.current && !presetPickerRef.current.contains(t)) setShowPresetPicker(false)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
@@ -483,6 +505,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         }
       } catch { /* fall through */ }
     }
+    // No preset: preview through the track's instrument — what playback will
+    // actually sound like. Bare sine only when there is no sound source at all.
+    if (track && track.instrument.type !== 'none') {
+      playInstrumentNote(engine.ctx, engine.masterGain, track.instrument, pitch, 100, engine.ctx.currentTime, 0.4)
+      return
+    }
     const osc = engine.ctx.createOscillator()
     const g   = engine.ctx.createGain()
     osc.type = 'sine'
@@ -517,6 +545,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       }
       const p = addPreset({ name, folder, loNote: lo, hiNote: hi, category: 'custom' })
       setPresets(getPresets())
+      engine.setPresets(getPresets()) // engine resolves presets from its own list — keep it current
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } })
       setShowNewPreset(false); setNpName(''); setNpFolder(''); setNpSfText(null); setShowPresetPicker(false)
     } catch (err) { alert(`Failed: ${err instanceof Error ? err.message : err}`) }
@@ -921,9 +950,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   background: clip.presetId ? 'rgba(124,58,237,0.15)' : 'transparent',
                   color: clip.presetId ? '#a78bfa' : 'var(--text-muted)',
                 }}
-                title={clip.presetId ? `Preset: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'}` : 'Assign a preset to this clip'}
+                title={clip.presetId
+                  ? `Sound: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'} — click to change (notes are kept)`
+                  : 'Choose the sound for this clip — notes are kept when switching'}
               >
-                {clip.presetId ? (presets.find(p => p.id === clip.presetId)?.name ?? 'Preset') : '+ Preset'}
+                {clip.presetId
+                  ? (presets.find(p => p.id === clip.presetId)?.name ?? 'Preset')
+                  : track && track.instrument.type !== 'none'
+                  ? `${INSTRUMENT_LABELS[track.instrument.type]} (track)`
+                  : '+ Sound'}
               </button>
             </div>
 
@@ -935,18 +970,18 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 const menuH = Math.min(presets.length * 28 + 48, 260)
                 const top = spaceBelow > menuH + 8 ? btn.bottom + 4 : btn.top - menuH - 4
                 return (
-                  <div style={{
+                  <div id="pr-preset-menu" style={{
                     position: 'fixed', top, right: window.innerWidth - btn.right,
                     width: 220, zIndex: 9999,
                     background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
                     padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
                     maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
                   }}>
-                    <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP PRESET</div>
-                    {clip.presetId && (
+                    <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP SOUND — notes are kept</div>
+                    {clip.presetId && track && track.instrument.type !== 'none' && (
                       <button onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: undefined } }); setShowPresetPicker(false) }}
                         style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#666', cursor: 'pointer' }}>
-                        ✕ Remove preset
+                        Track instrument — {INSTRUMENT_LABELS[track.instrument.type]}
                       </button>
                     )}
                     {getGroupedPresets(presets).map(({ group, presets: gp }) => (
@@ -954,7 +989,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                         <div style={{ padding: '5px 10px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
                         {gp.map(p => (
                           <button key={p.id}
-                            onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); setShowPresetPicker(false) }}
+                            onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(getPresets()); setShowPresetPicker(false) }}
                             style={{
                               display: 'block', width: '100%', textAlign: 'left', padding: '4px 10px 4px 16px', fontSize: 10, cursor: 'pointer', border: 'none',
                               background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
