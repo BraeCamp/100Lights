@@ -51,7 +51,7 @@ export default function PracticeButton() {
   // doing the work first and opening Practice later still counts.
   let advanced: Progress | null = null
   for (const path of PRACTICE_PATHS) {
-    const done = new Set((advanced ?? progress)[path.id] ?? [])
+    const done: Set<string> = new Set((advanced ?? progress)[path.id] ?? [])
     // Only the first incomplete step can complete — paths are sequential
     const current = path.steps.find(st => !done.has(st.id))
     if (current && current.done(snapshot)) {
