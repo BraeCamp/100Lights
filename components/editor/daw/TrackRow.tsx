@@ -802,11 +802,24 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       const newDurSec = engine.beatsToSeconds(newDurBeats)
                       // Only enable loop when dragging past native duration. NEVER change trimEnd/trimStart.
                       if (newDurSec > nativeSec + 0.001) patch.loopEnabled = true
+                    } else if (isMidiClip(clip) && clip.notes.length > 0) {
+                      // Dragging past the note pattern loops it — pattern length is the
+                      // content end rounded up to a whole bar (stable across drags).
+                      const barBeats = project.timeSignatureNum || 4
+                      const contentEnd = Math.max(...clip.notes.map(n => n.startBeat + n.durationBeats))
+                      const patternBeats = clip.loopLengthBeats
+                        ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+                      if (newDurBeats > patternBeats + 0.001) {
+                        patch.loopEnabled = true
+                        patch.loopLengthBeats = patternBeats
+                      }
                     }
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
                   }}
                   loopNativeBeats={isAudioClip(clip) && clip.loopEnabled && clip.bufferDuration
                     ? engine.secondsToBeats(clip.bufferDuration - clip.trimStart - clip.trimEnd)
+                    : isMidiClip(clip) && clip.loopEnabled && clip.loopLengthBeats
+                    ? clip.loopLengthBeats
                     : undefined}
                   onCrop={() => setCroppingClipId(prev => prev === clip.id ? null : clip.id)}
                   onCropChange={(ts, te) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { trimStart: ts, trimEnd: te } })}

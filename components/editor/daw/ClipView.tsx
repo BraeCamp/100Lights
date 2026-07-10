@@ -413,16 +413,31 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             </div>
           )
         })()}
-        {isMidiClip(clip) && clip.notes.length > 0 && (
-          <div style={{ position: 'absolute', inset: 0 }}>
-            {clip.notes.map(n => {
-              const nx = (n.startBeat / clip.durationBeats) * width
-              const nw = Math.max(2, (n.durationBeats / clip.durationBeats) * width)
-              const ny = ((127 - n.pitch) / 127) * 52
-              return <div key={n.id} style={{ position: 'absolute', left: nx, top: ny + 2, width: nw, height: 2, background: color, borderRadius: 1 }} />
-            })}
-          </div>
-        )}
+        {isMidiClip(clip) && clip.notes.length > 0 && (() => {
+          // Looped clips tile the pattern with a boundary line per repetition,
+          // mirroring the looped-waveform rendering above.
+          const loopPx = loopNativeBeats ? Math.max(4, loopNativeBeats * beatW) : null
+          const tileW = loopPx ?? width
+          const patternBeats = loopNativeBeats ?? clip.durationBeats
+          const tiles = loopPx ? Math.ceil(width / loopPx) : 1
+          return (
+            <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+              {Array.from({ length: tiles }, (_, i) => (
+                <div key={i} style={{ position: 'absolute', left: i * tileW, top: 0, bottom: 0, width: tileW }}>
+                  {i > 0 && (
+                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.3)', zIndex: 1 }} />
+                  )}
+                  {clip.notes.map(n => {
+                    const nx = (n.startBeat / patternBeats) * tileW
+                    const nw = Math.max(2, (n.durationBeats / patternBeats) * tileW)
+                    const ny = ((127 - n.pitch) / 127) * 52
+                    return <div key={n.id} style={{ position: 'absolute', left: nx, top: ny + 2, width: nw, height: 2, background: color, borderRadius: 1 }} />
+                  })}
+                </div>
+              ))}
+            </div>
+          )
+        })()}
 
         {/* Fade-in gradient overlay */}
         {fadeInPx > 0 && (

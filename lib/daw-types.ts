@@ -510,6 +510,10 @@ export interface MidiClip {
   durationBeats: number
   notes: MidiNote[]
   isDrumClip: boolean
+  /** When true, the note pattern repeats every loopLengthBeats for the clip's duration. */
+  loopEnabled?: boolean
+  /** Pattern length in beats — set when looping is enabled (content length rounded up to a bar). */
+  loopLengthBeats?: number
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
   color?: string
   launchQuantization?: LaunchQuantization

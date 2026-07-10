@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, ZoomIn, ZoomOut } from 'lucide-react'
+import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
@@ -134,7 +134,7 @@ function DrumLaneKeys({
 }
 
 function PianoKeys({
-  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches,
+  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches, noteH = NOTE_H,
 }: {
   scrollTop: number
   hoverPitch: number | null
@@ -142,6 +142,7 @@ function PianoKeys({
   trackColor: string
   scaleLock: boolean
   inScalePitches: Set<number>
+  noteH?: number
 }) {
   return (
     <div style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: '#1a1a1a' }}>
@@ -162,7 +163,7 @@ function PianoKeys({
               key={pitch}
               onMouseDown={() => onPlayNote(pitch)}
               style={{
-                height: NOTE_H, width: black ? '65%' : '100%',
+                height: noteH, width: black ? '65%' : '100%',
                 background: bg,
                 borderBottom: '1px solid #111',
                 borderRight: black ? 'none' : '1px solid #333',
@@ -353,6 +354,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [tool, setTool]   = useState<Tool>('draw')
   const [quant, setQuant] = useState<Quant>(0.25)
   const [beatW, setBeatW] = useState(80)
+  const [noteH, setNoteH] = useState(NOTE_H)
   const [scrollTop, setScrollTop]   = useState(clip.isDrumClip ? 0 : NUM_NOTES / 2 * NOTE_H - 80)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
@@ -377,7 +379,21 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   // ── Row model: chromatic piano vs named drum lanes ──
   const isDrum = clip.isDrumClip
-  const rowH = isDrum ? DRUM_LANE_H : NOTE_H
+  const rowH = isDrum ? DRUM_LANE_H : noteH
+
+  // Vertical zoom (pitched rolls only) — re-anchor scroll so the row at the
+  // viewport center stays put while row height changes.
+  function zoomVertical(factor: number) {
+    if (isDrum) return
+    setNoteH(h => {
+      const next = Math.max(6, Math.min(26, Math.round(h * factor)))
+      if (next !== h) {
+        const viewH = gridRef.current?.clientHeight ?? 0
+        setScrollTop(st => Math.max(0, (st + viewH / 2) * (next / h) - viewH / 2))
+      }
+      return next
+    })
+  }
   const rowCount = isDrum ? DRUM_LANES.length : NUM_NOTES
   const yToPitch = (y: number): number | null => {
     const row = Math.floor(y / rowH)
@@ -869,6 +885,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <button onClick={() => setBeatW(w => Math.min(200, w * 1.3))} style={prBtn} title="Zoom in"><ZoomIn size={12} /></button>
           <button onClick={() => setBeatW(w => Math.max(20, w * 0.77))} style={prBtn} title="Zoom out"><ZoomOut size={12} /></button>
+          {!isDrum && (
+            <>
+              <button onClick={() => zoomVertical(1.25)} style={prBtn} title="Taller rows (⌥ scroll)"><ChevronsUpDown size={12} /></button>
+              <button onClick={() => zoomVertical(0.8)} style={prBtn} title="Shorter rows (⌥ scroll)"><ChevronsDownUp size={12} /></button>
+            </>
+          )}
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <button
@@ -1063,6 +1085,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             trackColor={color}
             scaleLock={scaleLock}
             inScalePitches={inScalePitches}
+            noteH={noteH}
           />
         )}
 
@@ -1077,6 +1100,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             onMouseLeave={() => setHoverPitch(null)}
             onWheel={e => {
               if (e.ctrlKey || e.metaKey) { setBeatW(w => Math.max(20, Math.min(200, w * (e.deltaY < 0 ? 1.15 : 0.87)))); e.preventDefault() }
+              else if (e.altKey) { zoomVertical(e.deltaY < 0 ? 1.25 : 0.8); e.preventDefault() }
               else { setScrollTop(s => Math.max(0, s + e.deltaY * 0.5)); setScrollLeft(sl => Math.max(0, sl + e.deltaX)) }
             }}
           >

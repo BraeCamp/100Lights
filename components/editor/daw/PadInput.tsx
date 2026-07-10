@@ -924,6 +924,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'voice'>('pads')
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
   const [octave,       setOctave]       = useState(4)
+  // Velocity for mouse/computer-keyboard input (hardware MIDI supplies its own).
+  // Ref mirror so the window-level key listener reads the current value.
+  const [inputVelocity, setInputVelocity] = useState(100)
+  const inputVelocityRef = useRef(100)
   const [pressing,     setPressing]     = useState<Set<number>>(new Set())
   const [remapId,        setRemapId]        = useState<string | null>(null)
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null)
@@ -1476,7 +1480,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         const pitch  = keyMap[k] ?? keyMap[e.key]
         if (pitch === undefined) return
         e.preventDefault()
-        startNote(pitch)
+        startNote(pitch, inputVelocityRef.current)
       }
 
       if (e.type === 'keyup') {
@@ -1732,7 +1736,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 2, padding: '6px 12px 0', background: C.bgCard, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 2, padding: '6px 12px 0', background: C.bgCard, borderBottom: `1px solid ${C.border}`, flexShrink: 0, alignItems: 'center' }}>
           {(['pads', 'keyboard', 'voice'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '4px 14px', fontSize: 12, borderRadius: '4px 4px 0 0',
@@ -1742,6 +1746,22 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               textTransform: 'capitalize',
             }}>{t}</button>
           ))}
+          {tab !== 'voice' && (
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 4 }}
+              title="Velocity for mouse and computer-keyboard input — hardware MIDI keeps its own">
+              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: C.muted }}>VEL</span>
+              <input
+                type="range" min={1} max={127} value={inputVelocity}
+                onChange={e => {
+                  const v = Number(e.target.value)
+                  setInputVelocity(v)
+                  inputVelocityRef.current = v
+                }}
+                style={{ width: 80, accentColor: C.accent }}
+              />
+              <span style={{ fontSize: 10, color: C.text, minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{inputVelocity}</span>
+            </div>
+          )}
         </div>
 
         {/* Scrollable body */}
@@ -1765,7 +1785,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       onMouseDown={e => {
                         e.stopPropagation()
                         setActive(true)
-                        if (e.button === 0) startNote(pad.pitch)
+                        if (e.button === 0) startNote(pad.pitch, inputVelocityRef.current)
                       }}
                       onMouseUp={e => { e.stopPropagation(); if (e.button === 0) endNote(pad.pitch) }}
                       onMouseLeave={() => endNote(pad.pitch)}
@@ -2029,7 +2049,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                           onMouseDown={e => {
                             e.stopPropagation()
                             setActive(true)
-                            startNote(pitch)
+                            startNote(pitch, inputVelocityRef.current)
                           }}
                           onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
                           onMouseLeave={() => endNote(pitch)}
@@ -2046,7 +2066,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                           onMouseDown={e => {
                             e.stopPropagation(); e.preventDefault()
                             setActive(true)
-                            startNote(pitch)
+                            startNote(pitch, inputVelocityRef.current)
                           }}
                           onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
                           onMouseLeave={() => endNote(pitch)}

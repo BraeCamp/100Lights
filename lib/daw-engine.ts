@@ -1001,18 +1001,46 @@ export class DawEngine extends EventTarget {
 
       const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
 
+      // Looped clips repeat the note pattern every loopLengthBeats until the
+      // clip end. Each occurrence is a (note, repetition) pair with its own
+      // dedup key; non-looped clips keep the original single-occurrence key.
+      const loopLen = clip.loopEnabled && clip.loopLengthBeats && clip.loopLengthBeats > 0
+        ? clip.loopLengthBeats
+        : null
+      const occurrences: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number }[] = []
       for (const note of processedNotes) {
-        const noteKey   = `${clip.id}:${note.id}` as NoteKey
+        if (!loopLen) {
+          occurrences.push({
+            note, relBeat: note.startBeat,
+            key: `${clip.id}:${note.id}` as NoteKey,
+            maxDur: note.durationBeats,
+          })
+          continue
+        }
+        const kMax = Math.ceil(clip.durationBeats / loopLen)
+        for (let k = 0; k < kMax; k++) {
+          const relBeat = k * loopLen + note.startBeat
+          if (relBeat >= clip.durationBeats) break
+          occurrences.push({
+            note, relBeat,
+            key: `${clip.id}:${note.id}:${k}` as NoteKey,
+            // Truncate the last repetition at the clip boundary
+            maxDur: Math.min(note.durationBeats, clip.durationBeats - relBeat),
+          })
+        }
+      }
+
+      for (const { note, relBeat, key: noteKey, maxDur } of occurrences) {
         if (this._scheduledNoteKeys.has(noteKey)) continue
 
-        const noteAbsBeat = clip.startBeat + this._applySwing(note.startBeat)
-        const noteEnd     = clip.startBeat + note.startBeat + note.durationBeats
+        const noteAbsBeat = clip.startBeat + this._applySwing(relBeat)
+        const noteEnd     = clip.startBeat + relBeat + maxDur
         if (noteEnd < now) continue
         if (noteAbsBeat > now + aheadBeats) continue
 
         const startAt      = contextNow + this.beatsToSeconds(Math.max(0, noteAbsBeat - now))
         const alreadyBeats = Math.max(0, now - noteAbsBeat)
-        const remaining    = this.beatsToSeconds(note.durationBeats - alreadyBeats)
+        const remaining    = this.beatsToSeconds(maxDur - alreadyBeats)
 
         // Use clip-level preset if set, otherwise fall back to track instrument
         if (clip.presetId) {
