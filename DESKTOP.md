@@ -42,13 +42,15 @@ npm run dist:all    # both platforms (only works on Mac with cross-compile tools
 ```
 
 ### Mac notarization (required for distribution outside the App Store)
-Set these environment variables before building:
+Preferred: App Store Connect API key (what CI uses):
 ```
-APPLE_ID=you@icloud.com
-APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx   # from appleid.apple.com
-APPLE_TEAM_ID=XXXXXXXXXX                           # 10-char team ID
+APPLE_API_KEY=/path/to/AuthKey_XXXXXXXXXX.p8
+APPLE_API_KEY_ID=XXXXXXXXXX
+APPLE_API_ISSUER=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
-If `APPLE_ID` is not set, notarization is silently skipped.
+Fallback: Apple ID trio (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
+`APPLE_TEAM_ID`). If neither full set is present, notarization is skipped
+with a log line.
 
 ### Code signing (Mac)
 ```
@@ -71,11 +73,15 @@ this GitHub release for updates on every launch and every 4 hours.
 Add these secrets in GitHub → Settings → Secrets:
 | Secret | Description |
 |--------|-------------|
-| `APPLE_ID` | Apple ID email |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password |
-| `APPLE_TEAM_ID` | 10-char team ID |
+| `APPLE_API_KEY_CONTENT` | Raw contents of the App Store Connect `.p8` key |
+| `APPLE_API_KEY_ID` | 10-char API key ID |
+| `APPLE_API_ISSUER` | API issuer UUID |
 | `MAC_CERTIFICATE_P12_BASE64` | Base64-encoded .p12 signing cert |
 | `MAC_CERTIFICATE_PASSWORD` | .p12 password |
+
+The release is created as a **draft** (prevents the Mac/Win jobs racing).
+After both jobs finish: paste in the notes from `release-notes/`, smoke-test
+the DMG, then **Publish** — auto-update only sees published releases.
 
 ## Architecture
 
