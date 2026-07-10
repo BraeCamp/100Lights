@@ -15,6 +15,7 @@ import { captureAudioInput } from '@/lib/audio-capture'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import HelpButton from './daw/HelpButton'
+import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import GuestPanel from './daw/GuestPanel'
@@ -476,6 +477,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [metronome, setMetronome] = useState(false)
 
   useEffect(() => {
+    // engineForRender dep: after a StrictMode dispose the ref is re-pointed at
+    // a fresh engine during render, and this effect must re-attach to it —
+    // with [] deps the listeners stay on the disposed engine and playing/
+    // recording state never updates in dev.
     const engine = engineRef.current!
 
     const onTransport = (e: Event) => {
@@ -605,7 +610,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       inputStreamsRef.current.clear()
       inputRecsRef.current.clear()
     }
-  }, [])
+  }, [engineForRender]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // RAF loop: update positionBeatRef every frame, flush to state every ~100ms
   const positionBeatRef = useRef(0)
@@ -1047,6 +1052,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   border: '1px solid rgba(245,158,11,0.35)', whiteSpace: 'nowrap',
                 }}>OFFLINE — SAVING LOCALLY</span>
               )}
+              <PracticeButton />
               <HelpButton />
             </div>
 

@@ -141,6 +141,8 @@ const FEATURES: Feature[] = [
     description: 'Channel strips for every track with volume faders, pan, mute/solo, and live spectrum meters — the place to balance your entire mix in one view.' },
   { group: 'Views & Layout', name: 'Sound Library', helpIds: ['sound-library'], modes: ['music'],
     description: 'Browse thousands of built-in and imported sounds organized into folders. Drag any sound straight onto a track, and save your own captures back into it.' },
+  { group: 'Views & Layout', name: 'Practice Room', helpIds: ['practice'], modes: ['music'],
+    description: 'Guided skill paths completed by doing, not reading — pick a path and the editor checks steps off as your project takes shape, glowing the next control when you ask.' },
 
   // ── Arrangement Tools ──
   { group: 'Arrangement Tools', name: 'Zoom', helpIds: ['zoom-in', 'zoom-out'], hint: ARR_HINT,
