@@ -237,6 +237,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [draft,      setDraft]      = useState(track.name)
   const cancelRenameRef = useRef(false)
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
+  const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
@@ -1059,9 +1060,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>ROLL</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expandedClip.name}</span>
+              <button onClick={() => setRollTall(v => !v)} style={{ background: 'transparent', border: 'none', color: rollTall ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title={rollTall ? 'Collapse piano roll' : 'Expand piano roll to fill the view'}>{rollTall ? '⤡' : '⤢'}</button>
               <button onClick={() => setExpandedPianoRollClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close piano roll">✕</button>
             </div>
-            <div style={{ flex: 1, height: 240, overflow: 'hidden' }}>
+            <div style={{ flex: 1, height: rollTall ? 'max(400px, calc(100vh - 300px))' : 240, overflow: 'hidden' }}>
               <PianoRoll clipId={expandedClip.id} />
             </div>
           </div>

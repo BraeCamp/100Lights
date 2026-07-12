@@ -482,6 +482,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [selRect, setSelRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
 
   function snapBeat(b: number) { return Math.round(b / quant) * quant }
+  // Holding ⌥ (alt) bypasses grid snap for free positioning
+  function snapUnless(free: boolean, b: number) { return free ? b : snapBeat(b) }
 
   async function playNote(pitch: number) {
     if (!engine.ctx) return
@@ -661,7 +663,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (maybePitch === null) return
     const rawPitch = maybePitch
 
-    const beat  = snapBeat(rawBeat)
+    const beat  = snapUnless(e.altKey, rawBeat)
     const pitch = rawPitch
 
     if (tool === 'edit') {
@@ -688,7 +690,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onResizeMove(ev: MouseEvent) {
             const delta = (ev.clientX - startX) / beatW
             for (const t of targets) {
-              const dur = Math.max(0.125, snapBeat(t.dur + delta))
+              const dur = Math.max(0.125, snapUnless(ev.altKey, t.dur + delta))
               dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: t.id, patch: { durationBeats: dur } })
             }
           }
@@ -708,7 +710,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             .filter(n => selectedNotes.has(n.id))
             .map(n => ({ id: n.id, sb: n.startBeat, sp: n.pitch, row: isDrum ? (DRUM_PITCH_TO_ROW.get(n.pitch) ?? 0) : 0 }))
           function onDragSel(ev: MouseEvent) {
-            const db = snapBeat((ev.clientX - startX) / beatW)
+            const db = snapUnless(ev.altKey, (ev.clientX - startX) / beatW)
             const dRow = Math.round((ev.clientY - startY) / rowH)
             for (const o of origins) {
               const newPitch = isDrum
@@ -742,7 +744,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             ? DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, spRow + dRow))].pitch
             : Math.max(0, Math.min(127, sp - dRow))
           dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: existingId, patch: {
-            startBeat: Math.max(0, snapBeat(sb + db)),
+            startBeat: Math.max(0, snapUnless(ev.altKey, sb + db)),
             pitch: newPitch,
           }})
         }
@@ -802,7 +804,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       const noteId = note.id
       function onMove(ev: MouseEvent) {
         const delta = (ev.clientX - startX) / beatW
-        const dur   = Math.max(quant, snapBeat(quant + delta))
+        const dur   = ev.altKey ? Math.max(0.125, quant + delta) : Math.max(quant, snapBeat(quant + delta))
         dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { durationBeats: dur } })
       }
       function onUp() {
@@ -988,12 +990,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           ))}
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-          {(Object.entries(QUANT_LABELS) as [string, string][]).map(([q, label]) => (
+          {([2, 1, 0.5, 0.25] as Quant[]).map(q => { const label = QUANT_LABELS[q]; return (
             <button key={q} onClick={() => setQuant(Number(q) as Quant)}
               style={{ ...prBtn, background: quant === Number(q) ? 'var(--bg-surface)' : 'transparent', color: quant === Number(q) ? 'var(--text-primary)' : 'var(--text-muted)', border: quant === Number(q) ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 5px' }}>
               {label}
             </button>
-          ))}
+          )})}
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <button onClick={() => setBeatW(w => Math.min(200, w * 1.3))} style={prBtn} title="Zoom in"><ZoomIn size={12} /></button>
