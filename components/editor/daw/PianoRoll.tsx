@@ -6,7 +6,7 @@ import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
-import { getPresets, addPreset, getGroupedPresets, defaultPresetId, type MidiPreset } from '@/lib/midi-presets'
+import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
@@ -448,7 +448,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     setPreviewing(true)
     try {
       const NOTE_NAMES_PC = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
-      const target = 60
+      // Middle C, clamped into the preset's covered range (a bass preset
+      // previews its highest C-region note instead of silence)
+      const target = clampToPreset(preset, 60)
       const targetName = `${NOTE_NAMES_PC[target % 12]}${Math.floor(target / 12) - 1}`
       const entries = await libraryGetAll()
       const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
@@ -977,7 +979,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 return (
                   <div id="pr-preset-menu" style={{
                     position: 'fixed', top, right: window.innerWidth - btn.right,
-                    width: 220, zIndex: 9999,
+                    width: 248, zIndex: 9999,
                     background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
                     padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
                     maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
@@ -993,15 +995,28 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       <div key={group}>
                         <div style={{ padding: '5px 10px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
                         {gp.map(p => (
-                          <button key={p.id}
-                            onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(getPresets()); setShowPresetPicker(false) }}
-                            style={{
-                              display: 'block', width: '100%', textAlign: 'left', padding: '4px 10px 4px 16px', fontSize: 10, cursor: 'pointer', border: 'none',
-                              background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
-                              color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
-                            }}>
-                            {p.name}
-                          </button>
+                          <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
+                            <button
+                              onClick={e => { e.stopPropagation(); void previewMiddleC(p.id) }}
+                              title={`Listen — plays ${midiNoteLabel(clampToPreset(p, 60))}`}
+                              style={{
+                                flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer',
+                                color: previewing ? '#444' : '#a78bfa', fontSize: 10, padding: '4px 0 4px 8px', textAlign: 'left',
+                              }}>
+                              ▶
+                            </button>
+                            <button
+                              onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(getPresets()); setShowPresetPicker(false) }}
+                              style={{
+                                flex: 1, display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0,
+                                textAlign: 'left', padding: '4px 10px 4px 0', fontSize: 10, cursor: 'pointer', border: 'none',
+                                background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
+                                color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
+                              }}>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                              <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: '#555', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>
+                            </button>
+                          </div>
                         ))}
                       </div>
                     ))}

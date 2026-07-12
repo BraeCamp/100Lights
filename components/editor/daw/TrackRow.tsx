@@ -1052,7 +1052,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         const expandedClip = clips.find(c => isMidiClip(c) && c.id === expandedPianoRollClipId)
         if (!expandedClip) return null
         return (
-          <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
+          // position+zIndex+opaque bg: the arrangement playhead overlay
+          // (ArrangementView, zIndex 10) must not draw through the roll —
+          // the roll has its own playhead, so it sits above the overlay.
+          <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
             <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>ROLL</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expandedClip.name}</span>
