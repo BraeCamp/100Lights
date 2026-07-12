@@ -5,7 +5,7 @@ import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
-  ReturnTrack, TakeLane, MidiEffect, CueMarker,
+  ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer,
 } from './daw-types'
 import type { PodcastMeta } from './project-serializer'
 import {
@@ -31,7 +31,7 @@ export type DawAction =
   // Session grid
   | { type: 'SET_SESSION_SLOT'; trackId: string; sceneIndex: number; clip: DawClip | null }
   // Scenes
-  | { type: 'ADD_SCENE' }
+  | { type: 'ADD_SCENE'; id?: string }
   | { type: 'REMOVE_SCENE'; sceneIndex: number }
   | { type: 'UPDATE_SCENE'; sceneIndex: number; patch: Partial<Scene> }
   // Transport / project
@@ -224,7 +224,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     }
 
     case 'ADD_SCENE': {
-      const scene: Scene = { id: crypto.randomUUID(), name: `Scene ${project.scenes.length + 1}` }
+      const scene: Scene = { id: action.id ?? crypto.randomUUID(), name: `Scene ${project.scenes.length + 1}` }
       const grid = { ...project.sessionGrid }
       for (const id of Object.keys(grid)) grid[id] = [...(grid[id] ?? []), null]
       return { ...project, scenes: [...project.scenes, scene], sessionGrid: grid }
@@ -561,6 +561,8 @@ export interface DawContextValue {
   // Blink guidance — purely local UI, never synced to collaborators
   blinkIds: Set<string>
   triggerBlink: (ids: string[]) => void
+  // Connected collaborators' live focus (empty when working solo)
+  collabPeers: CollabPeer[]
 }
 
 export const DawContext = createContext<DawContextValue | null>(null)

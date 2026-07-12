@@ -61,10 +61,12 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
+  /** A collaborator holding this clip (selected, or editing = piano roll open) */
+  collabHolder?: { name: string; color: string; editing: boolean }
   onSelect(): void; onShiftSelect(): void; onDoubleClick(): void; onSettings?(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
@@ -371,7 +373,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     <>
       <div
         ref={clipDivRef}
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined }}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined }}
         onMouseDown={onMouseDownBody}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -383,6 +385,17 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           setCtxPos({ x: e.clientX, y: e.clientY, beat })
         }}
       >
+        {/* Collaborator holding this clip */}
+        {collabHolder && (
+          <div style={{
+            position: 'absolute', top: 2, right: 2, zIndex: 6, pointerEvents: 'none',
+            fontSize: 8, fontWeight: 700, lineHeight: 1, padding: '2px 4px', borderRadius: 3,
+            background: collabHolder.color, color: '#fff', maxWidth: '60%',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {collabHolder.editing ? '✎ ' : ''}{collabHolder.name}
+          </div>
+        )}
         {/* Waveform / MIDI notes */}
         {isAudioClip(clip) && clip.waveformPeaks && clip.waveformPeaks.length > 0 && (() => {
           const loopPx = loopNativeBeats ? Math.max(4, loopNativeBeats * beatW) : null

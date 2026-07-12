@@ -91,6 +91,30 @@ async function main() {
   const tB = await waitForTracks(alice.page, a0 + 2, 10000, "alice sees bob's track")
   console.log(`PASS bob→alice track sync in ${tB}ms`)
 
+  // ── Determinism: both clients must agree on entity ids, not just counts ──
+  const aliceIds = await alice.page.evaluate(() => (window.__daw?._tracks ?? []).map(t => t.id))
+  const bobIds = await bob.page.evaluate(() => (window.__daw?._tracks ?? []).map(t => t.id))
+  if (JSON.stringify(aliceIds) !== JSON.stringify(bobIds)) {
+    throw new Error(`track ids diverged:\n  alice: ${aliceIds}\n  bob:   ${bobIds}`)
+  }
+  console.log('PASS track ids identical on both clients')
+
+  // ── Soft locks: alice selects a track → bob sees her marker on the head ──
+  await alice.page.locator('[data-help-id="view-arrangement"]').first().click()
+  await bob.page.locator('[data-help-id="view-arrangement"]').first().click()
+  await sleep(400)
+  await alice.page.locator('[data-help-id="track-head"]').first().click()
+  const t0 = Date.now()
+  let markerSeen = false
+  while (Date.now() - t0 < 8000) {
+    markerSeen = await bob.page.evaluate(() =>
+      document.querySelectorAll('[title$="is on this track"]').length > 0)
+    if (markerSeen) break
+    await sleep(200)
+  }
+  if (!markerSeen) throw new Error('bob never saw alice\'s track marker')
+  console.log(`PASS presence track marker visible to bob in ${Date.now() - t0}ms`)
+
   // ── Presence: each should see one other collaborator (avatar row) ──
   const avatarsVisible = await alice.page.evaluate(() =>
     [...document.querySelectorAll('div')].some(d => d.title && /\(you\)$/.test(d.title))

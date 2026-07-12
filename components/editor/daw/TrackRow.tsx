@@ -228,7 +228,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onCopyEffects?: (ids: Set<string>) => void
   onPasteEffects?: () => void
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
@@ -461,6 +461,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               </button>
             )}
             {frozen && <span title="Frozen" style={{ fontSize: 10, flexShrink: 0 }}>❄</span>}
+            {collabPeers.filter(pr => pr.selectedTrackId === track.id).slice(0, 3).map(pr => (
+              <span key={pr.connectionId} title={`${pr.name} is on this track`} style={{
+                width: 7, height: 7, borderRadius: '50%', background: pr.color,
+                flexShrink: 0, display: 'inline-block', border: '1px solid rgba(0,0,0,0.4)',
+              }} />
+            ))}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
                 onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
@@ -718,6 +724,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 <ClipView
                   key={clip.id}
                   clip={clip}
+                  collabHolder={(() => {
+                    const editor = collabPeers.find(pr => pr.editingClipId === clip.id)
+                    if (editor) return { name: editor.name, color: editor.color, editing: true }
+                    const sel = collabPeers.find(pr => pr.selectedClipId === clip.id)
+                    return sel ? { name: sel.name, color: sel.color, editing: false } : undefined
+                  })()}
                   track={track} beatW={beatW}
                   selected={isClipSelected}
                   multiSelected={isMultiSelected}
@@ -1061,6 +1073,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>ROLL</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expandedClip.name}</span>
+              {(() => {
+                const peer = collabPeers.find(pr => pr.editingClipId === expandedClip.id)
+                return peer ? (
+                  <span title={`${peer.name} also has this clip open`} style={{
+                    fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3, flexShrink: 0,
+                    background: peer.color, color: '#fff', whiteSpace: 'nowrap',
+                  }}>✎ {peer.name}</span>
+                ) : null
+              })()}
               <button onClick={() => setRollTall(v => !v)} style={{ background: 'transparent', border: 'none', color: rollTall ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title={rollTall ? 'Collapse piano roll' : 'Expand piano roll to fill the view'}>{rollTall ? '⤡' : '⤢'}</button>
               <button onClick={() => setExpandedPianoRollClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close piano roll">✕</button>
             </div>

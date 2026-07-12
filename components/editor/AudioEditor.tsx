@@ -8,6 +8,7 @@ import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
 import { Library, Settings, FileText, Users } from 'lucide-react'
 import { DawEngine } from '@/lib/daw-engine'
+import type { CollabPeer } from '@/lib/daw-types'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import type { Caption } from '@/lib/types'
@@ -445,6 +446,11 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => { projectRef.current = project }, [project])
 
   const dispatch = useCallback((action: DawAction) => {
+    // Reducers must be deterministic for collaboration: actions that create
+    // entities carry their ids, otherwise each client mints a different one
+    // and every later edit to that entity diverges across the room.
+    if (action.type === 'ADD_TRACK' && !action.id) action = { ...action, id: crypto.randomUUID() }
+    if (action.type === 'ADD_SCENE' && !action.id) action = { ...action, id: crypto.randomUUID() }
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
       redoRef.current = []
@@ -479,6 +485,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [])
 
   // ── Transport state ─────────────────────────────────────────────────────────
+  // Other users' live focus (bridged from the Liveblocks room; empty when solo)
+  const [collabPeers, setCollabPeers] = useState<CollabPeer[]>([])
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
   const [position, setPositionState] = useState(0)
@@ -885,12 +893,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     podcastMeta,
     blinkIds,
     triggerBlink,
+    collabPeers,
   }), [
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
     expandedPianoRollClipId, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
+    collabPeers,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -915,7 +925,9 @@ export default function AudioEditor(props: AudioEditorProps) {
             isRemoteRef={isRemoteRef}
             selectedTrackId={selectedTrackId}
             selectedClipId={selectedClipId}
+            editingClipId={expandedPianoRollClipId}
             view={view}
+            onOthers={setCollabPeers}
           />
         )}
         <Transport />

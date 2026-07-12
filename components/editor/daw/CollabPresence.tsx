@@ -47,9 +47,10 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef }: BridgeP
 // ── CollabSelfPresence ────────────────────────────────────────────────────────
 // Syncs local Clerk user info + current UI state into Liveblocks presence.
 
-export function CollabSelfPresence({ selectedTrackId, selectedClipId, view }: {
+export function CollabSelfPresence({ selectedTrackId, selectedClipId, editingClipId, view }: {
   selectedTrackId: string | null
   selectedClipId: string | null
+  editingClipId: string | null
   view: string
 }) {
   const { user } = useUser()
@@ -67,9 +68,35 @@ export function CollabSelfPresence({ selectedTrackId, selectedClipId, view }: {
 
   // Sync selection/view on change
   useEffect(() => {
-    updatePresence({ selectedTrackId, selectedClipId, view })
-  }, [selectedTrackId, selectedClipId, view, updatePresence])
+    updatePresence({ selectedTrackId, selectedClipId, editingClipId, view })
+  }, [selectedTrackId, selectedClipId, editingClipId, view, updatePresence])
 
+  return null
+}
+
+// ── CollabOthersBridge ────────────────────────────────────────────────────────
+// Mirrors other users' presence into plain React state so components outside
+// the RoomProvider (clips, track heads) can render who is holding what.
+
+export function CollabOthersBridge({ onOthers }: {
+  onOthers: (peers: import('@/lib/daw-types').CollabPeer[]) => void
+}) {
+  const others = useOthers()
+  useEffect(() => {
+    onOthers(others.map(o => {
+      const p = o.presence as CollabPresence
+      return {
+        connectionId: o.connectionId,
+        name: p?.name || 'Collaborator',
+        color: p?.color || '#a78bfa',
+        selectedTrackId: p?.selectedTrackId ?? null,
+        selectedClipId: p?.selectedClipId ?? null,
+        editingClipId: p?.editingClipId ?? null,
+      }
+    }))
+  }, [others, onOthers])
+  // Clear on unmount (room left)
+  useEffect(() => () => onOthers([]), [onOthers])
   return null
 }
 

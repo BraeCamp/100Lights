@@ -526,6 +526,19 @@ export type DawClip = AudioClip | MidiClip
 export function isAudioClip(c: DawClip): c is AudioClip { return c.kind === 'audio' }
 export function isMidiClip(c: DawClip): c is MidiClip   { return c.kind === 'midi'  }
 
+// ── Collaboration ─────────────────────────────────────────────────────────────
+
+/** A connected collaborator's live focus, bridged out of the Liveblocks room. */
+export interface CollabPeer {
+  connectionId: number
+  name: string
+  color: string
+  selectedTrackId: string | null
+  selectedClipId: string | null
+  /** Clip open in their piano roll — treat as a soft edit lock */
+  editingClipId: string | null
+}
+
 // ── Scene ─────────────────────────────────────────────────────────────────────
 
 export interface Scene {

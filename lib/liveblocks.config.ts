@@ -9,6 +9,8 @@ export type CollabPresence = {
   imageUrl: string | null
   selectedTrackId: string | null
   selectedClipId: string | null
+  /** Clip currently open in this user's piano roll — a soft edit lock */
+  editingClipId: string | null
   view: string
 }
 
