@@ -74,7 +74,6 @@ async function main() {
     const diag = await c.page.evaluate(async () => {
       const invite = !!document.querySelector('[data-help-id="invite"]')
       const res = await fetch('/api/liveblocks-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'diag' }) })
-      const avatars = [...document.querySelectorAll('div')].filter(d => d.title && (d.title.endsWith('(you)') || d.title.length > 0) && d.querySelector('img,div')).length
       return { inviteBtn: invite, authStatus: res.status, avatarsRegion: document.querySelectorAll('[title$="(you)"]').length }
     })
     console.log(`[${c.name}] collab UI: ${JSON.stringify(diag)}`)
