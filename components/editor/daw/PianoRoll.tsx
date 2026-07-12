@@ -18,7 +18,10 @@ const CHORD_ROW_H = 26
 const VELOCITY_H  = 36
 const NUM_NOTES   = 128
 
-type Tool = 'draw' | 'select' | 'erase'
+// Edit unifies the old Draw and Select tools: click empty draws, click a note
+// selects + drags it, shift+drag marquee-selects. Erase deletes on click or
+// marquee-drag.
+type Tool = 'edit' | 'erase'
 type Quant = 0.25 | 0.5 | 1 | 2
 
 // Copied notes survive closing/reopening the roll and work across MIDI clips
@@ -357,7 +360,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const track = project.tracks.find(t => t.id === clip.trackId)
   const color = track?.color ?? '#3d8fef'
 
-  const [tool, setTool]   = useState<Tool>('draw')
+  const [tool, setTool]   = useState<Tool>('edit')
   const [quant, setQuant] = useState<Quant>(0.25)
   const [beatW, setBeatW] = useState(80)
   const [noteH, setNoteH] = useState(NOTE_H)
@@ -599,6 +602,48 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     )
   }
 
+  // Marquee drag shared by Edit (shift+drag select) and Erase (drag erase):
+  // draws the rubber-band rect and reports the swept note ids on mouseup.
+  function startMarquee(e: React.MouseEvent<HTMLDivElement>, rect: DOMRect, onDone: (ids: Set<string>) => void) {
+    selBoxRef.current = { startX: e.clientX - rect.left, startY: e.clientY - rect.top, endX: e.clientX - rect.left, endY: e.clientY - rect.top }
+    setSelRect({ x: selBoxRef.current.startX, y: selBoxRef.current.startY, w: 0, h: 0 })
+
+    function onMove(ev: MouseEvent) {
+      if (!selBoxRef.current) return
+      selBoxRef.current.endX = ev.clientX - rect.left
+      selBoxRef.current.endY = ev.clientY - rect.top
+      const x = Math.min(selBoxRef.current.startX, selBoxRef.current.endX)
+      const y = Math.min(selBoxRef.current.startY, selBoxRef.current.endY)
+      const w = Math.abs(selBoxRef.current.endX - selBoxRef.current.startX)
+      const h = Math.abs(selBoxRef.current.endY - selBoxRef.current.startY)
+      setSelRect({ x, y, w, h })
+    }
+    function onUp() {
+      if (!selBoxRef.current) return
+      const x1 = (Math.min(selBoxRef.current.startX, selBoxRef.current.endX) + scrollLeft) / beatW
+      const x2 = (Math.max(selBoxRef.current.startX, selBoxRef.current.endX) + scrollLeft) / beatW
+      const yTop = Math.min(selBoxRef.current.startY, selBoxRef.current.endY) + scrollTop
+      const yBot = Math.max(selBoxRef.current.startY, selBoxRef.current.endY) + scrollTop
+      const rowTop = Math.floor(yTop / rowH)
+      const rowBot = Math.floor(yBot / rowH)
+      const swept = new Set(clip.notes
+        .filter(n => {
+          if (n.startBeat < x1 || n.startBeat >= x2) return false
+          const row = isDrum ? DRUM_PITCH_TO_ROW.get(n.pitch) : NUM_NOTES - 1 - n.pitch
+          return row !== undefined && row >= rowTop && row <= rowBot
+        })
+        .map(n => n.id)
+      )
+      selBoxRef.current = null
+      setSelRect(null)
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      onDone(swept)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
   function handleGridMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
     rootRef.current?.focus()
@@ -611,10 +656,50 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     const beat  = snapBeat(rawBeat)
     const pitch = rawPitch
 
-    if (tool === 'draw') {
-      // Click on existing note → move it (scale lock does not apply to moves)
+    if (tool === 'edit') {
       const existing = noteAt(rawBeat, pitch)
       if (existing) {
+        // Shift+click toggles the note in/out of the selection
+        if (e.shiftKey) {
+          setSelectedNotes(prev => {
+            const next = new Set(prev)
+            if (next.has(existing.id)) next.delete(existing.id)
+            else next.add(existing.id)
+            return next
+          })
+          return
+        }
+
+        // Grabbing a note that is part of a multi-selection drags them all
+        if (selectedNotes.has(existing.id) && selectedNotes.size > 1) {
+          const startX = e.clientX, startY = e.clientY
+          const origins = clip.notes
+            .filter(n => selectedNotes.has(n.id))
+            .map(n => ({ id: n.id, sb: n.startBeat, sp: n.pitch, row: isDrum ? (DRUM_PITCH_TO_ROW.get(n.pitch) ?? 0) : 0 }))
+          function onDragSel(ev: MouseEvent) {
+            const db = snapBeat((ev.clientX - startX) / beatW)
+            const dRow = Math.round((ev.clientY - startY) / rowH)
+            for (const o of origins) {
+              const newPitch = isDrum
+                ? DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, o.row + dRow))].pitch
+                : Math.max(0, Math.min(127, o.sp - dRow))
+              dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: o.id, patch: {
+                startBeat: Math.max(0, o.sb + db),
+                pitch: newPitch,
+              }})
+            }
+          }
+          function onUpSel() {
+            document.removeEventListener('mousemove', onDragSel)
+            document.removeEventListener('mouseup', onUpSel)
+          }
+          document.addEventListener('mousemove', onDragSel)
+          document.addEventListener('mouseup', onUpSel)
+          return
+        }
+
+        // Single note: select it and drag moves it (scale lock never applies to moves)
+        setSelectedNotes(new Set([existing.id]))
         const startX = e.clientX, startY = e.clientY
         const sb = existing.startBeat, sp = existing.pitch
         const spRow = isDrum ? (DRUM_PITCH_TO_ROW.get(sp) ?? 0) : 0
@@ -636,6 +721,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         }
         document.addEventListener('mousemove', onMoveExisting)
         document.addEventListener('mouseup', onUpExisting)
+        return
+      }
+
+      // Empty grid: shift+drag marquee-selects, plain click draws a note
+      if (e.shiftKey) {
+        startMarquee(e, rect, ids => setSelectedNotes(ids))
         return
       }
 
@@ -673,6 +764,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         velocity: 100,
       }
       dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note })
+      setSelectedNotes(new Set([note.id]))
       playNote(finalPitch)
 
       const startX = e.clientX
@@ -691,77 +783,20 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     }
 
     if (tool === 'erase') {
+      // Click a note to erase it; drag sweeps a marquee that erases everything inside
       const target = noteAt(rawBeat, pitch)
-      if (target) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: target.id })
-    }
-
-    if (tool === 'select') {
-      // Grabbing a selected note drags the whole selection
-      const grabbed = noteAt(rawBeat, pitch)
-      if (grabbed && selectedNotes.has(grabbed.id)) {
-        const startX = e.clientX, startY = e.clientY
-        const origins = clip.notes
-          .filter(n => selectedNotes.has(n.id))
-          .map(n => ({ id: n.id, sb: n.startBeat, sp: n.pitch, row: isDrum ? (DRUM_PITCH_TO_ROW.get(n.pitch) ?? 0) : 0 }))
-        function onDragSel(ev: MouseEvent) {
-          const db = snapBeat((ev.clientX - startX) / beatW)
-          const dRow = Math.round((ev.clientY - startY) / rowH)
-          for (const o of origins) {
-            const newPitch = isDrum
-              ? DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, o.row + dRow))].pitch
-              : Math.max(0, Math.min(127, o.sp - dRow))
-            dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: o.id, patch: {
-              startBeat: Math.max(0, o.sb + db),
-              pitch: newPitch,
-            }})
-          }
-        }
-        function onUpSel() {
-          document.removeEventListener('mousemove', onDragSel)
-          document.removeEventListener('mouseup', onUpSel)
-        }
-        document.addEventListener('mousemove', onDragSel)
-        document.addEventListener('mouseup', onUpSel)
+      if (target) {
+        dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: target.id })
         return
       }
-
-      selBoxRef.current = { startX: e.clientX - rect.left, startY: e.clientY - rect.top, endX: e.clientX - rect.left, endY: e.clientY - rect.top }
-      setSelRect({ x: selBoxRef.current.startX, y: selBoxRef.current.startY, w: 0, h: 0 })
-
-      function onMove(ev: MouseEvent) {
-        if (!selBoxRef.current) return
-        selBoxRef.current.endX = ev.clientX - rect.left
-        selBoxRef.current.endY = ev.clientY - rect.top
-        const x = Math.min(selBoxRef.current.startX, selBoxRef.current.endX)
-        const y = Math.min(selBoxRef.current.startY, selBoxRef.current.endY)
-        const w = Math.abs(selBoxRef.current.endX - selBoxRef.current.startX)
-        const h = Math.abs(selBoxRef.current.endY - selBoxRef.current.startY)
-        setSelRect({ x, y, w, h })
-      }
-      function onUp() {
-        if (!selBoxRef.current) return
-        const x1 = (Math.min(selBoxRef.current.startX, selBoxRef.current.endX) + scrollLeft) / beatW
-        const x2 = (Math.max(selBoxRef.current.startX, selBoxRef.current.endX) + scrollLeft) / beatW
-        const yTop = Math.min(selBoxRef.current.startY, selBoxRef.current.endY) + scrollTop
-        const yBot = Math.max(selBoxRef.current.startY, selBoxRef.current.endY) + scrollTop
-        const rowTop = Math.floor(yTop / rowH)
-        const rowBot = Math.floor(yBot / rowH)
-        const selected = new Set(clip.notes
-          .filter(n => {
-            if (n.startBeat < x1 || n.startBeat >= x2) return false
-            const row = isDrum ? DRUM_PITCH_TO_ROW.get(n.pitch) : NUM_NOTES - 1 - n.pitch
-            return row !== undefined && row >= rowTop && row <= rowBot
-          })
-          .map(n => n.id)
-        )
-        setSelectedNotes(selected)
-        selBoxRef.current = null
-        setSelRect(null)
-        document.removeEventListener('mousemove', onMove)
-        document.removeEventListener('mouseup', onUp)
-      }
-      document.addEventListener('mousemove', onMove)
-      document.addEventListener('mouseup', onUp)
+      startMarquee(e, rect, ids => {
+        for (const id of ids) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: id })
+        setSelectedNotes(prev => {
+          const next = new Set(prev)
+          for (const id of ids) next.delete(id)
+          return next
+        })
+      })
     }
   }
 
@@ -782,7 +817,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       newIds.add(id)
     }
     setSelectedNotes(newIds)
-    setTool('select')
+    setTool('edit')
   }
 
   function quantizeSelection() {
@@ -903,8 +938,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 2, marginRight: 4 }}>{clip.name}</span>
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-          {(['draw', 'select', 'erase'] as Tool[]).map(t => (
+          {(['edit', 'erase'] as Tool[]).map(t => (
             <button key={t} onClick={() => setTool(t)}
+              title={t === 'edit'
+                ? 'Edit — click empty: draw · drag note: move · shift+click: multi-select · shift+drag: box-select'
+                : 'Erase — click a note or drag a box to delete'}
               style={{ ...prBtn, background: tool === t ? 'var(--bg-surface)' : 'transparent', color: tool === t ? 'var(--text-primary)' : 'var(--text-muted)', border: tool === t ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -1068,7 +1106,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         </div>
 
         {/* Row 2: MUSICAL — draw mode, melodic clips only */}
-        {tool === 'draw' && !isDrum && (
+        {tool === 'edit' && !isDrum && (
           <div style={{
             height: CHORD_ROW_H, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
             borderTop: '1px solid var(--border)', overflowX: 'auto',
@@ -1149,7 +1187,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           {/* Note grid */}
           <div
             ref={gridRef}
-            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'draw' ? 'crosshair' : tool === 'erase' ? 'cell' : 'default' }}
+            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? 'crosshair' : 'cell' }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={() => setHoverPitch(null)}
@@ -1223,7 +1261,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               <div style={{
                 position: 'absolute',
                 left: selRect.x, top: selRect.y, width: selRect.w, height: selRect.h,
-                border: '1px solid var(--accent)', background: 'rgba(61,143,239,0.1)',
+                border: tool === 'erase' ? '1px solid #ef4444' : '1px solid var(--accent)',
+                background: tool === 'erase' ? 'rgba(239,68,68,0.12)' : 'rgba(61,143,239,0.1)',
                 pointerEvents: 'none',
               }} />
             )}

@@ -17,6 +17,7 @@ interface TrackNodes {
   panner: StereoPannerNode
   analyser: AnalyserNode
   effectsInput: GainNode    // sources connect here
+  midiInput: GainNode       // MIDI voices connect here → effectsInput; swapped on stop so ringing notes cut off
   effectsOutput: GainNode   // routes into panner
   sendGains: Map<string, GainNode>     // returnTrackId → send gain (post-fader tap from analyser)
   preSendGains: Map<string, GainNode>  // returnTrackId → send gain (pre-fader tap from effectsOutput)
@@ -179,6 +180,8 @@ export class DawEngine extends EventTarget {
     if (this.ctx.state === 'closed') return
     if (!this.trackNodes.has(id)) {
       const effectsInput  = this.ctx.createGain()
+      const midiInput     = this.ctx.createGain()
+      midiInput.connect(effectsInput)
       const effectsOutput = this.ctx.createGain()
       const gain          = this.ctx.createGain()
       const panner        = this.ctx.createStereoPanner()
@@ -217,7 +220,7 @@ export class DawEngine extends EventTarget {
         sendModes.set(returnId, 'post')
       }
 
-      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, effectsOutput, sendGains, preSendGains, sendModes })
+      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, sendGains, preSendGains, sendModes })
 
       // High-res analyser for masking detection — separate from VU meter analyser
       const maskingAnalyser = this.ctx.createAnalyser()
@@ -872,12 +875,12 @@ export class DawEngine extends EventTarget {
           if (buf) {
             const velGain = this.ctx.createGain(); velGain.gain.value = (note.velocity ?? 100) / 127
             const src = this.ctx.createBufferSource(); src.buffer = buf
-            src.connect(velGain); velGain.connect(nodes.effectsInput)
+            src.connect(velGain); velGain.connect(nodes.midiInput)
             src.start(noteStartAt); src.stop(noteStartAt + noteDur)
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur)
+          playInstrumentNote(this.ctx, nodes.midiInput, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur)
         }
       }
     }
@@ -1070,13 +1073,13 @@ export class DawEngine extends EventTarget {
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             src.connect(velGain)
-            velGain.connect(nodes.effectsInput)
+            velGain.connect(nodes.midiInput)
             src.start(startAt)
             if (remaining > 0) src.stop(startAt + remaining)
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, nodes.effectsInput, track.instrument, note.pitch, note.velocity, startAt, remaining)
+          playInstrumentNote(this.ctx, nodes.midiInput, track.instrument, note.pitch, note.velocity, startAt, remaining)
         }
 
         this._scheduledNoteKeys.add(noteKey)
@@ -1642,6 +1645,19 @@ export class DawEngine extends EventTarget {
       if (tailOscs)  for (const o of tailOscs)  { try { o.stop(stopAt); o.disconnect() } catch { /* ok */ } }
     }
     this.scheduledSources = []
+
+    // Cut off ringing MIDI voices (preset samples and synth instruments):
+    // they connect through each track's midiInput bus, so fade the bus out
+    // and swap in a fresh one for whatever plays next.
+    for (const nodes of this.trackNodes.values()) {
+      const old = nodes.midiInput
+      old.gain.cancelScheduledValues(now)
+      old.gain.setTargetAtTime(0, now, 0.003)
+      setTimeout(() => { try { old.disconnect() } catch { /* ok */ } }, 100)
+      const fresh = this.ctx.createGain()
+      fresh.connect(nodes.effectsInput)
+      nodes.midiInput = fresh
+    }
   }
 
   clearStretchedCache(clipId?: string) {
