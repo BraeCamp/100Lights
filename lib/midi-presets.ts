@@ -26,19 +26,36 @@ export type PresetGroup = typeof PRESET_GROUPS[number]
 
 // ── Built-in presets (mirrors KEYBOARD_PRESETS in default-samples.ts) ─────────
 
+// NOTE: seeded ids are index-based (builtin-N). Never reorder or remove
+// entries — append new ones at the end so saved clips keep their sound.
 const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'Piano',          folder: 'Piano – All Notes',          loNote: 36, hiNote: 84, category: 'piano-grand',    group: 'Piano'   },
   { name: 'Electric Piano', folder: 'Elec. Piano – All Notes',    loNote: 36, hiNote: 84, category: 'piano-electric', group: 'Piano'   },
   { name: 'Rhodes',         folder: 'Rhodes – All Notes',         loNote: 36, hiNote: 84, category: 'piano-rhodes',   group: 'Piano'   },
   { name: 'Synth Lead',     folder: 'Synth Lead – All Notes',     loNote: 48, hiNote: 72, category: 'synth-lead',     group: 'Synth'   },
-  { name: 'Bass',           folder: 'Bass – All Notes',           loNote: 24, hiNote: 48, category: 'synth-bass',     group: 'Synth'   },
-  { name: 'Organ',          folder: 'Organ – All Notes',          loNote: 36, hiNote: 84, category: 'synth-organ',    group: 'Synth'   },
+  { name: 'Synth Bass',     folder: 'Synth Bass – All Notes',     loNote: 24, hiNote: 48, category: 'synth-bass',     group: 'Bass'    },
+  { name: 'Organ',          folder: 'Organ – All Notes',          loNote: 36, hiNote: 84, category: 'synth-organ',    group: 'Organ'   },
   { name: 'Choir',          folder: 'Choir – All Notes',          loNote: 36, hiNote: 84, category: 'synth-choir',    group: 'Synth'   },
   { name: 'Dark Synth',     folder: 'Dark Synth – All Notes',     loNote: 36, hiNote: 72, category: 'synth-dark',     group: 'Synth'   },
   { name: 'Metallic Pluck', folder: 'Metallic Pluck – All Notes', loNote: 36, hiNote: 72, category: 'synth-pluck',    group: 'Synth'   },
-  { name: 'Strings',        folder: 'Strings – All Notes',        loNote: 36, hiNote: 84, category: 'synth-strings',  group: 'Strings' },
+  { name: 'Synth Strings',  folder: 'Synth Strings – All Notes',  loNote: 36, hiNote: 84, category: 'synth-strings',  group: 'Strings' },
   { name: 'Violin',         folder: 'Violin – All Notes',         loNote: 55, hiNote: 88, category: 'violin',         group: 'Strings' },
   { name: 'Viola',          folder: 'Viola – All Notes',          loNote: 48, hiNote: 77, category: 'viola',          group: 'Strings' },
+  // Appended 2026-07 — full library coverage
+  { name: 'Synth Pad',       folder: 'Synth Pad – All Notes',       loNote: 36, hiNote: 84, category: 'synth-pad',  group: 'Synth'     },
+  { name: 'Drone',           folder: 'Drone – All Notes',           loNote: 36, hiNote: 60, category: 'synth-drone', group: 'Synth'    },
+  { name: 'Acoustic Guitar', folder: 'Acoustic Guitar – All Notes', loNote: 40, hiNote: 76, category: 'other',      group: 'Guitar'    },
+  { name: 'Electric Guitar', folder: 'Electric Guitar – All Notes', loNote: 40, hiNote: 76, category: 'other',      group: 'Guitar'    },
+  { name: 'Nylon Guitar',    folder: 'Nylon Guitar – All Notes',    loNote: 40, hiNote: 76, category: 'other',      group: 'Guitar'    },
+  { name: 'Fretless Bass',   folder: 'Fretless Bass – All Notes',   loNote: 24, hiNote: 67, category: 'synth-bass', group: 'Bass'      },
+  { name: 'Electric Bass',   folder: 'Electric Bass – All Notes',   loNote: 24, hiNote: 67, category: 'synth-bass', group: 'Bass'      },
+  { name: 'Acoustic Bass',   folder: 'Acoustic Bass – All Notes',   loNote: 24, hiNote: 55, category: 'synth-bass', group: 'Bass'      },
+  { name: 'Cello',           folder: 'Cello – All Notes',           loNote: 36, hiNote: 81, category: 'viola',      group: 'Strings'   },
+  { name: 'Trumpet',         folder: 'Trumpet – All Notes',         loNote: 52, hiNote: 84, category: 'other',      group: 'Brass'     },
+  { name: 'Trombone',        folder: 'Trombone – All Notes',        loNote: 40, hiNote: 77, category: 'other',      group: 'Brass'     },
+  { name: 'French Horn',     folder: 'French Horn – All Notes',     loNote: 35, hiNote: 77, category: 'other',      group: 'Brass'     },
+  { name: 'Flute',           folder: 'Flute – All Notes',           loNote: 60, hiNote: 96, category: 'other',      group: 'Woodwinds' },
+  { name: 'Clarinet',        folder: 'Clarinet – All Notes',        loNote: 50, hiNote: 93, category: 'other',      group: 'Woodwinds' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

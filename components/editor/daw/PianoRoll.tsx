@@ -873,7 +873,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     }
   }
 
-  const totalW = clip.durationBeats * beatW + 80
+  // Two bars of headroom past the clip end: drawing there auto-extends the
+  // clip (ADD_MIDI_NOTE grows durationBeats), so the canvas keeps growing.
+  const totalW = clip.durationBeats * beatW + (clip.loopEnabled ? 80 : 2 * (project.timeSignatureNum || 4) * beatW)
 
   return (
     <div

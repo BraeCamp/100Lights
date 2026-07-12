@@ -96,6 +96,17 @@ export type DawAction =
 
 // ── Reducer ─────────────────────────────────────────────────────────────
 
+// A MIDI clip grows to fit its notes: adding or moving a note past the clip
+// end extends the clip to the next bar boundary. Looped clips are exempt —
+// their duration means "number of repeats", not content length.
+function growToFitNotes(clip: MidiClip, timeSignatureNum: number): MidiClip {
+  if (clip.loopEnabled) return clip
+  const bar = timeSignatureNum || 4
+  const contentEnd = clip.notes.reduce((m, n) => Math.max(m, n.startBeat + n.durationBeats), 0)
+  if (contentEnd <= clip.durationBeats) return clip
+  return { ...clip, durationBeats: Math.ceil(contentEnd / bar) * bar }
+}
+
 export function reducer(project: DawProject, action: DawAction): DawProject {
   switch (action.type) {
 
@@ -256,7 +267,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'ADD_MIDI_NOTE': {
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
-        return { ...c, notes: [...c.notes, action.note] } as MidiClip
+        return growToFitNotes({ ...c, notes: [...c.notes, action.note] } as MidiClip, project.timeSignatureNum)
       })
       return { ...project, arrangementClips: clips }
     }
@@ -272,7 +283,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'UPDATE_MIDI_NOTE': {
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
-        return { ...c, notes: c.notes.map(n => n.id === action.noteId ? { ...n, ...action.patch } : n) } as MidiClip
+        return growToFitNotes({ ...c, notes: c.notes.map(n => n.id === action.noteId ? { ...n, ...action.patch } : n) } as MidiClip, project.timeSignatureNum)
       })
       return { ...project, arrangementClips: clips }
     }

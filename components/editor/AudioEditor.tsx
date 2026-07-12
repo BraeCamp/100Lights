@@ -434,7 +434,13 @@ export default function AudioEditor(props: AudioEditorProps) {
   // Keep engine in sync with available MIDI presets. engineForRender dep:
   // after a StrictMode dispose the recreated engine starts with an empty
   // preset list, which silences all preset-backed MIDI playback in dev.
-  useEffect(() => { engineForRender.setPresets(getPresets()) }, [engineForRender])
+  useEffect(() => {
+    engineForRender.setPresets(getPresets())
+    // Dev console access to the live engine (window.__daw)
+    if (process.env.NODE_ENV === 'development') {
+      (window as unknown as { __daw?: DawEngine }).__daw = engineRef.current ?? undefined
+    }
+  }, [engineForRender])
 
   useEffect(() => { projectRef.current = project }, [project])
 

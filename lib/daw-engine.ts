@@ -548,6 +548,20 @@ export class DawEngine extends EventTarget {
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._clips       = project.arrangementClips.filter(isAudioClip)
     this._midiClips   = project.arrangementClips.filter(isMidiClip)
+    // Pre-warm preset buffers for every note so the first playthrough sounds.
+    // Loading lazily from the scheduler misses the note: by the time the
+    // buffer resolves, the playhead has already passed it.
+    const sessionMidi = Object.values(project.sessionGrid ?? {})
+      .flatMap(row => row ?? [])
+      .filter((c): c is MidiClip => !!c && isMidiClip(c))
+    for (const clip of [...this._midiClips, ...sessionMidi]) {
+      if (!clip.presetId) continue
+      for (const note of clip.notes) {
+        if (!this._presetBufCache.has(`${clip.presetId}:${note.pitch}`)) {
+          void this._loadPresetBuffer(clip.presetId, note.pitch)
+        }
+      }
+    }
     this._tracks      = project.tracks
     this._automationLanes = project.automationLanes ?? []
     this._clipEffects     = project.clipEffects ?? []
