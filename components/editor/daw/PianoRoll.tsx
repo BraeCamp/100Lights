@@ -883,6 +883,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-surface)', outline: 'none' }}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
+      // Scrolling inside the roll must not also pan the arrangement behind it
+      // (ArrangementView has a handleWheel on the whole track area)
+      onWheel={e => e.stopPropagation()}
     >
       {/* ── Toolbar (two rows) ── */}
       <div style={{
