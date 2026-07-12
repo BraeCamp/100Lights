@@ -20,18 +20,29 @@ async function uniqueSlugExcluding(userId: string, name: string, excludeId: stri
 // GET /api/projects/:id
 // Returns the project's manually-saved data. If autosave_data exists and is
 // newer, also returns it as _cloudAutosave so the client can offer recovery.
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth()
-  if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  // DEV_OPEN test collaborators (mirrors /api/liveblocks-auth) — dev builds only
+  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
+    ? req.headers.get('x-test-user')
+    : null
+  if (!userId && !testUser) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  // Invite-by-link collaboration: any signed-in user who has the project URL
+  // may READ it (ids are unguessable UUIDs). Writes stay owner-only.
   const rows = await sql`
-    SELECT data, autosave_data FROM projects WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
+    SELECT user_id, data, autosave_data FROM projects WHERE id = ${id} AND deleted_at IS NULL
   `
 
   if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
 
+  const isOwner = userId !== null && rows[0].user_id === userId
   const data = rows[0].data as CfProjFile
+
+  // Collaborators get the saved project but never the owner's autosave recovery
+  if (!isOwner) return Response.json({ ...data, _isOwner: false })
+
   const autosaveData = rows[0].autosave_data as CfProjFile | null
 
   // Attach cloud autosave only when it is strictly newer than the saved copy

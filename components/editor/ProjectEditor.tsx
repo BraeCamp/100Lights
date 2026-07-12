@@ -291,6 +291,9 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const [pendingModules, setPendingModules] = useState<ModuleKey[] | null>(null)
   const [syncItems, setSyncItems]       = useState<SyncItem[] | null>(null)
   const savedProjectId = useRef(projectId ?? crypto.randomUUID())
+  // False when this project was opened via an invite link (not the owner):
+  // edits sync live through the room, but persistence belongs to the owner.
+  const [isOwner, setIsOwner] = useState(true)
 
   // ── Load project from API ──────────────────────────────────
   useEffect(() => {
@@ -299,6 +302,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       .then(r => r.ok ? r.json() : null)
       .then(async (data: CfProjFile | null) => {
         if (!data) { setActiveModules(['video']); return }
+        if ((data as CfProjFile & { _isOwner?: boolean })._isOwner === false) setIsOwner(false)
         setSavedData(data)
         setLocalName(data.name)
         setCaptions(data.captions ?? [])
@@ -391,6 +395,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     const trimmed = name.trim()
     if (!trimmed || trimmed === localName) return
     setLocalName(trimmed)
+    if (!isOwner) return  // collaborators rename locally only
     save({ name: trimmed }).catch(() => {})
     if (projectId) {
       fetch(`/api/projects/${projectId}`, {
@@ -544,7 +549,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     currentTime,
     onTimeChange: setCurrentTime,
     onProjectNameCommit: commitName,
-    onSave: handleAudioSave,
+    onSave: isOwner ? handleAudioSave : undefined,
     initialTracks: initAudioTracks,
     audioMode,
     initialPodcastMeta: podcastMeta,
