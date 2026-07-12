@@ -833,6 +833,17 @@ export default function AudioEditor(props: AudioEditorProps) {
         e.preventDefault()
         handleSaveRef.current()
       }
+
+      // Escape deselects everything. Modals/dropdowns consume Escape first
+      // (capture-phase listeners with stopPropagation), so reaching here
+      // means nothing was open.
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        setSelectedClipIds(new Set())
+        setSelectedClipId(null)
+        setSelectedEffectIds(new Set())
+        setSelectedTrackId(null)
+        setSelectedReturnId(null)
+      }
     }
 
     document.addEventListener('keydown', onKeyDown)

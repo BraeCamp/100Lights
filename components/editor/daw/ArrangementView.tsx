@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
+import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip, DawClip } from '@/lib/daw-types'
 
@@ -294,6 +295,7 @@ export default function ArrangementView() {
   const rafRef      = useRef<number | undefined>(undefined)
   const [viewWidth, setViewWidth] = useState(800)
   const [rubberBand, setRubberBand] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  const [prHint, setPrHint] = useState<string | null>(null)  // transient note under the PIANO ROLL button
 
   useEffect(() => {
     const ro = new ResizeObserver(entries => setViewWidth(entries[0].contentRect.width - HDR_W))
@@ -479,6 +481,10 @@ export default function ArrangementView() {
     }
     // Toggle off if already open
     if (expandedPianoRollClipId) { setExpandedPianoRollClipId(null); return }
+    // Nothing usable selected — say so and glow the track headers
+    setPrHint('Select a track to add piano roll')
+    window.setTimeout(() => setPrHint(null), 3500)
+    highlightHelpTargets(['track-head'])
   }
 
   function handleSelectTrack(trackId: string, ctrl: boolean) {
@@ -971,13 +977,23 @@ export default function ArrangementView() {
 
         <div style={{ flex: 1 }} />
         {audioMode !== 'podcast' && (
-          <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" data-help-id="piano-roll" style={{
-            ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-            border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
-            background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
-            color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
-            letterSpacing: '0.04em',
-          }}>PIANO ROLL</button>
+          <div style={{ position: 'relative', display: 'flex' }}>
+            <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" data-help-id="piano-roll" style={{
+              ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
+              border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
+              background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
+              color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
+              letterSpacing: '0.04em',
+            }}>PIANO ROLL</button>
+            {prHint && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 300,
+                whiteSpace: 'nowrap', fontSize: 10, padding: '4px 9px', borderRadius: 5,
+                background: '#1e1e1e', border: '1px solid rgba(250,204,21,0.45)', color: '#facc15',
+                boxShadow: '0 6px 18px rgba(0,0,0,0.5)', pointerEvents: 'none',
+              }}>{prHint}</div>
+            )}
+          </div>
         )}
         {/* Export split button */}
         <div ref={exportDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
