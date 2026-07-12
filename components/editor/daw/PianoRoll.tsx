@@ -368,6 +368,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [scrollLeft, setScrollLeft] = useState(0)
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
+  const [hoverEdge, setHoverEdge]   = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
   const [presets, setPresets]           = useState<MidiPreset[]>([])
   const [showPresetPicker, setShowPresetPicker] = useState(false)
@@ -602,6 +603,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     )
   }
 
+  // Right-edge grab zone for resizing: up to 8px wide but never more than 40%
+  // of the note, so short notes stay grabbable for moving.
+  function isNoteEdge(n: MidiNote, rawBeat: number): boolean {
+    const edgeBeats = Math.min(n.durationBeats * 0.4, 8 / beatW)
+    return rawBeat >= n.startBeat + n.durationBeats - edgeBeats
+  }
+
   // Marquee drag shared by Edit (shift+drag select) and Erase (drag erase):
   // draws the rubber-band rect and reports the swept note ids on mouseup.
   function startMarquee(e: React.MouseEvent<HTMLDivElement>, rect: DOMRect, onDone: (ids: Set<string>) => void) {
@@ -667,6 +675,29 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             else next.add(existing.id)
             return next
           })
+          return
+        }
+
+        // Grabbing the right edge resizes instead of moving. Resizes the whole
+        // selection when the grabbed note is part of one.
+        if (isNoteEdge(existing, rawBeat)) {
+          const targets = (selectedNotes.has(existing.id) ? clip.notes.filter(n => selectedNotes.has(n.id)) : [existing])
+            .map(n => ({ id: n.id, dur: n.durationBeats }))
+          setSelectedNotes(prev => prev.has(existing.id) ? prev : new Set([existing.id]))
+          const startX = e.clientX
+          function onResizeMove(ev: MouseEvent) {
+            const delta = (ev.clientX - startX) / beatW
+            for (const t of targets) {
+              const dur = Math.max(0.125, snapBeat(t.dur + delta))
+              dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: t.id, patch: { durationBeats: dur } })
+            }
+          }
+          function onResizeUp() {
+            document.removeEventListener('mousemove', onResizeMove)
+            document.removeEventListener('mouseup', onResizeUp)
+          }
+          document.addEventListener('mousemove', onResizeMove)
+          document.addEventListener('mouseup', onResizeUp)
           return
         }
 
@@ -802,7 +833,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   function handleGridMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     const rect  = e.currentTarget.getBoundingClientRect()
-    setHoverPitch(yToPitch(e.clientY - rect.top + scrollTop))
+    const p = yToPitch(e.clientY - rect.top + scrollTop)
+    setHoverPitch(p)
+    if (tool === 'edit' && p !== null) {
+      const rawBeat = (e.clientX - rect.left + scrollLeft) / beatW
+      const n = noteAt(rawBeat, p)
+      setHoverEdge(!!n && isNoteEdge(n, rawBeat))
+    } else if (hoverEdge) {
+      setHoverEdge(false)
+    }
   }
 
   function pasteNotes(notes: MidiNote[], atBeat: number) {
@@ -1187,7 +1226,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           {/* Note grid */}
           <div
             ref={gridRef}
-            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? 'crosshair' : 'cell' }}
+            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : 'cell' }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={() => setHoverPitch(null)}
