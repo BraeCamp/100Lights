@@ -12,16 +12,25 @@ function userColor(id: string): string {
 
 export async function POST(request: Request) {
   const { userId } = await auth()
-  if (!userId) return new Response('Unauthorized', { status: 401 })
 
-  const [user, body] = await Promise.all([currentUser(), request.json()])
+  // DEV_OPEN=1 (headless testing, mirrors middleware.ts): allow synthetic
+  // collaborators via x-test-user so multi-client tests can join rooms
+  // without two Clerk sessions. Never active in production builds.
+  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
+    ? request.headers.get('x-test-user')
+    : null
+
+  if (!userId && !testUser) return new Response('Unauthorized', { status: 401 })
+
+  const [user, body] = await Promise.all([userId ? currentUser() : null, request.json()])
   const room: string = body?.room ?? ''
   if (!room) return new Response('Missing room', { status: 400 })
 
-  const session = liveblocks.prepareSession(userId, {
+  const effectiveId = userId ?? `test:${testUser}`
+  const session = liveblocks.prepareSession(effectiveId, {
     userInfo: {
-      name: user?.fullName ?? user?.username ?? 'Collaborator',
-      color: userColor(userId),
+      name: user?.fullName ?? user?.username ?? (testUser ? `Test ${testUser}` : 'Collaborator'),
+      color: userColor(effectiveId),
       imageUrl: user?.imageUrl ?? null,
     },
   })
