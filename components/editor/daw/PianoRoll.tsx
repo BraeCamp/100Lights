@@ -763,6 +763,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         return
       }
 
+      // Looped clips: the region past the pattern length is a repeat, not
+      // canvas — a note drawn there would also sound inside every repeat.
+      if (clip.loopEnabled && clip.loopLengthBeats && beat >= clip.loopLengthBeats) return
+
       // Apply scale lock to new note pitch (never for drums)
       const finalPitch = scaleLock && !isDrum
         ? snapToScale(pitch, project.key, project.scale)

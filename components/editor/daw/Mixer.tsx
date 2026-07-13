@@ -278,10 +278,10 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         <div style={{ display: 'flex', gap: 2 }}>
           <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !muted } })}
             style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: muted ? '#d97706' : 'var(--bg-surface)', color: muted ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
-            title="Mute">M</button>
+            title="Mute" data-help-id="mute">M</button>
           <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !soloed } })}
             style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: soloed ? '#eab308' : 'var(--bg-surface)', color: soloed ? '#000' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
-            title="Solo">S</button>
+            title="Solo" data-help-id="solo">S</button>
         </div>
       )}
 

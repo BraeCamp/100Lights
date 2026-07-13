@@ -859,12 +859,27 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       dispatch({ type: 'ADD_CLIP', clip: leftClip })
                       dispatch({ type: 'ADD_CLIP', clip: rightClip })
                     } else if (!isAudioClip(clip)) {
+                      // Looped clips: materialize the repeats first so both
+                      // halves keep the audible pattern instead of splitting
+                      // the raw (single) pattern.
+                      let notes = clip.notes
+                      if (clip.loopEnabled && clip.loopLengthBeats) {
+                        const L = clip.loopLengthBeats
+                        notes = []
+                        for (let k = 0; k * L < clip.durationBeats; k++) {
+                          for (const n of clip.notes) {
+                            const start = k * L + n.startBeat
+                            if (start >= clip.durationBeats) continue
+                            notes.push({ ...n, id: crypto.randomUUID(), startBeat: start, durationBeats: Math.min(n.durationBeats, clip.durationBeats - start) })
+                          }
+                        }
+                      }
                       // MIDI: notes before splice go left (truncated if they span), notes at/after go right
-                      const leftNotes  = clip.notes.filter(n => n.startBeat < beatOffset).map(n => ({ ...n, durationBeats: Math.min(n.durationBeats, beatOffset - n.startBeat) }))
-                      const rightNotes = clip.notes.filter(n => n.startBeat >= beatOffset).map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - beatOffset }))
+                      const leftNotes  = notes.filter(n => n.startBeat < beatOffset).map(n => ({ ...n, durationBeats: Math.min(n.durationBeats, beatOffset - n.startBeat) }))
+                      const rightNotes = notes.filter(n => n.startBeat >= beatOffset).map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - beatOffset }))
                       dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
-                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, notes: leftNotes } })
-                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, notes: rightNotes } })
+                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, notes: leftNotes, loopEnabled: false, loopLengthBeats: undefined } })
+                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, notes: rightNotes, loopEnabled: false, loopLengthBeats: undefined } })
                     }
                   }}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
