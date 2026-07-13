@@ -244,10 +244,14 @@ export class DawEngine extends EventTarget {
     const nodes = this.trackNodes.get(trackId)
     if (!nodes) return
 
-    // Tear down old chain
+    // Tear down old routing — ALWAYS disconnect effectsInput, not only when a
+    // chain object exists: the zero-effects state wires effectsInput straight
+    // to effectsOutput, and leaving that in place when the first effect is
+    // added creates a dry bypass in parallel with the new chain (effects
+    // audibly "do nothing").
+    try { nodes.effectsInput.disconnect() } catch { /* ok */ }
     const old = this.effectsChains.get(trackId)
     if (old) {
-      try { nodes.effectsInput.disconnect() } catch { /* ok */ }
       old.dispose()
       this.effectsChains.delete(trackId)
     }
