@@ -22,7 +22,7 @@ import type { LibraryCategory } from './sound-library'
 const SEEDED_KEY          = '100lights-audio-seeded-v7'
 const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v7'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v4'
-const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v6'  // bumped: violin folder re-renders as synth bowed string (vibrato-free)
+const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v7'  // v7: violin AND viola render as synth bowed string with the vibrato LFO removed
 const PERCUSSION_SEEDED_KEY = '100lights-percussion-seeded-v3'
 const FX_SEEDED_KEY       = '100lights-fx-seeded-v3'
 const ARP_SEEDED_KEY      = '100lights-arp-seeded-v3'
@@ -40,8 +40,6 @@ function sk(base: string) {
 // ── Soundfont URLs ────────────────────────────────────────────────────────────
 
 const SF_BASE           = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM'
-const VIOLIN_SF_URL     = `${SF_BASE}/violin-mp3.js`
-const VIOLA_SF_URL      = `${SF_BASE}/viola-mp3.js`
 const CELLO_SF_URL      = `${SF_BASE}/cello-mp3.js`
 const FRETLESS_BASS_URL = `${SF_BASE}/fretless_bass-mp3.js`
 const ELEC_BASS_URL     = `${SF_BASE}/electric_bass_finger-mp3.js`
@@ -673,28 +671,26 @@ export async function seedStrings(): Promise<void> {
 
   // Single accessible entries — one playable sample per bowed string instrument
   const BOWED_SINGLES = [
-    { name: 'Violin',  category: 'violin' as LibraryCategory, midi: 69, url: VIOLIN_SF_URL,  charTags: ['Bright', 'Warm'] },
-    { name: 'Viola',   category: 'viola'  as LibraryCategory, midi: 57, url: VIOLA_SF_URL,   charTags: ['Warm'] },
-    { name: 'Cello',   category: 'viola'  as LibraryCategory, midi: 48, url: CELLO_SF_URL,   charTags: ['Warm'] },
+    { name: 'Violin',  category: 'violin' as LibraryCategory, midi: 69, url: null,          charTags: ['Bright', 'Warm'] },
+    { name: 'Viola',   category: 'viola'  as LibraryCategory, midi: 57, url: null,          charTags: ['Warm'] },
+    { name: 'Cello',   category: 'viola'  as LibraryCategory, midi: 48, url: CELLO_SF_URL,  charTags: ['Warm'] },
   ]
   for (const s of BOWED_SINGLES) {
     const [letter, full] = noteTags(s.midi)
-    await libraryAdd(makeStub(s.name, s.category, {
-      kind: 'soundfont', beatType: s.category, midiNote: s.midi,
-      duration: 5.0, channels: 2, soundfontUrl: s.url,
-    }, 'Strings', now, ['Strings', letter, full, ...s.charTags], 'Strings'))
+    const spec = s.url
+      ? { kind: 'soundfont' as const, beatType: s.category, midiNote: s.midi, duration: 5.0, channels: 2, soundfontUrl: s.url }
+      : { kind: 'melodic' as const, beatType: s.category, midiNote: s.midi, duration: 5.0, channels: 2 }
+    await libraryAdd(makeStub(s.name, s.category, spec, 'Strings', now, ['Strings', letter, full, ...s.charTags], 'Strings'))
   }
 
   // Per-note folders for violin, viola (from KEYBOARD_PRESETS).
-  // Violin uses the synthesized bowed string (steady, vibrato-free — users
-  // add their own vibrato); viola keeps the recorded soundfont.
+  // Both use the synthesized bowed string: steady, vibrato-free — users add
+  // their own vibrato with full control.
   const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
   for (const preset of stringPresets) {
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
       const [letter, full] = noteTags(midi)
-      const spec = preset.type === 'violin'
-        ? { kind: 'melodic' as const, beatType: preset.type, midiNote: midi, duration: preset.duration, channels: preset.channels }
-        : { kind: 'soundfont' as const, beatType: preset.type, midiNote: midi, duration: preset.duration, channels: preset.channels, soundfontUrl: VIOLA_SF_URL }
+      const spec = { kind: 'melodic' as const, beatType: preset.type, midiNote: midi, duration: preset.duration, channels: preset.channels }
       await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, spec,
         preset.folder, now, [...preset.typeTags, ...preset.charTags, letter, full], preset.parentGroup))
     }

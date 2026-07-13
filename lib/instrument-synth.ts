@@ -409,16 +409,8 @@ export function playBowedString(
   filter.Q.value = q
   filter.connect(masterGain)
 
-  // Vibrato LFO — delayed 0.5s then ramps to ±12¢ over 0.4s for natural bowing feel
-  const lfo    = ctx.createOscillator()
-  lfo.type     = 'sine'
-  lfo.frequency.value = variant === 'viola' ? 5.4 : 5.8
-  const lfoAmt = ctx.createGain()
-  lfoAmt.gain.setValueAtTime(0, when)
-  lfoAmt.gain.setValueAtTime(0, when + attack + 0.1)
-  lfoAmt.gain.linearRampToValueAtTime(12, when + attack + 0.5)  // 12 cents peak deviation
-  lfo.connect(lfoAmt)
-  lfo.start(when); lfo.stop(when + dur + 0.05)
+  // No vibrato by design: the tone stays dead straight so users add their
+  // own vibrato (pitch LFO, automation) with full control.
 
   // Primary oscillator + detuned unison (+4 cents for slight thickness)
   for (const detune of [0, 4]) {
@@ -426,7 +418,6 @@ export function playBowedString(
     osc.type = 'sawtooth'
     osc.frequency.value = hz
     osc.detune.value = detune
-    lfoAmt.connect(osc.detune)
     const g = ctx.createGain()
     g.gain.value = detune === 0 ? 0.7 : 0.3
     osc.connect(g); g.connect(filter)
