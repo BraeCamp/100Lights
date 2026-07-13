@@ -467,6 +467,40 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Community deep-link: /new?communityItem={id} drops the shared thing
+  // straight into this fresh project (sample → track+clip, recipe → roll clip,
+  // preset → installed). Best-effort; the editor works regardless.
+  const communityImportRan = useRef(false)
+  useEffect(() => {
+    if (communityImportRan.current) return
+    communityImportRan.current = true
+    const itemId = new URLSearchParams(window.location.search).get('communityItem')
+    if (!itemId) return
+    void (async () => {
+      try {
+        const { getCommunityItem, importItem } = await import('@/lib/community')
+        const item = await getCommunityItem(itemId)
+        if (!item) return
+        await importItem(item)  // installs into library / recipes / presets
+        if (item.kind === 'sample') {
+          const trackId = crypto.randomUUID()
+          dispatch({ type: 'ADD_TRACK', id: trackId, name: item.name })
+          const meta = (item.payload ?? {}) as { duration?: number }
+          const durBeats = Math.max(1, engineRef.current?.secondsToBeats(meta.duration ?? 2) ?? 4)
+          dispatch({ type: 'ADD_CLIP', clip: makeAudioClip(trackId, item.name, 0, durBeats, { libraryId: `community:${item.id}` }) })
+        } else if (item.kind === 'recipe') {
+          const { getAllChordRecipes, buildRecipeClip } = await import('@/lib/practice-recipes')
+          const recipe = getAllChordRecipes().find(r => r.id === `community-${item.id}`)
+          if (recipe) {
+            const trackId = crypto.randomUUID()
+            dispatch({ type: 'ADD_TRACK', id: trackId, name: item.name })
+            dispatch({ type: 'ADD_CLIP', clip: buildRecipeClip(recipe, trackId, 0) })
+          }
+        }
+      } catch { /* deep-link is best-effort */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-apply voice chain to Host and Guest 1 tracks on new podcast projects
   useEffect(() => {
     if (!isPodcast) return

@@ -9,9 +9,11 @@ import { getPresets, addPreset, type MidiPreset } from './midi-presets'
 import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import type { MidiClip } from './daw-types'
 
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project'
+
 export interface CommunityItem {
   id: string
-  kind: 'song' | 'sample' | 'preset' | 'recipe'
+  kind: CommunityKind
   name: string
   description: string
   authorName: string
@@ -22,13 +24,46 @@ export interface CommunityItem {
   r2Key: string | null
   votedByMe: boolean
   mine: boolean
+  reactions: Record<string, number>
+  myReactions: string[]
 }
 
-export async function listCommunity(kind?: string, sort: 'top' | 'new' = 'top'): Promise<CommunityItem[]> {
-  const qs = new URLSearchParams({ sort, ...(kind ? { kind } : {}) })
+export const COMMUNITY_TAGS = ['drums', 'melody', 'bass', 'vocals', 'lofi', 'electronic', 'hiphop', 'rock', 'jazz', 'ambient', 'pop', 'experimental'] as const
+
+export interface ListOptions {
+  kind?: string
+  sort?: 'top' | 'new' | 'trending'
+  q?: string
+  tag?: string
+  author?: string
+  page?: number
+}
+
+export async function listCommunity(opts: ListOptions = {}): Promise<{ items: CommunityItem[]; hasMore: boolean }> {
+  const qs = new URLSearchParams()
+  if (opts.kind) qs.set('kind', opts.kind)
+  qs.set('sort', opts.sort ?? 'top')
+  if (opts.q) qs.set('q', opts.q)
+  if (opts.tag) qs.set('tag', opts.tag)
+  if (opts.author) qs.set('author', opts.author)
+  if (opts.page) qs.set('page', String(opts.page))
   const res = await fetch(`/api/community?${qs}`)
   if (!res.ok) throw new Error(`list failed (${res.status})`)
-  return (await res.json()).items as CommunityItem[]
+  return await res.json() as { items: CommunityItem[]; hasMore: boolean }
+}
+
+export async function getCommunityItem(id: string): Promise<CommunityItem | null> {
+  const res = await fetch(`/api/community/${id}`)
+  if (!res.ok) return null
+  return (await res.json()).item as CommunityItem
+}
+
+export async function toggleReaction(id: string, emoji: string): Promise<Record<string, number>> {
+  const res = await fetch(`/api/community/${id}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'react', emoji }),
+  })
+  if (!res.ok) throw new Error('reaction failed')
+  return (await res.json()).reactions
 }
 
 export async function toggleVote(id: string): Promise<{ votes: number; votedByMe: boolean }> {
@@ -47,8 +82,16 @@ async function countDownload(id: string): Promise<void> {
 
 // ── Sharing ──────────────────────────────────────────────────────────────────
 
+export interface SongMeta {
+  bpm?: number
+  key?: string
+  durationSec?: number
+  peaks?: number[]     // pre-rendered waveform (≈120 bars) so cards draw instantly
+  tags?: string[]
+}
+
 /** Shares a rendered mix (from the export flow or a file) as a song. */
-export async function shareSong(blob: Blob, name: string, description: string): Promise<void> {
+export async function shareSong(blob: Blob, name: string, description: string, meta: SongMeta = {}): Promise<string> {
   const baseType = (blob.type || 'audio/wav').split(';')[0]
   const ext = baseType === 'audio/wav' ? '.wav' : baseType === 'audio/webm' ? '.webm' : '.mp3'
   const presign = await fetch('/api/media/presign-upload', {
@@ -61,13 +104,55 @@ export async function shareSong(blob: Blob, name: string, description: string): 
   if (!put.ok) throw new Error('upload failed')
   const res = await fetch('/api/community', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'song', name, description, r2Key: key, payload: { contentType: baseType } }),
+    body: JSON.stringify({ kind: 'song', name, description, r2Key: key, payload: { contentType: baseType, ...meta } }),
   })
   if (!res.ok) throw new Error('share failed')
+  return (await res.json()).id as string
+}
+
+/** Bundles several library samples into one importable pack. */
+export async function sharePack(entries: LibraryEntry[], name: string, description: string, tags: string[] = []): Promise<string> {
+  if (entries.length === 0) throw new Error('pick at least one sample')
+  const samples: Array<{ name: string; category: string; duration: number; r2Key: string; contentType: string }> = []
+  for (const raw of entries) {
+    const entry = raw.audioBlob ? raw : await libraryFulfill(raw.id)
+    if (!entry?.audioBlob) continue
+    const blob = entry.audioBlob
+    const baseType = (blob.type || 'audio/wav').split(';')[0]
+    const presign = await fetch('/api/media/presign-upload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: `pack-${crypto.randomUUID()}.wav`, contentType: baseType, mediaId: `community-pack-${crypto.randomUUID()}`, size: blob.size }),
+    })
+    if (!presign.ok) throw new Error('upload not authorized')
+    const { uploadUrl, key } = await presign.json() as { uploadUrl: string; key: string }
+    const put = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': baseType } })
+    if (!put.ok) throw new Error(`upload failed for ${entry.name}`)
+    samples.push({ name: entry.name, category: entry.category, duration: entry.duration, r2Key: key, contentType: baseType })
+  }
+  if (samples.length === 0) throw new Error('none of the picked samples had audio')
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'pack', name, description, payload: { samples, tags } }),
+  })
+  if (!res.ok) throw new Error('share failed')
+  return (await res.json()).id as string
+}
+
+/** Shares the whole arrangement as a remixable starter (audio resolves via r2Keys). */
+export async function shareProjectStarter(dawProject: unknown, name: string, description: string, meta: { tempo?: number; key?: string; tracks?: number; clips?: number; tags?: string[] } = {}): Promise<string> {
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'project', name, description, payload: { dawProject, ...meta } }),
+  })
+  if (!res.ok) {
+    if (res.status === 413) throw new Error('project too large to share as a starter')
+    throw new Error('share failed')
+  }
+  return (await res.json()).id as string
 }
 
 
-export async function shareSample(entry: LibraryEntry, description: string): Promise<void> {
+export async function shareSample(entry: LibraryEntry, description: string, tags: string[] = []): Promise<void> {
   const fulfilled = entry.audioBlob ? entry : await libraryFulfill(entry.id)
   if (!fulfilled?.audioBlob) throw new Error('sample has no audio')
   const blob = fulfilled.audioBlob
@@ -82,12 +167,12 @@ export async function shareSample(entry: LibraryEntry, description: string): Pro
   if (!put.ok) throw new Error('upload failed')
   const res = await fetch('/api/community', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'sample', name: entry.name, description, r2Key: key, payload: { category: entry.category, duration: fulfilled.duration, contentType: baseType } }),
+    body: JSON.stringify({ kind: 'sample', name: entry.name, description, r2Key: key, payload: { category: entry.category, duration: fulfilled.duration, contentType: baseType, ...(tags.length ? { tags } : {}) } }),
   })
   if (!res.ok) throw new Error('share failed')
 }
 
-export async function sharePreset(preset: MidiPreset, description: string): Promise<void> {
+export async function sharePreset(preset: MidiPreset, description: string, tags: string[] = []): Promise<void> {
   const entries = (await libraryGetAll()).filter(e => e.folder === preset.folder && e.renderSpec)
   if (entries.length === 0) throw new Error('preset folder has no renderable notes to share')
   const res = await fetch('/api/community', {
@@ -97,6 +182,7 @@ export async function sharePreset(preset: MidiPreset, description: string): Prom
       payload: {
         preset: { name: preset.name, folder: preset.folder, loNote: preset.loNote, hiNote: preset.hiNote, category: preset.category, group: preset.group },
         entries: entries.map(e => ({ name: e.name, category: e.category, renderSpec: e.renderSpec, tags: e.tags })),
+        ...(tags.length ? { tags } : {}),
       },
     }),
   })
@@ -151,6 +237,37 @@ export async function importItem(item: CommunityItem): Promise<string> {
     if (!already) addPreset({ name: p.preset.name, folder, loNote: p.preset.loNote, hiNote: p.preset.hiNote, category: p.preset.category, group: p.preset.group })
     void countDownload(item.id)
     return 'Preset installed — pick it from any MIDI clip’s sound menu.'
+  }
+
+  if (item.kind === 'pack') {
+    const p = item.payload as { samples?: Array<{ name: string; category: string; duration: number; r2Key: string }> }
+    const samples = p.samples ?? []
+    let added = 0
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i]
+      const audio = await fetch(`/api/community/${item.id}/audio?i=${i}`)
+      if (!audio.ok) continue
+      const blob = await audio.blob()
+      await libraryAdd({
+        id: `community:${item.id}:${i}`,
+        name: s.name,
+        category: (s.category ?? 'other') as LibraryCategory,
+        audioBlob: blob,
+        duration: s.duration ?? await getAudioDurationFromBlob(blob).catch(() => 1),
+        addedAt: new Date().toISOString(),
+        folder: item.name.slice(0, 40), parentFolder: 'Community',
+      })
+      added++
+    }
+    void countDownload(item.id)
+    return `${added} sample${added !== 1 ? 's' : ''} added to your library under Community › ${item.name.slice(0, 40)}.`
+  }
+
+  if (item.kind === 'project') {
+    // Starters open in the editor rather than importing into the library
+    window.open(`/new?starter=${item.id}`, '_blank')
+    void countDownload(item.id)
+    return 'Opening the starter in a new studio tab…'
   }
 
   if (item.kind === 'song') {

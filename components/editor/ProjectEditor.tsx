@@ -22,6 +22,7 @@ import type { Caption, Output } from '@/lib/types'
 import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
 import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
+import type { DawProject } from '@/lib/daw-types'
 import type { AudioTrack } from './AudioEditor'
 
 // ── All editors are lazy. None load until their module is active. ─────────
@@ -65,6 +66,8 @@ export interface ProjectEditorProps {
   projectName: string
   modules?: ModuleKey[]
   allowImport?: boolean
+  /** Community starter item id — its shared dawProject seeds this new project. */
+  starterId?: string
   audioMode?: 'music' | 'podcast'
 }
 
@@ -273,7 +276,7 @@ style={{
 
 // ── Main component ────────────────────────────────────────────
 
-export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp }: ProjectEditorProps) {
+export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId }: ProjectEditorProps) {
   const isNewProject = !projectId
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
     isNewProject ? (moduleProp ?? ['video']) : null
@@ -281,6 +284,21 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const [captions, setCaptions]         = useState<Caption[]>([])
   const [outputs, setOutputs]           = useState<Output[]>([])
   const [savedData, setSavedData]       = useState<CfProjFile | null>(null)
+  const [starterProject, setStarterProject] = useState<DawProject | null>(null)
+  const [starterLoading, setStarterLoading] = useState(!!starterId)
+  useEffect(() => {
+    if (!starterId) return
+    let alive = true
+    fetch(`/api/community/${starterId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { item?: { kind?: string; payload?: { dawProject?: DawProject } } } | null) => {
+        if (!alive) return
+        if (d?.item?.kind === 'project' && d.item.payload?.dawProject) setStarterProject(d.item.payload.dawProject)
+        setStarterLoading(false)
+      })
+      .catch(() => { if (alive) setStarterLoading(false) })
+    return () => { alive = false }
+  }, [starterId])
   const [localName, setLocalName]       = useState(projectName)
   const [currentTime, setCurrentTime]   = useState(0)
   const [audioMedia, setAudioMedia]     = useState<SerializedAudioMedia[]>([])
@@ -564,7 +582,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onProjectNameCommit: commitName,
     onSave: isOwner ? handleAudioSave : undefined,
     initialTracks: initAudioTracks,
-    initialDawProject: savedData?.dawProject,
+    initialDawProject: starterProject ?? savedData?.dawProject,
     audioMode,
     initialPodcastMeta: podcastMeta,
     ...sharedModuleProps,
@@ -605,7 +623,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       <>
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ flex: '0 0 55%', overflow: 'hidden' }}>
-            <AudioEditor {...audioProps} />
+            {starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}
           </div>
           <div style={{ flex: '0 0 45%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
             <TranscriptEditor {...transcriptProps} hideHeader currentTime={currentTime} />
@@ -620,7 +638,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
   if (hasAudio)      return (
     <>
-      <AudioEditor {...audioProps} />
+      {starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}
       {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
     </>
   )

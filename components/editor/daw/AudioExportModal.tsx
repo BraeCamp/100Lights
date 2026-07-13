@@ -7,7 +7,7 @@ import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
-import { shareSong } from '@/lib/community'
+import { shareSong, shareProjectStarter } from '@/lib/community'
 
 interface Props {
   onClose: () => void
@@ -17,6 +17,9 @@ interface Props {
 }
 
 type ExportFormat  = 'webm' | 'wav'
+
+const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const keyLabel = (key: unknown, scale: unknown) => `${typeof key === 'number' ? KEY_NAMES[key % 12] ?? 'C' : key} ${scale}`
 type StatusMessage = 'recording' | 'converting' | 'normalizing' | 'done'
 
 function slugify(s: string) {
@@ -73,6 +76,9 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   const finalBlobRef = useRef<Blob | null>(null)
   const [shareState, setShareState]       = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [shareName, setShareName]         = useState('')
+  const [sharedId, setSharedId]           = useState<string | null>(null)
+  const [starterState, setStarterState]   = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+  const [starterId, setStarterId]         = useState<string | null>(null)
 
   // Escape closes the modal — except mid-export, matching the overlay-click guard
   useEffect(() => {
@@ -346,7 +352,13 @@ style={{
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
                   {shareState === 'done' ? (
                     <p style={{ fontSize: 11.5, color: '#4ade80', margin: 0 }}>
-                      Shared! <a href="/community?kind=song" target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>See it in the Community feed ↗</a>
+                      Shared! <a href={sharedId ? `/community/${sharedId}` : '/community?kind=song'} target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>View its public page ↗</a>
+                      {sharedId && (
+                        <button
+                          onClick={() => { void navigator.clipboard.writeText(`${window.location.origin}/community/${sharedId}`) }}
+                          style={{ marginLeft: 10, fontSize: 10.5, padding: '2px 10px', borderRadius: 999, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}
+                        >Copy link</button>
+                      )}
                     </p>
                   ) : (
                     <>
@@ -366,7 +378,27 @@ style={{
                             if (!blob) return
                             setShareState('busy')
                             try {
-                              await shareSong(blob, shareName.trim() || project.name || 'Untitled song', '')
+                              // Stamp BPM/key/duration and pre-render the waveform so
+                              // the feed card and share unfurl draw instantly.
+                              let meta: { bpm: number; key: string; durationSec?: number; peaks?: number[] } = {
+                                bpm: project.tempo, key: keyLabel(project.key, project.scale),
+                              }
+                              try {
+                                const decoded = await blobToAudioBuffer(blob)
+                                const ch = decoded.getChannelData(0)
+                                const bars = 120
+                                const per = Math.max(1, Math.floor(ch.length / bars))
+                                const peaks: number[] = []
+                                for (let i = 0; i < bars; i++) {
+                                  let m = 0
+                                  for (let j = i * per; j < Math.min((i + 1) * per, ch.length); j += 16) m = Math.max(m, Math.abs(ch[j]))
+                                  peaks.push(m)
+                                }
+                                const mx = Math.max(...peaks, 0.01)
+                                meta = { ...meta, durationSec: Math.round(decoded.duration * 10) / 10, peaks: peaks.map(v => Math.round((v / mx) * 100) / 100) }
+                              } catch { /* meta stays partial */ }
+                              const id = await shareSong(blob, shareName.trim() || project.name || 'Untitled song', '', meta)
+                              setSharedId(id)
                               setShareState('done')
                             } catch { setShareState('error') }
                           }}
@@ -385,6 +417,49 @@ style={{
                       </p>
                     </>
                   )}
+
+                  {/* Share the arrangement itself as a remixable starter */}
+                  <div style={{ marginTop: 10 }}>
+                    {starterState === 'done' ? (
+                      <p style={{ fontSize: 11, color: '#4ade80', margin: 0 }}>
+                        Starter shared! <a href={starterId ? `/community/${starterId}` : '/community?kind=project'} target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>View its public page ↗</a>
+                      </p>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          setStarterState('busy')
+                          try {
+                            // Strip session-only bits: blob URLs die with the tab and
+                            // voice-map traces are heavy — collaborative audio still
+                            // resolves via r2Key / libraryId.
+                            const dawProject = {
+                              ...project,
+                              arrangementClips: project.arrangementClips.map(c => {
+                                const copy = { ...c } as Record<string, unknown>
+                                if (typeof copy.audioUrl === 'string' && (copy.audioUrl as string).startsWith('blob:')) delete copy.audioUrl
+                                delete copy.voiceMap
+                                return copy
+                              }),
+                            }
+                            const id = await shareProjectStarter(dawProject, shareName.trim() || project.name || 'Untitled starter', '', {
+                              tempo: project.tempo, key: keyLabel(project.key, project.scale),
+                              tracks: project.tracks.length, clips: project.arrangementClips.length,
+                            })
+                            setStarterId(id)
+                            setStarterState('done')
+                          } catch { setStarterState('error') }
+                        }}
+                        disabled={starterState === 'busy'}
+                        style={{
+                          fontSize: 10.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+                          border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)',
+                          opacity: starterState === 'busy' ? 0.6 : 1,
+                        }}
+                      >
+                        {starterState === 'busy' ? 'Sharing starter…' : starterState === 'error' ? 'Starter share failed — retry' : 'Also share the project as a remixable starter'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </>

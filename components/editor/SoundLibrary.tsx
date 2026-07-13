@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal } from 'lucide-react'
+import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
   initLibrary,
@@ -333,8 +333,30 @@ function EntryRow({
           Use
         </button>
       )}
+      {!onPick && !entry.id.startsWith('seed:') && !entry.id.startsWith('community:') && (
+        <button
+          onClick={async e => {
+            e.stopPropagation()
+            const btn = e.currentTarget
+            const desc = window.prompt(`Share "${entry.name}" to the Community?\n\nOptional description:`)
+            if (desc === null) return
+            btn.disabled = true
+            try {
+              const { shareSample } = await import('@/lib/community')
+              await shareSample(entry, desc)
+              window.alert('Shared! Find it at /community — every share gets a public link.')
+            } catch (err) {
+              window.alert(err instanceof Error ? err.message : 'Share failed')
+            } finally { btn.disabled = false }
+          }}
+          title="Share to Community"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}
+        >
+          <Globe2 size={10} />
+        </button>
+      )}
       {!onPick && (
-        <button onClick={() => onDelete(entry.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
+        <button onClick={() => onDelete(entry.id)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
           <Trash2 size={10} />
         </button>
       )}

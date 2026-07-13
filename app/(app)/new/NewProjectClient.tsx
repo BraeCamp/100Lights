@@ -22,8 +22,11 @@ interface Props {
 
 export default function NewProjectClient({ flags }: Props) {
   const searchParams = useSearchParams()
-  const moduleParam   = searchParams.get('modules')
-  const audioModeParam = searchParams.get('audioMode')
+  const starterParam = searchParams.get('starter')
+  const communityItemParam = searchParams.get('communityItem')
+  // Community deep-links always target the DAW
+  const moduleParam   = searchParams.get('modules') ?? (starterParam || communityItemParam ? 'audio' : null)
+  const audioModeParam = searchParams.get('audioMode') ?? (starterParam || communityItemParam ? 'music' : null)
 
   const visibleMods = MODULE_DEFS.filter(m => flags.enabledModules.includes(m.key))
 
@@ -52,6 +55,7 @@ export default function NewProjectClient({ flags }: Props) {
           modules={selected ? [selected] : []}
           audioMode={initAudioMode}
           allowImport
+          starterId={starterParam ?? undefined}
         />
       </div>
     )
