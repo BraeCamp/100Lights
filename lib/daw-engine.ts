@@ -1089,13 +1089,24 @@ export class DawEngine extends EventTarget {
             continue
           }
           if (buf !== null) {
+            // Starting mid-note (playhead landed inside it): play the sample
+            // from the elapsed position, not from its beginning.
+            const offsetSec = this.beatsToSeconds(alreadyBeats)
+            if (offsetSec >= buf.duration) { this._scheduledNoteKeys.add(noteKey); continue }
             const velGain = this.ctx.createGain()
-            velGain.gain.value = (note.velocity ?? 100) / 127
+            const target = (note.velocity ?? 100) / 127
+            if (offsetSec > 0) {
+              // 5ms fade-in avoids the click of entering a waveform mid-cycle
+              velGain.gain.setValueAtTime(0, startAt)
+              velGain.gain.linearRampToValueAtTime(target, startAt + 0.005)
+            } else {
+              velGain.gain.value = target
+            }
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             src.connect(velGain)
             velGain.connect(nodes.midiInput)
-            src.start(startAt)
+            src.start(startAt, offsetSec)
             if (remaining > 0) src.stop(startAt + remaining)
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
