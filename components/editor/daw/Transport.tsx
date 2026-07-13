@@ -1,5 +1,6 @@
 'use client'
 
+import { uploadRecordingBlob } from '@/lib/record-upload'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2 } from 'lucide-react'
@@ -209,9 +210,10 @@ export default function Transport() {
     const url = URL.createObjectURL(blob)
     const durationBeats = 30 * (project.tempo / 60)
     const startBeat = Math.max(0, engine.currentBeat - durationBeats)
-    dispatch({
-      type: 'ADD_CLIP',
-      clip: makeAudioClip(target.id, 'Jam Capture', startBeat, durationBeats, { audioUrl: url }),
+    const clip = makeAudioClip(target.id, 'Jam Capture', startBeat, durationBeats, { audioUrl: url })
+    dispatch({ type: 'ADD_CLIP', clip })
+    void uploadRecordingBlob(blob, clip.id).then(key => {
+      if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
     })
   }
 

@@ -133,6 +133,81 @@ async function main() {
   if (!markerSeen) throw new Error('bob never saw alice\'s track marker')
   console.log(`PASS presence track marker visible to bob in ${Date.now() - t0}ms`)
 
+  // ── Recorded audio syncs: alice JAMs a take → bob can PLAY it ──
+  // (metronome + play + JAM produces a real clip; eager upload attaches an
+  // r2Key that bob's engine resolves via signed URL)
+  await alice.page.locator('[data-help-id="metronome"]').first().click()
+  await alice.page.locator('[data-help-id="rewind"]').first().click()
+  await alice.page.locator('[data-help-id="play"]').first().click()
+  await sleep(3000)
+  await alice.page.locator('[data-help-id="jam"]').first().click()
+  await sleep(400)
+  await alice.page.locator('[data-help-id="play"]').first().click() // stop
+
+  // Wait for the upload to attach an r2Key on alice's clip
+  const keyOnAlice = await (async () => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 20000) {
+      const k = await alice.page.evaluate(() => window.__daw?._clips?.[0]?.r2Key ?? null)
+      if (k) return k
+      await sleep(300)
+    }
+    return null
+  })()
+  if (!keyOnAlice) throw new Error('recording never got an r2Key on alice')
+  console.log(`PASS eager upload: alice's take has r2Key ${keyOnAlice.slice(0, 30)}…`)
+
+  // Bob must receive the clip WITH the key, then audibly play it
+  const t0k = Date.now()
+  while (Date.now() - t0k < 10000) {
+    const k = await bob.page.evaluate(() => window.__daw?._clips?.[0]?.r2Key ?? null)
+    if (k === keyOnAlice) break
+    await sleep(200)
+  }
+  const bobKey = await bob.page.evaluate(() => window.__daw?._clips?.[0]?.r2Key ?? null)
+  if (bobKey !== keyOnAlice) throw new Error('bob never received the r2Key')
+
+  const clipInfo = await bob.page.evaluate(() => {
+    const c = window.__daw?._clips?.[0]
+    return c ? { start: c.startBeat, dur: c.durationBeats, id: c.id } : null
+  })
+  const bobPeak = await bob.page.evaluate(async (clip) => {
+    const e = window.__daw
+    // Force-resolve the buffer first so we can tell decode failures from seek misses
+    const buf = await e.loadClipBuffer(e._clips[0])
+    if (!buf) return -1  // r2 fetch/decode failed
+    // Scan the buffer for the loudest sample so we know where the audio IS
+    const ch = buf.getChannelData(0)
+    let bufPeak = 0, peakAt = 0
+    for (let i = 0; i < ch.length; i += 20) {
+      const v = Math.abs(ch[i]); if (v > bufPeak) { bufPeak = v; peakAt = i / buf.sampleRate }
+    }
+    console.log(`[bobdiag] ctx=${e.ctx.state} bufDur=${buf.duration.toFixed(1)}s bufPeak=${bufPeak.toFixed(3)} at ${peakAt.toFixed(1)}s`)
+    if (bufPeak < 0.005) return -2  // the uploaded audio itself is silent
+    const an = e.ctx.createAnalyser(); an.fftSize = 2048
+    e.masterGain.connect(an)
+    const data = new Float32Array(an.fftSize)
+    // Seek the transport to just before the loudest moment of the buffer
+    const beatsPerSec = e.tempo / 60
+    e.seek(Math.max(clip.start, clip.start + (peakAt - 1) * beatsPerSec))
+    document.querySelector('[data-help-id="play"]').click()
+    let peak = 0
+    const t0 = Date.now()
+    while (Date.now() - t0 < 6000) {
+      an.getFloatTimeDomainData(data)
+      for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]))
+      if (peak > 0.02) break
+      await new Promise(r => setTimeout(r, 60))
+    }
+    document.querySelector('[data-help-id="play"]').click()
+    e.masterGain.disconnect(an)
+    return +peak.toFixed(4)
+  }, clipInfo)
+  if (bobPeak === -1) throw new Error('bob could not fetch/decode the r2 audio')
+  if (bobPeak === -2) throw new Error('uploaded recording decodes but contains only silence')
+  if (bobPeak <= 0.005) throw new Error(`bob's playback of alice's recording was silent (peak ${bobPeak})`)
+  console.log(`PASS cross-client audio: bob played alice's recording (peak ${bobPeak})`)
+
   // ── Presence: each should see one other collaborator (avatar row) ──
   const avatarsVisible = await alice.page.evaluate(() =>
     [...document.querySelectorAll('div')].some(d => d.title && /\(you\)$/.test(d.title))

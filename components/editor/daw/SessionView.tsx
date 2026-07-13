@@ -1,5 +1,6 @@
 'use client'
 
+import { uploadRecordingBlob } from '@/lib/record-upload'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
@@ -303,6 +304,9 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
         const audioUrl = URL.createObjectURL(blob)
         const clip = makeAudioClip(track.id, 'Recording', 0, durationBeats, { audioUrl })
         dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip })
+        void uploadRecordingBlob(blob, clip.id).then(key => {
+          if (key) dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, r2Key: key } })
+        })
       }
       setSlotRecording(null)
     }

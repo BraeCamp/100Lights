@@ -473,18 +473,39 @@ export class DawEngine extends EventTarget {
 
   async loadClipBuffer(clip: AudioClip): Promise<AudioBuffer | null> {
     if (this.bufferCache.has(clip.id)) return this.bufferCache.get(clip.id)!
-    const url = clip.audioUrl
-    if (!url) return null
-    try {
-      const res = await fetch(url)
-      const ab  = await res.arrayBuffer()
-      const buf = await this.ctx.decodeAudioData(ab)
-      this.bufferCache.set(clip.id, buf)
-      return buf
-    } catch {
-      return null
+    // Try the local URL first (blob: for fresh recordings, signed URL for
+    // imports). A collaborator receives clips whose blob: URLs belong to
+    // another browser — those fail, and we fall back to the clip's r2Key.
+    const tryUrl = async (url: string): Promise<AudioBuffer | null> => {
+      try {
+        const res = await fetch(url)
+        if (!res.ok) return null
+        const ab  = await res.arrayBuffer()
+        const buf = await this.ctx.decodeAudioData(ab)
+        this.bufferCache.set(clip.id, buf)
+        return buf
+      } catch {
+        return null
+      }
     }
+    if (clip.audioUrl) {
+      const buf = await tryUrl(clip.audioUrl)
+      if (buf) return buf
+    }
+    if (clip.r2Key && !this._r2Resolving.has(clip.id)) {
+      this._r2Resolving.add(clip.id)
+      try {
+        const res = await fetch(`/api/media/signed-url?key=${encodeURIComponent(clip.r2Key)}`)
+        if (res.ok) {
+          const { url } = await res.json() as { url: string }
+          return await tryUrl(url)
+        }
+      } catch { /* fall through */ }
+      finally { this._r2Resolving.delete(clip.id) }
+    }
+    return null
   }
+  private _r2Resolving = new Set<string>()
 
   evictBuffer(clipId: string) { this.bufferCache.delete(clipId) }
 

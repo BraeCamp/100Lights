@@ -9,6 +9,7 @@ import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/li
 import { Library, Settings, FileText, Users } from 'lucide-react'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
+import { uploadRecordingBlob } from '@/lib/record-upload'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import type { Caption } from '@/lib/types'
@@ -581,6 +582,9 @@ export default function AudioEditor(props: AudioEditorProps) {
               )
               dispatch({ type: 'ADD_CLIP', clip })
               console.log('[rec] per-track clip dispatched:', clip.id, 'at beat', startBeat)
+              void uploadRecordingBlob(blob, clip.id).then(key => {
+                if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+              })
             }
             pending--
             if (pending === 0) cleanup()
@@ -613,6 +617,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       const clip = makeAudioClip(trackId, 'Recording', startBeat, durationBeats, { audioUrl: url })
       dispatch({ type: 'ADD_CLIP', clip })
       console.log('[rec] master bus clip dispatched:', clip.id, 'at beat', startBeat)
+      void uploadRecordingBlob(blob, clip.id).then(key => {
+        if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+      })
     }
     engine.addEventListener('transport', onTransport)
     engine.addEventListener('recording', onRecording)
