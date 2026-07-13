@@ -507,6 +507,36 @@ export class DawEngine extends EventTarget {
       } catch { /* fall through */ }
       finally { this._r2Resolving.delete(clip.id) }
     }
+    // Sound-library fallback: pad bounces carry the source entry's id, and
+    // older saves can often be rescued from the clip name ("Pad – Folder –
+    // Name"), since pad clips were never uploaded before libraryId existed.
+    const fromEntry = async (entry: { audioBlob?: Blob } | null): Promise<AudioBuffer | null> => {
+      if (!entry?.audioBlob) return null
+      try {
+        const buf = await this.ctx.decodeAudioData(await entry.audioBlob.arrayBuffer())
+        this.bufferCache.set(clip.id, buf)
+        return buf
+      } catch { return null }
+    }
+    try {
+      const { libraryFulfill } = await import('./default-samples')
+      if (clip.libraryId) {
+        const buf = await fromEntry(await libraryFulfill(clip.libraryId))
+        if (buf) return buf
+      }
+      // Old saves: pad bounces are named "Pad – Folder – Name"; library drops
+      // are named exactly like their entry. Match accordingly.
+      const parts = clip.name.split(' – ')
+      const { libraryGetAll } = await import('./sound-library')
+      const all = await libraryGetAll()
+      const entry =
+        (parts.length >= 3 ? all.find(e => e.folder === parts[1] && e.name === parts[2]) : undefined) ??
+        all.find(e => e.name === parts[parts.length - 1])
+      if (entry) {
+        const buf = await fromEntry(await libraryFulfill(entry.id))
+        if (buf) return buf
+      }
+    } catch { /* library unavailable (SSR/tests) */ }
     return null
   }
   private _r2Resolving = new Set<string>()

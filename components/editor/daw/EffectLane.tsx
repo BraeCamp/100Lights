@@ -385,6 +385,24 @@ export default function EffectLaneView({
   const [expandedEffectId, setExpandedEffectId] = useState<string | null>(null)
   const [rubberBand,       setRubberBand]       = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const laneRef = useRef<HTMLDivElement>(null)
+  const editPopRef = useRef<HTMLDivElement>(null)
+
+  // The param-slider popup dismisses on any click outside it (or Escape) —
+  // not just clicks inside this lane.
+  useEffect(() => {
+    if (!editTarget) return
+    function onDown(e: MouseEvent) {
+      if (editPopRef.current?.contains(e.target as Node)) return
+      setEditTarget(null)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setEditTarget(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [editTarget])
 
   function beatFromClientX(clientX: number) {
     const rect = laneRef.current?.getBoundingClientRect()
@@ -542,7 +560,7 @@ export default function EffectLaneView({
 
       {/* Param editor popover */}
       {editTarget && createPortal(
-        <div style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
+        <div ref={editPopRef} style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
           <EffectParamEditor effect={editTarget.effect} onClose={() => setEditTarget(null)} />
         </div>,
         document.body

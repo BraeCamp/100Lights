@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
+import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, AutomationLane, TakeLane } from '@/lib/daw-types'
@@ -334,7 +335,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       ? project.arrangementClips.filter(c => selectedClipIds.has(c.id) && isAudioClip(c))
       : clips.filter(c => selectedClipId === c.id && isAudioClip(c))
     for (const c of targets) {
-      dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { audioUrl, waveformPeaks: peaks, bufferDuration: undefined } })
+      dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { audioUrl, libraryId: fulfilled.id, waveformPeaks: peaks, bufferDuration: undefined } })
     }
   }
 
@@ -379,7 +380,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         entry = fulfilled
       }
       const url  = URL.createObjectURL(entry.audioBlob!)
-      const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: url })
+      const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: url, libraryId: entry.id })
       dispatch({ type: 'ADD_CLIP', clip })
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
@@ -418,6 +419,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
         const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: blobUrl })
         dispatch({ type: 'ADD_CLIP', clip })
+        // Imported files have no library entry — upload so the clip survives reloads
+        void uploadRecordingBlob(new Blob([ab], { type: 'audio/wav' }), clip.id).then(key => {
+          if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+        })
         const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
         const peaks = extractPeaks(buf)
         dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })

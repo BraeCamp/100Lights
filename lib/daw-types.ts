@@ -472,6 +472,10 @@ export interface AudioClip {
   durationBeats: number
   r2Key?: string
   audioUrl?: string
+  /** Sound-library entry the audio came from (pad bounces) — lets the engine
+   *  re-render/reload the sample after a project reload, when the session's
+   *  blob: URL is long dead. */
+  libraryId?: string
   waveformPeaks?: number[]
   gain: number
   loopEnabled: boolean

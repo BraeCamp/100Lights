@@ -1353,7 +1353,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
       const pressDuration = engine.currentBeat - started.beat
       const sustainBeats  = engine.secondsToBeats(pad?.sampleSustain ?? 0)
       const durationBeats = Math.max(0.0625, pressDuration + sustainBeats)
-      const clip = makeAudioClip(padTrackId, `${pad?.drumLabel ?? 'Pad'} – ${entry.folder ? `${entry.folder} – ${entry.name}` : entry.name}`, started.beat, durationBeats, { audioUrl, bufferDuration: buf?.duration })
+      const clip = makeAudioClip(padTrackId, `${pad?.drumLabel ?? 'Pad'} – ${entry.folder ? `${entry.folder} – ${entry.name}` : entry.name}`, started.beat, durationBeats, { audioUrl, bufferDuration: buf?.duration, libraryId: entry.id })
       dispatch({ type: 'ADD_CLIP', clip })
     }
   }, [engine, dispatch, getOrCreatePadTrack, getOrCreateMidiClip])
