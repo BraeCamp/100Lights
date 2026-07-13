@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
-import { CHORD_RECIPES, buildRecipeClip } from '@/lib/practice-recipes'
+import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
@@ -360,7 +360,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
     const recipeId = e.dataTransfer.getData('application/x-recipe-id')
     if (recipeId) {
-      const recipe = CHORD_RECIPES.find(r => r.id === recipeId)
+      const recipe = getAllChordRecipes().find(r => r.id === recipeId)
       if (!recipe) return
       const clip = buildRecipeClip(recipe, track.id, snapBeat(beatX, snap, project.timeSignatureNum))
       dispatch({ type: 'ADD_CLIP', clip })

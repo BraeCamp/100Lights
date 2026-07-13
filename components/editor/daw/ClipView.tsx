@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import type { DawTrack, DawClip, AudioClip } from '@/lib/daw-types'
+import type { DawTrack, DawClip, AudioClip, MidiClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
 import { getPresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
+import { shareRecipe } from '@/lib/community'
 import Waveform from './Waveform'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -371,6 +372,14 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     ] : [
       { label: 'Open Piano Roll', fn: onDoubleClick },
       { label: 'Change Sound…', fn: () => setCtxSoundMenu(true), keepOpen: true },
+      { label: 'Share to Community…', fn: () => {
+        const name = window.prompt('Share this pattern as a recipe.\nName:', clip.name)
+        if (!name?.trim()) return
+        const description = window.prompt('Short description (optional):') ?? ''
+        shareRecipe(clip as MidiClip, name.trim(), description.trim())
+          .then(() => window.alert('Shared! It\u2019s now on the Community page.'))
+          .catch(err => window.alert(`Share failed: ${err instanceof Error ? err.message : err}`))
+      } },
     ]),
   ]
 

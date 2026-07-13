@@ -12,7 +12,7 @@ import {
 } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
 import { seedDefaultSamples } from '@/lib/default-samples'
-import { CHORD_RECIPES } from '@/lib/practice-recipes'
+import { getAllChordRecipes } from '@/lib/practice-recipes'
 import { libraryFulfill } from '@/lib/default-samples'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
@@ -1130,7 +1130,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
         Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
       </p>
-      {CHORD_RECIPES.map(r => (
+      {getAllChordRecipes().map(r => (
         <div
           key={r.id}
           draggable

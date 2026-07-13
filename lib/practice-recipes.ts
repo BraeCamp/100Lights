@@ -223,6 +223,39 @@ export const CHORD_RECIPES: PracticeRecipe[] = [
     ]),
 ]
 
+// ── Community-imported recipes ────────────────────────────────────────────────
+// Recipes downloaded from the community page live in localStorage and merge
+// into the same catalog the library tab, drag-drop, and Practice Room read.
+
+const IMPORTED_KEY = '100lights-imported-recipes'
+
+export interface StoredRecipeSpec {
+  id: string
+  title: string
+  tagline: string
+  annotation: string[]
+  spec: ReturnType<PracticeRecipe['build']>
+}
+
+export function getImportedRecipes(): PracticeRecipe[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = JSON.parse(localStorage.getItem(IMPORTED_KEY) || '[]') as StoredRecipeSpec[]
+    return raw.map(r => ({ id: r.id, title: r.title, tagline: r.tagline, annotation: r.annotation ?? [], build: () => r.spec }))
+  } catch { return [] }
+}
+
+export function importRecipe(stored: StoredRecipeSpec): void {
+  const raw = (() => { try { return JSON.parse(localStorage.getItem(IMPORTED_KEY) || '[]') as StoredRecipeSpec[] } catch { return [] } })()
+  const next = [...raw.filter(r => r.id !== stored.id), stored]
+  localStorage.setItem(IMPORTED_KEY, JSON.stringify(next))
+}
+
+/** Built-in chord recipes plus anything imported from the community. */
+export function getAllChordRecipes(): PracticeRecipe[] {
+  return [...CHORD_RECIPES, ...getImportedRecipes()]
+}
+
 /** Materializes a recipe into a clip for a given track, with fresh ids. */
 export function buildRecipeClip(recipe: PracticeRecipe, trackId: string, startBeat: number): MidiClip {
   const spec = recipe.build()
