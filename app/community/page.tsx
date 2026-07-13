@@ -460,6 +460,7 @@ function RecipePreview({ item, color }: { item: CommunityItem; color: string }) 
     if (playing) { stopFnRef.current(); return }
     const ctx = audioCtx()
     const g = ctx.createGain()
+    g.gain.value = 0.7  // headroom — stacked chord voices can sum past full scale
     g.connect(ctx.destination)
     const spb = 60 / 100  // audition at 100 bpm
     const t0 = ctx.currentTime + 0.06

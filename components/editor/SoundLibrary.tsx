@@ -11,8 +11,11 @@ import {
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
+
+let _recipeCtx: AudioContext | null = null
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getAllChordRecipes } from '@/lib/practice-recipes'
+import { playMelodicNote } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
@@ -871,6 +874,40 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   }, [isLoaded, user?.id])
 
   const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
+  const [auditioningRecipe, setAuditioningRecipe] = useState<string | null>(null)
+  const recipeStopRef = useRef<() => void>(() => {})
+  useEffect(() => () => { recipeStopRef.current() }, [])
+
+  function auditionRecipe(recipeId: string) {
+    if (auditioningRecipe === recipeId) { recipeStopRef.current(); return }
+    recipeStopRef.current()
+    const recipe = getAllChordRecipes().find(r => r.id === recipeId)
+    if (!recipe) return
+    const spec = recipe.build()
+    if (spec.isDrumClip) return
+    _recipeCtx ??= new AudioContext()
+    const ctx = _recipeCtx
+    if (ctx.state === 'suspended') void ctx.resume()
+    const g = ctx.createGain()
+    g.gain.value = 0.7  // headroom — stacked chord voices can sum past full scale
+    g.connect(ctx.destination)
+    const spb = 60 / 100  // audition at 100 bpm, whatever the project tempo
+    const t0 = ctx.currentTime + 0.05
+    let end = 0
+    for (const n of spec.notes) {
+      playMelodicNote(ctx, 'piano-grand', n.pitch, t0 + n.startBeat * spb, (n.velocity ?? 100) / 127, g)
+      end = Math.max(end, (n.startBeat + n.durationBeats) * spb)
+    }
+    const timer = window.setTimeout(() => recipeStopRef.current(), (end + 1.2) * 1000)
+    recipeStopRef.current = () => {
+      clearTimeout(timer)
+      g.gain.setTargetAtTime(0, ctx.currentTime, 0.04)
+      setTimeout(() => g.disconnect(), 300)
+      setAuditioningRecipe(null)
+      recipeStopRef.current = () => {}
+    }
+    setAuditioningRecipe(recipeId)
+  }
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
   const [openFolders,      setOpenFolders]      = useState<Set<string>>(new Set())
@@ -1140,12 +1177,31 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           }}
           title={r.tagline}
           style={{
+            display: 'flex', alignItems: 'center', gap: 8,
             padding: '8px 10px', borderRadius: 7, cursor: 'grab',
             background: 'var(--bg-card)', border: '1px solid var(--border)',
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>♪ {r.title}</div>
-          <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.tagline}</div>
+          <button
+            onClick={e => { e.stopPropagation(); auditionRecipe(r.id) }}
+            onMouseDown={e => e.stopPropagation()}
+            draggable={false}
+            title={auditioningRecipe === r.id ? 'Stop' : 'Listen (piano preview)'}
+            aria-label={auditioningRecipe === r.id ? 'Stop recipe preview' : 'Play recipe preview'}
+            style={{
+              width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: 'none', cursor: 'pointer',
+              background: auditioningRecipe === r.id ? 'var(--accent)' : 'rgba(167,139,250,0.16)',
+              color: auditioningRecipe === r.id ? '#fff' : '#a78bfa',
+            }}
+          >
+            {auditioningRecipe === r.id ? <Square size={9} fill="currentColor" /> : <Play size={10} style={{ marginLeft: 1 }} />}
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>♪ {r.title}</div>
+            <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.tagline}</div>
+          </div>
         </div>
       ))}
     </div>

@@ -221,6 +221,99 @@ export const CHORD_RECIPES: PracticeRecipe[] = [
       ...chord(40, 4, 48, 52, 55, 58),   // C7
       ...chord(44, 4, 55, 59, 62, 65),   // G7 turnaround
     ]),
+  progression('mixolydian-rock', 'The rock lift (I–♭VII–IV)', 'C → B♭ → F: stadium rock’s favorite borrowed chord.',
+    ['♭VII (B♭) isn’t in the key of C at all — it’s borrowed from the parallel minor, and that rule-break is the swagger.',
+     'All three chords are major, so it stays triumphant even while it wanders off-key.',
+     'Try: hold each chord 8 beats instead of 4 and it turns from rock riff into anthem outro.'],
+    16, [
+      ...chord(0, 4, 60, 64, 67),   // C
+      ...chord(4, 4, 58, 62, 65),   // B♭
+      ...chord(8, 4, 53, 57, 60),   // F
+      ...chord(12, 4, 60, 64, 67),  // C
+    ]),
+  progression('rhythm-turnaround', 'The turnaround (I–vi–ii–V)', 'C → Am → Dm → G: the loop that ends a thousand jazz and soul tunes.',
+    ['Cousin of the doo-wop changes, but ii instead of IV gives the bass a smoother circle-of-fifths walk: A → D → G → C.',
+     'Each root is a fifth below the last — the strongest pull in harmony, four times in a row.',
+     'Try: turn every chord into a seventh and it’s instantly a jazz standard ending.'],
+    16, [
+      ...chord(0, 4, 60, 64, 67),   // C
+      ...chord(4, 4, 57, 60, 64),   // Am
+      ...chord(8, 4, 53, 57, 62),   // Dm/F
+      ...chord(12, 4, 55, 59, 62),  // G
+    ]),
+  progression('emotional-iv', 'The big-chorus loop (IV–I–V–vi)', 'F → C → G → Am: the pop progression rotated to start away from home.',
+    ['Same four chords as I–V–vi–IV, but opening on IV makes the arrival at I in bar two feel like a sigh of relief.',
+     'Ending each cycle on the minor vi keeps it circling — resolution is always one bar away.',
+     'Try: compare it side by side with the pop progression and the axis progression: same chords, three moods.'],
+    16, [
+      ...chord(0, 4, 53, 57, 60),   // F
+      ...chord(4, 4, 52, 55, 60),   // C/E
+      ...chord(8, 4, 55, 59, 62),   // G
+      ...chord(12, 4, 57, 60, 64),  // Am
+    ]),
+  progression('minor-rise', 'The epic minor rise (i–♭VI–♭VII)', 'Am → F → G: the slow-burn build under countless trailers and synthwave tracks.',
+    ['Only three chords, and two of them are major — the minor home chord does all the brooding.',
+     'F to G is a step-wise climb that never resolves upward to A major, so the tension keeps stacking.',
+     'Try: double every duration and add a rising melody on top — it’s an instant final chorus.'],
+    16, [
+      ...chord(0, 8, 57, 60, 64),   // Am (held)
+      ...chord(8, 4, 53, 57, 60),   // F
+      ...chord(12, 4, 55, 59, 62),  // G
+    ]),
+  progression('neo-soul-vamp', 'The two-chord vamp (Imaj7–IVmaj7)', 'Cmaj7 → Fmaj7: neo-soul’s entire harmonic budget.',
+    ['Two chords, both major sevenths — the 7ths blur the line between them so neither feels like a destination.',
+     'With no V chord anywhere there’s no tension to resolve; the music just floats.',
+     'Try: this is the progression to practice melodies over — nothing you play can clash.'],
+    16, [
+      ...chord(0, 4, 48, 52, 55, 59),   // Cmaj7
+      ...chord(4, 4, 53, 57, 60, 64),   // Fmaj7
+      ...chord(8, 4, 48, 52, 55, 59),   // Cmaj7
+      ...chord(12, 4, 53, 57, 60, 64),  // Fmaj7
+    ]),
+  progression('ragtime-turnaround', 'The parlor turnaround (I–VI7–ii–V7)', 'C → A7 → Dm → G7: ragtime, gospel, and every Christmas song bridge.',
+    ['A7 is the surprise: it doesn’t belong to the key, it’s borrowed to point straight at Dm (a "secondary dominant").',
+     'The C# inside A7 is the tell — one foreign note that makes the old-timey magic.',
+     'Try: revert A7 to plain Am and hear it become the ordinary turnaround.'],
+    16, [
+      ...chord(0, 4, 60, 64, 67),        // C
+      ...chord(4, 4, 57, 61, 64, 67),    // A7: A3 C#4 E4 G4
+      ...chord(8, 4, 53, 57, 62),        // Dm/F
+      ...chord(12, 4, 55, 59, 62, 65),   // G7
+    ]),
+  progression('lydian-lift', 'The dreamer’s lift (I–II)', 'C → D: two major chords a step apart — instant wonder.',
+    ['D major doesn’t belong in the key of C: its F# is the fourth scale degree raised, the "lydian" note.',
+     'Because both chords are major and neither resolves, it hangs in the air — film scores use it for flight and space.',
+     'Try: alternate slowly with a sustained pad preset; speed it up and it turns playful.'],
+    16, [
+      ...chord(0, 4, 60, 64, 67),   // C
+      ...chord(4, 4, 62, 66, 69),   // D: D4 F#4 A4
+      ...chord(8, 4, 60, 64, 67),   // C
+      ...chord(12, 4, 62, 66, 69),  // D
+    ]),
+  progression('line-cliche', 'The descending line (C–C/B–Am–Am/G–F–F/E–Dm–G)', 'A bassline that walks down the whole scale while the harmony shadows it.',
+    ['The chords barely change — it’s the bass stepping down C B A G F E D that carries the song.',
+     'This is the skeleton of "A Whiter Shade of Pale" and half the ballads of 1967–73.',
+     'Try: mute the top notes and play only the lowest note of each chord — the progression still works.'],
+    32, [
+      ...chord(0, 4, 48, 60, 64, 67),   // C
+      ...chord(4, 4, 47, 60, 64, 67),   // C/B
+      ...chord(8, 4, 45, 57, 60, 64),   // Am
+      ...chord(12, 4, 43, 57, 60, 64),  // Am/G
+      ...chord(16, 4, 41, 57, 60, 65),  // F
+      ...chord(20, 4, 40, 57, 60, 65),  // F/E
+      ...chord(24, 4, 38, 53, 57, 62),  // Dm
+      ...chord(28, 4, 43, 55, 59, 62),  // G
+    ]),
+  progression('uplift', 'The slow climb (I–iii–IV–V)', 'C → Em → F → G: every chord a step higher than the last.',
+    ['The whole progression only moves upward — root motion C E F G — so it feels like ascending stairs.',
+     'iii is the quiet one: shares two notes with C, so bar two is a shadow of bar one before the real climb.',
+     'Try: put a rising bass note under each chord and it doubles the lift.'],
+    16, [
+      ...chord(0, 4, 60, 64, 67),   // C
+      ...chord(4, 4, 52, 55, 59),   // Em
+      ...chord(8, 4, 53, 57, 60),   // F
+      ...chord(12, 4, 55, 59, 62),  // G
+    ]),
 ]
 
 // ── Community-imported recipes ────────────────────────────────────────────────
