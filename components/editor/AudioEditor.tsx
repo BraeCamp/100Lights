@@ -34,11 +34,13 @@ export interface AudioEditorProps {
   projectId?: string
   projectName: string
   initialTracks?: AudioTrack[]
+  /** Saved DAW arrangement from the cloud project file — takes priority over initialTracks. */
+  initialDawProject?: import('@/lib/daw-types').DawProject
   captions?: Caption[]
   currentTime?: number
   onTimeChange?: (t: number) => void
   onProjectNameCommit?: (name: string) => void
-  onSave?: (tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta }) => Promise<void>
+  onSave?: (tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject }) => Promise<void>
   hideHeader?: boolean
   activeModules?: ModuleKey[]
   onModulesChange?: (modules: ModuleKey[]) => void
@@ -293,6 +295,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   const initialProject = useMemo(
     () => {
+      if (props.initialDawProject) return props.initialDawProject
       if (initialTracks?.length) return buildInitialProject(initialTracks)
       if (isPodcast) return buildPodcastProject()
       return defaultProject()
@@ -480,8 +483,11 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   // ── Engine lifecycle ────────────────────────────────────────────────────────
   useEffect(() => {
-    engineRef.current?.updateProject(project)
-  }, [project])
+    // engineForRender dep: after a StrictMode dispose+recreate, the fresh
+    // engine must receive the current project — with [project] alone a
+    // loaded-but-unedited project never reaches it (silent playback).
+    engineForRender.updateProject(project)
+  }, [project, engineForRender])
 
   useEffect(() => {
     return () => { engineRef.current?.dispose() }
@@ -738,7 +744,17 @@ export default function AudioEditor(props: AudioEditorProps) {
               r2Key: audioClip?.r2Key,
             } satisfies AudioTrack
           })
-        await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta })
+        // Persist the full arrangement. Blob URLs are browser-local — strip
+        // them; clips keep their r2Key (eager upload) and resolve audio on load.
+        const stripUrl = <C,>(c: C & { kind: string; audioUrl?: string }): C =>
+          c.kind === 'audio' && c.audioUrl?.startsWith('blob:') ? { ...c, audioUrl: undefined } : c
+        const dawProject = {
+          ...p,
+          arrangementClips: p.arrangementClips.map(stripUrl),
+          sessionGrid: Object.fromEntries(Object.entries(p.sessionGrid).map(([tid, row]) =>
+            [tid, row.map(c => (c ? stripUrl(c) : c))])),
+        }
+        await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta, dawProject })
         void saveSnapshot(props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`, p, { synced: true }).catch(() => {})
         setSaveStatus('saved')
         setSaveError('')

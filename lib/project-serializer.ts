@@ -7,6 +7,7 @@
  * the same way DaVinci Resolve handles moved or missing media.
  */
 
+import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, Track, VideoAdjustments, ModuleKey } from '@/lib/editor-types'
 
@@ -110,6 +111,8 @@ export interface CfProjFile {
   // Audio sub-mode
   audioMode?: 'music' | 'podcast'
   podcastMeta?: PodcastMeta
+  /** Full DAW arrangement (tracks, clips, notes, mixer). Blob audio URLs stripped; clips resolve audio via r2Key. */
+  dawProject?: DawProject
 }
 
 // ── Serialize ────────────────────────────────────────────────

@@ -334,6 +334,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     moduleSavedAt?: Partial<Record<ModuleKey, string>>
     audioMode?: 'music' | 'podcast'
     podcastMeta?: import('@/lib/project-serializer').PodcastMeta
+    dawProject?: import('@/lib/daw-types').DawProject
   }) {
     const name    = patch.name    ?? localName
     const outs    = patch.outputs ?? outputs
@@ -364,6 +365,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       modules:     mods,
       audioMode:   patch.audioMode ?? savedData?.audioMode,
       podcastMeta: patch.podcastMeta ?? savedData?.podcastMeta,
+      dawProject:  patch.dawProject ?? savedData?.dawProject,
     }
 
     if (isDemo) return
@@ -388,6 +390,16 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     // Keep savedData.media in sync so subsequent saves don't overwrite with stale data
     if (patch.audioMedia || patch.modules) {
       setSavedData(prev => prev ? { ...prev, audioMedia: am, modules: mods, moduleSavedAt: msat } : prev)
+    }
+    if (patch.dawProject) {
+      setSavedData(prev => prev ? { ...prev, dawProject: patch.dawProject } : prev)
+    }
+
+    // First save of a /new session: put the project's real URL in the bar so
+    // refreshing or sharing the link lands on the saved project. No remount —
+    // just the address (the editor keeps its in-memory state).
+    if (!projectId && typeof window !== 'undefined' && window.location.pathname === '/new') {
+      window.history.replaceState(null, '', `/projects/${savedProjectId.current}`)
     }
   }
 
@@ -488,7 +500,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   // ── AudioEditor save callback ──────────────────────────────
   async function handleAudioSave(
     tracks: AudioTrack[],
-    meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: import('@/lib/project-serializer').PodcastMeta },
+    meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: import('@/lib/project-serializer').PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject },
   ) {
     const now = new Date().toISOString()
     const serialized: SerializedAudioMedia[] = tracks
@@ -508,6 +520,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       moduleSavedAt: { audio: now },
       audioMode: meta?.audioMode,
       podcastMeta: meta?.podcastMeta,
+      dawProject: meta?.dawProject,
     })
   }
 
@@ -551,6 +564,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onProjectNameCommit: commitName,
     onSave: isOwner ? handleAudioSave : undefined,
     initialTracks: initAudioTracks,
+    initialDawProject: savedData?.dawProject,
     audioMode,
     initialPodcastMeta: podcastMeta,
     ...sharedModuleProps,
