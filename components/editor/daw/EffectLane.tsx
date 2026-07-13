@@ -184,9 +184,13 @@ function AutomationPreview({ effect, width, color }: { effect: ClipEffect; width
       const p = pts[i], q = pts[i + 1]
       const qx = toX(q.t), qy = toY(q.v)
       if (p.smooth || q.smooth) {
+        // Control x clamped inside the segment — matches EffectEditor and the
+        // engine's evaluation, so the preview can't run backwards in time
+        const c1t = Math.min(q.t, Math.max(p.t, p.t + (p.smooth ? p.h2[0] : 0)))
+        const c2t = Math.min(q.t, Math.max(p.t, q.t + (q.smooth ? q.h1[0] : 0)))
         ctx.bezierCurveTo(
-          toX(p.t + (p.smooth ? p.h2[0] : 0)), toY(p.v + (p.smooth ? p.h2[1] : 0)),
-          toX(q.t + (q.smooth ? q.h1[0] : 0)), toY(q.v + (q.smooth ? q.h1[1] : 0)),
+          toX(c1t), toY(p.v + (p.smooth ? p.h2[1] : 0)),
+          toX(c2t), toY(q.v + (q.smooth ? q.h1[1] : 0)),
           qx, qy,
         )
       } else {

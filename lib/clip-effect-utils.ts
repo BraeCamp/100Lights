@@ -47,8 +47,11 @@ function evalAtT(sorted: AutoPoint[], t: number): number {
     const s = (t - p.t) / (q.t - p.t)
     return p.v + s * (q.v - p.v)
   }
-  const c1: [number, number] = [p.t + (p.smooth ? p.h2[0] : 0), p.v + (p.smooth ? p.h2[1] : 0)]
-  const c2: [number, number] = [q.t + (q.smooth ? q.h1[0] : 0), q.v + (q.smooth ? q.h1[1] : 0)]
+  // Clamp control-point x inside the segment: a handle reaching past the
+  // neighboring point makes the bezier double back in time (the curve "goes
+  // backwards"), and breaks this bisection, which assumes monotonic x.
+  const c1: [number, number] = [Math.min(q.t, Math.max(p.t, p.t + (p.smooth ? p.h2[0] : 0))), p.v + (p.smooth ? p.h2[1] : 0)]
+  const c2: [number, number] = [Math.min(q.t, Math.max(p.t, q.t + (q.smooth ? q.h1[0] : 0))), q.v + (q.smooth ? q.h1[1] : 0)]
   let lo = 0, hi = 1
   for (let n = 0; n < 24; n++) {
     const mid = (lo + hi) / 2

@@ -122,9 +122,13 @@ export default function EffectEditor({
         const p = sorted[i], q = sorted[i + 1]
         const qx = toX(effStart + q.t), qy = toY(q.v, H)
         if (p.smooth || q.smooth) {
+          // Control x clamped inside the segment so the curve can't run
+          // backwards in time (matches the engine's evaluation)
+          const c1t = Math.min(q.t, Math.max(p.t, p.t + (p.smooth ? p.h2[0] : 0)))
+          const c2t = Math.min(q.t, Math.max(p.t, q.t + (q.smooth ? q.h1[0] : 0)))
           ctx.bezierCurveTo(
-            toX(effStart + p.t + (p.smooth ? p.h2[0] : 0)), toY(p.v + (p.smooth ? p.h2[1] : 0), H),
-            toX(effStart + q.t + (q.smooth ? q.h1[0] : 0)), toY(q.v + (q.smooth ? q.h1[1] : 0), H),
+            toX(effStart + c1t), toY(p.v + (p.smooth ? p.h2[1] : 0), H),
+            toX(effStart + c2t), toY(q.v + (q.smooth ? q.h1[1] : 0), H),
             qx, qy,
           )
         } else {
