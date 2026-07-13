@@ -193,6 +193,7 @@ export function buildRecipeClip(recipe: PracticeRecipe, trackId: string, startBe
     isDrumClip: spec.isDrumClip,
     notes: spec.notes.map(n => ({ ...n, id: crypto.randomUUID() })),
     stretchNotes: true,
+    rootNote: 0,  // all recipes are authored in C / A minor
     ...(spec.usePreset ? { presetId: defaultPresetId() ?? undefined } : {}),
   }
 }

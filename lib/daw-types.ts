@@ -516,6 +516,8 @@ export interface MidiClip {
   loopLengthBeats?: number
   /** Recipe clips: edge-resize scales the note pattern to the new length instead of looping. */
   stretchNotes?: boolean
+  /** Pitch class (0=C … 11=B) the pattern is rooted on — the piano roll's Root selector transposes relative to this. */
+  rootNote?: number
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
   color?: string
   launchQuantization?: LaunchQuantization

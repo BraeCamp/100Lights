@@ -372,8 +372,28 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
   const [presets, setPresets]           = useState<MidiPreset[]>([])
   const [showPresetPicker, setShowPresetPicker] = useState(false)
+  const [showRootPicker, setShowRootPicker]     = useState(false)
   const [previewing, setPreviewing]     = useState(false)
   const presetPickerRef = useRef<HTMLDivElement>(null)
+  const rootPickerRef   = useRef<HTMLDivElement>(null)
+
+  // Transpose the whole pattern to a new root: every note shifts by the same
+  // interval, chosen as the smallest movement (−6…+5 semitones), so chord
+  // shapes and voicings are preserved exactly.
+  function transposeToRoot(newRoot: number) {
+    const current = clip.rootNote ?? 0
+    let delta = (newRoot - current) % 12
+    if (delta > 6) delta -= 12
+    if (delta < -6) delta += 12
+    if (delta !== 0) {
+      const notes = clip.notes.map(n => ({ ...n, pitch: Math.max(0, Math.min(127, n.pitch + delta)) }))
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, rootNote: newRoot } })
+      playNote(60 + newRoot)  // audition the new root
+    } else if (newRoot !== current) {
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rootNote: newRoot } })
+    }
+    setShowRootPicker(false)
+  }
   const [showNewPreset, setShowNewPreset] = useState(false)
   const [npName,    setNpName]    = useState('')
   const [npFolder,  setNpFolder]  = useState('')
@@ -432,6 +452,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       engine.setPresets(getPresets())
     }
   }, [clip.presetId, clip.isDrumClip, clip.id, track, dispatch, engine])
+
+  useEffect(() => {
+    if (!showRootPicker) return
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node
+      if (document.getElementById('pr-root-menu')?.contains(t)) return
+      if (rootPickerRef.current && !rootPickerRef.current.contains(t)) setShowRootPicker(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showRootPicker])
 
   useEffect(() => {
     if (!showPresetPicker) return
@@ -1021,6 +1052,47 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           >Quantize</button>
 
           <div style={{ flex: 1 }} />
+
+          {/* Root selector — transposes the whole pattern (not for drums) */}
+          {!isDrum && (
+            <div style={{ position: 'relative' }} ref={rootPickerRef}>
+              <button
+                onClick={() => setShowRootPicker(v => !v)}
+                title="Transpose the whole pattern to a new root — all notes shift together, voicings preserved"
+                style={{ ...prBtn, fontSize: 9, padding: '2px 8px', flexShrink: 0, whiteSpace: 'nowrap' }}
+              >
+                Root: {NOTE_NAMES[(clip.rootNote ?? 0) % 12]}
+              </button>
+              {showRootPicker && createPortal(
+                (() => {
+                  const btn = rootPickerRef.current?.getBoundingClientRect()
+                  if (!btn) return null
+                  const spaceBelow = window.innerHeight - btn.bottom
+                  const top = spaceBelow > 260 ? btn.bottom + 4 : btn.top - 260
+                  return (
+                    <div id="pr-root-menu" style={{
+                      position: 'fixed', top, right: window.innerWidth - btn.right, width: 132, zIndex: 9999,
+                      background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+                      padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
+                      display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+                    }}>
+                      {NOTE_NAMES.map((n, i) => (
+                        <button key={n} onClick={() => transposeToRoot(i)}
+                          style={{
+                            padding: '6px 0', fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
+                            background: (clip.rootNote ?? 0) === i ? 'rgba(124,58,237,0.2)' : 'transparent',
+                            color: (clip.rootNote ?? 0) === i ? '#a78bfa' : '#bbb',
+                          }}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })(),
+                document.body,
+              )}
+            </div>
+          )}
 
           {/* Preset picker */}
           <div style={{ position: 'relative' }} ref={presetPickerRef}>
