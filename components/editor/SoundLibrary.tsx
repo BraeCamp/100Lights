@@ -1160,10 +1160,21 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             <button key={t} onClick={() => setLibTab(t)} style={{
               fontSize: 10, fontWeight: 600, padding: '4px 12px', borderRadius: '5px 5px 0 0', cursor: 'pointer',
               background: libTab === t ? 'var(--bg-card)' : 'transparent',
-              border: libTab === t ? '1px solid var(--border)' : '1px solid transparent', borderBottom: 'none',
+              borderTop: libTab === t ? '1px solid var(--border)' : '1px solid transparent',
+              borderLeft: libTab === t ? '1px solid var(--border)' : '1px solid transparent',
+              borderRight: libTab === t ? '1px solid var(--border)' : '1px solid transparent',
+              borderBottom: 'none',
               color: libTab === t ? 'var(--text-primary)' : 'var(--text-muted)', textTransform: 'capitalize',
             }}>{t}</button>
           ))}
+          <a
+            href={libTab === 'recipes' ? '/community?kind=recipe' : '/community?kind=sample'}
+            target="_blank" rel="noreferrer"
+            title="Browse what other producers have shared"
+            style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 9.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none', padding: '4px 2px' }}
+          >
+            {libTab === 'recipes' ? 'Find recipes ↗' : 'Find sounds ↗'}
+          </a>
         </div>
       )}
       {!onPick && libTab === 'recipes' ? recipesBody : (<>

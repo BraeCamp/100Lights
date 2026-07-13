@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Download, Loader2 } from 'lucide-react'
+import { X, Download, Loader2, Globe2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
+import { shareSong } from '@/lib/community'
 
 interface Props {
   onClose: () => void
@@ -69,6 +70,9 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   const [normalize, setNormalize]         = useState(false)
   const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const finalBlobRef = useRef<Blob | null>(null)
+  const [shareState, setShareState]       = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+  const [shareName, setShareName]         = useState('')
 
   // Escape closes the modal — except mid-export, matching the overlay-click guard
   useEffect(() => {
@@ -127,6 +131,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
               finalBlob = blob
             }
 
+            finalBlobRef.current = finalBlob
             setDownloadUrl(URL.createObjectURL(finalBlob))
             setProgress(1)
             setStatusMessage('done')
@@ -335,6 +340,53 @@ style={{
                   ? `Exported as 16-bit PCM WAV.${normalize && isPodcast ? ' Normalized to approximate -16 LUFS.' : ''}`
                   : 'Exported as WebM/Opus. For MP3, re-encode with any converter.'}
               </p>
+
+              {/* Share the finished mix to the community feed (music mode) */}
+              {!isPodcast && (
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                  {shareState === 'done' ? (
+                    <p style={{ fontSize: 11.5, color: '#4ade80', margin: 0 }}>
+                      Shared! <a href="/community?kind=song" target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>See it in the Community feed ↗</a>
+                    </p>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          value={shareName}
+                          onChange={e => setShareName(e.target.value)}
+                          placeholder={project.name ?? 'Song title'}
+                          style={{
+                            flex: 1, minWidth: 0, background: '#101010', border: '1px solid var(--border)', borderRadius: 7,
+                            color: 'var(--text-primary)', fontSize: 12, padding: '8px 10px', outline: 'none',
+                          }}
+                        />
+                        <button
+                          onClick={async () => {
+                            const blob = finalBlobRef.current
+                            if (!blob) return
+                            setShareState('busy')
+                            try {
+                              await shareSong(blob, shareName.trim() || project.name || 'Untitled song', '')
+                              setShareState('done')
+                            } catch { setShareState('error') }
+                          }}
+                          disabled={shareState === 'busy'}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, fontSize: 12, fontWeight: 700,
+                            padding: '8px 13px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                            background: 'var(--accent)', color: '#fff', opacity: shareState === 'busy' ? 0.6 : 1,
+                          }}
+                        >
+                          <Globe2 size={13} /> {shareState === 'busy' ? 'Sharing…' : 'Share to Community'}
+                        </button>
+                      </div>
+                      <p style={{ fontSize: 10, color: shareState === 'error' ? '#ef4444' : 'var(--text-muted)', margin: '6px 0 0' }}>
+                        {shareState === 'error' ? 'Share failed — try again.' : 'Posts this mix publicly so other producers can listen and vote.'}
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
             </>
           )}
 

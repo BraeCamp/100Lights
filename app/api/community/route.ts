@@ -14,7 +14,7 @@ async function ensureTables() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id TEXT NOT NULL,
       author_name TEXT NOT NULL DEFAULT 'Anonymous',
-      kind TEXT NOT NULL CHECK (kind IN ('sample', 'preset', 'recipe')),
+      kind TEXT NOT NULL CHECK (kind IN ('song', 'sample', 'preset', 'recipe')),
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       payload JSONB,
@@ -24,6 +24,9 @@ async function ensureTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
+  // Existing tables predate the 'song' kind — rebuild the check constraint
+  await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
+  await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe'))`
   await sql`
     CREATE TABLE IF NOT EXISTS community_votes (
       item_id UUID NOT NULL,
@@ -79,11 +82,12 @@ export async function POST(req: Request) {
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
   const { kind, name } = body
-  if (!kind || !['sample', 'preset', 'recipe'].includes(kind) || !name?.trim()) {
-    return Response.json({ error: 'kind (sample|preset|recipe) and name are required' }, { status: 400 })
+  if (!kind || !['song', 'sample', 'preset', 'recipe'].includes(kind) || !name?.trim()) {
+    return Response.json({ error: 'kind (song|sample|preset|recipe) and name are required' }, { status: 400 })
   }
-  if (kind === 'sample' && !body.r2Key) return Response.json({ error: 'sample requires r2Key' }, { status: 400 })
-  if (kind !== 'sample' && !body.payload) return Response.json({ error: `${kind} requires payload` }, { status: 400 })
+  const audioKind = kind === 'sample' || kind === 'song'
+  if (audioKind && !body.r2Key) return Response.json({ error: `${kind} requires r2Key` }, { status: 400 })
+  if (!audioKind && !body.payload) return Response.json({ error: `${kind} requires payload` }, { status: 400 })
   const payloadJson = body.payload ? JSON.stringify(body.payload) : null
   if (payloadJson && payloadJson.length > 500_000) return Response.json({ error: 'payload too large' }, { status: 413 })
 

@@ -11,7 +11,7 @@ import type { MidiClip } from './daw-types'
 
 export interface CommunityItem {
   id: string
-  kind: 'sample' | 'preset' | 'recipe'
+  kind: 'song' | 'sample' | 'preset' | 'recipe'
   name: string
   description: string
   authorName: string
@@ -46,6 +46,26 @@ async function countDownload(id: string): Promise<void> {
 }
 
 // ── Sharing ──────────────────────────────────────────────────────────────────
+
+/** Shares a rendered mix (from the export flow or a file) as a song. */
+export async function shareSong(blob: Blob, name: string, description: string): Promise<void> {
+  const baseType = (blob.type || 'audio/wav').split(';')[0]
+  const ext = baseType === 'audio/wav' ? '.wav' : baseType === 'audio/webm' ? '.webm' : '.mp3'
+  const presign = await fetch('/api/media/presign-upload', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: `song-${crypto.randomUUID()}${ext}`, contentType: baseType, mediaId: `community-song-${crypto.randomUUID()}`, size: blob.size }),
+  })
+  if (!presign.ok) throw new Error('upload not authorized')
+  const { uploadUrl, key } = await presign.json() as { uploadUrl: string; key: string }
+  const put = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': baseType } })
+  if (!put.ok) throw new Error('upload failed')
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'song', name, description, r2Key: key, payload: { contentType: baseType } }),
+  })
+  if (!res.ok) throw new Error('share failed')
+}
+
 
 export async function shareSample(entry: LibraryEntry, description: string): Promise<void> {
   const fulfilled = entry.audioBlob ? entry : await libraryFulfill(entry.id)
@@ -131,6 +151,22 @@ export async function importItem(item: CommunityItem): Promise<string> {
     if (!already) addPreset({ name: p.preset.name, folder, loNote: p.preset.loNote, hiNote: p.preset.hiNote, category: p.preset.category, group: p.preset.group })
     void countDownload(item.id)
     return 'Preset installed — pick it from any MIDI clip’s sound menu.'
+  }
+
+  if (item.kind === 'song') {
+    if (!item.r2Key) throw new Error('song has no audio key')
+    const signed = await fetch(`/api/media/signed-url?key=${encodeURIComponent(item.r2Key)}`)
+    if (!signed.ok) throw new Error('could not resolve song audio')
+    const { url } = await signed.json() as { url: string }
+    const blob = await (await fetch(url)).blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    const meta = (item.payload ?? {}) as { contentType?: string }
+    a.download = `${item.name.replace(/[^a-z0-9_\-\s]/gi, '').trim() || 'song'}${meta.contentType === 'audio/webm' ? '.webm' : '.wav'}`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    void countDownload(item.id)
+    return 'Song downloaded.'
   }
 
   // sample

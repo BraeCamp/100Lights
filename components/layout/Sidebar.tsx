@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Users } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -118,7 +118,6 @@ export default function Sidebar() {
         {navLink(isElectron ? '/launcher' : '/dashboard', 'Home', LayoutDashboard)}
         {navLink('/new', 'New Project', PlusCircle)}
         {navLink('/projects', 'All Projects', FolderOpen)}
-        {navLink('/community', 'Community', Users)}
 
         {/* Apps */}
         <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>

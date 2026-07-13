@@ -468,6 +468,14 @@ function makeStub(
 
 // ── On-demand fulfillment ─────────────────────────────────────────────────────
 
+/** Renders any RenderSpec to a buffer — used by the community page to audition
+ *  presets that aren't in the local library yet. */
+export async function renderSpecToBuffer(spec: RenderSpec): Promise<AudioBuffer> {
+  if (spec.kind === 'drum') return renderDrum(spec.beatType as BeatType, spec.duration)
+  if (spec.kind === 'soundfont' && spec.soundfontUrl) return renderSoundfont(spec.soundfontUrl, spec.midiNote ?? 60)
+  return renderMelodic(spec.beatType as BeatType, spec.midiNote ?? 60, spec.duration, spec.channels)
+}
+
 export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
   const entry = await libraryGetById(id)
   if (!entry) return null

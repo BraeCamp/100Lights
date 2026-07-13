@@ -1190,12 +1190,16 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       </div>
                     ))}
                     <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
-                    {!showNewPreset ? (
+                    {!showNewPreset ? (<>
                       <button onClick={() => setShowNewPreset(true)}
                         style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
                         + New Preset
                       </button>
-                    ) : (
+                      <a href="/community?kind=preset" target="_blank" rel="noreferrer"
+                        style={{ display: 'block', padding: '5px 10px', fontSize: 10, color: '#666', textDecoration: 'none' }}>
+                        Find presets in Community ↗
+                      </a>
+                    </>) : (
                       <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
                           style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
