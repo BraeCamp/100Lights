@@ -924,6 +924,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             broadcastRef={broadcastRef}
             rawDispatch={rawDispatch}
             isRemoteRef={isRemoteRef}
+            projectRef={projectRef}
             selectedTrackId={selectedTrackId}
             selectedClipId={selectedClipId}
             editingClipId={expandedPianoRollClipId}

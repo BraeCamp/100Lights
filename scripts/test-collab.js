@@ -58,16 +58,26 @@ async function main() {
   const browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required'] })
   console.log('opening alice…')
   const alice = await openClient(browser, 'alice')
+  await sleep(4000)  // alice joins the room
+
+  // ── Late-join sync: alice edits BEFORE bob joins ──
+  const aStart = await trackCount(alice.page)
+  await alice.page.locator('[data-help-id="add-track"]').first().click()
+  await sleep(300)
+  await alice.page.locator('[data-help-id="add-track"]').first().click()
+  await sleep(500)
+  const aPre = await trackCount(alice.page)
+  console.log(`alice edited before bob joined: ${aStart} → ${aPre} tracks (unsaved)`) 
+
   console.log('opening bob…')
   const bob = await openClient(browser, 'bob')
-
-  // Give the lazy-loaded collab layer time to join the room
-  await sleep(5000)
+  const tJoin = await waitForTracks(bob.page, aPre, 15000, 'bob catches up to live (unsaved) state after joining')
+  console.log(`PASS late-join sync: bob caught up to ${aPre} tracks in ${tJoin}ms`)
 
   const a0 = await trackCount(alice.page)
   const b0 = await trackCount(bob.page)
-  console.log(`initial tracks — alice: ${a0}, bob: ${b0}`)
-  if (a0 !== b0 || a0 < 0) throw new Error('clients disagree before any edit')
+  console.log(`tracks — alice: ${a0}, bob: ${b0}`)
+  if (a0 !== b0 || a0 < 0) throw new Error('clients disagree after join sync')
 
   // Diagnostics: is the collab layer mounted and the room joined?
   for (const c of [alice, bob]) {

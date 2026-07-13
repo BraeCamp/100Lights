@@ -11,19 +11,39 @@ import {
   type CollabPresence,
 } from '@/lib/liveblocks.config'
 import type { DawAction } from '@/lib/daw-state'
+import type { DawProject } from '@/lib/daw-types'
 
 // ── CollabBridge ─────────────────────────────────────────────────────────────
 // Null-rendering component that wires Liveblocks broadcast ↔ local reducer.
 // Must live inside RoomProvider.
+//
+// Late-join sync: broadcast events are fire-and-forget, so a client joining
+// mid-session only has the last DB save. On join we broadcast SYNC_REQUEST;
+// the connected peer with the lowest connectionId answers with SYNC_STATE
+// carrying the full project, which the joiner applies as LOAD_PROJECT.
+
+const SYNC_WINDOW_MS = 8000        // joiner accepts SYNC_STATE this long after mount
+const SYNC_MAX_BYTES = 900_000     // stay under the broadcast payload limit
 
 interface BridgeProps {
   broadcastRef: React.MutableRefObject<((action: DawAction) => void) | null>
   rawDispatch: React.Dispatch<DawAction>
   isRemoteRef: React.MutableRefObject<boolean>
+  projectRef: React.MutableRefObject<DawProject>
 }
 
-export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef }: BridgeProps) {
+export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef, projectRef }: BridgeProps) {
   const broadcast = useBroadcastEvent()
+  const self = useSelf()
+  const others = useOthers()
+
+  const selfIdRef = useRef<number | null>(null)
+  const otherIdsRef = useRef<number[]>([])
+  useEffect(() => { selfIdRef.current = self?.connectionId ?? null }, [self])
+  useEffect(() => { otherIdsRef.current = others.map(o => o.connectionId) }, [others])
+
+  // Accept a state snapshot only during the join window
+  const awaitingSyncUntil = useRef<number>(Date.now() + SYNC_WINDOW_MS)
 
   useEffect(() => {
     broadcastRef.current = (action: DawAction) => {
@@ -33,12 +53,50 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef }: BridgeP
     return () => { broadcastRef.current = null }
   }, [broadcast, broadcastRef])
 
+  // Announce ourselves so an existing peer can send the live state.
+  // Delay slightly so our connectionId and the peer list have settled.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      broadcast({ type: 'SYNC_REQUEST', requesterId: selfIdRef.current } as any)
+    }, 700)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEventListener(({ event }) => {
-    const e = event as { type?: string; action?: DawAction }
-    if (e.type !== 'ACTION' || !e.action) return
-    isRemoteRef.current = true
-    rawDispatch(e.action)
-    isRemoteRef.current = false
+    const e = event as { type?: string; action?: DawAction; requesterId?: number; to?: number; project?: DawProject }
+
+    if (e.type === 'ACTION' && e.action) {
+      isRemoteRef.current = true
+      rawDispatch(e.action)
+      isRemoteRef.current = false
+      return
+    }
+
+    // A new client joined: exactly one peer answers — the lowest connectionId
+    // among everyone except the requester.
+    if (e.type === 'SYNC_REQUEST' && typeof e.requesterId === 'number') {
+      const me = selfIdRef.current
+      if (me === null || me === e.requesterId) return
+      const candidates = [me, ...otherIdsRef.current.filter(id => id !== e.requesterId)]
+      if (Math.min(...candidates) !== me) return
+      try {
+        const json = JSON.stringify(projectRef.current)
+        if (json.length > SYNC_MAX_BYTES) return  // too large for a broadcast — joiner keeps the DB state
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        broadcast({ type: 'SYNC_STATE', to: e.requesterId, project: JSON.parse(json) } as any)
+      } catch { /* non-serializable state — skip */ }
+      return
+    }
+
+    if (e.type === 'SYNC_STATE' && e.project && e.to === selfIdRef.current) {
+      if (Date.now() > awaitingSyncUntil.current) return  // stale — we've been editing already
+      awaitingSyncUntil.current = 0  // apply at most once
+      isRemoteRef.current = true
+      rawDispatch({ type: 'LOAD_PROJECT', project: e.project })
+      isRemoteRef.current = false
+    }
   })
 
   return null

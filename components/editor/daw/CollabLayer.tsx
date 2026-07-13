@@ -7,7 +7,7 @@ import { RoomProvider } from '@/lib/liveblocks.config'
 import { CollabBridge, CollabAvatars, CollabSelfPresence, CollabOthersBridge } from './CollabPresence'
 import { CollabInvite } from './CollabInvite'
 import type { DawAction } from '@/lib/daw-state'
-import type { DawView, CollabPeer } from '@/lib/daw-types'
+import type { DawView, CollabPeer, DawProject } from '@/lib/daw-types'
 
 // Everything Liveblocks lives behind this component so the collab bundle is
 // only fetched for saved projects (AudioEditor imports it via dynamic()).
@@ -17,6 +17,7 @@ interface Props {
   broadcastRef: RefObject<((action: DawAction) => void) | null>
   rawDispatch: Dispatch<DawAction>
   isRemoteRef: RefObject<boolean>
+  projectRef: RefObject<DawProject>
   selectedTrackId: string | null
   selectedClipId: string | null
   editingClipId: string | null
@@ -52,7 +53,7 @@ function CollabTransportSlot({ projectId }: { projectId: string }) {
 }
 
 export default function CollabLayer({
-  projectId, broadcastRef, rawDispatch, isRemoteRef,
+  projectId, broadcastRef, rawDispatch, isRemoteRef, projectRef,
   selectedTrackId, selectedClipId, editingClipId, view, onOthers,
 }: Props) {
   return (
@@ -60,7 +61,7 @@ export default function CollabLayer({
       id={`project-${projectId}`}
       initialPresence={{ name: '', color: '#3d8fef', imageUrl: null, selectedTrackId: null, selectedClipId: null, editingClipId: null, view: 'arrangement' }}
     >
-      <CollabBridge broadcastRef={broadcastRef} rawDispatch={rawDispatch} isRemoteRef={isRemoteRef} />
+      <CollabBridge broadcastRef={broadcastRef} rawDispatch={rawDispatch} isRemoteRef={isRemoteRef} projectRef={projectRef as React.MutableRefObject<DawProject>} />
       <CollabOthersBridge onOthers={onOthers} />
       <CollabSelfPresence
         selectedTrackId={selectedTrackId}
