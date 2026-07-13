@@ -519,6 +519,11 @@ export interface MidiClip {
   /** Pitch class (0=C … 11=B) the pattern is rooted on — the piano roll's Root selector transposes relative to this. */
   rootNote?: number
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
+  /** Clip-local sound settings from the piano roll's Settings panel. Sustain
+   *  (seconds) lets notes ring past their end with a release ramp; the rest
+   *  wrap each note in a distortion → lowpass → reverb chain. Only this
+   *  clip's notes are affected. */
+  rollFx?: { sustain?: number; reverbWet?: number; distortion?: number; filterHz?: number }
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

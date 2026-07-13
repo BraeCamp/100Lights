@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useVoiceMap, VoiceMapTrace, VoiceMapControls } from './VoiceMapKit'
+import { RollSettings } from './RollSettings'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
@@ -1112,6 +1113,20 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           )}
 
           {!isDrum && <VoiceMapControls vm={voiceMap} />}
+
+          {!isDrum && (
+            <RollSettings
+              clip={clip} dispatch={dispatch}
+              presetLabel={clip.presetId
+                ? presets.find(p => p.id === clip.presetId)?.name ?? '?'
+                : track && track.instrument.type !== 'none'
+                ? `${INSTRUMENT_LABELS[track.instrument.type]} (track)`
+                : 'None'}
+              onChangeSound={() => setShowPresetPicker(true)}
+              onPreviewSound={() => { if (clip.presetId) void previewMiddleC(clip.presetId) }}
+              canPreview={!!clip.presetId}
+            />
+          )}
 
           {/* Preset picker */}
           <div style={{ position: 'relative' }} ref={presetPickerRef}>

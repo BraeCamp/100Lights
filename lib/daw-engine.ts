@@ -889,23 +889,42 @@ export class DawEngine extends EventTarget {
     const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
 
     const scheduleLoop = (iterationStart: number) => {
+      const rollFx = clip.rollFx
+      const sustainSec = rollFx?.sustain ?? 0
       for (const note of processedNotes) {
         const noteStartAt = iterationStart + this.beatsToSeconds(this._applySwing(note.startBeat))
         const noteDur     = this.beatsToSeconds(note.durationBeats)
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
+        let noteDest: AudioNode = nodes.midiInput
+        if (DawEngine.rollFxActive(rollFx)) {
+          const chain = this._buildRollFxChain(rollFx!, noteDest)
+          noteDest = chain.input
+          const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
+          setTimeout(() => {
+            for (const nd of chain.nodes) { try { nd.disconnect() } catch { /* ok */ } }
+          }, Math.max(0, ttlMs))
+        }
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
           const buf    = this._presetBufCache.get(bufKey)
           if (buf === undefined) void this._loadPresetBuffer(clip.presetId, note.pitch)
           if (buf) {
-            const velGain = this.ctx.createGain(); velGain.gain.value = (note.velocity ?? 100) / 127
+            const target = (note.velocity ?? 100) / 127
+            const velGain = this.ctx.createGain(); velGain.gain.value = target
             const src = this.ctx.createBufferSource(); src.buffer = buf
-            src.connect(velGain); velGain.connect(nodes.midiInput)
-            src.start(noteStartAt); src.stop(noteStartAt + noteDur)
+            src.connect(velGain); velGain.connect(noteDest)
+            src.start(noteStartAt)
+            if (sustainSec > 0) {
+              velGain.gain.setValueAtTime(target, noteStartAt + noteDur)
+              velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur + sustainSec)
+              src.stop(noteStartAt + noteDur + sustainSec + 0.05)
+            } else {
+              src.stop(noteStartAt + noteDur)
+            }
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, nodes.midiInput, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur)
+          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
         }
       }
     }
@@ -1089,6 +1108,8 @@ export class DawEngine extends EventTarget {
         // them — the "volume effect doesn't touch the piano roll" bug).
         // 'pitch' is excluded: it detunes audio sources, MIDI has none.
         let noteDest: AudioNode = nodes.midiInput
+        const rollFx = clip.rollFx
+        const sustainSec = rollFx?.sustain ?? 0
         const fxCleanup: { nodes: AudioNode[]; oscs: OscillatorNode[] } = { nodes: [], oscs: [] }
         {
           const overlapping = this._clipEffects.filter(e =>
@@ -1111,12 +1132,22 @@ export class DawEngine extends EventTarget {
             last.connect(nodes.midiInput)
             noteDest = entry
             // Tear the chain down after the note (plus a tail for time-based FX)
-            const ttlMs = (startAt - contextNow + remaining + 3) * 1000
+            const ttlMs = (startAt - contextNow + remaining + sustainSec + 3) * 1000
             setTimeout(() => {
               for (const o of fxCleanup.oscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
               for (const nd of fxCleanup.nodes) { try { nd.disconnect() } catch { /* ok */ } }
             }, Math.max(0, ttlMs))
           }
+        }
+
+        // Clip sound settings: distortion/filter/reverb wrap this note only
+        if (DawEngine.rollFxActive(rollFx)) {
+          const chain = this._buildRollFxChain(rollFx!, noteDest)
+          noteDest = chain.input
+          const ttlMs = (startAt - contextNow + remaining + sustainSec + chain.tailSec + 1.5) * 1000
+          setTimeout(() => {
+            for (const nd of chain.nodes) { try { nd.disconnect() } catch { /* ok */ } }
+          }, Math.max(0, ttlMs))
         }
 
         // Use clip-level preset if set, otherwise fall back to track instrument
@@ -1146,11 +1177,21 @@ export class DawEngine extends EventTarget {
             src.connect(velGain)
             velGain.connect(noteDest)
             src.start(startAt, offsetSec)
-            if (remaining > 0) src.stop(startAt + remaining)
+            if (remaining > 0) {
+              if (sustainSec > 0) {
+                // Sustain: let the sample ring past the note's end with a release
+                // ramp instead of the hard cut — pedal-like, far more natural.
+                velGain.gain.setValueAtTime(target, startAt + remaining)
+                velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining + sustainSec)
+                src.stop(startAt + remaining + sustainSec + 0.05)
+              } else {
+                src.stop(startAt + remaining)
+              }
+            }
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, remaining)
+          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, remaining + sustainSec)
         }
 
         this._scheduledNoteKeys.add(noteKey)
@@ -1517,6 +1558,84 @@ export class DawEngine extends EventTarget {
     const slice     = all.slice(idx)
     const arr       = slice.length >= 2 ? slice : [all[N - 1], all[N - 1]]
     return { curve: new Float32Array(arr.map(mapper)), durSec: remainSec }
+  }
+
+  // ── Piano-roll clip sound settings (MidiClip.rollFx) ─────────────────────────
+  // Per-note chains, torn down after each note — persistent chains would pin
+  // the swapped-on-stop midiInput bus (the stale-bus class).
+
+  private _reverbIR: AudioBuffer | null = null
+  private _distCurves = new Map<number, Float32Array>()
+
+  private _getReverbIR(): AudioBuffer {
+    if (!this._reverbIR) {
+      const sr = this.ctx.sampleRate
+      const len = Math.floor(sr * 2.2)
+      const ir = this.ctx.createBuffer(2, len, sr)
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch)
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6)
+      }
+      this._reverbIR = ir
+    }
+    return this._reverbIR
+  }
+
+  private _getDistCurve(drive: number): Float32Array {
+    const key = Math.round(drive * 20)
+    let c = this._distCurves.get(key)
+    if (!c) {
+      const k = 2 + drive * 48
+      c = new Float32Array(1024)
+      for (let i = 0; i < 1024; i++) {
+        const x = i / 511.5 - 1
+        c[i] = Math.tanh(k * x) / Math.tanh(k)
+      }
+      this._distCurves.set(key, c)
+    }
+    return c
+  }
+
+  static rollFxActive(rfx: MidiClip['rollFx']): boolean {
+    return !!rfx && ((rfx.distortion ?? 0) > 0 || (rfx.reverbWet ?? 0) > 0 || (rfx.filterHz !== undefined && rfx.filterHz < 17500))
+  }
+
+  /** Chain: note → distortion → lowpass → reverb mix → dest. Returns the entry node. */
+  private _buildRollFxChain(rfx: NonNullable<MidiClip['rollFx']>, dest: AudioNode): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
+    const nodes: AudioNode[] = []
+    const input = this.ctx.createGain()
+    nodes.push(input)
+    let last: AudioNode = input
+    let tail = 0
+    if ((rfx.distortion ?? 0) > 0) {
+      const ws = this.ctx.createWaveShaper()
+      ws.curve = this._getDistCurve(rfx.distortion!) as Float32Array<ArrayBuffer>
+      ws.oversample = '2x'
+      const pg = this.ctx.createGain()
+      pg.gain.value = 1 - rfx.distortion! * 0.4  // tame the level lift saturation adds
+      last.connect(ws); ws.connect(pg); last = pg
+      nodes.push(ws, pg)
+    }
+    if (rfx.filterHz !== undefined && rfx.filterHz < 17500) {
+      const f = this.ctx.createBiquadFilter()
+      f.type = 'lowpass'; f.frequency.value = rfx.filterHz; f.Q.value = 0.8
+      last.connect(f); last = f
+      nodes.push(f)
+    }
+    if ((rfx.reverbWet ?? 0) > 0) {
+      const wetAmt = rfx.reverbWet!
+      const dry = this.ctx.createGain(); dry.gain.value = 1 - wetAmt * 0.5
+      const conv = this.ctx.createConvolver(); conv.buffer = this._getReverbIR()
+      const wet = this.ctx.createGain(); wet.gain.value = wetAmt
+      const sum = this.ctx.createGain()
+      last.connect(dry); dry.connect(sum)
+      last.connect(conv); conv.connect(wet); wet.connect(sum)
+      last = sum
+      nodes.push(dry, conv, wet, sum)
+      tail = 2.4
+    }
+    last.connect(dest)
+    return { input, nodes, tailSec: tail }
   }
 
   private _buildClipEffect(
