@@ -1084,6 +1084,41 @@ export class DawEngine extends EventTarget {
         const alreadyBeats = Math.max(0, now - noteAbsBeat)
         const remaining    = this.beatsToSeconds(maxDur - alreadyBeats)
 
+        // FX-lane clip effects overlapping this note: thread the note's audio
+        // through them (audio clips already do this; MIDI silently bypassed
+        // them — the "volume effect doesn't touch the piano roll" bug).
+        // 'pitch' is excluded: it detunes audio sources, MIDI has none.
+        let noteDest: AudioNode = nodes.midiInput
+        const fxCleanup: { nodes: AudioNode[]; oscs: OscillatorNode[] } = { nodes: [], oscs: [] }
+        {
+          const overlapping = this._clipEffects.filter(e =>
+            e.trackId === clip.trackId && e.type !== 'pitch' &&
+            e.startBeat < noteAbsBeat + maxDur &&
+            e.startBeat + e.durationBeats > noteAbsBeat
+          )
+          if (overlapping.length > 0) {
+            const entry = this.ctx.createGain()
+            fxCleanup.nodes.push(entry)
+            let last: AudioNode = entry
+            for (const eff of overlapping) {
+              const effContextStart  = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
+              const effSeekOffsetSec = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
+              const r = this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
+              last = r.output
+              fxCleanup.nodes.push(...r.extraNodes)
+              fxCleanup.oscs.push(...r.extraOscs)
+            }
+            last.connect(nodes.midiInput)
+            noteDest = entry
+            // Tear the chain down after the note (plus a tail for time-based FX)
+            const ttlMs = (startAt - contextNow + remaining + 3) * 1000
+            setTimeout(() => {
+              for (const o of fxCleanup.oscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
+              for (const nd of fxCleanup.nodes) { try { nd.disconnect() } catch { /* ok */ } }
+            }, Math.max(0, ttlMs))
+          }
+        }
+
         // Use clip-level preset if set, otherwise fall back to track instrument
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
@@ -1109,13 +1144,13 @@ export class DawEngine extends EventTarget {
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             src.connect(velGain)
-            velGain.connect(nodes.midiInput)
+            velGain.connect(noteDest)
             src.start(startAt, offsetSec)
             if (remaining > 0) src.stop(startAt + remaining)
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, nodes.midiInput, track.instrument, note.pitch, note.velocity, startAt, remaining)
+          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, remaining)
         }
 
         this._scheduledNoteKeys.add(noteKey)
