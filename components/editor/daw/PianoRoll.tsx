@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
@@ -355,7 +355,7 @@ function PlayheadLine({ clipStart, clipDuration, beatW, scrollLeft }: {
 // ── Piano Roll inner (receives guaranteed MidiClip) ───────────────────────────
 
 function PianoRollInner({ clip }: { clip: MidiClip }) {
-  const { project, dispatch, setEditTarget, setExpandedPianoRollClipId, engine } = useDaw()
+  const { project, dispatch, setEditTarget, setExpandedPianoRollClipId, engine, selectedClipIds } = useDaw()
 
   const track = project.tracks.find(t => t.id === clip.trackId)
   const color = track?.color ?? '#3d8fef'
@@ -377,21 +377,33 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const presetPickerRef = useRef<HTMLDivElement>(null)
   const rootPickerRef   = useRef<HTMLDivElement>(null)
 
-  // Transpose the whole pattern to a new root: every note shifts by the same
-  // interval, chosen as the smallest movement (−6…+5 semitones), so chord
-  // shapes and voicings are preserved exactly.
+  // The Root selector applies to this clip plus every other selected MIDI
+  // clip (any track) — multi-select clips in the arrangement, pick a root,
+  // and they all land in the new key together.
+  const transposeTargets = useMemo(() => {
+    const targets = project.arrangementClips.filter(c =>
+      isMidiClip(c) && !c.isDrumClip && (c.id === clip.id || selectedClipIds.has(c.id)))
+    return targets.length ? targets : [clip]
+  }, [project.arrangementClips, selectedClipIds, clip])
+
+  // Transpose whole patterns to a new root: every note shifts by the same
+  // interval, chosen as the smallest movement (−6…+5 semitones) per clip, so
+  // chord shapes and voicings are preserved exactly.
   function transposeToRoot(newRoot: number) {
-    const current = clip.rootNote ?? 0
-    let delta = (newRoot - current) % 12
-    if (delta > 6) delta -= 12
-    if (delta < -6) delta += 12
-    if (delta !== 0) {
-      const notes = clip.notes.map(n => ({ ...n, pitch: Math.max(0, Math.min(127, n.pitch + delta)) }))
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, rootNote: newRoot } })
-      playNote(60 + newRoot)  // audition the new root
-    } else if (newRoot !== current) {
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rootNote: newRoot } })
+    for (const target of transposeTargets) {
+      if (!isMidiClip(target)) continue
+      const current = target.rootNote ?? 0
+      let delta = (newRoot - current) % 12
+      if (delta > 6) delta -= 12
+      if (delta < -6) delta += 12
+      if (delta !== 0) {
+        const notes = target.notes.map(n => ({ ...n, pitch: Math.max(0, Math.min(127, n.pitch + delta)) }))
+        dispatch({ type: 'UPDATE_CLIP', clipId: target.id, patch: { notes, rootNote: newRoot } })
+      } else if (newRoot !== current) {
+        dispatch({ type: 'UPDATE_CLIP', clipId: target.id, patch: { rootNote: newRoot } })
+      }
     }
+    playNote(60 + newRoot)  // audition the new root
     setRootMenuPos(null)
   }
   const [showNewPreset, setShowNewPreset] = useState(false)
@@ -1066,7 +1078,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 title="Transpose the whole pattern to a new root — all notes shift together, voicings preserved"
                 style={{ ...prBtn, fontSize: 9, padding: '2px 8px', flexShrink: 0, whiteSpace: 'nowrap' }}
               >
-                Root: {NOTE_NAMES[(clip.rootNote ?? 0) % 12]}
+                Root: {NOTE_NAMES[(clip.rootNote ?? 0) % 12]}{transposeTargets.length > 1 ? ` (${transposeTargets.length} clips)` : ''}
               </button>
               {rootMenuPos && createPortal(
                 (() => {
