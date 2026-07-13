@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { GraduationCap, Check, ChevronLeft, Sparkles, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { PRACTICE_PATHS, type PracticeSnapshot } from '@/lib/practice-paths'
+import { PRACTICE_RECIPES, buildRecipeClip, type PracticeRecipe } from '@/lib/practice-recipes'
 import { highlightHelpTargets } from './HelpButton'
 
 // ── Progress persistence ────────────────────────────────────────────────────
@@ -24,9 +25,25 @@ function loadProgress(): Progress {
 }
 
 export default function PracticeButton() {
-  const { project, view, playing, metronome } = useDaw()
+  const { project, view, playing, metronome, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<'paths' | 'recipes'>('paths')
   const [activePathId, setActivePathId] = useState<string | null>(null)
+  const [loadedRecipe, setLoadedRecipe] = useState<PracticeRecipe | null>(null)
+
+  // Load a recipe: fresh track + annotated clip appended to the real project,
+  // then open it in the piano roll for study.
+  function loadRecipe(recipe: PracticeRecipe) {
+    const spec = recipe.build()
+    const trackId = crypto.randomUUID()
+    dispatch({ type: 'ADD_TRACK', id: trackId, name: spec.trackName, instrument: spec.instrument })
+    const clip = buildRecipeClip(recipe, trackId, 0)
+    dispatch({ type: 'ADD_CLIP', clip })
+    setView('arrangement')
+    setSelectedTrackId(trackId)
+    setExpandedPianoRollClipId(clip.id)
+    setLoadedRecipe(recipe)
+  }
   const [progress, setProgress] = useState<Progress>(() =>
     typeof window === 'undefined' ? {} : loadProgress()
   )
@@ -136,8 +153,21 @@ export default function PracticeButton() {
                 </button>
               )}
               <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {activePath ? activePath.title : 'Practice Room'}
+                {activePath ? activePath.title : loadedRecipe && tab === 'recipes' ? loadedRecipe.title : 'Practice Room'}
               </span>
+              {!activePath && !loadedRecipe && (
+                <span style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+                  {(['paths', 'recipes'] as const).map(t => (
+                    <button key={t} onClick={() => setTab(t)} style={{
+                      fontSize: 10, fontWeight: 600, padding: '2px 9px', borderRadius: 4, cursor: 'pointer',
+                      background: tab === t ? 'var(--bg-card)' : 'transparent',
+                      border: tab === t ? '1px solid var(--border)' : '1px solid transparent',
+                      color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
+                      textTransform: 'capitalize',
+                    }}>{t}</button>
+                  ))}
+                </span>
+              )}
               <button
                 onClick={() => setOpen(false)}
                 title="Close"
@@ -149,7 +179,48 @@ export default function PracticeButton() {
 
             {/* Body */}
             <div style={{ overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {!activePath && (
+              {!activePath && tab === 'recipes' && loadedRecipe && (
+                <>
+                  <p style={{ fontSize: 11.5, color: 'var(--text-secondary)', margin: '0 0 2px', lineHeight: 1.5 }}>
+                    Loaded into your project and opened in the piano roll. What to notice:
+                  </p>
+                  {loadedRecipe.annotation.map((a, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, padding: '7px 10px', borderRadius: 7, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                      <span style={{ color: 'var(--accent-light)', fontWeight: 700, fontSize: 11, flexShrink: 0 }}>{i + 1}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{a}</span>
+                    </div>
+                  ))}
+                  <button onClick={() => setLoadedRecipe(null)} style={{
+                    marginTop: 4, fontSize: 10.5, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start',
+                    color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 9px',
+                  }}>← All recipes</button>
+                </>
+              )}
+
+              {!activePath && tab === 'recipes' && !loadedRecipe && (
+                <>
+                  <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>
+                    Small annotated constructions — load one into your project and pull it apart in the piano roll.
+                  </p>
+                  {PRACTICE_RECIPES.map(r => (
+                    <div key={r.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px',
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{r.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{r.tagline}</div>
+                      </div>
+                      <button onClick={() => loadRecipe(r)} style={{
+                        flexShrink: 0, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                        color: '#fff', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px',
+                      }}>Load</button>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {!activePath && tab === 'paths' && (
                 <>
                   <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>
                     Skill paths are completed by doing, not reading — the editor watches your
