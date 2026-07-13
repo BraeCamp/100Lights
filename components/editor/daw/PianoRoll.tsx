@@ -1286,8 +1286,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       width: w, height: rowH - 2,
                       background: color,
                       border: sel ? '1px solid #fff' : hasPreset ? `1px solid #a78bfa` : `1px solid ${color}cc`,
+                      boxShadow: sel ? '0 0 0 1px #fff, 0 0 6px rgba(255,255,255,0.55)' : undefined,
+                      filter: sel ? 'brightness(1.3)' : undefined,
                       borderRadius: 2, boxSizing: 'border-box',
-                      opacity: 0.9, cursor: 'context-menu',
+                      opacity: sel ? 1 : 0.9, cursor: 'context-menu',
                     }}
                   />
                 )

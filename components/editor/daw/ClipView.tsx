@@ -373,7 +373,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     <>
       <div
         ref={clipDivRef}
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected ? '#fff' : multiSelected ? `${color}cc` : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: multiSelected && !selected ? `1px solid #fff6` : undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined }}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined }}
         onMouseDown={onMouseDownBody}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
