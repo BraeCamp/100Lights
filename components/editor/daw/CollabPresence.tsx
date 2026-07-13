@@ -43,7 +43,8 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef, projectRe
   useEffect(() => { otherIdsRef.current = others.map(o => o.connectionId) }, [others])
 
   // Accept a state snapshot only during the join window
-  const awaitingSyncUntil = useRef<number>(Date.now() + SYNC_WINDOW_MS)
+  const awaitingSyncUntil = useRef<number>(0)
+  useEffect(() => { awaitingSyncUntil.current = Date.now() + SYNC_WINDOW_MS }, [])
 
   useEffect(() => {
     broadcastRef.current = (action: DawAction) => {
