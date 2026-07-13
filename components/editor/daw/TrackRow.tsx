@@ -247,6 +247,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
+  const [laneCtxMenu,    setLaneCtxMenu]   = useState<{ x: number; y: number; beat: number } | null>(null)
   const frozen = track.frozen ?? false
   const [takesExpanded,  setTakesExpanded]  = useState(false)
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
@@ -285,6 +286,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [trackCtxMenu, track.id])
+
+  // Close lane context menu on outside click / Escape
+  useEffect(() => {
+    if (!laneCtxMenu) return
+    function onDown(e: MouseEvent) {
+      const menu = document.getElementById(`lcm-${track.id}`)
+      if (menu && !menu.contains(e.target as Node)) setLaneCtxMenu(null)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setLaneCtxMenu(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [laneCtxMenu, track.id])
 
   // Close take lane context menu on outside click
   useEffect(() => {
@@ -719,6 +733,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           data-track-type={track.type}
           style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgba(61,143,239,0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
           onMouseDown={e => { if (!e.altKey) { setSelectedClipIds(new Set()); setSelectedClipId(null) }; setCroppingClipId(null) }}
+          onContextMenu={e => {
+            // Clips stop propagation for their own menu — this fires on empty lane
+            e.preventDefault()
+            const rect = e.currentTarget.getBoundingClientRect()
+            const beat = Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, project.timeSignatureNum))
+            setLaneCtxMenu({ x: e.clientX, y: e.clientY, beat })
+          }}
           onDoubleClick={handleDoubleClick}
           onDragOver={e => e.preventDefault()}
           onDrop={handleDrop}
@@ -750,7 +771,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onFadeChange={isAudioClip(clip) ? (fadeIn, fadeOut) => {
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fadeIn, fadeOut } })
                   } : undefined}
-                  onSelect={() => { setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])); setSelectedEffectIds(new Set()) }}
+                  onSelect={() => {
+                    setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])); setSelectedEffectIds(new Set())
+                    // An open piano roll follows the selection to the newly selected MIDI clip
+                    if (expandedPianoRollClipId && expandedPianoRollClipId !== clip.id && isMidiClip(clip)) {
+                      setExpandedPianoRollClipId(clip.id)
+                    }
+                  }}
                   onShiftSelect={() => {
                     setSelectedClipIds(prev => {
                       const next = new Set(prev)
@@ -1103,6 +1130,29 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             onCopyEffects={onCopyEffects}
             onPasteEffects={onPasteEffects}
           />
+        </div>
+      )}
+
+      {/* Lane context menu (empty-lane right-click) */}
+      {laneCtxMenu && (
+        <div id={`lcm-${track.id}`} style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+          <button
+            onClick={() => {
+              const clip = makeMidiClip(track.id, 'MIDI Clip', laneCtxMenu.beat, 4, { isDrumClip: track.instrument.type === 'drum' })
+              dispatch({ type: 'ADD_CLIP', clip })
+              setSelectedTrackId(track.id)
+              setSelectedClipId(clip.id)
+              setExpandedPianoRollClipId(clip.id)
+              setLaneCtxMenu(null)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+          >
+            <span style={{ color: '#a78bfa' }}>♩</span>
+            <span>Piano Roll here</span>
+            <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-muted)' }}>bar {Math.floor(laneCtxMenu.beat / project.timeSignatureNum) + 1}</span>
+          </button>
         </div>
       )}
 
