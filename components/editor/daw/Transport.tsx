@@ -714,6 +714,10 @@ export default function Transport() {
         MASK
       </button>
 
+      {/* Collab slot — CollabLayer portals the avatars + invite button here
+          so they live in the transport row instead of their own bar */}
+      <div id="transport-collab-slot" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4, flexShrink: 0 }} />
+
       {/* Floating tuner panel */}
       {showTuner && typeof document !== 'undefined' && createPortal(
         <div style={{

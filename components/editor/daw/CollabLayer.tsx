@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Dispatch, RefObject } from 'react'
 import { RoomProvider } from '@/lib/liveblocks.config'
 import { CollabBridge, CollabAvatars, CollabSelfPresence, CollabOthersBridge } from './CollabPresence'
@@ -22,6 +24,33 @@ interface Props {
   onOthers: (peers: CollabPeer[]) => void
 }
 
+// Portals the avatars + invite button into the transport row's collab slot
+// (Transport renders #transport-collab-slot at its right end) so collab UI
+// shares the transport bar instead of occupying its own row.
+function CollabTransportSlot({ projectId }: { projectId: string }) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    const find = () => {
+      const el = document.getElementById('transport-collab-slot')
+      if (el) setSlot(el)
+      return !!el
+    }
+    if (find()) return
+    // Transport may mount after this lazy-loaded layer — retry briefly
+    const t = setInterval(() => { if (find()) clearInterval(t) }, 200)
+    return () => clearInterval(t)
+  }, [])
+
+  if (!slot) return null
+  return createPortal(
+    <>
+      <CollabAvatars />
+      <CollabInvite projectId={projectId} />
+    </>,
+    slot,
+  )
+}
+
 export default function CollabLayer({
   projectId, broadcastRef, rawDispatch, isRemoteRef,
   selectedTrackId, selectedClipId, editingClipId, view, onOthers,
@@ -39,14 +68,7 @@ export default function CollabLayer({
         editingClipId={editingClipId}
         view={view}
       />
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-        gap: 8, padding: '4px 10px', borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-surface)', minHeight: 32, flexShrink: 0,
-      }}>
-        <CollabAvatars />
-        <CollabInvite projectId={projectId} />
-      </div>
+      <CollabTransportSlot projectId={projectId} />
     </RoomProvider>
   )
 }
