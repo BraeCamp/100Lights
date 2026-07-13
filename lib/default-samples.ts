@@ -22,14 +22,14 @@ import type { LibraryCategory } from './sound-library'
 const SEEDED_KEY          = '100lights-audio-seeded-v7'
 const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v7'
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v4'
-const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v5'
+const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v6'  // bumped: violin folder re-renders as synth bowed string (vibrato-free)
 const PERCUSSION_SEEDED_KEY = '100lights-percussion-seeded-v3'
 const FX_SEEDED_KEY       = '100lights-fx-seeded-v3'
 const ARP_SEEDED_KEY      = '100lights-arp-seeded-v3'
 const BASS_SEEDED_KEY     = '100lights-bass-seeded-v1'
 const BRASS_SEEDED_KEY    = '100lights-brass-seeded-v1'
 const WIND_SEEDED_KEY     = '100lights-wind-seeded-v1'
-const DEDUP_KEY           = '100lights-dedup-v4'  // v4: clean up identity-race duplicates (2026-07)
+const DEDUP_KEY           = '100lights-dedup-v5'  // v5: prefer deterministic seed ids over legacy random-id built-ins
 const MIGRATION_V7_KEY    = '100lights-migration-v7'
 
 function sk(base: string) {
@@ -508,7 +508,13 @@ async function dedupLibrary(): Promise<void> {
     const key  = `${e.parentFolder ?? ''}|${e.folder ?? ''}|${e.name}`
     const prev = seen.get(key)
     if (!prev) { seen.set(key, e); continue }
-    const keepNew = !prev.audioBlob && (e.audioBlob || e.addedAt > prev.addedAt)
+    // Deterministic seed entries (seed:*) are canonical — they carry the
+    // current renderSpec. Legacy random-id built-ins lose even when fulfilled,
+    // otherwise stale sounds (e.g. the old vibrato violin) shadow new ones.
+    const eSeed = e.id.startsWith('seed:'), pSeed = prev.id.startsWith('seed:')
+    const keepNew = eSeed !== pSeed
+      ? eSeed
+      : !prev.audioBlob && (e.audioBlob || e.addedAt > prev.addedAt)
     if (keepNew) { toDelete.push(prev.id); seen.set(key, e) }
     else { toDelete.push(e.id) }
   }
@@ -679,16 +685,18 @@ export async function seedStrings(): Promise<void> {
     }, 'Strings', now, ['Strings', letter, full, ...s.charTags], 'Strings'))
   }
 
-  // Per-note folders for violin, viola (from KEYBOARD_PRESETS)
+  // Per-note folders for violin, viola (from KEYBOARD_PRESETS).
+  // Violin uses the synthesized bowed string (steady, vibrato-free — users
+  // add their own vibrato); viola keeps the recorded soundfont.
   const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
   for (const preset of stringPresets) {
-    const soundfontUrl = preset.type === 'violin' ? VIOLIN_SF_URL : VIOLA_SF_URL
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
       const [letter, full] = noteTags(midi)
-      await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, {
-        kind: 'soundfont', beatType: preset.type, midiNote: midi,
-        duration: preset.duration, channels: preset.channels, soundfontUrl,
-      }, preset.folder, now, [...preset.typeTags, ...preset.charTags, letter, full], preset.parentGroup))
+      const spec = preset.type === 'violin'
+        ? { kind: 'melodic' as const, beatType: preset.type, midiNote: midi, duration: preset.duration, channels: preset.channels }
+        : { kind: 'soundfont' as const, beatType: preset.type, midiNote: midi, duration: preset.duration, channels: preset.channels, soundfontUrl: VIOLA_SF_URL }
+      await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, spec,
+        preset.folder, now, [...preset.typeTags, ...preset.charTags, letter, full], preset.parentGroup))
     }
   }
 
