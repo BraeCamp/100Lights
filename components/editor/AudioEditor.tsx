@@ -20,7 +20,6 @@ import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import GuestPanel from './daw/GuestPanel'
-import { seedDefaultSamples } from '@/lib/default-samples'
 import { saveSnapshot, loadSnapshot, deleteSnapshot } from '@/lib/offline-store'
 import { getPresets } from '@/lib/midi-presets'
 
@@ -411,7 +410,9 @@ export default function AudioEditor(props: AudioEditorProps) {
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
   const inputStreamsRef = useRef<Map<string, MediaStream>>(new Map())
   // Seed default samples once per browser (no-op if already done)
-  useEffect(() => { seedDefaultSamples().catch(() => {}) }, [])
+  // Seeding moved to SoundLibrary: it must run AFTER initLibrary(user) —
+  // seeding pre-identity raced the per-user db/guard namespace and duplicated
+  // the library on every load.
 
   // Prefetch lazy view chunks once the editor is idle, so the first switch to
   // Mixer / Session / Piano Roll / device panels doesn't pause on a network fetch

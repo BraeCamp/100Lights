@@ -11,6 +11,7 @@ import {
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
+import { seedDefaultSamples } from '@/lib/default-samples'
 import { libraryFulfill } from '@/lib/default-samples'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
@@ -857,11 +858,16 @@ function getCharTags(entry: LibraryEntry): string[] {
 const FOLDERS_KEY = 'sound-library-folders'
 
 export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean; onPick?: (entry: LibraryEntry) => void }) {
-  const { user } = useUser()
+  const { user, isLoaded } = useUser()
 
   useEffect(() => {
+    // Seed only once identity is settled — seeding before Clerk resolves
+    // raced the per-user db/guard namespace and duplicated the built-in
+    // library on every page load.
+    if (!isLoaded) return
     initLibrary(user?.id ?? null)
-  }, [user?.id])
+    seedDefaultSamples().catch(() => {})
+  }, [isLoaded, user?.id])
 
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])

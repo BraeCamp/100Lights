@@ -29,7 +29,7 @@ const ARP_SEEDED_KEY      = '100lights-arp-seeded-v3'
 const BASS_SEEDED_KEY     = '100lights-bass-seeded-v1'
 const BRASS_SEEDED_KEY    = '100lights-brass-seeded-v1'
 const WIND_SEEDED_KEY     = '100lights-wind-seeded-v1'
-const DEDUP_KEY           = '100lights-dedup-v3'
+const DEDUP_KEY           = '100lights-dedup-v4'  // v4: clean up identity-race duplicates (2026-07)
 const MIGRATION_V7_KEY    = '100lights-migration-v7'
 
 function sk(base: string) {
@@ -454,7 +454,9 @@ function makeStub(
   parentFolder?: string,
 ): LibraryEntry {
   return {
-    id:           crypto.randomUUID(),
+    // Deterministic id: libraryAdd() is a put, so re-seeding overwrites the
+    // same entry instead of duplicating it — idempotent by construction.
+    id:           `seed:${parentFolder ?? '100lights Audio'}:${folder}:${name}`,
     name,
     category,
     renderSpec,
