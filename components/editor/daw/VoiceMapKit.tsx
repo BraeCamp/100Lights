@@ -135,7 +135,7 @@ export function useVoiceMap(engine: DawEngine, clip: MidiClip, dispatch: (a: Daw
 
     const source = ctx.createMediaStreamSource(stream)
     const analyser = ctx.createAnalyser()
-    analyser.fftSize = 2048
+    analyser.fftSize = 4096  // ~93ms window — steadier on low voices than 2048
     source.connect(analyser)  // analysis only — the mic is never monitored out loud
 
     const recorder = new MediaRecorder(stream)
@@ -159,14 +159,62 @@ export function useVoiceMap(engine: DawEngine, clip: MidiClip, dispatch: (a: Daw
 
     const frame = new Float32Array(analyser.fftSize)
     const clipStart = clip.startBeat
+
+    // Spike/jump suppression: raw detections pass a median gate against the
+    // running pitch. Outliers go on probation — a real note jump confirms
+    // itself within 3 frames (~100ms) and gets backfilled; a one-frame spike
+    // never does and is dropped. Accepted values are lightly EMA-smoothed.
+    const recent: number[] = []
+    let pending: Array<{ midi: number; beat: number }> = []
+    let smoothed: number | null = null
+    let unvoicedRun = 0
+    const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)] }
+    const accept = (midi: number, beat: number) => {
+      smoothed = smoothed === null ? midi : smoothed * 0.45 + midi * 0.55
+      recent.push(midi); if (recent.length > 8) recent.shift()
+      pointsRef.current.push([beat, smoothed])
+    }
+
     const poll = window.setInterval(() => {
       analyser.getFloatTimeDomainData(frame)
       const elapsed = ctx.currentTime - anchorTime
       if (elapsed > MAX_RECORD_SEC) { stopFnRef.current(); return }
-      const r = detectPitch(frame, ctx.sampleRate)
-      if (r) {
-        const beatAbs = anchorBeat + engine.secondsToBeats(elapsed)
-        pointsRef.current.push([beatAbs - clipStart, r.midi])
+      const hint = recent.length ? recent[recent.length - 1] : undefined
+      const r = detectPitch(frame, ctx.sampleRate, 70, 1050, hint)
+      const beatRel = anchorBeat + engine.secondsToBeats(elapsed) - clipStart
+      if (!r) {
+        pending = []
+        if (++unvoicedRun >= 4) smoothed = null          // don't glide across silences
+        if (unvoicedRun >= 12) recent.length = 0         // long pause — allow a fresh register
+      } else {
+        unvoicedRun = 0
+        let midi = r.midi
+        if (recent.length) {
+          const med = median(recent.slice(-5))
+          // Fold plain octave flips back onto the running pitch
+          if (Math.abs(midi - med) > 10) {
+            for (const k of [-12, 12]) {
+              if (Math.abs(midi + k - med) < 1.5) { midi += k; break }
+            }
+          }
+          if (Math.abs(midi - med) <= 5) {
+            pending = []
+            accept(midi, beatRel)
+          } else {
+            pending.push({ midi, beat: beatRel })
+            if (pending.length >= 3) {
+              const ms = pending.map(p => p.midi)
+              if (Math.max(...ms) - Math.min(...ms) < 2) {   // consistent → a real jump
+                recent.length = 0
+                smoothed = null
+                for (const p of pending) accept(p.midi, p.beat)
+              }
+              pending = []                                    // else: noise burst, dropped
+            }
+          }
+        } else {
+          accept(midi, beatRel)
+        }
       }
       setVersion(v => v + 1)
     }, POLL_MS)
@@ -251,13 +299,31 @@ export function VoiceMapTrace({ vm, beatW, rowH, scrollLeft, scrollTop, totalW, 
 }
 
 function buildPath(pts: [number, number][], beatW: number, rowH: number, offsetBeats: number, gapBeats: number): string {
-  let d = ''
+  // Split into voiced segments, then draw each as quadratic curves through
+  // consecutive midpoints — the standard trick for a smooth ribbon.
+  const segs: Array<Array<[number, number]>> = []
+  let cur: Array<[number, number]> = []
   let prevBeat = -Infinity
   for (const [beat, midi] of pts) {
     const x = (beat + offsetBeats) * beatW
     const y = (NUM_NOTES - 1 - midi) * rowH + rowH / 2
-    d += beat - prevBeat > gapBeats ? `M${x.toFixed(1)},${y.toFixed(1)}` : `L${x.toFixed(1)},${y.toFixed(1)}`
+    if (beat - prevBeat > gapBeats && cur.length) { segs.push(cur); cur = [] }
+    cur.push([x, y])
     prevBeat = beat
+  }
+  if (cur.length) segs.push(cur)
+
+  let d = ''
+  for (const s of segs) {
+    d += `M${s[0][0].toFixed(1)},${s[0][1].toFixed(1)}`
+    if (s.length === 2) { d += `L${s[1][0].toFixed(1)},${s[1][1].toFixed(1)}`; continue }
+    for (let i = 1; i < s.length - 1; i++) {
+      const mx = (s[i][0] + s[i + 1][0]) / 2
+      const my = (s[i][1] + s[i + 1][1]) / 2
+      d += `Q${s[i][0].toFixed(1)},${s[i][1].toFixed(1)} ${mx.toFixed(1)},${my.toFixed(1)}`
+    }
+    const last = s[s.length - 1]
+    d += `L${last[0].toFixed(1)},${last[1].toFixed(1)}`
   }
   return d
 }
