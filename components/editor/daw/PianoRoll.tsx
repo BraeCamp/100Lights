@@ -973,9 +973,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       <div style={{
         background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0,
       }}>
-        {/* Row 1: EDIT */}
+        {/* Row 1: EDIT — scrolls horizontally when narrow so the sound picker
+            at the right end can never be clipped out of reach */}
         <div style={{
-          height: TOOLBAR_H, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
+          height: TOOLBAR_H, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', overflowX: 'auto', overflowY: 'hidden',
         }}>
           <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', marginRight: 2, flexShrink: 0, userSelect: 'none' }}>EDIT</span>
           <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />

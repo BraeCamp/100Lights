@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import type { DawTrack, DawClip, AudioClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
+import { getPresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import Waveform from './Waveform'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const resizeRef  = useRef<{ startX: number; startDur: number } | null>(null)
   const gainDragRef = useRef<{ startY: number; startGain: number; clipH: number } | null>(null)
   const [ctxPos, setCtxPos] = useState<{ x: number; y: number; beat: number } | null>(null)
+  const [ctxSoundMenu, setCtxSoundMenu] = useState(false)  // "Change Sound" submenu inside the ctx menu
   const [hovered, setHovered] = useState(false)
   const [gainDragInfo, setGainDragInfo] = useState<{ gain: number; mouseX: number; mouseY: number } | null>(null)
   const [transientDialog, setTransientDialog] = useState<{
@@ -368,6 +370,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
     ] : [
       { label: 'Open Piano Roll', fn: onDoubleClick },
+      { label: 'Change Sound…', fn: () => setCtxSoundMenu(true), keepOpen: true },
     ]),
   ]
 
@@ -384,6 +387,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           e.preventDefault(); e.stopPropagation()
           const rect = clipDivRef.current?.getBoundingClientRect()
           const beat = rect ? clip.startBeat + (e.clientX - rect.left) / beatW : clip.startBeat
+          setCtxSoundMenu(false)
           setCtxPos({ x: e.clientX, y: e.clientY, beat })
         }}
       >
@@ -654,14 +658,51 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       )}
 
       {ctxPos && (
-        <div ref={menuRef} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
-          {menuItems.map(it => (
-            <button key={it.label} onClick={() => { it.fn(); setCtxPos(null) }}
+        <div ref={menuRef} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
+          {!ctxSoundMenu && menuItems.map(it => (
+            <button key={it.label} onClick={() => { it.fn(); if (!(it as { keepOpen?: boolean }).keepOpen) setCtxPos(null) }}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >{it.label}</button>
           ))}
+          {ctxSoundMenu && !isAudioClip(clip) && (() => {
+            const presets = getPresets()
+            const pick = (presetId: string | undefined) => {
+              dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId } })
+              engine.setPresets(presets)
+              setCtxSoundMenu(false); setCtxPos(null)
+            }
+            return (
+              <>
+                <button onClick={() => setCtxSoundMenu(false)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 10, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-muted)' }}>
+                  ← Back
+                </button>
+                {track.instrument.type !== 'none' && (
+                  <button onClick={() => pick(undefined)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: clip.presetId ? 'var(--text-primary)' : 'var(--accent-light)' }}>
+                    Track instrument
+                  </button>
+                )}
+                {getGroupedPresets(presets).map(({ group, presets: gp }) => (
+                  <div key={group}>
+                    <div style={{ padding: '4px 12px 2px', fontSize: 8, color: '#666', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
+                    {gp.map(p => (
+                      <button key={p.id} onClick={() => pick(p.id)}
+                        style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', padding: '4px 12px 4px 18px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: clip.presetId === p.id ? 'var(--accent-light)' : 'var(--text-primary)' }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                      >
+                        <span>{p.name}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: '#666' }}>{noteRangeLabel(p)}</span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </>
+            )
+          })()}
         </div>
       )}
 
