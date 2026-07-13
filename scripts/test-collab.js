@@ -101,6 +101,14 @@ async function main() {
   const tB = await waitForTracks(alice.page, a0 + 2, 10000, "alice sees bob's track")
   console.log(`PASS bob→alice track sync in ${tB}ms`)
 
+  // ── DUPLICATE_TRACK determinism: nested ids must match across clients ──
+  await alice.page.locator('[data-help-id="track-head"]').first().click({ button: 'right' })
+  await sleep(300)
+  await alice.page.getByRole('button', { name: 'Duplicate' }).first().click()
+  const dupTarget = (await trackCount(alice.page))
+  await waitForTracks(bob.page, dupTarget, 8000, 'bob sees duplicated track')
+  console.log(`PASS duplicate synced (now ${dupTarget} tracks)`)
+
   // ── Determinism: both clients must agree on entity ids, not just counts ──
   const aliceIds = await alice.page.evaluate(() => (window.__daw?._tracks ?? []).map(t => t.id))
   const bobIds = await bob.page.evaluate(() => (window.__daw?._tracks ?? []).map(t => t.id))

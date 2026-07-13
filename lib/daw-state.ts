@@ -20,7 +20,7 @@ export type DawAction =
   // Tracks
   | { type: 'ADD_TRACK'; instrument?: DawTrack['instrument']; id?: string; name?: string }
   | { type: 'REMOVE_TRACK'; trackId: string }
-  | { type: 'DUPLICATE_TRACK'; trackId: string }
+  | { type: 'DUPLICATE_TRACK'; trackId: string; seed?: string }
   | { type: 'UPDATE_TRACK'; trackId: string; patch: Partial<DawTrack> }
   | { type: 'REORDER_TRACKS'; ids: string[] }
   // Clips (arrangement)
@@ -96,6 +96,23 @@ export type DawAction =
 
 // ── Reducer ─────────────────────────────────────────────────────────────
 
+// Deterministic id stream for reducer cases that create many entities
+// (DUPLICATE_TRACK): with a seed, every client derives the same ids from the
+// same action; without one, falls back to random (solo/legacy callers).
+function makeIdGen(seed?: string): () => string {
+  if (!seed) return () => crypto.randomUUID()
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (Math.imul(h, 31) + seed.charCodeAt(i)) | 0
+  let s = h >>> 0
+  const next32 = () => {
+    s = (s + 0x6D2B79F5) | 0
+    let t = Math.imul(s ^ (s >>> 15), 1 | s)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0).toString(16).padStart(8, '0')
+  }
+  return () => `d-${next32()}${next32()}${next32()}${next32()}`
+}
+
 // A MIDI clip grows to fit its notes: adding or moving a note past the clip
 // end extends the clip to the next bar boundary. Looped clips are exempt —
 // their duration means "number of repeats", not content length.
@@ -152,19 +169,20 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'DUPLICATE_TRACK': {
       const source = project.tracks.find(t => t.id === action.trackId)
       if (!source) return project
-      const newTrackId = crypto.randomUUID()
+      const nextId = makeIdGen(action.seed)
+      const newTrackId = nextId()
       const newTrack: DawTrack = {
         ...source,
         id:      newTrackId,
         name:    `${source.name} copy`,
-        effects: source.effects.map(e => ({ ...e, id: crypto.randomUUID() })),
+        effects: source.effects.map(e => ({ ...e, id: nextId() })),
       }
       const newClips = project.arrangementClips
         .filter(c => c.trackId === source.id)
-        .map(c => ({ ...c, id: crypto.randomUUID(), trackId: newTrackId }))
+        .map(c => ({ ...c, id: nextId(), trackId: newTrackId }))
       const newLanes = project.automationLanes
         .filter(l => l.trackId === source.id)
-        .map(l => ({ ...l, id: crypto.randomUUID(), trackId: newTrackId }))
+        .map(l => ({ ...l, id: nextId(), trackId: newTrackId }))
       const srcIdx = project.tracks.findIndex(t => t.id === source.id)
       const tracks = [
         ...project.tracks.slice(0, srcIdx + 1),

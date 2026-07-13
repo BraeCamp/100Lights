@@ -452,6 +452,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     // and every later edit to that entity diverges across the room.
     if (action.type === 'ADD_TRACK' && !action.id) action = { ...action, id: crypto.randomUUID() }
     if (action.type === 'ADD_SCENE' && !action.id) action = { ...action, id: crypto.randomUUID() }
+    if (action.type === 'DUPLICATE_TRACK' && !action.seed) action = { ...action, seed: crypto.randomUUID() }
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
       redoRef.current = []
