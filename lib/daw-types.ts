@@ -514,6 +514,8 @@ export interface MidiClip {
   loopEnabled?: boolean
   /** Pattern length in beats — set when looping is enabled (content length rounded up to a bar). */
   loopLengthBeats?: number
+  /** Recipe clips: edge-resize scales the note pattern to the new length instead of looping. */
+  stretchNotes?: boolean
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
   color?: string
   launchQuantization?: LaunchQuantization

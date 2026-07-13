@@ -61,7 +61,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onResizeStart, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -70,6 +70,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onSelect(): void; onShiftSelect(): void; onDoubleClick(): void; onSettings?(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
+  onResizeStart?(): void
   onCrop(): void
   onCropChange?(trimStart: number, trimEnd: number): void
   onCropSnap?(beat: number): number
@@ -261,6 +262,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
 
   function onMouseDownResize(e: React.MouseEvent) {
     e.stopPropagation()
+    onResizeStart?.()
     resizeRef.current = { startX: e.clientX, startDur: clip.durationBeats }
     function mm(ev: MouseEvent) {
       if (!resizeRef.current) return

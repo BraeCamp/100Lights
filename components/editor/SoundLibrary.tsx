@@ -12,6 +12,7 @@ import {
 } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
 import { seedDefaultSamples } from '@/lib/default-samples'
+import { CHORD_RECIPES } from '@/lib/practice-recipes'
 import { libraryFulfill } from '@/lib/default-samples'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
@@ -869,6 +870,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     seedDefaultSamples().catch(() => {})
   }, [isLoaded, user?.id])
 
+  const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
   const [openFolders,      setOpenFolders]      = useState<Set<string>>(new Set())
@@ -1123,8 +1125,48 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     />
   )
 
+  const recipesBody = (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
+        Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
+      </p>
+      {CHORD_RECIPES.map(r => (
+        <div
+          key={r.id}
+          draggable
+          onDragStart={e => {
+            e.dataTransfer.setData('application/x-recipe-id', r.id)
+            e.dataTransfer.effectAllowed = 'copy'
+          }}
+          title={r.tagline}
+          style={{
+            padding: '8px 10px', borderRadius: 7, cursor: 'grab',
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>♪ {r.title}</div>
+          <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.tagline}</div>
+        </div>
+      ))}
+    </div>
+  )
+
   const content = (
     <>
+      {/* Samples | Recipes tabs (hidden in pickers — onPick contexts expect audio samples) */}
+      {!onPick && (
+        <div style={{ display: 'flex', gap: 2, padding: '6px 10px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+          {(['samples', 'recipes'] as const).map(t => (
+            <button key={t} onClick={() => setLibTab(t)} style={{
+              fontSize: 10, fontWeight: 600, padding: '4px 12px', borderRadius: '5px 5px 0 0', cursor: 'pointer',
+              background: libTab === t ? 'var(--bg-card)' : 'transparent',
+              border: libTab === t ? '1px solid var(--border)' : '1px solid transparent', borderBottom: 'none',
+              color: libTab === t ? 'var(--text-primary)' : 'var(--text-muted)', textTransform: 'capitalize',
+            }}>{t}</button>
+          ))}
+        </div>
+      )}
+      {!onPick && libTab === 'recipes' ? recipesBody : (<>
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
@@ -1375,6 +1417,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       </div>
 
       {showAdd && <AddToLibraryModal onClose={() => setShowAdd(false)} onAdded={load} />}
+      </>)}
     </>
   )
 

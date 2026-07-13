@@ -106,6 +106,80 @@ export const PRACTICE_RECIPES: PracticeRecipe[] = [
   },
 ]
 
+// ── Chord progressions (Sound Library → Recipes tab) ─────────────────────────
+// Dropped onto a track they become normal MIDI clips: notes editable in the
+// piano roll, sound switchable via the clip preset picker, and edge-resize
+// STRETCHES the progression to the new length (stretchNotes) instead of
+// looping — squeeze 16 beats into 12 for a 3/4 feel, or spread it out.
+
+const chord = (startBeat: number, durationBeats: number, ...pitches: number[]): Omit<MidiNote, 'id'>[] =>
+  pitches.map(p => N(p, startBeat, durationBeats))
+
+const progression = (
+  id: string, title: string, tagline: string, annotation: string[],
+  durationBeats: number, notes: Omit<MidiNote, 'id'>[],
+): PracticeRecipe => ({
+  id, title, tagline, annotation,
+  build: () => ({
+    trackName: title, instrument: { type: 'none', params: {} },
+    isDrumClip: false, durationBeats, usePreset: true, notes,
+  }),
+})
+
+export const CHORD_RECIPES: PracticeRecipe[] = [
+  PRACTICE_RECIPES.find(r => r.id === 'pop-progression')!,
+  progression('axis-minor', 'The axis progression (vi–IV–I–V)', 'Am → F → C → G: the pop progression started from its saddest chord.',
+    ['Same four chords as I–V–vi–IV, rotated to start on the minor vi — instantly moodier.',
+     'Try: swap it back to start on C and hear the optimism return.'],
+    16, [
+      ...chord(0, 4, 57, 60, 64),   // Am
+      ...chord(4, 4, 57, 60, 65),   // F
+      ...chord(8, 4, 60, 64, 67),   // C
+      ...chord(12, 4, 59, 62, 67),  // G
+    ]),
+  progression('doo-wop', 'Doo-wop changes (I–vi–IV–V)', 'C → Am → F → G: every 50s slow dance.',
+    ['The vi chord right after I is the signature — home, then its melancholy twin.',
+     'V at the end never resolves inside the loop; the pull back to C is what makes it circular.'],
+    16, [
+      ...chord(0, 4, 60, 64, 67),   // C
+      ...chord(4, 4, 57, 60, 64),   // Am
+      ...chord(8, 4, 57, 60, 65),   // F
+      ...chord(12, 4, 59, 62, 67),  // G
+    ]),
+  progression('jazz-251', 'The jazz ii–V–I', 'Dm7 → G7 → Cmaj7: the cadence jazz is built on.',
+    ['Sevenths everywhere — the extra note is what makes it "jazz". Delete the 7ths and it turns plain.',
+     'The G7 contains B and F (a tritone) — the most unstable interval — which is why landing on Cmaj7 feels so resolved.',
+     'Try: keep the rhythm, move every chord up a whole step (Em7–A7–Dmaj7) — same engine, new key.'],
+    16, [
+      ...chord(0, 4, 50, 53, 57, 60),   // Dm7: D3 F3 A3 C4
+      ...chord(4, 4, 47, 50, 53, 59),   // G7: B2 D3 F3 B3
+      ...chord(8, 8, 48, 52, 55, 59),   // Cmaj7: C3 E3 G3 B3 (held twice as long)
+    ]),
+  progression('andalusian', 'Andalusian cadence (i–VII–VI–V)', 'Am → G → F → E: flamenco\u2019s descending walk.',
+    ['The bass falls one step per chord: A → G → F → E. That stairway down IS the progression.',
+     'The last chord is E MAJOR in an A-minor world — the borrowed G# is the exotic color.',
+     'Try: make the E minor instead and hear the Spanish flavor evaporate.'],
+    16, [
+      ...chord(0, 4, 57, 60, 64),   // Am
+      ...chord(4, 4, 55, 59, 62),   // G
+      ...chord(8, 4, 53, 57, 60),   // F
+      ...chord(12, 4, 52, 56, 59),  // E major (G#)
+    ]),
+  progression('blues-12', '12-bar blues (I7–IV7–V7)', 'Three dominant chords, twelve bars, a century of songs.',
+    ['Every chord is a dominant 7th — permanently "unresolved". In blues, that tension is home.',
+     'The shape: four bars of I, two of IV, two of I, then V–IV–I–V. The last V is the turnaround that loops you back.',
+     'Try: play the four-on-the-floor recipe under it and swing the hats.'],
+    48, [
+      ...chord(0, 16, 48, 52, 55, 58),   // C7 ×4 bars
+      ...chord(16, 8, 53, 57, 60, 63),   // F7 ×2
+      ...chord(24, 8, 48, 52, 55, 58),   // C7 ×2
+      ...chord(32, 4, 55, 59, 62, 65),   // G7
+      ...chord(36, 4, 53, 57, 60, 63),   // F7
+      ...chord(40, 4, 48, 52, 55, 58),   // C7
+      ...chord(44, 4, 55, 59, 62, 65),   // G7 turnaround
+    ]),
+]
+
 /** Materializes a recipe into a clip for a given track, with fresh ids. */
 export function buildRecipeClip(recipe: PracticeRecipe, trackId: string, startBeat: number): MidiClip {
   const spec = recipe.build()
@@ -118,6 +192,7 @@ export function buildRecipeClip(recipe: PracticeRecipe, trackId: string, startBe
     durationBeats: spec.durationBeats,
     isDrumClip: spec.isDrumClip,
     notes: spec.notes.map(n => ({ ...n, id: crypto.randomUUID() })),
+    stretchNotes: true,
     ...(spec.usePreset ? { presetId: defaultPresetId() ?? undefined } : {}),
   }
 }

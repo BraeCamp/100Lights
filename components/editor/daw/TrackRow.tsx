@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
+import { CHORD_RECIPES, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
@@ -238,6 +239,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const cancelRenameRef = useRef(false)
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
   const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
+  // Originals captured when an edge-resize starts on a stretchNotes clip
+  const stretchOriginRef = useRef<{ clipId: string; durationBeats: number; notes: import('@/lib/daw-types').MidiNote[] } | null>(null)
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
@@ -341,6 +344,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     e.preventDefault()
     const rect  = e.currentTarget.getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
+    const recipeId = e.dataTransfer.getData('application/x-recipe-id')
+    if (recipeId) {
+      const recipe = CHORD_RECIPES.find(r => r.id === recipeId)
+      if (!recipe) return
+      const clip = buildRecipeClip(recipe, track.id, snapBeat(beatX, snap, project.timeSignatureNum))
+      dispatch({ type: 'ADD_CLIP', clip })
+      setSelectedClipId(clip.id)
+      setExpandedPianoRollClipId(clip.id)
+      return
+    }
     const libId = e.dataTransfer.getData('application/x-library-entry-id')
     if (libId) {
       const entries = await libraryGetAll()
@@ -804,12 +817,29 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       }
                     }
                   }}
+                  onResizeStart={() => {
+                    if (isMidiClip(clip) && clip.stretchNotes) {
+                      stretchOriginRef.current = { clipId: clip.id, durationBeats: clip.durationBeats, notes: clip.notes }
+                    }
+                  }}
                   onResize={(db, alt) => {
                     if (frozen) return
                     const endBeat = clip.startBeat + db
                     let snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
                     if (!alt) snappedEnd = snapToClipEdges(snappedEnd, new Set([clip.id]), 8 / beatW, project.arrangementClips)
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
+                    // Stretch clips (recipes): scale the whole note pattern to the
+                    // new length — from the originals captured at resize start, so
+                    // repeated drag events don't compound rounding.
+                    const so = stretchOriginRef.current
+                    if (isMidiClip(clip) && clip.stretchNotes && so?.clipId === clip.id) {
+                      const ratio = newDurBeats / so.durationBeats
+                      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
+                        durationBeats: newDurBeats,
+                        notes: so.notes.map(n => ({ ...n, startBeat: n.startBeat * ratio, durationBeats: n.durationBeats * ratio })),
+                      } })
+                      return
+                    }
                     const patch: Record<string, unknown> = { durationBeats: newDurBeats }
                     if (isAudioClip(clip) && clip.bufferDuration) {
                       const nativeSec = clip.bufferDuration - clip.trimStart - clip.trimEnd
