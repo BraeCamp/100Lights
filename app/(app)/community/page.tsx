@@ -35,7 +35,10 @@ export default function CommunityPage() {
       setError('Could not load the community feed.')
     }
   }
-  useEffect(() => { void load() }, [kind, sort]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const t = setTimeout(() => { void load() }, 0)  // async boundary — no sync setState in the effect
+    return () => clearTimeout(t)
+  }, [kind, sort]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function flash(msg: string) { setToast(msg); setTimeout(() => setToast(null), 3500) }
 
@@ -179,14 +182,13 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
   const [working, setWorking] = useState(false)
   const [err, setErr] = useState('')
   const [entries, setEntries] = useState<LibraryEntry[]>([])
-  const [presets, setPresets] = useState<MidiPreset[]>([])
+  const [presets] = useState<MidiPreset[]>(() => typeof window === 'undefined' ? [] : getPresets().filter(p => !p.builtIn))
   const [pickedEntry, setPickedEntry] = useState('')
   const [pickedPreset, setPickedPreset] = useState('')
 
   useEffect(() => {
     // Own recordings/imports only — sharing the built-in library back would be noise
     libraryGetAll().then(all => setEntries(all.filter(e => !e.id.startsWith('seed:') && !e.id.startsWith('community:')))).catch(() => {})
-    setPresets(getPresets().filter(p => !p.builtIn))
   }, [])
 
   async function submit() {
