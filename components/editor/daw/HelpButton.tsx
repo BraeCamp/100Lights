@@ -524,6 +524,11 @@ export default function HelpButton() {
                 </>
               )}
             </div>
+            <div style={{ borderTop: '1px solid var(--border)', padding: '8px 14px', flexShrink: 0 }}>
+              <a href="/community" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--text-muted)', textDecoration: 'none' }}>
+                Community — browse shared songs, samples, presets &amp; recipes ↗
+              </a>
+            </div>
           </div>
         </div>,
         document.body

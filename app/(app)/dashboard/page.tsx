@@ -7,7 +7,7 @@ import { useUser } from '@clerk/nextjs'
 import {
   Film, AudioLines, Palette,
   ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X,
-  Star, Pencil, ExternalLink, Clock, LogIn,
+  Star, Pencil, ExternalLink, Clock, LogIn, Users,
 } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
@@ -248,6 +248,35 @@ export default function DashboardPage() {
               <AppCard key={mod.key} mod={mod} />
             ))}
           </div>
+        </section>
+
+        {/* ── Community banner ── */}
+        <section style={{ marginBottom: 52 }}>
+          <Link
+            href="/community"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px',
+              borderRadius: 12, border: '1px solid rgba(139,92,246,0.25)', textDecoration: 'none',
+              background: 'linear-gradient(135deg, rgba(139,92,246,0.07), rgba(34,211,238,0.05))',
+            }}
+          >
+            <div style={{
+              width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(139,92,246,0.14)', border: '1px solid rgba(139,92,246,0.25)',
+            }}>
+              <Users size={20} color="var(--accent-light)" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 3px' }}>Community</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+                Songs, samples, presets, and recipes from other producers — listen, vote, and pull anything into your studio.
+              </p>
+            </div>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: 'var(--accent-light)', flexShrink: 0 }}>
+              Browse <ArrowRight size={11} />
+            </span>
+          </Link>
         </section>
 
         {/* ── Recent Projects ── */}

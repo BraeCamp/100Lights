@@ -443,8 +443,18 @@ export default function ArrangementView() {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       setBeatW(w => Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, w * (e.deltaY < 0 ? 1.15 : 0.87))))
-    } else {
-      setScrollLeft(s => Math.max(0, s + e.deltaX + e.deltaY * 0.5))
+      return
+    }
+    // Shift+wheel pans the timeline (mouse wheels have no deltaX of their own)
+    if (e.shiftKey) {
+      setScrollLeft(s => Math.max(0, s + (e.deltaX || e.deltaY)))
+      return
+    }
+    // Axis lock: only a dominantly-horizontal gesture pans the timeline.
+    // Vertical scrolling falls through to the lane's native overflowY scroll
+    // instead of dragging the view sideways.
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      setScrollLeft(s => Math.max(0, s + e.deltaX))
     }
   }
 
@@ -584,11 +594,23 @@ export default function ArrangementView() {
         }
       }
 
+      // FX-lane effects live in per-track sub-lanes — intersect their DOM rects.
+      // Skip rects hidden under the header column (lanes clip overflow, rects don't).
+      const newEffIds = new Set<string>()
+      for (const el of Array.from(laneEl.querySelectorAll('[data-effect-id]'))) {
+        const r = el.getBoundingClientRect()
+        if (r.right < laneRect.left + HDR_W) continue
+        if (r.right < selL || r.left > selR || r.bottom < selT || r.top > selB) continue
+        newEffIds.add((el as HTMLElement).dataset.effectId!)
+      }
+
       if (ev.altKey) {
         setSelectedClipIds(prev => new Set([...prev, ...newIds]))
+        setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
       } else {
         setSelectedClipIds(newIds)
         setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
+        setSelectedEffectIds(newEffIds)
       }
     }
 

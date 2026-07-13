@@ -217,6 +217,12 @@ export default function PracticeButton() {
                       }}>Load</button>
                     </div>
                   ))}
+                  <a href="/community?kind=recipe" target="_blank" rel="noreferrer" style={{
+                    fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none',
+                    padding: '8px 12px', textAlign: 'center',
+                  }}>
+                    Find more recipes in Community ↗
+                  </a>
                 </>
               )}
 

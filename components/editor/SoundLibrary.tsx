@@ -1181,6 +1181,12 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
+        {onPick && (
+          <a href="/community?kind=sample" target="_blank" rel="noreferrer" title="Browse what other producers have shared"
+            style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none' }}>
+            Find sounds ↗
+          </a>
+        )}
         <button
           onClick={() => setAddingFolder(true)}
           title="New folder"
@@ -1301,7 +1307,8 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
         {entries.length === 0 ? (
           <div style={{ padding: '20px 14px', textAlign: 'center' }}>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-              No items yet.<br />Record or import a sample to build your library.
+              No items yet.<br />Record or import a sample to build your library,<br />
+              or <a href="/community?kind=sample" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-light, #a78bfa)' }}>browse Community sounds ↗</a>
             </p>
           </div>
         ) : (
