@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
+import { useVoiceMap, VoiceMapTrace, VoiceMapControls } from './VoiceMapKit'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
@@ -418,6 +419,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [chordType, setChordType] = useState<string | null>(null)
   const [scaleLock, setScaleLock] = useState(false)
   const inScalePitches = getInScalePitches(project.key, project.scale)
+
+  // Voice mapping: sung-pitch ribbon overlay + synced replay (pitched rolls only)
+  const voiceMap = useVoiceMap(engine, clip, dispatch)
 
   // ── Row model: chromatic piano vs named drum lanes ──
   const isDrum = clip.isDrumClip
@@ -1107,6 +1111,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             </div>
           )}
 
+          {!isDrum && <VoiceMapControls vm={voiceMap} />}
+
           {/* Preset picker */}
           <div style={{ position: 'relative' }} ref={presetPickerRef}>
             <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
@@ -1389,6 +1395,14 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 )
               })}
             </div>
+
+            {/* Voice mapping ribbon */}
+            {!isDrum && (
+              <VoiceMapTrace
+                vm={voiceMap} beatW={beatW} rowH={rowH} scrollLeft={scrollLeft} scrollTop={scrollTop}
+                totalW={totalW} offsetBeats={engine.secondsToBeats(voiceMap.offsetMs / 1000)}
+              />
+            )}
 
             {/* Playhead */}
             <PlayheadLine clipStart={clip.startBeat} clipDuration={clip.durationBeats} beatW={beatW} scrollLeft={scrollLeft} />
