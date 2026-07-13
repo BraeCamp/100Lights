@@ -372,7 +372,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
   const [presets, setPresets]           = useState<MidiPreset[]>([])
   const [showPresetPicker, setShowPresetPicker] = useState(false)
-  const [showRootPicker, setShowRootPicker]     = useState(false)
+  const [rootMenuPos, setRootMenuPos] = useState<{ top: number; right: number } | null>(null)
   const [previewing, setPreviewing]     = useState(false)
   const presetPickerRef = useRef<HTMLDivElement>(null)
   const rootPickerRef   = useRef<HTMLDivElement>(null)
@@ -392,7 +392,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     } else if (newRoot !== current) {
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rootNote: newRoot } })
     }
-    setShowRootPicker(false)
+    setRootMenuPos(null)
   }
   const [showNewPreset, setShowNewPreset] = useState(false)
   const [npName,    setNpName]    = useState('')
@@ -454,15 +454,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   }, [clip.presetId, clip.isDrumClip, clip.id, track, dispatch, engine])
 
   useEffect(() => {
-    if (!showRootPicker) return
+    if (!rootMenuPos) return
     function onDown(e: MouseEvent) {
       const t = e.target as Node
       if (document.getElementById('pr-root-menu')?.contains(t)) return
-      if (rootPickerRef.current && !rootPickerRef.current.contains(t)) setShowRootPicker(false)
+      if (rootPickerRef.current && !rootPickerRef.current.contains(t)) setRootMenuPos(null)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [showRootPicker])
+  }, [rootMenuPos])
 
   useEffect(() => {
     if (!showPresetPicker) return
@@ -1057,21 +1057,22 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           {!isDrum && (
             <div style={{ position: 'relative' }} ref={rootPickerRef}>
               <button
-                onClick={() => setShowRootPicker(v => !v)}
+                onClick={e => {
+                  if (rootMenuPos) { setRootMenuPos(null); return }
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  const spaceBelow = window.innerHeight - r.bottom
+                  setRootMenuPos({ top: spaceBelow > 260 ? r.bottom + 4 : r.top - 260, right: window.innerWidth - r.right })
+                }}
                 title="Transpose the whole pattern to a new root — all notes shift together, voicings preserved"
                 style={{ ...prBtn, fontSize: 9, padding: '2px 8px', flexShrink: 0, whiteSpace: 'nowrap' }}
               >
                 Root: {NOTE_NAMES[(clip.rootNote ?? 0) % 12]}
               </button>
-              {showRootPicker && createPortal(
+              {rootMenuPos && createPortal(
                 (() => {
-                  const btn = rootPickerRef.current?.getBoundingClientRect()
-                  if (!btn) return null
-                  const spaceBelow = window.innerHeight - btn.bottom
-                  const top = spaceBelow > 260 ? btn.bottom + 4 : btn.top - 260
                   return (
                     <div id="pr-root-menu" style={{
-                      position: 'fixed', top, right: window.innerWidth - btn.right, width: 132, zIndex: 9999,
+                      position: 'fixed', top: rootMenuPos.top, right: rootMenuPos.right, width: 132, zIndex: 9999,
                       background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
                       padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
                       display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
