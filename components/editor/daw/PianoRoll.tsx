@@ -1036,7 +1036,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               <button
                 onClick={() => setShowPresetPicker(v => !v)}
                 style={{
-                  ...prBtn, fontSize: 9, padding: '2px 8px', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  ...prBtn, fontSize: 9, padding: '2px 8px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0,
                   border: `1px solid ${clip.presetId ? 'rgba(167,139,250,0.5)' : 'var(--border)'}`,
                   background: clip.presetId ? 'rgba(124,58,237,0.15)' : 'transparent',
                   color: clip.presetId ? '#a78bfa' : 'var(--text-muted)',
@@ -1046,10 +1046,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   : 'Choose the sound for this clip — notes are kept when switching'}
               >
                 {clip.presetId
-                  ? (presets.find(p => p.id === clip.presetId)?.name ?? 'Preset')
+                  ? `Preset: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'}`
                   : track && track.instrument.type !== 'none'
-                  ? `${INSTRUMENT_LABELS[track.instrument.type]} (track)`
-                  : '+ Sound'}
+                  ? `Preset: ${INSTRUMENT_LABELS[track.instrument.type]} (track)`
+                  : 'Preset: None'}
               </button>
             </div>
 
