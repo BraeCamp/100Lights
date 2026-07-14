@@ -754,6 +754,19 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+
+  // B toggles the sound library panel (Ableton-style browser shortcut)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'b' && e.key !== 'B') return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
+      setSidebarOpen(v => !v)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)

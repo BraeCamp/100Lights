@@ -256,6 +256,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const multiDragOrigins   = useRef<Record<string, number>>({})
   const rippleOriginsRef   = useRef<Record<string, number>>({})
   const [showLibraryPicker, setShowLibraryPicker] = useState(false)
+  const [pickerInsertBeat, setPickerInsertBeat] = useState<number | null>(null)  // null = replace selected clip's sample
+
+  useEffect(() => {
+    if (!showLibraryPicker) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setShowLibraryPicker(false); setPickerInsertBeat(null) }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [showLibraryPicker])
 
   // Keep a ref to project for stable closures in event listeners
   const projectRef = useRef(project)
@@ -325,6 +335,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     const fulfilled = entry.audioBlob ? entry : await libraryFulfill(entry.id)
     if (!fulfilled?.audioBlob) return
     const audioUrl = URL.createObjectURL(fulfilled.audioBlob)
+
+    // Lane-menu flow: drop the picked sound as a NEW clip at the clicked beat
+    if (pickerInsertBeat !== null) {
+      const at = pickerInsertBeat
+      setPickerInsertBeat(null)
+      const clip = makeAudioClip(track.id, entry.name, at, 8, { audioUrl, libraryId: entry.id })
+      dispatch({ type: 'ADD_CLIP', clip })
+      const buf = await engine.loadClipBuffer(clip)
+      if (buf) {
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+      }
+      return
+    }
     let peaks: number[] | undefined
     try {
       const ab = await fulfilled.audioBlob.arrayBuffer()
@@ -1158,6 +1181,18 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <span>Piano Roll here</span>
             <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-muted)' }}>bar {Math.floor(laneCtxMenu.beat / project.timeSignatureNum) + 1}</span>
           </button>
+          <button
+            onClick={() => {
+              setPickerInsertBeat(snapBeat(laneCtxMenu.beat, snap, project.timeSignatureNum))
+              setShowLibraryPicker(true)
+              setLaneCtxMenu(null)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+          >
+            <span>♫ Sound from library here</span>
+          </button>
         </div>
       )}
 
@@ -1196,10 +1231,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         <div
 className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onMouseDown={e => { if (e.target === e.currentTarget) setShowLibraryPicker(false) }}>
+          onMouseDown={e => { if (e.target === e.currentTarget) { setShowLibraryPicker(false); setPickerInsertBeat(null) } }}>
           <div style={{ width: 480, height: 620, background: '#1e1e1e', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Replace Sample</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{pickerInsertBeat !== null ? 'Add a Sound' : 'Replace Sample'}</span>
               <button onClick={() => setShowLibraryPicker(false)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1 }}>✕</button>
             </div>

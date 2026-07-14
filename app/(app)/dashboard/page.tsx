@@ -231,12 +231,20 @@ export default function DashboardPage() {
             <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
               Your Apps
             </h2>
-            <Link
-              href="/new"
-              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
-            >
-              New project <ArrowRight size={11} />
-            </Link>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <Link
+                href="/library"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
+              >
+                Sound library <ArrowRight size={11} />
+              </Link>
+              <Link
+                href="/new"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
+              >
+                New project <ArrowRight size={11} />
+              </Link>
+            </div>
           </div>
 
           <div style={{

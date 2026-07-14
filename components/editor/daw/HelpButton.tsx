@@ -48,6 +48,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: '⇧⌘Z', action: 'Redo' },
       { keys: '⌘S', action: 'Save project' },
       { keys: 'Delete', action: 'Delete selected clips' },
+      { keys: 'B', action: 'Toggle the sound library panel' },
       { keys: 'H or ?', action: 'Open this help menu' },
     ],
   },

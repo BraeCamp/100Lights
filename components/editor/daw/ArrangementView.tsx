@@ -1130,6 +1130,26 @@ export default function ArrangementView() {
         onWheel={handleWheel}
         onMouseDown={onLaneMouseDown}
       >
+        {/* Music empty-state hint: point brand-new users at the library */}
+        {audioMode !== 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (
+          <div style={{
+            position: 'absolute', left: HDR_W, right: 0, top: 0, bottom: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none', zIndex: 1,
+          }}>
+            <span style={{
+              fontSize: 12, color: 'var(--text-muted)',
+              textAlign: 'center', lineHeight: 1.9,
+              background: 'rgba(0,0,0,0.4)', padding: '12px 20px', borderRadius: 8,
+            }}>
+              <b style={{ color: 'var(--text-secondary)' }}>Drag a sound in from the library</b> on the left (press <b>B</b> to show it)<br/>
+              <span style={{ fontSize: 10.5, opacity: 0.8 }}>
+                …or right-click this lane for a piano roll or a library sound · record with ● · try a Recipe from the library’s Recipes tab
+              </span>
+            </span>
+          </div>
+        )}
+
         {/* Podcast empty-state hint */}
         {audioMode === 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (
           <div style={{
