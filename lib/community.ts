@@ -32,16 +32,19 @@ export const COMMUNITY_TAGS = ['drums', 'melody', 'bass', 'vocals', 'lofi', 'ele
 
 export interface ListOptions {
   kind?: string
-  sort?: 'top' | 'new' | 'trending'
+  sort?: 'top' | 'new' | 'trending' | 'name'
   q?: string
   tag?: string
   author?: string
+  /** Comma-separated LibraryCategory values (send a category group's members) */
+  category?: string
   page?: number
 }
 
 export interface ListResult {
   items: CommunityItem[]
   hasMore: boolean
+  total: number
   scale: 'small' | 'large'
   sortUsed: string
   stats: { items: number; authors: number }
@@ -54,6 +57,7 @@ export async function listCommunity(opts: ListOptions = {}): Promise<ListResult>
   if (opts.q) qs.set('q', opts.q)
   if (opts.tag) qs.set('tag', opts.tag)
   if (opts.author) qs.set('author', opts.author)
+  if (opts.category) qs.set('category', opts.category)
   if (opts.page) qs.set('page', String(opts.page))
   const res = await fetch(`/api/community?${qs}`)
   if (!res.ok) throw new Error(`list failed (${res.status})`)

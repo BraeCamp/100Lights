@@ -26,6 +26,8 @@ export async function GET(req: Request) {
   const q = url.searchParams.get('q')?.trim() || null
   const tag = url.searchParams.get('tag')?.trim() || null
   const author = url.searchParams.get('author')?.trim() || null
+  // Comma-separated LibraryCategory values (a library category-group's members)
+  const category = url.searchParams.get('category')?.trim() || null
   const page = Math.max(0, parseInt(url.searchParams.get('page') ?? '0', 10) || 0)
   const PAGE_SIZE = 50
 
@@ -33,18 +35,35 @@ export async function GET(req: Request) {
   // ancient one that accumulated slowly.
   const order =
     sortParam === 'new' ? sql`created_at DESC` :
+    sortParam === 'name' ? sql`LOWER(name) ASC` :
     sortParam === 'trending' ? sql`(votes + downloads * 0.5 + 1) / POWER(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 + 2, 1.4) DESC` :
     sql`votes DESC, created_at DESC`
 
-  const rows = await sql`
-    SELECT * FROM community_items
-    WHERE (${kind}::text IS NULL OR kind = ${kind})
+  // Library-style search: the query looks INSIDE items too — tags, the names
+  // and categories of a pack's samples, and a song's musical key — not just
+  // the title line.
+  const like = q ? `%${q}%` : null
+  const where = sql`
+    (${kind}::text IS NULL OR kind = ${kind})
       AND (${author}::text IS NULL OR author_name = ${author})
       AND (${tag}::text IS NULL OR payload->'tags' ? ${tag})
-      AND (${q}::text IS NULL OR name ILIKE ${'%' + (q ?? '') + '%'} OR description ILIKE ${'%' + (q ?? '') + '%'} OR author_name ILIKE ${'%' + (q ?? '') + '%'})
+      AND (${category}::text IS NULL
+        OR payload->>'category' = ANY(string_to_array(${category ?? ''}, ','))
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'samples', '[]'::jsonb)) elem
+                   WHERE elem->>'category' = ANY(string_to_array(${category ?? ''}, ','))))
+      AND (${like}::text IS NULL
+        OR name ILIKE ${like ?? ''} OR description ILIKE ${like ?? ''} OR author_name ILIKE ${like ?? ''}
+        OR payload->>'key' ILIKE ${like ?? ''}
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(payload->'tags', '[]'::jsonb)) t WHERE t ILIKE ${like ?? ''})
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'samples', '[]'::jsonb)) elem WHERE elem->>'name' ILIKE ${like ?? ''}))`
+
+  const rows = await sql`
+    SELECT * FROM community_items
+    WHERE ${where}
     ORDER BY ${order}
     LIMIT ${PAGE_SIZE + 1} OFFSET ${page * PAGE_SIZE}
   `
+  const totalRows = await sql`SELECT COUNT(*)::int AS n FROM community_items WHERE ${where}`
   const hasMore = rows.length > PAGE_SIZE
   const pageRows = rows.slice(0, PAGE_SIZE)
 
@@ -61,6 +80,7 @@ export async function GET(req: Request) {
   const res = Response.json({
     items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine)),
     hasMore,
+    total: totalRows[0]?.n ?? 0,
     scale: communityScale,
     sortUsed: sortParam,
     stats: { items: statRows[0]?.items ?? 0, authors: statRows[0]?.authors ?? 0 },

@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Upload, Search, X } from 'lucide-react'
 import { listCommunity, toggleVote, importItem, shareSample, sharePreset, sharePack, COMMUNITY_TAGS, type CommunityItem } from '@/lib/community'
 import { getPresets, noteRangeLabel, type MidiPreset } from '@/lib/midi-presets'
-import { libraryGetAll, initLibrary, type LibraryEntry } from '@/lib/sound-library'
+import { libraryGetAll, initLibrary, CATEGORY_GROUPS, type LibraryEntry } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
 import { FeedCard, KIND_META, stopFeedPlayback } from './FeedCard'
 
@@ -20,8 +20,10 @@ export default function CommunityPage() {
   const [hasMore, setHasMore] = useState(false)
   const [page, setPage] = useState(0)
   const [kind, setKind] = useState<Kind>('all')  // ?kind= adopted client-side to avoid a hydration mismatch
-  const [sort, setSort] = useState<'top' | 'new' | 'trending' | null>(null)  // null → server's scale mode decides
+  const [sort, setSort] = useState<'top' | 'new' | 'trending' | 'name' | null>(null)  // null → server's scale mode decides
   const [pulse, setPulse] = useState<{ items: number; authors: number } | null>(null)
+  const [total, setTotal] = useState<number | null>(null)
+  const [catGroup, setCatGroup] = useState<string | null>(null)  // a CATEGORY_GROUPS label
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState<string | null>(null)
   const [author, setAuthor] = useState<string | null>(null)
@@ -36,15 +38,17 @@ export default function CommunityPage() {
 
   async function load(reset: boolean, pageNum: number) {
     try {
+      const catList = catGroup ? CATEGORY_GROUPS.find(g => g.label === catGroup)?.categories.join(',') : undefined
       const r = await listCommunity({
         kind: kind === 'all' ? undefined : kind, sort: sort ?? undefined,
         q: query.trim() || undefined, tag: tag ?? undefined, author: author ?? undefined,
-        page: pageNum,
+        category: catList, page: pageNum,
       })
       setItems(prev => reset || !prev ? r.items : [...prev, ...r.items])
       setHasMore(r.hasMore)
       setPulse(r.stats)
-      if (sort === null && (r.sortUsed === 'top' || r.sortUsed === 'new' || r.sortUsed === 'trending')) setSort(r.sortUsed)
+      setTotal(r.total)
+      if (sort === null && (r.sortUsed === 'top' || r.sortUsed === 'new' || r.sortUsed === 'trending' || r.sortUsed === 'name')) setSort(r.sortUsed)
       setError(null)
     } catch {
       setError('Could not load the community feed.')
@@ -68,7 +72,7 @@ export default function CommunityPage() {
       void load(true, 0)
     }, query ? 300 : 0)  // debounce typing; instant for filter clicks
     return () => clearTimeout(t)
-  }, [kind, sort, query, tag, author]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kind, sort, query, tag, author, catGroup]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function pickKind(k: Kind) {
     setKind(k)
@@ -167,19 +171,19 @@ export default function CommunityPage() {
             )
           })}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-            {(['trending', 'top', 'new'] as const).map(s => (
+            {(['trending', 'top', 'new', 'name'] as const).map(s => (
               <button key={s} onClick={() => setSort(s)} style={{
                 fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 6, cursor: 'pointer', textTransform: 'capitalize',
                 background: sort === s ? 'var(--bg-card)' : 'transparent',
                 border: sort === s ? '1px solid var(--border)' : '1px solid transparent',
                 color: sort === s ? 'var(--text-primary)' : 'var(--text-muted)',
-              }}>{s}</button>
+              }}>{s === 'name' ? 'a–z' : s}</button>
             ))}
           </div>
         </div>
 
         {/* Tag chips */}
-        <div style={{ display: 'flex', gap: 5, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 5, marginBottom: 8, flexWrap: 'wrap' }}>
           {COMMUNITY_TAGS.map(t => (
             <button key={t} onClick={() => setTag(tag === t ? null : t)} style={{
               fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
@@ -189,6 +193,28 @@ export default function CommunityPage() {
             }}>#{t}</button>
           ))}
         </div>
+
+        {/* Instrument groups — the sound library's own taxonomy, for samples & packs */}
+        {(kind === 'all' || kind === 'sample' || kind === 'pack') && (
+          <div style={{ display: 'flex', gap: 5, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 9.5, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Instrument</span>
+            {CATEGORY_GROUPS.map(g => (
+              <button key={g.label} onClick={() => setCatGroup(catGroup === g.label ? null : g.label)} style={{
+                fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                background: catGroup === g.label ? 'rgba(52,211,153,0.15)' : 'transparent',
+                border: catGroup === g.label ? '1px solid rgba(52,211,153,0.5)' : '1px solid var(--border)',
+                color: catGroup === g.label ? '#34d399' : 'var(--text-muted)',
+              }}>{g.label}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Result count when any filter narrows the feed */}
+        {total !== null && (query.trim() || tag || catGroup || author || kind !== 'all') && (
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px' }} role="status">
+            {total} result{total !== 1 ? 's' : ''}
+          </p>
+        )}
 
         {error && <p style={{ color: '#ef4444', fontSize: 13 }}>{error}</p>}
         {items === null && !error && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading…</p>}
