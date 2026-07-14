@@ -955,6 +955,7 @@ export class DawEngine extends EventTarget {
             const src = this.ctx.createBufferSource(); src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
             src.connect(velGain); velGain.connect(noteDest)
+            this._registerMidiVoice(src, velGain)
             src.start(noteStartAt)
             if (sustainSec > 0) {
               velGain.gain.setValueAtTime(target, noteStartAt + noteDur)
@@ -1082,15 +1083,20 @@ export class DawEngine extends EventTarget {
     const aheadBeats   = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
 
     // ── Arrangement audio clips ──────────────────────────────────────────
-    // Exact-overlay guard: two identical clips stacked at the same spot (a
-    // paste that landed on its source — invisible on the track) would play
-    // doubled. Only the first plays.
-    const seenOverlay = new Set<string>()
+    // Overlay guard: identical clips stacked at (or within ~10ms of) the same
+    // spot would play doubled — and a few-ms offset comb-filters, which reads
+    // as feedback. Only the first plays. 0.02 beats ≈ 10ms at 120bpm; any
+    // intentional doubling lives further apart than that.
+    const seenOverlay: Array<{ trackId: string; startBeat: number; durationBeats: number; sig: string }> = []
 
     for (const clip of this._clips) {
-      const overlayKey = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
-      if (seenOverlay.has(overlayKey)) continue
-      seenOverlay.add(overlayKey)
+      const sig = `${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
+      const dup = seenOverlay.some(o =>
+        o.trackId === clip.trackId && o.sig === sig &&
+        Math.abs(o.startBeat - clip.startBeat) < 0.02 &&
+        Math.abs(o.durationBeats - clip.durationBeats) < 0.02)
+      if (dup) continue
+      seenOverlay.push({ trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, sig })
       const alreadyScheduled = this.scheduledSources.some(s => s.clipId === clip.id)
       if (alreadyScheduled) continue
 
@@ -1260,6 +1266,7 @@ export class DawEngine extends EventTarget {
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
             src.connect(velGain)
             velGain.connect(noteDest)
+            this._registerMidiVoice(src, velGain)
             src.start(startAt, offsetSec)
             if (remaining > 0) {
               if (sustainSec > 0) {
@@ -1657,6 +1664,20 @@ export class DawEngine extends EventTarget {
 
   private _loopMeta = new Map<string, { start: number; end: number } | null>()
 
+  // Every sampled MIDI voice registers here so pause can hard-stop it even if
+  // some routing path dodges the midiInput bus swap (belt and braces).
+  private _midiVoices = new Set<{ src: AudioBufferSourceNode; gain: GainNode }>()
+
+  private _registerMidiVoice(src: AudioBufferSourceNode, gain: GainNode) {
+    const entry = { src, gain }
+    this._midiVoices.add(entry)
+    const prev = src.onended
+    src.onended = (e) => {
+      this._midiVoices.delete(entry)
+      if (typeof prev === 'function') prev.call(src, e)
+    }
+  }
+
   private _getLoopMeta(bufKey: string, buf: AudioBuffer): { start: number; end: number } | null {
     const cached = this._loopMeta.get(bufKey)
     if (cached !== undefined) return cached
@@ -1981,6 +2002,17 @@ export class DawEngine extends EventTarget {
       if (tailOscs)  for (const o of tailOscs)  { try { o.stop(stopAt); o.disconnect() } catch { /* ok */ } }
     }
     this.scheduledSources = []
+
+    // Hard-stop every registered sampled MIDI voice (looped drones included) —
+    // scheduled ramps are cancelled so nothing can resurrect them.
+    for (const { src, gain } of this._midiVoices) {
+      try {
+        gain.gain.cancelScheduledValues(now)
+        gain.gain.setTargetAtTime(0, now, 0.003)
+        src.stop(stopAt)
+      } catch { /* not started yet or already stopped */ }
+    }
+    this._midiVoices.clear()
 
     // Cut off ringing MIDI voices (preset samples and synth instruments):
     // they connect through each track's midiInput bus, so fade the bus out
