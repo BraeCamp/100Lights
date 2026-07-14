@@ -7,6 +7,7 @@ import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrum
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
+import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import { Library, Settings, FileText, Users } from 'lucide-react'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
@@ -1145,6 +1146,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 }}>OFFLINE — SAVING LOCALLY</span>
               )}
               <InspectorBridge />
+              <DuplicateCleanup />
               <PracticeButton />
               <HelpButton />
             </div>

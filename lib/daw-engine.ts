@@ -638,6 +638,12 @@ export class DawEngine extends EventTarget {
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._clips       = project.arrangementClips.filter(isAudioClip)
     this._midiClips   = project.arrangementClips.filter(isMidiClip)
+    // Pre-warm audio buffers too: clips resolving through slow paths (r2,
+    // library fallback) were silent for the first pass after a reload and
+    // "appeared" a few plays later once their buffer finally cached.
+    for (const clip of this._clips) {
+      if (!this.bufferCache.has(clip.id)) void this.loadClipBuffer(clip)
+    }
     // Pre-warm preset buffers for every note so the first playthrough sounds.
     // Loading lazily from the scheduler misses the note: by the time the
     // buffer resolves, the playhead has already passed it.
