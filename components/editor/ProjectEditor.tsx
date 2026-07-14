@@ -313,6 +313,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   // False when this project was opened via an invite link (not the owner):
   // edits sync live through the room, but persistence belongs to the owner.
   const [isOwner, setIsOwner] = useState(true)
+  const [viewOnly, setViewOnly] = useState(false)
 
   // ── Load project from API ──────────────────────────────────
   useEffect(() => {
@@ -322,6 +323,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       .then(async (data: CfProjFile | null) => {
         if (!data) { setActiveModules(['video']); return }
         if ((data as CfProjFile & { _isOwner?: boolean })._isOwner === false) setIsOwner(false)
+        if ((data as CfProjFile & { _access?: string })._access === 'view') setViewOnly(true)
         setSavedData(data)
         setLocalName(data.name)
         setCaptions(data.captions ?? [])
@@ -584,6 +586,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onSave: isOwner ? handleAudioSave : undefined,
     initialTracks: initAudioTracks,
     initialDawProject: starterProject ?? savedData?.dawProject,
+    readOnly: viewOnly,
     audioMode,
     initialPodcastMeta: podcastMeta,
     ...sharedModuleProps,

@@ -45,19 +45,27 @@ export default function TermsPage() {
             body: 'The Service is provided "as is" without warranties of any kind, express or implied. Automated processing such as transcription may contain errors; you are responsible for reviewing and verifying any output before use.',
           },
           {
-            title: '10. Limitation of Liability',
+            title: '10. User Content & the Community',
+            body: 'You may share songs, samples, presets, recipes, and projects to the public Community. You keep ownership of everything you share; by sharing, you grant 100Lights a non-exclusive, worldwide license to host, stream, and display that content within the Service, and you grant other users the right to download and use it in their own projects. Only share audio you created or have the rights to distribute. We may remove any shared content at our discretion, including content that is reported by other users.',
+          },
+          {
+            title: '11. Copyright & Takedown',
+            body: 'We respect intellectual property rights. If you believe content shared on 100Lights infringes your copyright, report it using the flag on the item or email legal@100lights.com with a link to the content, a description of the copyrighted work, and your contact information. We review reports promptly and remove infringing content. Repeat infringers will have their accounts terminated.',
+          },
+          {
+            title: '12. Limitation of Liability',
             body: 'To the maximum extent permitted by law, 100Lights shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Service. Our total liability shall not exceed the fees paid by you in the 12 months preceding the claim.',
           },
           {
-            title: '11. Governing Law',
+            title: '13. Governing Law',
             body: 'These Terms are governed by the laws of the jurisdiction in which 100Lights operates, without regard to conflict of law principles.',
           },
           {
-            title: '12. Changes to Terms',
+            title: '14. Changes to Terms',
             body: 'We may update these Terms from time to time. We will notify you of material changes by email or in-app notice. Continued use after notice constitutes acceptance of the updated Terms.',
           },
           {
-            title: '13. Contact',
+            title: '15. Contact',
             body: 'Questions about these Terms? Contact us at legal@100lights.com.',
           },
         ].map(({ title, body }) => (

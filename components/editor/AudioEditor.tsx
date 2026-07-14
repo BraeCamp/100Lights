@@ -38,6 +38,9 @@ export interface AudioEditorProps {
   initialTracks?: AudioTrack[]
   /** Saved DAW arrangement from the cloud project file — takes priority over initialTracks. */
   initialDawProject?: import('@/lib/daw-types').DawProject
+  /** Shared-project viewers (free plan): the UI is a faithful read-only mirror —
+   *  local edit actions are dropped, remote/broadcast state still applies. */
+  readOnly?: boolean
   captions?: Caption[]
   currentTime?: number
   onTimeChange?: (t: number) => void
@@ -452,7 +455,15 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   useEffect(() => { projectRef.current = project }, [project])
 
+  const readOnlyRef = useRef(!!props.readOnly)
+  useEffect(() => { readOnlyRef.current = !!props.readOnly }, [props.readOnly])
+
   const dispatch = useCallback((action: DawAction) => {
+    // View-only collaborators: their room access is read-only server-side, so
+    // local edits would silently diverge from the real project. Drop them here
+    // instead — the UI stays a live mirror. (LOAD_PROJECT still applies: it
+    // carries the room's state to us.)
+    if (readOnlyRef.current && action.type !== 'LOAD_PROJECT') return
     // Reducers must be deterministic for collaboration: actions that create
     // entities carry their ids, otherwise each client mints a different one
     // and every later edit to that entity diverges across the room.
@@ -1144,6 +1155,15 @@ export default function AudioEditor(props: AudioEditorProps) {
                   background: 'rgba(245,158,11,0.12)', color: '#f59e0b',
                   border: '1px solid rgba(245,158,11,0.35)', whiteSpace: 'nowrap',
                 }}>OFFLINE — SAVING LOCALLY</span>
+              )}
+              {props.readOnly && (
+                <span style={{
+                  display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, fontWeight: 700,
+                  padding: '3px 12px', borderRadius: 999, whiteSpace: 'nowrap',
+                  background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.45)', color: '#f59e0b',
+                }}>
+                  👁 View only — upgrade to Pro to edit shared projects
+                </span>
               )}
               <InspectorBridge />
               <DuplicateCleanup />
