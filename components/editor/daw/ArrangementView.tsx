@@ -637,12 +637,24 @@ export default function ArrangementView() {
     if (!_clipboard) return
     const { clips, originBeat, buffers } = _clipboard
     const pasteAt = engine.currentBeat
-    const delta = pasteAt - originBeat
+    let delta = pasteAt - originBeat
+    // Pasting with the playhead still at the source (the common copy→paste
+    // without moving) would overlay identical clips invisibly — place the
+    // copies right after the copied span instead.
+    if (Math.abs(delta) < 1e-6) {
+      const span = Math.max(...clips.map(c => c.startBeat + c.durationBeats)) - originBeat
+      delta = span
+    }
     const bufMap = new Map(buffers)
     const newIds = new Set<string>()
     for (const clip of clips) {
+      const startBeat = Math.max(0, clip.startBeat + delta)
+      // Never create an exact invisible duplicate of an existing clip
+      if (project.arrangementClips.some(c =>
+        c.trackId === clip.trackId && Math.abs(c.startBeat - startBeat) < 1e-6 &&
+        Math.abs(c.durationBeats - clip.durationBeats) < 1e-6 && c.name === clip.name)) continue
       const newId = crypto.randomUUID()
-      const newClip: DawClip = { ...clip, id: newId, startBeat: Math.max(0, clip.startBeat + delta) }
+      const newClip: DawClip = { ...clip, id: newId, startBeat }
       if (isAudioClip(clip)) {
         const buf = bufMap.get(clip.id)
         if (buf) engine.bufferCache.set(newId, buf)

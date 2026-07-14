@@ -528,17 +528,23 @@ export class DawEngine extends EventTarget {
         const buf = await fromEntry(await libraryFulfill(clip.libraryId))
         if (buf) return buf
       }
-      // Old saves: pad bounces are named "Pad – Folder – Name"; library drops
-      // are named exactly like their entry. Match accordingly.
-      const parts = clip.name.split(' – ')
-      const { libraryGetAll } = await import('./sound-library')
-      const all = await libraryGetAll()
-      const entry =
-        (parts.length >= 3 ? all.find(e => e.folder === parts[1] && e.name === parts[2]) : undefined) ??
-        all.find(e => e.name === parts[parts.length - 1])
-      if (entry) {
-        const buf = await fromEntry(await libraryFulfill(entry.id))
-        if (buf) return buf
+      // Name-based rescue is a last resort for OLD saves only, and it must
+      // never guess: a wrong match plays audio that isn't on the track.
+      //  - clips that had a real source (r2Key) stay silent on failure rather
+      //    than being substituted (the failure may be transient)
+      //  - recorder-generated names are never library entries
+      //  - the match must be unambiguous (exactly one candidate)
+      if (!clip.r2Key && !/^(Recording|Jam Capture|MIDI Capture|Morph)$|recording$/i.test(clip.name.trim())) {
+        const parts = clip.name.split(' – ')
+        const { libraryGetAll } = await import('./sound-library')
+        const all = await libraryGetAll()
+        const candidates = parts.length >= 3
+          ? all.filter(e => e.folder === parts[1] && e.name === parts[2])
+          : all.filter(e => e.name === clip.name)
+        if (candidates.length === 1) {
+          const buf = await fromEntry(await libraryFulfill(candidates[0].id))
+          if (buf) return buf
+        }
       }
     } catch { /* library unavailable (SSR/tests) */ }
     return null
@@ -1076,7 +1082,15 @@ export class DawEngine extends EventTarget {
     const aheadBeats   = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
 
     // ── Arrangement audio clips ──────────────────────────────────────────
+    // Exact-overlay guard: two identical clips stacked at the same spot (a
+    // paste that landed on its source — invisible on the track) would play
+    // doubled. Only the first plays.
+    const seenOverlay = new Set<string>()
+
     for (const clip of this._clips) {
+      const overlayKey = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
+      if (seenOverlay.has(overlayKey)) continue
+      seenOverlay.add(overlayKey)
       const alreadyScheduled = this.scheduledSources.some(s => s.clipId === clip.id)
       if (alreadyScheduled) continue
 
@@ -1094,7 +1108,14 @@ export class DawEngine extends EventTarget {
     }
 
     // ── Arrangement MIDI clips ───────────────────────────────────────────
+    // Same exact-overlay guard for MIDI clips: an identical clip pasted onto
+    // itself would double every note.
+    const seenMidiOverlay = new Set<string>()
+
     for (const clip of this._midiClips) {
+      const midiOverlayKey = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.presetId ?? ''}|${clip.notes.length}|${clip.name}`
+      if (seenMidiOverlay.has(midiOverlayKey)) continue
+      seenMidiOverlay.add(midiOverlayKey)
       const track = this._tracks.find(t => t.id === clip.trackId)
       if (!track || track.mute) continue
       const nodes = this.trackNodes.get(clip.trackId)
