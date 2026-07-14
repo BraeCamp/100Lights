@@ -14,7 +14,6 @@ import { startWebMidi, onMidiNote, onMidiDevices, webMidiSupported } from '@/lib
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 
-const PadVoice = dynamic(() => import('./PadVoice'), { ssr: false })
 
 // ── Capture MIDI — rolling note memory (like the JAM buffer, but for notes) ────
 // Every note played while the transport runs is remembered here, recording or
@@ -921,7 +920,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
   const { project, dispatch, engine, metronome, setMetronome } = useDaw()
 
-  const [tab,          setTab]          = useState<'pads' | 'keyboard' | 'voice'>('pads')
+  const [tab,          setTab]          = useState<'pads' | 'keyboard'>('pads')
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
   const [octave,       setOctave]       = useState(4)
   // Velocity for mouse/computer-keyboard input (hardware MIDI supplies its own).
@@ -1737,7 +1736,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 2, padding: '6px 12px 0', background: C.bgCard, borderBottom: `1px solid ${C.border}`, flexShrink: 0, alignItems: 'center' }}>
-          {(['pads', 'keyboard', 'voice'] as const).map(t => (
+          {(['pads', 'keyboard'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '4px 14px', fontSize: 12, borderRadius: '4px 4px 0 0',
               border: `1px solid ${tab === t ? C.border : 'transparent'}`, borderBottom: 'none',
@@ -1746,7 +1745,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               textTransform: 'capitalize',
             }}>{t}</button>
           ))}
-          {tab !== 'voice' && (
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 4 }}
               title="Velocity for mouse and computer-keyboard input — hardware MIDI keeps its own">
               <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: C.muted }}>VEL</span>
@@ -1761,7 +1759,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               />
               <span style={{ fontSize: 10, color: C.text, minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{inputVelocity}</span>
             </div>
-          )}
         </div>
 
         {/* Scrollable body */}
@@ -2087,14 +2084,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             </div>
           )}
 
-          {tab === 'voice' && (
-            <PadVoice
-              quantizeEnabled={quantizeEnabled}
-              quantizeGrid={quantizeGrid}
-              setQuantizeEnabled={setQuantizeEnabled}
-              setQuantizeGrid={setQuantizeGrid}
-            />
-          )}
         </div>
 
         {/* Footer */}
