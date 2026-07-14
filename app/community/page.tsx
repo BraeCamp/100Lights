@@ -20,7 +20,8 @@ export default function CommunityPage() {
   const [hasMore, setHasMore] = useState(false)
   const [page, setPage] = useState(0)
   const [kind, setKind] = useState<Kind>('all')  // ?kind= adopted client-side to avoid a hydration mismatch
-  const [sort, setSort] = useState<'top' | 'new' | 'trending'>('trending')
+  const [sort, setSort] = useState<'top' | 'new' | 'trending' | null>(null)  // null → server's scale mode decides
+  const [pulse, setPulse] = useState<{ items: number; authors: number } | null>(null)
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState<string | null>(null)
   const [author, setAuthor] = useState<string | null>(null)
@@ -36,12 +37,14 @@ export default function CommunityPage() {
   async function load(reset: boolean, pageNum: number) {
     try {
       const r = await listCommunity({
-        kind: kind === 'all' ? undefined : kind, sort,
+        kind: kind === 'all' ? undefined : kind, sort: sort ?? undefined,
         q: query.trim() || undefined, tag: tag ?? undefined, author: author ?? undefined,
         page: pageNum,
       })
       setItems(prev => reset || !prev ? r.items : [...prev, ...r.items])
       setHasMore(r.hasMore)
+      setPulse(r.stats)
+      if (sort === null && (r.sortUsed === 'top' || r.sortUsed === 'new' || r.sortUsed === 'trending')) setSort(r.sortUsed)
       setError(null)
     } catch {
       setError('Could not load the community feed.')
@@ -119,6 +122,11 @@ export default function CommunityPage() {
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 18px' }}>
           Songs, samples, presets, recipes, packs, and project starters from other producers. Listen right here — every card has a public link anyone can open.
+          {pulse && pulse.items > 0 && (
+            <span style={{ display: 'block', marginTop: 4, fontSize: 11.5, color: '#a78bfa' }}>
+              {pulse.items} share{pulse.items !== 1 ? 's' : ''} from {pulse.authors} producer{pulse.authors !== 1 ? 's' : ''} so far.
+            </span>
+          )}
         </p>
 
         {/* Author filter banner */}

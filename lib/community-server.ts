@@ -41,7 +41,19 @@ export async function ensureTables() {
       PRIMARY KEY (item_id, user_id, emoji)
     )
   `
+  // Indexes for the feed's hot paths — cheap at any size, needed at scale
+  await sql`CREATE INDEX IF NOT EXISTS community_items_kind_idx ON community_items (kind, created_at DESC)`
+  await sql`CREATE INDEX IF NOT EXISTS community_items_created_idx ON community_items (created_at DESC)`
+  await sql`CREATE INDEX IF NOT EXISTS community_items_author_idx ON community_items (author_name)`
+  await sql`CREATE INDEX IF NOT EXISTS community_items_user_idx ON community_items (user_id)`
   tablesReady = true
+}
+
+// Per-user write limits applied in 'large' mode. Small communities stay
+// unthrottled — a handful of enthusiastic users IS the community.
+export const LARGE_MODE_LIMITS = {
+  sharesPerDay: 20,
+  actionsPerHour: 240,   // votes + reactions combined
 }
 
 export function devTestUser(req: Request): string | null {

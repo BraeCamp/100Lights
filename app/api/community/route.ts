@@ -1,6 +1,7 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps } from '@/lib/community-server'
+import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, LARGE_MODE_LIMITS } from '@/lib/community-server'
+import { getFlags } from '@/lib/platform-flags'
 
 export const runtime = 'nodejs'
 
@@ -18,7 +19,10 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const kind = url.searchParams.get('kind')
-  const sortParam = url.searchParams.get('sort')
+  const { communityScale } = await getFlags()
+  // No explicit sort → the mode decides: a small community shows everything
+  // newest-first (nothing gets buried); a large one leads with trending.
+  const sortParam = url.searchParams.get('sort') ?? (communityScale === 'large' ? 'trending' : 'new')
   const q = url.searchParams.get('q')?.trim() || null
   const tag = url.searchParams.get('tag')?.trim() || null
   const author = url.searchParams.get('author')?.trim() || null
@@ -51,10 +55,21 @@ export async function GET(req: Request) {
   }
   const { reactions, mine } = await reactionMaps(pageRows.map(r => r.id as string), userId)
 
-  return Response.json({
+  // Community pulse for the feed header — makes a small feed feel alive
+  const statRows = await sql`SELECT COUNT(*)::int AS items, COUNT(DISTINCT author_name)::int AS authors FROM community_items`
+
+  const res = Response.json({
     items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine)),
     hasMore,
+    scale: communityScale,
+    sortUsed: sortParam,
+    stats: { items: statRows[0]?.items ?? 0, authors: statRows[0]?.authors ?? 0 },
   })
+  // At scale, anonymous reads are cacheable at the edge (no per-user data in them)
+  if (communityScale === 'large' && !userId) {
+    res.headers.set('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120')
+  }
+  return res
 }
 
 // POST /api/community — share an item (requires a session)
@@ -76,6 +91,14 @@ export async function POST(req: Request) {
   if (!audioKind && !body.payload) return Response.json({ error: `${kind} requires payload` }, { status: 400 })
   const payloadJson = body.payload ? JSON.stringify(body.payload) : null
   if (payloadJson && payloadJson.length > 900_000) return Response.json({ error: 'payload too large' }, { status: 413 })
+
+  const { communityScale } = await getFlags()
+  if (communityScale === 'large') {
+    const recent = await sql`SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = ${userId} AND created_at > NOW() - INTERVAL '24 hours'`
+    if ((recent[0]?.n ?? 0) >= LARGE_MODE_LIMITS.sharesPerDay) {
+      return Response.json({ error: `Share limit reached (${LARGE_MODE_LIMITS.sharesPerDay}/day) — try again tomorrow` }, { status: 429 })
+    }
+  }
 
   const user = clerkId ? await currentUser() : null
   const authorName = user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId)

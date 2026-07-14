@@ -39,17 +39,25 @@ export interface ListOptions {
   page?: number
 }
 
-export async function listCommunity(opts: ListOptions = {}): Promise<{ items: CommunityItem[]; hasMore: boolean }> {
+export interface ListResult {
+  items: CommunityItem[]
+  hasMore: boolean
+  scale: 'small' | 'large'
+  sortUsed: string
+  stats: { items: number; authors: number }
+}
+
+export async function listCommunity(opts: ListOptions = {}): Promise<ListResult> {
   const qs = new URLSearchParams()
   if (opts.kind) qs.set('kind', opts.kind)
-  qs.set('sort', opts.sort ?? 'top')
+  if (opts.sort) qs.set('sort', opts.sort)  // omitted → the server's scale mode decides
   if (opts.q) qs.set('q', opts.q)
   if (opts.tag) qs.set('tag', opts.tag)
   if (opts.author) qs.set('author', opts.author)
   if (opts.page) qs.set('page', String(opts.page))
   const res = await fetch(`/api/community?${qs}`)
   if (!res.ok) throw new Error(`list failed (${res.status})`)
-  return await res.json() as { items: CommunityItem[]; hasMore: boolean }
+  return await res.json() as ListResult
 }
 
 export async function getCommunityItem(id: string): Promise<CommunityItem | null> {

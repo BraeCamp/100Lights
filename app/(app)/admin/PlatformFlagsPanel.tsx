@@ -62,6 +62,11 @@ export default function PlatformFlagsPanel({ initial }: Props) {
     setSaved(false)
   }
 
+  function setScale(scale: 'small' | 'large') {
+    setFlags(f => ({ ...f, communityScale: scale }))
+    setSaved(false)
+  }
+
   async function save() {
     setSaving(true)
     await fetch('/api/admin/platform-flags', {
@@ -75,6 +80,32 @@ export default function PlatformFlagsPanel({ initial }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Community scale */}
+      <div>
+        <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Community scale</h3>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px', maxWidth: 560, lineHeight: 1.5 }}>
+          How /community behaves. Switch to Large when the feed outgrows a single screen of shares.
+        </p>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {([
+            { key: 'small' as const, label: 'Small community', desc: 'Newest-first feed — every share stays visible. No rate limits. Community pulse shown.' },
+            { key: 'large' as const, label: 'Large community', desc: 'Trending-first feed, per-user limits (20 shares/day, 240 votes+reactions/hour), edge-cached public reads.' },
+          ]).map(opt => {
+            const active = (flags.communityScale ?? 'small') === opt.key
+            return (
+              <button key={opt.key} onClick={() => setScale(opt.key)} style={{
+                textAlign: 'left', width: 260, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                background: active ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)',
+                border: active ? '1px solid rgba(167,139,250,0.6)' : '1px solid var(--border)',
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: active ? '#a78bfa' : 'var(--text-primary)' }}>{opt.label}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.45 }}>{opt.desc}</div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
 
         {/* Modules */}

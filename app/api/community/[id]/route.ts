@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { ensureTables, devTestUser, rowToItem, reactionMaps, REACTION_EMOJI } from '@/lib/community-server'
+import { ensureTables, devTestUser, rowToItem, reactionMaps, REACTION_EMOJI, LARGE_MODE_LIMITS } from '@/lib/community-server'
+import { getFlags } from '@/lib/platform-flags'
 
 export const runtime = 'nodejs'
 
@@ -38,6 +39,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // At scale, votes+reactions are rate limited per user via a sliding-window
+  // action log (the vote/reaction tables themselves carry no timestamps).
+  const { communityScale } = await getFlags()
+  if (communityScale === 'large') {
+    await ensureTables()
+    await sql`
+      CREATE TABLE IF NOT EXISTS community_action_log (
+        user_id TEXT NOT NULL,
+        at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+    const n = await sql`SELECT COUNT(*)::int AS n FROM community_action_log WHERE user_id = ${userId} AND at > NOW() - INTERVAL '1 hour'`
+    if ((n[0]?.n ?? 0) >= LARGE_MODE_LIMITS.actionsPerHour) {
+      return Response.json({ error: 'Slow down — too many actions this hour' }, { status: 429 })
+    }
+    await sql`INSERT INTO community_action_log (user_id) VALUES (${userId})`
+    // Opportunistic cleanup keeps the log tiny
+    if (Math.random() < 0.02) await sql`DELETE FROM community_action_log WHERE at < NOW() - INTERVAL '2 hours'`
+  }
 
   if (body.action === 'vote') {
     // Toggle: one vote per user per item, kept consistent with the count
