@@ -30,7 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = clerkId ?? devTestUser(req)
 
   const { id } = await params
-  let body: { action?: string; emoji?: string }
+  let body: { action?: string; emoji?: string; reason?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
   if (body.action === 'download') {
@@ -73,6 +73,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return Response.json({ votes: rows[0]?.votes ?? 0, votedByMe: true })
   }
 
+  if (body.action === 'report') {
+    await ensureTables()
+    const reason = (body as { reason?: string }).reason?.slice(0, 500) ?? ''
+    await sql`
+      INSERT INTO community_reports (item_id, user_id, reason) VALUES (${id}, ${userId}, ${reason})
+      ON CONFLICT (item_id, user_id) DO UPDATE SET reason = EXCLUDED.reason, created_at = NOW()
+    `
+    return Response.json({ ok: true })
+  }
+
   if (body.action === 'react') {
     if (!body.emoji || !REACTION_EMOJI.includes(body.emoji)) return Response.json({ error: 'Unknown emoji' }, { status: 400 })
     await ensureTables()
@@ -104,5 +114,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (rows.length === 0) return Response.json({ error: 'Not found or not yours' }, { status: 404 })
   await sql`DELETE FROM community_votes WHERE item_id = ${id}`
   await sql`DELETE FROM community_reactions WHERE item_id = ${id}`
+  await sql`DELETE FROM community_reports WHERE item_id = ${id}`
   return Response.json({ ok: true })
 }

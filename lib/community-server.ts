@@ -23,9 +23,17 @@ export async function ensureTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
-  // Older tables carry a narrower kind constraint — rebuild it
-  await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
-  await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project'))`
+  // Older tables carry a narrower kind constraint — rebuild it only when it
+  // actually differs, and tolerate the race where two requests migrate at
+  // once (page render + generateMetadata run ensureTables in parallel).
+  try {
+    const con = await sql`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'community_items_kind_check'`
+    const def = (con[0]?.def as string | undefined) ?? ''
+    if (!COMMUNITY_KINDS.every(k => def.includes(`'${k}'`))) {
+      await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
+      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project'))`
+    }
+  } catch { /* concurrent migration won the race — constraint is in place */ }
   await sql`
     CREATE TABLE IF NOT EXISTS community_votes (
       item_id UUID NOT NULL,
@@ -39,6 +47,16 @@ export async function ensureTables() {
       user_id TEXT NOT NULL,
       emoji TEXT NOT NULL,
       PRIMARY KEY (item_id, user_id, emoji)
+    )
+  `
+  await sql`
+    CREATE TABLE IF NOT EXISTS community_reports (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      item_id UUID NOT NULL,
+      user_id TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (item_id, user_id)
     )
   `
   // Indexes for the feed's hot paths — cheap at any size, needed at scale

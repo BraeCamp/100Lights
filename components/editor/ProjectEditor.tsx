@@ -23,6 +23,7 @@ import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
 import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
 import type { DawProject } from '@/lib/daw-types'
+import { SmallScreenGate } from './SmallScreenGate'
 import type { AudioTrack } from './AudioEditor'
 
 // ── All editors are lazy. None load until their module is active. ─────────
@@ -592,6 +593,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   if (hasVideo) {
     return (
       <>
+        <SmallScreenGate />
         <VideoEditor
           projectId={projectId}
           projectName={localName}
@@ -623,7 +625,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       <>
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ flex: '0 0 55%', overflow: 'hidden' }}>
-            {starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}
+            <><SmallScreenGate />{starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}</>
           </div>
           <div style={{ flex: '0 0 45%', overflow: 'hidden', borderTop: '1px solid var(--border)' }}>
             <TranscriptEditor {...transcriptProps} hideHeader currentTime={currentTime} />
@@ -638,7 +640,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
   if (hasAudio)      return (
     <>
-      {starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}
+      <><SmallScreenGate />{starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}</>
       {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
     </>
   )

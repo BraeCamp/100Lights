@@ -39,6 +39,48 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid signature' }, { status: 400 })
   }
 
+  // Account deletion: remove everything the user owns. R2 objects are keyed
+  // under their userId prefix; a lifecycle rule or batch sweep can reclaim
+  // them later — the database references disappear now, which is what makes
+  // the data unreachable.
+  if (event.type === 'user.deleted') {
+    const userId = (event.data as { id?: string })?.id
+    if (!userId) return Response.json({ received: true })
+    try {
+      // Cancel any live Stripe subscription so they aren't billed post-deletion
+      const subRows = await sql`SELECT stripe_sub_id FROM subscriptions WHERE user_id = ${userId}`
+      const subId = subRows[0]?.stripe_sub_id as string | null
+      if (subId) {
+        try { await stripe.subscriptions.cancel(subId) } catch { /* already gone */ }
+      }
+      const owned = await sql`SELECT id FROM projects WHERE user_id = ${userId}`
+      const projectIds = owned.map(r => r.id as string)
+      if (projectIds.length > 0) {
+        await sql`DELETE FROM project_members WHERE project_id = ANY(${projectIds}::uuid[])`
+      }
+      await sql`DELETE FROM projects WHERE user_id = ${userId}`
+      const items = await sql`SELECT id FROM community_items WHERE user_id = ${userId}`
+      const itemIds = items.map(r => r.id as string)
+      if (itemIds.length > 0) {
+        await sql`DELETE FROM community_votes WHERE item_id = ANY(${itemIds}::uuid[])`
+        await sql`DELETE FROM community_reactions WHERE item_id = ANY(${itemIds}::uuid[])`
+        await sql`DELETE FROM community_reports WHERE item_id = ANY(${itemIds}::uuid[])`
+      }
+      await sql`DELETE FROM community_items WHERE user_id = ${userId}`
+      await sql`DELETE FROM community_votes WHERE user_id = ${userId}`
+      await sql`DELETE FROM community_reactions WHERE user_id = ${userId}`
+      await sql`DELETE FROM community_reports WHERE user_id = ${userId}`
+      await sql`DELETE FROM feedback WHERE user_id = ${userId}`
+      await sql`DELETE FROM upload_log WHERE user_id = ${userId}`
+      await sql`DELETE FROM subscriptions WHERE user_id = ${userId}`
+      try { await sql`DELETE FROM usage WHERE user_id = ${userId}` } catch { /* table optional */ }
+    } catch (err) {
+      console.error('user.deleted cleanup failed:', err)
+      return Response.json({ error: 'Cleanup failed' }, { status: 500 })  // Clerk retries
+    }
+    return Response.json({ received: true })
+  }
+
   if (event.type !== 'user.created') {
     return Response.json({ received: true })
   }

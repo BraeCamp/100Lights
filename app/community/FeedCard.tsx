@@ -6,7 +6,7 @@
 // sign-in prompts instead of failing.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink } from 'lucide-react'
+import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag } from 'lucide-react'
 import { toggleReaction, type CommunityItem } from '@/lib/community'
 import { renderSpecToBuffer } from '@/lib/default-samples'
 import type { RenderSpec } from '@/lib/sound-library'
@@ -260,6 +260,28 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
           display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 999, cursor: 'pointer',
           background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
         }}><Link2 size={12} /></button>
+
+        {!item.mine && (
+          <button
+            onClick={async () => {
+              if (!signedIn) { window.location.assign('/sign-in'); return }
+              const reason = window.prompt('Report this to the moderators?\n\nOptional: what\u2019s wrong with it (stolen sample, offensive, spam…)')
+              if (reason === null) return
+              try {
+                await fetch(`/api/community/${item.id}`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'report', reason }),
+                })
+                onToast('Reported — a moderator will take a look.')
+              } catch { onToast('Report failed') }
+            }}
+            title="Report to moderators" aria-label="Report to moderators"
+            style={{
+              display: 'flex', alignItems: 'center', padding: '5px 9px', borderRadius: 999, cursor: 'pointer',
+              background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
+            }}
+          ><Flag size={11} /></button>
+        )}
 
         <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
           {item.downloads} {item.kind === 'song' ? 'download' : 'import'}{item.downloads !== 1 ? 's' : ''}

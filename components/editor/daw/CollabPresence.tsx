@@ -24,6 +24,23 @@ import type { DawProject } from '@/lib/daw-types'
 
 const SYNC_WINDOW_MS = 8000        // joiner accepts SYNC_STATE this long after mount
 const SYNC_MAX_BYTES = 900_000     // stay under the broadcast payload limit
+const FP_INTERVAL_MS = 20_000      // divergence check cadence
+const FP_QUIET_MS    = 5_000       // only compare fingerprints when nobody is mid-edit
+
+// Cheap structural fingerprint: enough to notice a dropped broadcast (missing
+// clip, wrong note count, moved clip) without hashing every byte.
+function projectFingerprint(p: DawProject): string {
+  let h = 5381
+  const mix = (s: string) => { for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0 }
+  mix(String(p.tracks.length))
+  for (const t of p.tracks) mix(t.id)
+  mix(String(p.arrangementClips.length))
+  for (const c of p.arrangementClips) {
+    mix(`${c.id}:${c.startBeat}:${c.durationBeats}:${'notes' in c ? (c as { notes: unknown[] }).notes.length : 'a'}`)
+  }
+  mix(String((p.clipEffects ?? []).length))
+  return h.toString(36)
+}
 
 interface BridgeProps {
   broadcastRef: React.MutableRefObject<((action: DawAction) => void) | null>
@@ -46,13 +63,33 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef, projectRe
   const awaitingSyncUntil = useRef<number>(0)
   useEffect(() => { awaitingSyncUntil.current = Date.now() + SYNC_WINDOW_MS }, [])
 
+  // Self-healing: broadcasts are lossy — a dropped packet silently diverges a
+  // client until reload. Peers exchange cheap state fingerprints during quiet
+  // moments; a client that disagrees twice in a row re-requests the state.
+  const lastActivityRef = useRef(0)
+  const fpMismatchesRef = useRef(new Map<number, number>())
+
   useEffect(() => {
     broadcastRef.current = (action: DawAction) => {
+      lastActivityRef.current = Date.now()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       broadcast({ type: 'ACTION', action } as any)
     }
     return () => { broadcastRef.current = null }
   }, [broadcast, broadcastRef])
+
+  useEffect(() => {
+    const jitter = Math.random() * 4000
+    const iv = setInterval(() => {
+      if (selfIdRef.current === null) return
+      if (otherIdsRef.current.length === 0) return
+      if (Date.now() - lastActivityRef.current < FP_QUIET_MS) return
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      broadcast({ type: 'STATE_FP', from: selfIdRef.current, fp: projectFingerprint(projectRef.current) } as any)
+    }, FP_INTERVAL_MS + jitter)
+    return () => clearInterval(iv)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Announce ourselves so an existing peer can send the live state.
   // Delay slightly so our connectionId and the peer list have settled.
@@ -69,9 +106,41 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef, projectRe
     const e = event as { type?: string; action?: DawAction; requesterId?: number; to?: number; project?: DawProject }
 
     if (e.type === 'ACTION' && e.action) {
+      lastActivityRef.current = Date.now()
+      // Dev-only fault injection so divergence recovery is testable:
+      // set window.__collabDropNextAction = true and the next remote action
+      // is silently discarded, exactly like a dropped packet.
+      if (process.env.NODE_ENV !== 'production' && (window as unknown as { __collabDropNextAction?: boolean }).__collabDropNextAction) {
+        ;(window as unknown as { __collabDropNextAction?: boolean }).__collabDropNextAction = false
+        return
+      }
       isRemoteRef.current = true
       rawDispatch(e.action)
       isRemoteRef.current = false
+      return
+    }
+
+    if (e.type === 'STATE_FP' && typeof (e as { from?: number }).from === 'number') {
+      const from = (e as { from: number }).from
+      const theirFp = (e as { fp?: string }).fp
+      const me = selfIdRef.current
+      if (me === null || from === me) return
+      if (Date.now() - lastActivityRef.current < FP_QUIET_MS) return
+      const mine = projectFingerprint(projectRef.current)
+      if (mine === theirFp) {
+        fpMismatchesRef.current.delete(from)
+        return
+      }
+      const misses = (fpMismatchesRef.current.get(from) ?? 0) + 1
+      fpMismatchesRef.current.set(from, misses)
+      // Two consecutive disagreements with a senior peer → we resync from the
+      // room's authority (lowest connectionId answers SYNC_REQUEST).
+      if (misses >= 2 && me > from) {
+        fpMismatchesRef.current.delete(from)
+        awaitingSyncUntil.current = Date.now() + SYNC_WINDOW_MS
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        broadcast({ type: 'SYNC_REQUEST', requesterId: me } as any)
+      }
       return
     }
 
