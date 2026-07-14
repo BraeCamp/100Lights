@@ -23,6 +23,5 @@ export async function GET() {
 
   return Response.json({
     plan: sub.plan,
-    transcriptions: { used: getCount('transcribe'), limit: limits.transcriptionsPerMonth },
   })
 }

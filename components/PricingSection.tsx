@@ -10,14 +10,13 @@ const FREE_FEATURES = [
   'Full audio editor (DAW) — free forever',
   '500 MB storage — your first few songs',
   '5 projects',
-  '3 transcriptions / month',
 ]
 
 const PRO_FEATURES = [
   'Every editor included — audio + video',
   '20 GB storage — multitrack sessions, stems, video',
   'Unlimited projects',
-  '30 transcriptions / month',
+  'Edit shared projects with collaborators',
   'Priority support',
 ]
 

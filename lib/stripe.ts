@@ -5,8 +5,8 @@ export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '
 // App-side limits per plan. Update here when limits change.
 // Stripe owns the price/product; this file owns the feature gates.
 export const PLAN_LIMITS = {
-  free: { transcriptionsPerMonth: 3,  storageMb: 500,   projectsMax: 5 },
-  pro:  { transcriptionsPerMonth: 30, storageMb: 20480, projectsMax: Infinity },
+  free: { storageMb: 500,   projectsMax: 5 },
+  pro:  { storageMb: 20480, projectsMax: Infinity },
 } as const
 
 // Legacy alias used by subscription.ts — keeps existing callers working

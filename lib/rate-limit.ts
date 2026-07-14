@@ -1,5 +1,4 @@
 import { sql } from '@/lib/db'
-import { getSubscription, getPlanLimits } from '@/lib/subscription'
 
 interface RateLimitResult {
   allowed: boolean
@@ -12,10 +11,9 @@ export async function checkRateLimit(
   action: 'transcribe',
   _legacyLimit?: number,
 ): Promise<RateLimitResult> {
-  const sub = await getSubscription(userId)
-  const limits = getPlanLimits(sub.plan)
-
-  const limitPerMonth = limits.transcriptionsPerMonth
+  // Transcription is no longer a marketed plan feature; the caption
+  // generator keeps a flat internal cap purely as abuse protection.
+  const limitPerMonth = 30
 
   const now = new Date()
   const resetAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
