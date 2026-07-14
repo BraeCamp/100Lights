@@ -176,6 +176,27 @@ export class DawEngine extends EventTarget {
     this.masterGain.connect(this.masterAnalyser)
 
     this._buildMetronomeBuffers()
+
+    // Only one window plays at a time (Spotify semantics). Community links
+    // open the studio in new tabs, so it's easy to end up with a forgotten
+    // tab still looping a project — audible, duplicated, and unpausable from
+    // the window you're looking at. When any engine starts, every other
+    // engine that's sounding stops itself.
+    try {
+      this._exclusiveChan = new BroadcastChannel('100lights-transport')
+      this._exclusiveChan.onmessage = (e: MessageEvent<{ type: string; id: string }>) => {
+        if (e.data?.type === 'playing' && e.data.id !== this._engineId) {
+          if (this.isPlaying) this.stop()
+          else this._stopAllSessionSlots()
+        }
+      }
+    } catch { /* BroadcastChannel unavailable (tests) */ }
+  }
+
+  private _engineId = crypto.randomUUID()
+  private _exclusiveChan: BroadcastChannel | null = null
+  private _announcePlayback() {
+    try { this._exclusiveChan?.postMessage({ type: 'playing', id: this._engineId }) } catch { /* ok */ }
   }
 
   // ── Track routing ──────────────────────────────────────────────────────────
@@ -578,6 +599,7 @@ export class DawEngine extends EventTarget {
     this._noteKeyVersion++; this._scheduledNoteKeys.clear()
     this._startScheduler()
     this.startJamBuffer()
+    this._announcePlayback()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: true, beat: this._startBeat } }))
   }
 
@@ -772,6 +794,7 @@ export class DawEngine extends EventTarget {
       this._sessionClockRunning      = true
       launchCtxTime                  = this.ctx.currentTime
     }
+    this._announcePlayback()
 
     this._sessionQueue.set(trackId, { clip, launchCtxTime })
     this._ensureSessionTicker()
@@ -2294,6 +2317,7 @@ export class DawEngine extends EventTarget {
     this.setMetronome(false)
     void this.stopRecording()
     this.stopJamBuffer()
+    try { this._exclusiveChan?.close() } catch { /* ok */ }
     this.ctx.close()
   }
 }
