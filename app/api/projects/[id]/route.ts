@@ -29,19 +29,32 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!userId && !testUser) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  // Invite-by-link collaboration: any signed-in user who has the project URL
-  // may READ it (ids are unguessable UUIDs). Writes stay owner-only.
+  // Access model: owner always; otherwise the project must be public or the
+  // user's email must be on the member list. Paid viewers get edit rights.
+  // DEV_OPEN test users keep read access for the collab harness.
   const rows = await sql`
     SELECT user_id, data, autosave_data FROM projects WHERE id = ${id} AND deleted_at IS NULL
   `
 
   if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
 
-  const isOwner = userId !== null && rows[0].user_id === userId
   const data = rows[0].data as CfProjFile
 
+  let access: 'owner' | 'edit' | 'view' | null
+  if (testUser && !userId) {
+    access = 'edit'  // harness collaborators
+  } else {
+    const { getProjectAccess } = await import('@/lib/project-access')
+    const user = userId ? await (await import('@clerk/nextjs/server')).currentUser() : null
+    const r = await getProjectAccess(id, userId, user?.emailAddresses?.[0]?.emailAddress ?? null)
+    access = r.access
+  }
+  if (!access) return Response.json({ error: 'Project not found' }, { status: 404 })
+
+  const isOwner = access === 'owner'
+
   // Collaborators get the saved project but never the owner's autosave recovery
-  if (!isOwner) return Response.json({ ...data, _isOwner: false })
+  if (!isOwner) return Response.json({ ...data, _isOwner: false, _access: access })
 
   const autosaveData = rows[0].autosave_data as CfProjFile | null
 

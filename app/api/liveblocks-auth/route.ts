@@ -35,7 +35,19 @@ export async function POST(request: Request) {
     },
   })
 
-  session.allow(room, session.FULL_ACCESS)
+  // Room-scoped access: owners and paid members edit, others read,
+  // strangers are rejected. Test users keep full access for the harness.
+  const projectId = room.startsWith('project-') ? room.slice('project-'.length) : null
+  if (testUser && !userId) {
+    session.allow(room, session.FULL_ACCESS)
+  } else if (projectId) {
+    const { getProjectAccess } = await import('@/lib/project-access')
+    const { access } = await getProjectAccess(projectId, userId, user?.emailAddresses?.[0]?.emailAddress ?? null)
+    if (!access) return new Response('Forbidden', { status: 403 })
+    session.allow(room, access === 'view' ? session.READ_ACCESS : session.FULL_ACCESS)
+  } else {
+    session.allow(room, session.FULL_ACCESS)
+  }
   const { body: token, status } = await session.authorize()
   return new Response(token, { status })
 }

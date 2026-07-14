@@ -502,6 +502,18 @@ export class DawEngine extends EventTarget {
 
   async loadClipBuffer(clip: AudioClip): Promise<AudioBuffer | null> {
     if (this.bufferCache.has(clip.id)) return this.bufferCache.get(clip.id)!
+    // Concurrent callers (pre-warm + scheduler + UI) share one in-flight load —
+    // returning null to the second caller while the first is mid-fetch made
+    // audio look undecodable.
+    const inFlight = this._loadInFlight.get(clip.id)
+    if (inFlight) return inFlight
+    const p = this._loadClipBufferInner(clip).finally(() => { this._loadInFlight.delete(clip.id) })
+    this._loadInFlight.set(clip.id, p)
+    return p
+  }
+  private _loadInFlight = new Map<string, Promise<AudioBuffer | null>>()
+
+  private async _loadClipBufferInner(clip: AudioClip): Promise<AudioBuffer | null> {
     // Try the local URL first (blob: for fresh recordings, signed URL for
     // imports). A collaborator receives clips whose blob: URLs belong to
     // another browser — those fail, and we fall back to the clip's r2Key.
@@ -521,8 +533,7 @@ export class DawEngine extends EventTarget {
       const buf = await tryUrl(clip.audioUrl)
       if (buf) return buf
     }
-    if (clip.r2Key && !this._r2Resolving.has(clip.id)) {
-      this._r2Resolving.add(clip.id)
+    if (clip.r2Key) {
       try {
         const res = await fetch(`/api/media/signed-url?key=${encodeURIComponent(clip.r2Key)}`)
         if (res.ok) {
@@ -530,7 +541,6 @@ export class DawEngine extends EventTarget {
           return await tryUrl(url)
         }
       } catch { /* fall through */ }
-      finally { this._r2Resolving.delete(clip.id) }
     }
     // Sound-library fallback: pad bounces carry the source entry's id, and
     // older saves can often be rescued from the clip name ("Pad – Folder –
@@ -570,7 +580,6 @@ export class DawEngine extends EventTarget {
     } catch { /* library unavailable (SSR/tests) */ }
     return null
   }
-  private _r2Resolving = new Set<string>()
 
   evictBuffer(clipId: string) { this.bufferCache.delete(clipId) }
 
