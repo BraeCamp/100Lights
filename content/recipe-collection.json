@@ -1,0 +1,2025 @@
+{
+ "id": "83804dcf-3deb-42c7-8437-70f3a2004ad3",
+ "key": 0,
+ "name": "Recipe Collection",
+ "scale": "major",
+ "swing": 0,
+ "tempo": 120,
+ "scenes": [
+  {
+   "id": "7f348beb-f3b4-402e-baea-608259d6b230",
+   "name": "Scene 1"
+  },
+  {
+   "id": "005b84f8-6d81-4b95-a7b9-f7f1bd20b8d3",
+   "name": "Scene 2"
+  },
+  {
+   "id": "fa856a70-ec44-417a-b1ea-5621d975a475",
+   "name": "Scene 3"
+  },
+  {
+   "id": "37f3ea36-7b47-4b3a-9237-7803b8bc5d08",
+   "name": "Scene 4"
+  },
+  {
+   "id": "8cc28012-0739-4185-8c12-75915224e8ae",
+   "name": "Scene 5"
+  },
+  {
+   "id": "763e94a9-f09e-4cfb-904c-340a5b8959f6",
+   "name": "Scene 6"
+  },
+  {
+   "id": "a427adc1-9662-453d-9129-dab8ac18f10f",
+   "name": "Scene 7"
+  },
+  {
+   "id": "213a1ba6-09af-4a0b-9c42-8279cdccbd49",
+   "name": "Scene 8"
+  }
+ ],
+ "tracks": [
+  {
+   "id": "8b179e02-60d3-404e-9d36-b94068b044d8",
+   "pan": 0,
+   "mute": false,
+   "name": "Moonlight broken minor",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#8b5cf6",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "84e975d4-126e-4c06-87b0-509d967a4423",
+   "pan": 0,
+   "mute": false,
+   "name": "Gospel amen turn",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#3b82f6",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "adf755db-8ee1-4b96-b49c-e10d15b59e98",
+   "pan": 0,
+   "mute": false,
+   "name": "Phrygian low riff",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#ef4444",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "7370fab2-03a5-46c1-bd16-47acf2684c98",
+   "pan": 0,
+   "mute": false,
+   "name": "Pedal-point lift",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#f59e0b",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "c6397f51-d696-42d6-a334-ba1b6f8585ab",
+   "pan": 0,
+   "mute": false,
+   "name": "Bossa nova comp",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#10b981",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "6b7667fc-6bd8-49bc-8ae2-29388619cfcb",
+   "pan": 0,
+   "mute": false,
+   "name": "Trap minor cascade",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#ec4899",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "ae05e441-a601-4104-9dd5-6243fa0d98f8",
+   "pan": 0,
+   "mute": false,
+   "name": "Quartal rise",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#22d3ee",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "63315e27-da6f-4ad1-94bb-7b9bb8356ed0",
+   "pan": 0,
+   "mute": false,
+   "name": "Blues turnaround lick",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#f97316",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "4a5cbf7f-edf9-477b-83aa-372c86683a11",
+   "pan": 0,
+   "mute": false,
+   "name": "Minor waltz",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#a3e635",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  },
+  {
+   "id": "86813a48-c9be-4db0-930a-338f87624532",
+   "pan": 0,
+   "mute": false,
+   "name": "Pentatonic cascade",
+   "solo": false,
+   "type": "audio",
+   "armed": false,
+   "color": "#e879f9",
+   "height": 64,
+   "volume": 0.8,
+   "effects": [],
+   "instrument": {
+    "type": "none",
+    "params": {}
+   },
+   "inputSource": null
+  }
+ ],
+ "loopEnd": 164,
+ "loopStart": 0,
+ "takeLanes": [],
+ "cueMarkers": [],
+ "clipEffects": [],
+ "loopEnabled": false,
+ "sessionGrid": {},
+ "masterVolume": 0.85,
+ "returnTracks": [],
+ "waveformZoom": 1,
+ "automationLanes": [],
+ "crossfaderValue": 0.5,
+ "arrangementClips": [
+  {
+   "kind": "midi",
+   "id": "fab60b55-c9ff-4d7c-a7f4-1bb68a7191f5",
+   "trackId": "8b179e02-60d3-404e-9d36-b94068b044d8",
+   "name": "Moonlight broken minor",
+   "startBeat": 0,
+   "durationBeats": 16,
+   "notes": [
+    {
+     "id": "fb14ed4b-a413-4291-8324-7afcb9ff8694",
+     "pitch": 48,
+     "startBeat": 0,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "a0e2969c-3605-445d-ae1a-169ed3a0425c",
+     "pitch": 55,
+     "startBeat": 0.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "6556e0b3-66ff-4b98-9207-fc34e1cc5ba0",
+     "pitch": 60,
+     "startBeat": 1,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "0c7ddccc-b829-45c1-8c00-fb37612817b2",
+     "pitch": 63,
+     "startBeat": 1.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "a6eb5438-70b6-42a9-8f1c-1ad6c0b58de4",
+     "pitch": 48,
+     "startBeat": 2,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "ede135d5-30a3-4636-ae26-76f0a67d9bfb",
+     "pitch": 55,
+     "startBeat": 2.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "f7f4174c-f6f0-48fb-bef5-a4a1f860b834",
+     "pitch": 60,
+     "startBeat": 3,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "2af7650e-e630-4df3-a392-24092fb65fc9",
+     "pitch": 63,
+     "startBeat": 3.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "8301425f-3be0-4cd4-b5df-33557a8512d5",
+     "pitch": 44,
+     "startBeat": 4,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "a821eb16-b7b4-4b83-9755-d6cd921450c9",
+     "pitch": 51,
+     "startBeat": 4.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "7fa9d5b9-f7cf-46dc-8fa5-6007fcd95b29",
+     "pitch": 56,
+     "startBeat": 5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "0ebec254-dbcb-4c30-a800-293db23e3f44",
+     "pitch": 60,
+     "startBeat": 5.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "68870c56-8fe4-44a8-b6fa-186602f10681",
+     "pitch": 44,
+     "startBeat": 6,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "cf4c2f49-6613-4cdd-a52d-1a3316f7acee",
+     "pitch": 51,
+     "startBeat": 6.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "b3984523-0152-4461-a362-a93423aa841f",
+     "pitch": 56,
+     "startBeat": 7,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "33895560-4f87-4f18-b03d-6337ea40d373",
+     "pitch": 60,
+     "startBeat": 7.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "ebddf2c9-f036-4fd2-852f-3b003f3b43ff",
+     "pitch": 41,
+     "startBeat": 8,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "cc617deb-8a24-48e8-a51f-bf67b2023b43",
+     "pitch": 48,
+     "startBeat": 8.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "5e2f5d47-a062-4c81-94c0-0e4ffa5ea509",
+     "pitch": 53,
+     "startBeat": 9,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "1575a0ef-67ec-4bc7-b9c0-78890b610719",
+     "pitch": 56,
+     "startBeat": 9.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "4b4d75cc-7ada-48ab-8eba-9cb43c8d5e37",
+     "pitch": 41,
+     "startBeat": 10,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "7956b5a6-81d1-4697-91f3-5466262cf020",
+     "pitch": 48,
+     "startBeat": 10.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "e7088d70-69b5-414a-8d65-eb643ba25222",
+     "pitch": 53,
+     "startBeat": 11,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "1e301b86-e221-4862-9fac-a0ba4b6622f9",
+     "pitch": 56,
+     "startBeat": 11.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "13e918b0-43b0-4f20-9561-cbedf95416df",
+     "pitch": 43,
+     "startBeat": 12,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "a12fd1a7-2da5-4e6c-aaa7-ec34c007c77a",
+     "pitch": 50,
+     "startBeat": 12.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "883293ed-660d-44ba-9114-a6899ee7434c",
+     "pitch": 55,
+     "startBeat": 13,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "32d1c783-f60b-44be-bac4-d4dd81f1aa51",
+     "pitch": 59,
+     "startBeat": 13.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "71397573-c553-4070-a5f6-09dfd3c48530",
+     "pitch": 43,
+     "startBeat": 14,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "c9b0ad70-6530-49fa-a8eb-0a01c2e960e6",
+     "pitch": 50,
+     "startBeat": 14.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "f9657929-9c88-45e4-a6b5-f5c205faee99",
+     "pitch": 55,
+     "startBeat": 15,
+     "durationBeats": 0.5,
+     "velocity": 74
+    },
+    {
+     "id": "b1befc06-03af-45e7-9887-0af44f7b4389",
+     "pitch": 59,
+     "startBeat": 15.5,
+     "durationBeats": 0.5,
+     "velocity": 74
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "ca592778-34e4-4ae5-a2b7-d336f3a0a1f6",
+   "trackId": "84e975d4-126e-4c06-87b0-509d967a4423",
+   "name": "Gospel amen turn",
+   "startBeat": 20,
+   "durationBeats": 16,
+   "notes": [
+    {
+     "id": "d0fb508d-0739-4b5f-ba92-d50bb22a8fbf",
+     "pitch": 41,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "94029c17-2de3-4e5b-8147-4bd91b83809a",
+     "pitch": 53,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "13780f20-bb37-4b40-acb3-369ffdf2c7d1",
+     "pitch": 57,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "27241ae7-3a70-405e-b035-5bff7da19de8",
+     "pitch": 60,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "feb98b41-7538-4d2f-a532-628ad8894816",
+     "pitch": 65,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "0161156b-cdc6-4c4a-ad80-1b64d23f8018",
+     "pitch": 41,
+     "startBeat": 4,
+     "durationBeats": 2,
+     "velocity": 88
+    },
+    {
+     "id": "0b527082-0ca2-4be7-894f-95249c811b4a",
+     "pitch": 53,
+     "startBeat": 4,
+     "durationBeats": 2,
+     "velocity": 88
+    },
+    {
+     "id": "851fdef6-f919-4e8d-a5dc-a0322172ab6f",
+     "pitch": 56,
+     "startBeat": 4,
+     "durationBeats": 2,
+     "velocity": 88
+    },
+    {
+     "id": "4ed1563e-1e0d-461f-bd6b-539d3c0b1336",
+     "pitch": 60,
+     "startBeat": 4,
+     "durationBeats": 2,
+     "velocity": 88
+    },
+    {
+     "id": "ddfbf0c2-23f8-4c1e-92f6-51c4ee21f23a",
+     "pitch": 65,
+     "startBeat": 4,
+     "durationBeats": 2,
+     "velocity": 88
+    },
+    {
+     "id": "7d91cee9-37fe-403e-8390-a37db469dd82",
+     "pitch": 43,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 84
+    },
+    {
+     "id": "fb229c28-bea5-4c27-945f-ee279882bf97",
+     "pitch": 52,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 84
+    },
+    {
+     "id": "e97b6c9c-abf9-4892-8d2a-37a9828fcda1",
+     "pitch": 55,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 84
+    },
+    {
+     "id": "3026781d-bf26-403a-8f4a-0b36623c4c61",
+     "pitch": 60,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 84
+    },
+    {
+     "id": "b8f457e3-981a-4df8-9b7d-3ed2fffd8520",
+     "pitch": 64,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 84
+    },
+    {
+     "id": "2881cd63-cb14-4e7a-995f-9dc4cc8bd68b",
+     "pitch": 36,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "b659b036-c68c-470f-ad7f-e0641e208315",
+     "pitch": 52,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "b499d445-0c63-419f-a612-47cf8075a9fb",
+     "pitch": 55,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "762f2048-1b75-4a4c-9997-f2e983b13c0a",
+     "pitch": 60,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "f5a9b016-f7ac-4472-ae8e-f4ae1bfb1ee8",
+     "pitch": 64,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 96
+    },
+    {
+     "id": "324118ba-9575-460f-a9ab-d608cb45eb2d",
+     "pitch": 45,
+     "startBeat": 12,
+     "durationBeats": 2,
+     "velocity": 78
+    },
+    {
+     "id": "347db6b0-29fa-405a-96cb-b22a85bcc127",
+     "pitch": 53,
+     "startBeat": 12,
+     "durationBeats": 2,
+     "velocity": 78
+    },
+    {
+     "id": "cbffb537-7776-42c4-856e-6e8603ff0df1",
+     "pitch": 57,
+     "startBeat": 12,
+     "durationBeats": 2,
+     "velocity": 78
+    },
+    {
+     "id": "62c52b3f-da7e-4f1a-942f-6b1dcc6e848f",
+     "pitch": 60,
+     "startBeat": 12,
+     "durationBeats": 2,
+     "velocity": 78
+    },
+    {
+     "id": "059828b3-c1a2-487d-88da-1da1fb9893ff",
+     "pitch": 36,
+     "startBeat": 14,
+     "durationBeats": 2,
+     "velocity": 90
+    },
+    {
+     "id": "ebd6c0ca-5dee-49a2-94a6-e09d29b41063",
+     "pitch": 48,
+     "startBeat": 14,
+     "durationBeats": 2,
+     "velocity": 90
+    },
+    {
+     "id": "2ceeb1f4-1e61-4088-bb56-a0733098c04a",
+     "pitch": 55,
+     "startBeat": 14,
+     "durationBeats": 2,
+     "velocity": 90
+    },
+    {
+     "id": "59f23b92-9082-4420-945b-bda7055ef596",
+     "pitch": 60,
+     "startBeat": 14,
+     "durationBeats": 2,
+     "velocity": 90
+    },
+    {
+     "id": "794a8e00-1864-4d81-96b7-bbcc02c45ccc",
+     "pitch": 64,
+     "startBeat": 14,
+     "durationBeats": 2,
+     "velocity": 90
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "cb47b4a7-eedd-484a-8cff-a36e35d2cd84",
+   "trackId": "adf755db-8ee1-4b96-b49c-e10d15b59e98",
+   "name": "Phrygian low riff",
+   "startBeat": 40,
+   "durationBeats": 8,
+   "notes": [
+    {
+     "id": "f54a1a38-f8cc-4907-881a-faef1672e952",
+     "pitch": 36,
+     "startBeat": 0,
+     "durationBeats": 0.5,
+     "velocity": 110
+    },
+    {
+     "id": "ff2ac131-8ce3-41d3-bd70-d171d127ca57",
+     "pitch": 36,
+     "startBeat": 0.5,
+     "durationBeats": 0.5,
+     "velocity": 70
+    },
+    {
+     "id": "778b4ea6-5f13-4dec-8d52-596fbb4ee6c3",
+     "pitch": 37,
+     "startBeat": 1,
+     "durationBeats": 0.5,
+     "velocity": 96
+    },
+    {
+     "id": "27dc6c2b-92b5-4da9-a7a9-418897a2d0e3",
+     "pitch": 36,
+     "startBeat": 1.5,
+     "durationBeats": 0.5,
+     "velocity": 70
+    },
+    {
+     "id": "2a4a8f97-cf0d-4247-bc96-1cb3e15e77f5",
+     "pitch": 39,
+     "startBeat": 2,
+     "durationBeats": 0.5,
+     "velocity": 100
+    },
+    {
+     "id": "8e927b64-7818-4581-8041-9f8a4d346c54",
+     "pitch": 37,
+     "startBeat": 2.5,
+     "durationBeats": 0.5,
+     "velocity": 76
+    },
+    {
+     "id": "35e2b37f-3519-4d0b-a69b-54af1feb1127",
+     "pitch": 36,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 104
+    },
+    {
+     "id": "3e8311d2-2e3d-4759-a340-8722b8d6d93b",
+     "pitch": 34,
+     "startBeat": 4,
+     "durationBeats": 0.5,
+     "velocity": 96
+    },
+    {
+     "id": "a347dd56-bbdd-43bf-a407-c935cc222b11",
+     "pitch": 36,
+     "startBeat": 4.5,
+     "durationBeats": 0.5,
+     "velocity": 76
+    },
+    {
+     "id": "25aee2c0-018e-425d-b92f-042a1cb9d6b1",
+     "pitch": 37,
+     "startBeat": 5,
+     "durationBeats": 1,
+     "velocity": 100
+    },
+    {
+     "id": "2807716c-c829-4ac0-bc29-81aa02cc6699",
+     "pitch": 36,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 108
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "bdeb5245-e60b-43f3-96c9-18a16766f761",
+   "trackId": "7370fab2-03a5-46c1-bd16-47acf2684c98",
+   "name": "Pedal-point lift",
+   "startBeat": 52,
+   "durationBeats": 16,
+   "notes": [
+    {
+     "id": "cbd8c331-c47a-4406-ba54-08db03ae2a31",
+     "pitch": 36,
+     "startBeat": 0,
+     "durationBeats": 16,
+     "velocity": 88
+    },
+    {
+     "id": "08ee21e3-2b25-427a-bfe3-07300dbe5037",
+     "pitch": 60,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "f0afe143-7247-4ced-b2e3-564079f084bc",
+     "pitch": 64,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "69a7d6d0-a44e-4d7e-b120-07594ceafa15",
+     "pitch": 67,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "765b4d2d-a87a-4160-9450-83f6a7713e8a",
+     "pitch": 60,
+     "startBeat": 4,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "106497dc-7963-49f1-962e-cd1bcbf38052",
+     "pitch": 65,
+     "startBeat": 4,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "9e8b5a79-0128-475e-b0c7-11ea66899a4d",
+     "pitch": 69,
+     "startBeat": 4,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "665545fe-dcbc-4940-a282-6abe49c0bc9b",
+     "pitch": 62,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "a3289c48-d0a0-4a23-aed1-25d581eed942",
+     "pitch": 67,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "c0871709-0c5c-49af-bee2-4f1dae5b14f9",
+     "pitch": 71,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "0d1b515d-09d0-4bf0-84d8-1e43444cfae0",
+     "pitch": 58,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "f1829489-c456-4a5d-b559-84cb773a4c61",
+     "pitch": 65,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "0263c1b3-2be8-42c2-a889-6f46b8e54fa2",
+     "pitch": 70,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 84
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "37471040-c940-4a73-9983-1e570fa2cee9",
+   "trackId": "c6397f51-d696-42d6-a334-ba1b6f8585ab",
+   "name": "Bossa nova comp",
+   "startBeat": 72,
+   "durationBeats": 16,
+   "notes": [
+    {
+     "id": "09ff0b63-fa31-44c3-bbb7-6f7bde50e9eb",
+     "pitch": 48,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "dc3b4c16-de0d-49f6-925e-54381c6a1f0c",
+     "pitch": 59,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "1131b455-19af-4f13-af7e-d6830645d6b3",
+     "pitch": 64,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "1630c4bb-47c8-4c91-bd25-789a3df3f7a9",
+     "pitch": 67,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "048ea3de-26cd-4b03-af77-d4d355116a58",
+     "pitch": 48,
+     "startBeat": 1.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "2dac127e-1d91-40df-a7e2-94aad085e16d",
+     "pitch": 59,
+     "startBeat": 1.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "0f696a3e-7d3d-47e0-9e4e-247da6b354a2",
+     "pitch": 64,
+     "startBeat": 1.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "608d6afd-54f5-47e9-97d4-9dda8e2755fa",
+     "pitch": 67,
+     "startBeat": 1.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "cc46c1c9-e5ab-4af6-8495-1b3b32bac307",
+     "pitch": 48,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "e70cf67a-cded-44a6-830a-fe4163fa2267",
+     "pitch": 59,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "58f26008-937b-4719-a040-98f126d784ea",
+     "pitch": 64,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "6cacb0ba-70f9-426b-9f6b-15dc21734c39",
+     "pitch": 67,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "6f70a532-f481-4ec8-951a-24e40ad325de",
+     "pitch": 45,
+     "startBeat": 4.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "071b0c11-adfe-40ee-9e65-3e919cdcfdc1",
+     "pitch": 55,
+     "startBeat": 4.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "4905d595-32e1-4807-a600-413ff4e0378e",
+     "pitch": 60,
+     "startBeat": 4.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "ac86663e-6e50-4217-8604-deda47af185c",
+     "pitch": 64,
+     "startBeat": 4.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "c684396e-27cc-4953-8a47-e4af27ccc4f1",
+     "pitch": 45,
+     "startBeat": 6.5,
+     "durationBeats": 1,
+     "velocity": 76
+    },
+    {
+     "id": "fc83ade3-a9f1-41a1-bd5b-c2e5a7524560",
+     "pitch": 55,
+     "startBeat": 6.5,
+     "durationBeats": 1,
+     "velocity": 76
+    },
+    {
+     "id": "4770674c-a4d4-4cdc-a42e-2844dc4e0172",
+     "pitch": 60,
+     "startBeat": 6.5,
+     "durationBeats": 1,
+     "velocity": 76
+    },
+    {
+     "id": "55374c76-38c1-45cb-81e7-965fd57f446c",
+     "pitch": 64,
+     "startBeat": 6.5,
+     "durationBeats": 1,
+     "velocity": 76
+    },
+    {
+     "id": "412f852f-0267-4855-a826-aab6948a6a5b",
+     "pitch": 50,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "fba24d40-541f-44d6-bc03-732d2afdc069",
+     "pitch": 57,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "a613c3ab-a6f5-4614-8b5c-a17355462ee9",
+     "pitch": 60,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "f1a92193-9ebf-40af-a96e-e2b7a7c5597e",
+     "pitch": 65,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 92
+    },
+    {
+     "id": "a4da0d3f-a08d-4297-9699-59ae9e499a61",
+     "pitch": 50,
+     "startBeat": 9.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "7aa1b039-c6a3-46ad-a096-0cf6805b4773",
+     "pitch": 57,
+     "startBeat": 9.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "71507435-94e1-4349-9610-330d0b86d99a",
+     "pitch": 60,
+     "startBeat": 9.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "c55d5f66-cf0f-40e6-a3e0-0af214cf52f6",
+     "pitch": 65,
+     "startBeat": 9.5,
+     "durationBeats": 1,
+     "velocity": 78
+    },
+    {
+     "id": "853262bd-27eb-4306-a353-5c807d0f5bff",
+     "pitch": 50,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "e9c07b82-fa2b-423b-8f30-73147f291858",
+     "pitch": 57,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "b477f43c-45bb-4205-ab44-d2411cb104bb",
+     "pitch": 60,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "48e5d98c-e3bc-461f-930c-3fc775c6a5da",
+     "pitch": 65,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 84
+    },
+    {
+     "id": "37083798-8bf0-4980-909e-d22519e775e8",
+     "pitch": 43,
+     "startBeat": 12.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "8adfdba3-be9b-43e8-b5cf-e051bbff5f9a",
+     "pitch": 53,
+     "startBeat": 12.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "b3ca7c85-45d0-4faa-b5c8-954f7ab282c5",
+     "pitch": 59,
+     "startBeat": 12.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "0c3ca2ce-d50c-488c-acce-edba451ac107",
+     "pitch": 65,
+     "startBeat": 12.5,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "658ac011-6660-44bc-bcc1-575c4c448f2a",
+     "pitch": 43,
+     "startBeat": 14.5,
+     "durationBeats": 1,
+     "velocity": 80
+    },
+    {
+     "id": "276c7146-bb60-4830-a7db-8aac28ca93b1",
+     "pitch": 53,
+     "startBeat": 14.5,
+     "durationBeats": 1,
+     "velocity": 80
+    },
+    {
+     "id": "24fa7cdd-0d7a-45ae-97e8-0b8967ec8f36",
+     "pitch": 59,
+     "startBeat": 14.5,
+     "durationBeats": 1,
+     "velocity": 80
+    },
+    {
+     "id": "91ee9df9-98ce-4f21-91ab-43e6fd570799",
+     "pitch": 65,
+     "startBeat": 14.5,
+     "durationBeats": 1,
+     "velocity": 80
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "656d1440-7677-4c23-b6bc-336088df7fee",
+   "trackId": "6b7667fc-6bd8-49bc-8ae2-29388619cfcb",
+   "name": "Trap minor cascade",
+   "startBeat": 92,
+   "durationBeats": 8,
+   "notes": [
+    {
+     "id": "3c3a2dcb-588b-4d8d-b88f-9ccd8154d951",
+     "pitch": 72,
+     "startBeat": 0,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "ac144a2c-0d3e-4e78-aea3-d251948ea0bc",
+     "pitch": 70,
+     "startBeat": 0.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "5795e254-ca48-4f59-b4f9-a897de2660f7",
+     "pitch": 67,
+     "startBeat": 0.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "c5f6a1b1-02b3-401a-8bcb-2212d2e69885",
+     "pitch": 63,
+     "startBeat": 0.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "2de5f78d-4605-4890-9722-881b6e3a191c",
+     "pitch": 60,
+     "startBeat": 1,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "2e88bd3c-c9b7-4fda-affb-8406a6574324",
+     "pitch": 58,
+     "startBeat": 1.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "7cd0c0c9-252b-4668-b10f-f77f1eb560f9",
+     "pitch": 55,
+     "startBeat": 1.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "a90a7de8-b725-4c3d-a5a3-244a8f43e439",
+     "pitch": 51,
+     "startBeat": 1.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "1b3bb641-ae76-43d5-a0f7-018e46124749",
+     "pitch": 72,
+     "startBeat": 2,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "667a1dac-a311-44df-ae9a-85d92f2dab68",
+     "pitch": 70,
+     "startBeat": 2.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "1b105e04-7130-4599-85df-2c4a0983afce",
+     "pitch": 67,
+     "startBeat": 2.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "a9e73287-c239-400e-8783-8697369a6e2c",
+     "pitch": 63,
+     "startBeat": 2.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "4c9d8a99-694e-4ca6-aa4c-526f996ad5fc",
+     "pitch": 60,
+     "startBeat": 3,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "329231ce-e160-4622-9f37-9b339dd7eb24",
+     "pitch": 58,
+     "startBeat": 3.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "5a7b1714-47aa-40b1-a9a6-f17c51ce96ba",
+     "pitch": 55,
+     "startBeat": 3.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "61da4b71-6aef-4273-8e3a-5be1d201c5fc",
+     "pitch": 51,
+     "startBeat": 3.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "17ce854e-1f52-4266-8f34-04b743337d14",
+     "pitch": 74,
+     "startBeat": 4,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "551a1a1b-f70c-420f-8d34-795e8f261145",
+     "pitch": 72,
+     "startBeat": 4.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "d5f8a35c-bb82-4555-a675-039a53636ddb",
+     "pitch": 68,
+     "startBeat": 4.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "86f7e87d-8521-44d5-9fcd-63bdec304a56",
+     "pitch": 63,
+     "startBeat": 4.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "3cd78a1c-cac6-451c-97b8-30327f878f73",
+     "pitch": 62,
+     "startBeat": 5,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "06f7d56a-ed4c-43b0-aadb-014b6c880b3f",
+     "pitch": 60,
+     "startBeat": 5.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "72af3cb7-6f41-4abf-82d8-c8820d07b111",
+     "pitch": 56,
+     "startBeat": 5.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "173af8ff-8479-4aba-bcce-439bc84ec68c",
+     "pitch": 51,
+     "startBeat": 5.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "49d761c5-a05b-47ed-9a66-a8db2abab0c1",
+     "pitch": 75,
+     "startBeat": 6,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "fc70ccfc-b51d-4df0-aca2-b64b57d43deb",
+     "pitch": 72,
+     "startBeat": 6.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "26f6eaf4-8e1e-46a5-a654-58f1e3982c78",
+     "pitch": 67,
+     "startBeat": 6.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "125a35e0-8e3e-459e-88c4-cd365bfcc573",
+     "pitch": 63,
+     "startBeat": 6.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "d0b880f4-1d94-4a53-85df-fcfb408cef5d",
+     "pitch": 63,
+     "startBeat": 7,
+     "durationBeats": 0.25,
+     "velocity": 96
+    },
+    {
+     "id": "37277fb5-9301-452f-be3a-c95e173ee4f3",
+     "pitch": 60,
+     "startBeat": 7.25,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "ee52e072-f8d4-4216-9db9-2356a2dc9c61",
+     "pitch": 55,
+     "startBeat": 7.5,
+     "durationBeats": 0.25,
+     "velocity": 72
+    },
+    {
+     "id": "a6a48174-b7d2-40a8-9c31-16093bf085e6",
+     "pitch": 48,
+     "startBeat": 7.75,
+     "durationBeats": 0.25,
+     "velocity": 72
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "2d395233-771a-4304-b15b-68c7e930cb97",
+   "trackId": "ae05e441-a601-4104-9dd5-6243fa0d98f8",
+   "name": "Quartal rise",
+   "startBeat": 104,
+   "durationBeats": 16,
+   "notes": [
+    {
+     "id": "4875f77d-a025-461f-ae3e-ca2429f08f41",
+     "pitch": 48,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 82
+    },
+    {
+     "id": "b7ff3804-2077-46a6-bd76-b5d2f62aa28a",
+     "pitch": 53,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 82
+    },
+    {
+     "id": "2e3a9042-8247-4463-bfb6-35963391700a",
+     "pitch": 58,
+     "startBeat": 0,
+     "durationBeats": 4,
+     "velocity": 82
+    },
+    {
+     "id": "7ae4f309-4188-47b2-921e-d10d8755e308",
+     "pitch": 50,
+     "startBeat": 4,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "1c988ac4-3e2a-4572-ad76-2b5fdba5823d",
+     "pitch": 55,
+     "startBeat": 4,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "eb6e7e52-de8c-46f0-945f-948f6caace46",
+     "pitch": 60,
+     "startBeat": 4,
+     "durationBeats": 4,
+     "velocity": 84
+    },
+    {
+     "id": "8fe7a352-52bd-408f-bcc5-f3f7ccba5245",
+     "pitch": 53,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 86
+    },
+    {
+     "id": "230dec3e-b99f-4be3-8ea4-a59af6df0b2b",
+     "pitch": 58,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 86
+    },
+    {
+     "id": "f45be8ae-435d-4560-ad57-70dc1745c1f3",
+     "pitch": 63,
+     "startBeat": 8,
+     "durationBeats": 4,
+     "velocity": 86
+    },
+    {
+     "id": "757e1519-7a02-4e09-8b85-12172348ea59",
+     "pitch": 55,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 92
+    },
+    {
+     "id": "d0973e43-90e6-4f94-860b-170facd4c368",
+     "pitch": 60,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 92
+    },
+    {
+     "id": "ff3122e2-11d3-4735-a2f6-efe1804c7245",
+     "pitch": 65,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 92
+    },
+    {
+     "id": "73d35ece-6b5f-4509-a0c5-be3dad2d846c",
+     "pitch": 70,
+     "startBeat": 12,
+     "durationBeats": 4,
+     "velocity": 92
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "8ca8da1f-6869-4a1a-9e25-128974afb938",
+   "trackId": "63315e27-da6f-4ad1-94bb-7b9bb8356ed0",
+   "name": "Blues turnaround lick",
+   "startBeat": 124,
+   "durationBeats": 8,
+   "notes": [
+    {
+     "id": "211ee982-3cc7-4e3b-a0ca-a0e78e399e59",
+     "pitch": 60,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 94
+    },
+    {
+     "id": "7c4c6bca-ed6a-43e7-b588-1956a4a08804",
+     "pitch": 64,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 94
+    },
+    {
+     "id": "4830f38e-20b1-4d2a-85b9-1c9fc126f677",
+     "pitch": 57,
+     "startBeat": 1,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "411bad0f-9910-45ed-8732-a1feca899e38",
+     "pitch": 63,
+     "startBeat": 1,
+     "durationBeats": 1,
+     "velocity": 88
+    },
+    {
+     "id": "fe5759b1-8fa4-48ad-be3a-045ade2c1817",
+     "pitch": 56,
+     "startBeat": 2,
+     "durationBeats": 1,
+     "velocity": 86
+    },
+    {
+     "id": "09a74902-4d6f-4a6c-b8e3-99103c46f9cf",
+     "pitch": 62,
+     "startBeat": 2,
+     "durationBeats": 1,
+     "velocity": 86
+    },
+    {
+     "id": "eec011c5-f863-4b40-a9fb-1236e3ebb95f",
+     "pitch": 55,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 90
+    },
+    {
+     "id": "21cdd40c-a492-4c4e-abec-ec6fe0501f0f",
+     "pitch": 60,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 90
+    },
+    {
+     "id": "ad19af7a-cd48-4725-9ece-719f3c8ab729",
+     "pitch": 43,
+     "startBeat": 4,
+     "durationBeats": 0.5,
+     "velocity": 96
+    },
+    {
+     "id": "0d8df993-155d-4b1d-8c30-fd3b857c78fc",
+     "pitch": 47,
+     "startBeat": 4.5,
+     "durationBeats": 0.5,
+     "velocity": 88
+    },
+    {
+     "id": "861cf562-2d14-4781-b100-966eb6c33e11",
+     "pitch": 50,
+     "startBeat": 5,
+     "durationBeats": 0.5,
+     "velocity": 92
+    },
+    {
+     "id": "7ffa3a77-b627-4d38-b191-01b787878c7b",
+     "pitch": 53,
+     "startBeat": 5.5,
+     "durationBeats": 0.5,
+     "velocity": 84
+    },
+    {
+     "id": "171c151a-b50f-43a7-9baf-027ac63393a3",
+     "pitch": 36,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 100
+    },
+    {
+     "id": "d0b37997-d64e-4319-abca-fb08159e3521",
+     "pitch": 48,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 100
+    },
+    {
+     "id": "967e443d-5712-4cd2-9a85-cd8d71f983c5",
+     "pitch": 55,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 100
+    },
+    {
+     "id": "d45b02e5-b44c-48e0-bf72-2314eaee42af",
+     "pitch": 64,
+     "startBeat": 6,
+     "durationBeats": 2,
+     "velocity": 100
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "d6ea43ea-5745-48ff-839c-1c3bc1c924be",
+   "trackId": "4a5cbf7f-edf9-477b-83aa-372c86683a11",
+   "name": "Minor waltz",
+   "startBeat": 136,
+   "durationBeats": 12,
+   "notes": [
+    {
+     "id": "ad63fe83-1b34-4077-942c-bea61d4be062",
+     "pitch": 36,
+     "startBeat": 0,
+     "durationBeats": 1,
+     "velocity": 96
+    },
+    {
+     "id": "2948721c-ded3-4ef9-bfb0-e4dd83f12fb8",
+     "pitch": 55,
+     "startBeat": 1,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "b20ac4dc-e615-4614-99d2-4f0cab2ce1e5",
+     "pitch": 60,
+     "startBeat": 1,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "c97945c7-67c2-4e35-b576-1c8ed094fa3d",
+     "pitch": 63,
+     "startBeat": 1,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "f41d3e7a-c4bc-4f02-8c5d-dd36d93e02c4",
+     "pitch": 55,
+     "startBeat": 2,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "a1d7dad0-fe4c-4d76-8e7e-816da99cb077",
+     "pitch": 60,
+     "startBeat": 2,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "28a1e9b0-6497-4d70-b048-3eaae330fadd",
+     "pitch": 63,
+     "startBeat": 2,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "4e53abfc-7f5f-4c88-8579-4691f7ce4d22",
+     "pitch": 32,
+     "startBeat": 3,
+     "durationBeats": 1,
+     "velocity": 96
+    },
+    {
+     "id": "d8e7152c-f199-417a-9a7b-8b8e2b6a30a2",
+     "pitch": 51,
+     "startBeat": 4,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "e169badb-a895-4f79-8d81-3b316320824e",
+     "pitch": 56,
+     "startBeat": 4,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "9abb3ba2-cb99-4339-865f-0ccfd580cd07",
+     "pitch": 60,
+     "startBeat": 4,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "94c35c04-0957-4cc4-ab99-d165e1b6a274",
+     "pitch": 51,
+     "startBeat": 5,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "4722c141-4979-48d7-a723-1e6cd7732458",
+     "pitch": 56,
+     "startBeat": 5,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "3da5072d-7ec7-4514-9afa-fd1bd0857a23",
+     "pitch": 60,
+     "startBeat": 5,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "61906860-3d3e-4674-83f9-485f5d59edee",
+     "pitch": 34,
+     "startBeat": 6,
+     "durationBeats": 1,
+     "velocity": 96
+    },
+    {
+     "id": "e05cdfa0-c92a-4db6-a326-ae9715ee89d6",
+     "pitch": 53,
+     "startBeat": 7,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "83ce697b-f0d8-43fb-914e-35b638308eb2",
+     "pitch": 58,
+     "startBeat": 7,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "fd0fc55d-b64a-4379-b33a-fca16c47eb50",
+     "pitch": 62,
+     "startBeat": 7,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "9dd64b6d-42b9-406a-ac44-70b996d1e6ba",
+     "pitch": 53,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "7120f9f9-d78f-4ddb-a265-a8ea1aa3851d",
+     "pitch": 58,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "991235a0-7f5f-46fb-9155-ffb2e4a14748",
+     "pitch": 62,
+     "startBeat": 8,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "830884c1-0dde-4e6e-bfaa-41aac59d217b",
+     "pitch": 36,
+     "startBeat": 9,
+     "durationBeats": 1,
+     "velocity": 96
+    },
+    {
+     "id": "2bc80311-7d6c-4a5f-8059-38528e697f9e",
+     "pitch": 55,
+     "startBeat": 10,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "45a5de19-ec25-4347-aed3-17bac1801205",
+     "pitch": 60,
+     "startBeat": 10,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "0f2c9761-3a93-439f-8ab5-7386a6af322d",
+     "pitch": 63,
+     "startBeat": 10,
+     "durationBeats": 1,
+     "velocity": 72
+    },
+    {
+     "id": "bcd2f2ae-8f58-440f-9a51-cacf2ac94f6f",
+     "pitch": 55,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "8614c57b-b31d-4059-86b9-a9bc66d0f73a",
+     "pitch": 60,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 66
+    },
+    {
+     "id": "41974751-9c51-4630-94ad-1fd98bfafb59",
+     "pitch": 63,
+     "startBeat": 11,
+     "durationBeats": 1,
+     "velocity": 66
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  },
+  {
+   "kind": "midi",
+   "id": "26706083-e143-4092-9dbd-81e5e05c79c6",
+   "trackId": "86813a48-c9be-4db0-930a-338f87624532",
+   "name": "Pentatonic cascade",
+   "startBeat": 152,
+   "durationBeats": 8,
+   "notes": [
+    {
+     "id": "682b7779-a28f-4a2c-9a12-9a1822f8eab7",
+     "pitch": 84,
+     "startBeat": 0,
+     "durationBeats": 0.3,
+     "velocity": 90
+    },
+    {
+     "id": "17dd0a3f-c6c5-4900-8aa6-abd7138a9a5f",
+     "pitch": 81,
+     "startBeat": 0.25,
+     "durationBeats": 0.3,
+     "velocity": 88
+    },
+    {
+     "id": "a3bd9441-77c0-455e-a12b-f97eb9e74872",
+     "pitch": 79,
+     "startBeat": 0.5,
+     "durationBeats": 0.3,
+     "velocity": 86
+    },
+    {
+     "id": "84d3e31d-c3a8-4f9b-bc08-bef996ea2100",
+     "pitch": 76,
+     "startBeat": 0.75,
+     "durationBeats": 0.3,
+     "velocity": 84
+    },
+    {
+     "id": "3ae1e09f-ba2a-49a8-b342-c20a6f2f1567",
+     "pitch": 74,
+     "startBeat": 1,
+     "durationBeats": 0.3,
+     "velocity": 82
+    },
+    {
+     "id": "817cca3c-2dfc-4d3c-a347-f2ac0d0877e9",
+     "pitch": 72,
+     "startBeat": 1.25,
+     "durationBeats": 0.3,
+     "velocity": 80
+    },
+    {
+     "id": "b7624d38-382f-40d7-9f22-00a50f0fe60e",
+     "pitch": 69,
+     "startBeat": 1.5,
+     "durationBeats": 0.3,
+     "velocity": 78
+    },
+    {
+     "id": "831810ec-6f20-40e8-80a1-dc806c0f1a9a",
+     "pitch": 67,
+     "startBeat": 1.75,
+     "durationBeats": 0.3,
+     "velocity": 76
+    },
+    {
+     "id": "03c152a1-74af-4dfc-8b7b-e8eed322764b",
+     "pitch": 64,
+     "startBeat": 2,
+     "durationBeats": 0.3,
+     "velocity": 74
+    },
+    {
+     "id": "ac64cbf4-0ea3-48d0-aeea-6204660f5484",
+     "pitch": 62,
+     "startBeat": 2.25,
+     "durationBeats": 0.3,
+     "velocity": 72
+    },
+    {
+     "id": "41b8c81b-f1fa-4ea2-9231-15018fd2be2f",
+     "pitch": 60,
+     "startBeat": 2.5,
+     "durationBeats": 0.3,
+     "velocity": 70
+    },
+    {
+     "id": "5286caac-3c0f-48e4-8c24-5fdcfd0b7db4",
+     "pitch": 57,
+     "startBeat": 2.75,
+     "durationBeats": 0.3,
+     "velocity": 68
+    },
+    {
+     "id": "33c328c6-1753-452e-8038-a58336b6c6aa",
+     "pitch": 55,
+     "startBeat": 3,
+     "durationBeats": 0.3,
+     "velocity": 66
+    },
+    {
+     "id": "a50b0867-bf47-48c5-8cbd-c515fab91f1a",
+     "pitch": 52,
+     "startBeat": 3.25,
+     "durationBeats": 0.3,
+     "velocity": 64
+    },
+    {
+     "id": "470ee44a-e3cf-449d-ab2d-d59e70621342",
+     "pitch": 50,
+     "startBeat": 3.5,
+     "durationBeats": 0.3,
+     "velocity": 62
+    },
+    {
+     "id": "3ae706ae-44c6-4864-9eec-9aca009c6e0b",
+     "pitch": 48,
+     "startBeat": 3.75,
+     "durationBeats": 0.3,
+     "velocity": 60
+    },
+    {
+     "id": "db3664a8-8d36-4a00-ac2d-14a8e2a83b6b",
+     "pitch": 48,
+     "startBeat": 4.5,
+     "durationBeats": 3.5,
+     "velocity": 84
+    },
+    {
+     "id": "56fad822-0844-426f-ae1d-eb9db4dabe6e",
+     "pitch": 55,
+     "startBeat": 4.5,
+     "durationBeats": 3.5,
+     "velocity": 84
+    },
+    {
+     "id": "df183387-1771-474b-b34a-5cd72879ba0e",
+     "pitch": 60,
+     "startBeat": 4.5,
+     "durationBeats": 3.5,
+     "velocity": 84
+    },
+    {
+     "id": "79240fc5-3cc9-4b67-a0c5-0c02abd30174",
+     "pitch": 64,
+     "startBeat": 4.5,
+     "durationBeats": 3.5,
+     "velocity": 84
+    },
+    {
+     "id": "9cf4fdef-1cff-495d-b281-3d97d135b2e6",
+     "pitch": 67,
+     "startBeat": 4.5,
+     "durationBeats": 3.5,
+     "velocity": 84
+    }
+   ],
+   "isDrumClip": false,
+   "stretchNotes": true,
+   "rootNote": 0,
+   "presetId": "builtin-0"
+  }
+ ],
+ "timeSignatureDen": 4,
+ "timeSignatureNum": 4
+}
