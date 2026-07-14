@@ -155,12 +155,16 @@ export class DawEngine extends EventTarget {
     super()
     this.ctx = new AudioContext()
 
+    // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
+    // sustained loud element (stacked drones, held chords) sat above threshold,
+    // audibly ducking every other instrument for its entire duration. Higher
+    // threshold + gentler ratio only catches true overloads.
     this.masterCompressor = this.ctx.createDynamicsCompressor()
-    this.masterCompressor.threshold.value = -12
-    this.masterCompressor.knee.value = 6
-    this.masterCompressor.ratio.value = 3
+    this.masterCompressor.threshold.value = -6
+    this.masterCompressor.knee.value = 10
+    this.masterCompressor.ratio.value = 2.5
     this.masterCompressor.attack.value = 0.003
-    this.masterCompressor.release.value = 0.15
+    this.masterCompressor.release.value = 0.25
     this.masterCompressor.connect(this.ctx.destination)
 
     this.masterAnalyser = this.ctx.createAnalyser()
@@ -1127,8 +1131,23 @@ export class DawEngine extends EventTarget {
         }
       }
 
+      // Unison guard: two same-pitch notes overlapping inside one clip play the
+      // identical sound twice — a loudness accident (usually an invisible
+      // stacked paste), never a musical layer. The earlier note wins; a note
+      // starting inside another's span at the same pitch is skipped.
+      const unisonSkip = new Set<string>()
+      for (const a of occurrences) {
+        for (const b of occurrences) {
+          if (a === b || a.note.pitch !== b.note.pitch) continue
+          const startsInside = b.relBeat > a.relBeat - 1e-6 && b.relBeat < a.relBeat + a.maxDur - 1e-6
+          const tieBreak = Math.abs(b.relBeat - a.relBeat) < 1e-6 ? a.key < b.key : a.relBeat < b.relBeat
+          if (startsInside && tieBreak && !unisonSkip.has(a.key)) unisonSkip.add(b.key)
+        }
+      }
+
       for (const { note, relBeat, key: noteKey, maxDur } of occurrences) {
         if (this._scheduledNoteKeys.has(noteKey)) continue
+        if (unisonSkip.has(noteKey)) { this._scheduledNoteKeys.add(noteKey); continue }
 
         const noteAbsBeat = clip.startBeat + this._applySwing(relBeat)
         const noteEnd     = clip.startBeat + relBeat + maxDur

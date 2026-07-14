@@ -903,10 +903,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     const origin = Math.min(...notes.map(n => n.startBeat))
     const newIds = new Set<string>()
     for (const n of notes) {
+      const startBeat = Math.max(0, atBeat + (n.startBeat - origin))
+      // Pasting onto the exact same spot (double-paste, paste-at-playhead over
+      // the source) would silently stack an identical note — doubling loudness
+      // with nothing visible on the roll. Skip exact duplicates.
+      if (clip.notes.some(x => x.pitch === n.pitch && Math.abs(x.startBeat - startBeat) < 1e-6 && Math.abs(x.durationBeats - n.durationBeats) < 1e-6)) continue
       const id = crypto.randomUUID()
-      dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: {
-        ...n, id, startBeat: Math.max(0, atBeat + (n.startBeat - origin)),
-      }})
+      dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { ...n, id, startBeat } })
       newIds.add(id)
     }
     setSelectedNotes(newIds)
