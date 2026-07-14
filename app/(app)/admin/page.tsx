@@ -3,6 +3,8 @@ import AdminLogout from './AdminLogout'
 import UsersPanel from './UsersPanel'
 import SoundLibraryPanel from './SoundLibraryPanel'
 import MidiPresetsPanel from './MidiPresetsPanel'
+import CommunityModerationPanel from './CommunityModerationPanel'
+import FeedbackPanel from './FeedbackPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
 import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
@@ -148,6 +150,32 @@ export default async function AdminPage() {
       label: 'Audio',
       color: '#8b5cf6',
       subtabs: [
+        {
+          id: 'feedback',
+          label: 'Feedback',
+          content: (
+            <>
+              <PanelIntro
+                title="Feedback Inbox"
+                description="Everything users send through the sidebar's Send feedback button, newest first, with their email and the page they were on."
+              />
+              <FeedbackPanel />
+            </>
+          ),
+        },
+        {
+          id: 'community-moderation',
+          label: 'Community',
+          content: (
+            <>
+              <PanelIntro
+                title="Community Moderation"
+                description="The latest community shares. Remove anything that shouldn't be public — deletion is immediate and takes the item's votes and reactions with it."
+              />
+              <CommunityModerationPanel />
+            </>
+          ),
+        },
         {
           id: 'sound-library',
           label: 'Sound Library',

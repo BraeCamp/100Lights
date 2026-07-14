@@ -22,6 +22,7 @@ const APP_ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: 
 
 
 export default function Sidebar() {
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const pathname = usePathname()
   const { user } = useUser()
   const { showUpgrade } = useUpgradeModal()
@@ -211,19 +212,59 @@ export default function Sidebar() {
             Get Desktop App
           </Link>
         )}
-        <a
-          href="mailto:feedback@100lights.com?subject=Feedback"
+        <button
+          onClick={() => setFeedbackOpen(true)}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
-          style={{ color: 'var(--text-muted)' }}
+          style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left' }}
         >
           <MessageSquare size={15} />
           Send feedback
-        </a>
+        </button>
+        {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
         <div className="flex gap-3 px-3 pt-1">
           <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
           <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>
         </div>
       </div>
     </aside>
+  )
+}
+
+
+function FeedbackModal({ onClose }: { onClose: () => void }) {
+  const [message, setMessage] = useState('')
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+
+  async function submit() {
+    if (!message.trim()) return
+    setState('busy')
+    try {
+      const r = await fetch('/api/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, page: window.location.pathname }),
+      })
+      if (!r.ok) throw new Error()
+      setState('done')
+      setTimeout(onClose, 1400)
+    } catch { setState('error') }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1001, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 420, maxWidth: 'calc(100vw - 40px)', background: '#161616', border: '1px solid var(--border)', borderRadius: 12, padding: 20 }}>
+        <p style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 4px' }}>Send feedback</p>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>Bugs, ideas, confusion — everything helps. It goes straight to the team.</p>
+        <textarea
+          autoFocus value={message} onChange={e => setMessage(e.target.value)}
+          placeholder="What happened / what would make this better?"
+          style={{ width: '100%', height: 110, resize: 'none', boxSizing: 'border-box', background: '#101010', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12.5, padding: '10px 12px', outline: 'none' }}
+        />
+        {state === 'error' && <p style={{ color: '#ef4444', fontSize: 11, margin: '8px 0 0' }}>Could not send — try again.</p>}
+        <button
+          onClick={submit} disabled={state === 'busy' || state === 'done' || !message.trim()}
+          style={{ marginTop: 12, width: '100%', padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', background: state === 'done' ? '#16a34a' : 'var(--accent)', color: '#fff', fontSize: 12.5, fontWeight: 700, opacity: state === 'busy' ? 0.6 : 1 }}
+        >{state === 'done' ? 'Sent — thank you!' : state === 'busy' ? 'Sending…' : 'Send'}</button>
+      </div>
+    </div>
   )
 }

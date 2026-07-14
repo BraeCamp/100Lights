@@ -21,6 +21,28 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       persistence: 'localStorage',
     })
     initialised = true
+
+    // Crash visibility for the beta: uncaught errors and promise rejections
+    // land in PostHog with stack traces, tied to the user who hit them.
+    const onError = (e: ErrorEvent) => {
+      posthog.capture('$exception', {
+        message: e.message,
+        source: e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined,
+        stack: e.error instanceof Error ? e.error.stack?.slice(0, 4000) : undefined,
+        url: window.location.pathname,
+      })
+    }
+    const onRejection = (e: PromiseRejectionEvent) => {
+      const r = e.reason
+      posthog.capture('$exception', {
+        message: r instanceof Error ? r.message : String(r).slice(0, 500),
+        stack: r instanceof Error ? r.stack?.slice(0, 4000) : undefined,
+        unhandled_rejection: true,
+        url: window.location.pathname,
+      })
+    }
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
   }, [])
 
   // Identify the logged-in user so events are tied to their account

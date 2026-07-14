@@ -1,5 +1,21 @@
 import { auth } from '@clerk/nextjs/server'
 import { presignUpload } from '@/lib/r2'
+import { sql } from '@/lib/db'
+
+let uploadLogReady = false
+async function ensureUploadLog() {
+  if (uploadLogReady) return
+  await sql`
+    CREATE TABLE IF NOT EXISTS upload_log (
+      user_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      size BIGINT NOT NULL DEFAULT 0,
+      at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+  await sql`CREATE INDEX IF NOT EXISTS upload_log_user_idx ON upload_log (user_id)`
+  uploadLogReady = true
+}
 
 export async function POST(req: Request) {
   const { userId: clerkId } = await auth()
@@ -44,6 +60,22 @@ export async function POST(req: Request) {
     return Response.json({ error: 'File too large. Maximum size is 500 MB.' }, { status: 413 })
   }
 
+  // Cumulative storage against the plan limit (approximate: presigned sizes,
+  // not reconciled against deletions — a guardrail, not a meter)
+  if (clerkId) {
+    try {
+      await ensureUploadLog()
+      const { getSubscription, getPlanLimits } = await import('@/lib/subscription')
+      const sub = await getSubscription(clerkId)
+      const limits = getPlanLimits(sub.plan)
+      const used = await sql`SELECT COALESCE(SUM(size), 0)::bigint AS total FROM upload_log WHERE user_id = ${clerkId}`
+      const totalAfter = Number(used[0]?.total ?? 0) + size
+      if (totalAfter > limits.storageMb * 1024 * 1024) {
+        return Response.json({ error: `Storage limit reached (${limits.storageMb >= 1024 ? `${limits.storageMb / 1024} GB` : `${limits.storageMb} MB`}). Upgrade for more space.` }, { status: 413 })
+      }
+    } catch { /* accounting is best-effort — never block uploads on its failure */ }
+  }
+
   const ALLOWED = ['video/', 'audio/']
   if (!ALLOWED.some(p => resolvedType.startsWith(p))) {
     return Response.json({ error: `Unsupported file type (${resolvedType || ext || 'unknown'}). Upload a video or audio file.` }, { status: 415 })
@@ -54,5 +86,11 @@ export async function POST(req: Request) {
 
   // Presign for 15 minutes — the browser uploads immediately after receiving this
   const uploadUrl = await presignUpload(key, contentType, 900)
+  if (clerkId && size > 0) {
+    try {
+      await ensureUploadLog()
+      await sql`INSERT INTO upload_log (user_id, key, size) VALUES (${clerkId}, ${key}, ${size})`
+    } catch { /* best-effort */ }
+  }
   return Response.json({ uploadUrl, key })
 }

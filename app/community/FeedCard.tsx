@@ -343,10 +343,21 @@ function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
       const blob = await (await fetch(`/api/community/${item.id}/audio`)).blob()
       const objUrl = URL.createObjectURL(blob)
       urlRef.current = objUrl
-      const decoded = await audioCtx().decodeAudioData(await blob.arrayBuffer())
-      peaksRef.current = extractPeaks(decoded)
-      durRef.current = decoded.duration
+      // Only decode when the share didn't bring its own waveform — Safari
+      // can't decodeAudioData WebM, but its <audio> element can still play it.
+      if (!peaksRef.current || !durRef.current) {
+        try {
+          const decoded = await audioCtx().decodeAudioData(await blob.arrayBuffer())
+          peaksRef.current = extractPeaks(decoded)
+          durRef.current = decoded.duration
+        } catch {
+          peaksRef.current ??= Array.from({ length: 96 }, () => 0.5)  // flat bar — playable, just no shape
+        }
+      }
       const a = new Audio(objUrl)
+      a.onloadedmetadata = () => {
+        if (!durRef.current && isFinite(a.duration)) durRef.current = a.duration
+      }
       a.onended = () => {
         setPlaying(false)
         releasePlayback(stop)
