@@ -2,6 +2,28 @@ import { stripe } from '@/lib/stripe'
 import { upsertSubscription } from '@/lib/subscription'
 import type Stripe from 'stripe'
 
+// 2025+ Stripe API versions moved current_period_end from the subscription to
+// its items; older payloads have it top-level. Missing/invalid → undefined,
+// never an Invalid Date (toISOString() on one throws and fails the webhook —
+// which would leave a paying customer without their plan).
+function periodEnd(sub: Stripe.Subscription): Date | undefined {
+  const raw = (sub as unknown as { current_period_end?: number }).current_period_end
+    ?? sub.items?.data?.[0]?.current_period_end
+  if (typeof raw !== 'number' || !isFinite(raw)) return undefined
+  return new Date(raw * 1000)
+}
+
+// invoice.subscription similarly moved under parent.subscription_details
+function invoiceSubId(invoice: Stripe.Invoice): string | null {
+  const legacy = (invoice as unknown as { subscription?: string | { id: string } }).subscription
+  if (typeof legacy === 'string') return legacy
+  if (legacy && typeof legacy === 'object') return legacy.id
+  const nested = (invoice as unknown as { parent?: { subscription_details?: { subscription?: string | { id: string } } } }).parent?.subscription_details?.subscription
+  if (typeof nested === 'string') return nested
+  if (nested && typeof nested === 'object') return nested.id
+  return null
+}
+
 export const runtime = 'nodejs'
 
 export async function POST(req: Request) {
@@ -34,7 +56,7 @@ export async function POST(req: Request) {
           stripeSubId: sub.id,
           plan: 'pro',
           status: sub.status,
-          currentPeriodEnd: new Date((sub as unknown as { current_period_end: number }).current_period_end * 1000),
+          currentPeriodEnd: periodEnd(sub),
         })
         break
       }
@@ -50,13 +72,13 @@ export async function POST(req: Request) {
           stripeSubId: sub.id,
           plan,
           status: sub.status,
-          currentPeriodEnd: new Date((sub as unknown as { current_period_end: number }).current_period_end * 1000),
+          currentPeriodEnd: periodEnd(sub),
         })
         break
       }
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
-        const subId = (invoice as unknown as { subscription: string }).subscription
+        const subId = invoiceSubId(invoice)
         if (!subId) break
         const sub = await stripe.subscriptions.retrieve(subId)
         const userId = sub.metadata?.userId
@@ -67,7 +89,7 @@ export async function POST(req: Request) {
           stripeSubId: sub.id,
           plan: 'free',
           status: 'past_due',
-          currentPeriodEnd: new Date((sub as unknown as { current_period_end: number }).current_period_end * 1000),
+          currentPeriodEnd: periodEnd(sub),
         })
         break
       }
