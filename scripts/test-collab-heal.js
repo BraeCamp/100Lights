@@ -1,6 +1,7 @@
 // Divergence self-heal test: bob drops one of alice's broadcasts (simulated
 // packet loss via the dev fault hook), the periodic fingerprint exchange
 // notices, and bob auto-resyncs without a reload.
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { chromium } = require('playwright-core')
 
 const projectId = process.argv[2]
