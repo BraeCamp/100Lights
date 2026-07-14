@@ -6,6 +6,7 @@ import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
+import { InspectorBridge } from './daw/InspectorBridge'
 import { Library, Settings, FileText, Users } from 'lucide-react'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
@@ -1143,6 +1144,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   border: '1px solid rgba(245,158,11,0.35)', whiteSpace: 'nowrap',
                 }}>OFFLINE — SAVING LOCALLY</span>
               )}
+              <InspectorBridge />
               <PracticeButton />
               <HelpButton />
             </div>
