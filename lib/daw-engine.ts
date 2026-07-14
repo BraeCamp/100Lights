@@ -940,14 +940,20 @@ export class DawEngine extends EventTarget {
           if (buf === undefined) void this._loadPresetBuffer(clip.presetId, note.pitch)
           if (buf) {
             const target = (note.velocity ?? 100) / 127
+            const loop = noteDur + sustainSec > buf.duration - 0.05 ? this._getLoopMeta(bufKey, buf) : null
             const velGain = this.ctx.createGain(); velGain.gain.value = target
             const src = this.ctx.createBufferSource(); src.buffer = buf
+            if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
             src.connect(velGain); velGain.connect(noteDest)
             src.start(noteStartAt)
             if (sustainSec > 0) {
               velGain.gain.setValueAtTime(target, noteStartAt + noteDur)
               velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur + sustainSec)
               src.stop(noteStartAt + noteDur + sustainSec + 0.05)
+            } else if (loop) {
+              velGain.gain.setValueAtTime(target, Math.max(noteStartAt, noteStartAt + noteDur - 0.08))
+              velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur)
+              src.stop(noteStartAt + noteDur + 0.02)
             } else {
               src.stop(noteStartAt + noteDur)
             }
@@ -1189,10 +1195,17 @@ export class DawEngine extends EventTarget {
             continue
           }
           if (buf !== null) {
-            // Starting mid-note (playhead landed inside it): play the sample
-            // from the elapsed position, not from its beginning.
-            const offsetSec = this.beatsToSeconds(alreadyBeats)
-            if (offsetSec >= buf.duration) { this._scheduledNoteKeys.add(noteKey); continue }
+            // Notes longer than the sample loop its sustain plateau so a bowed
+            // chord or pad holds for the whole note, however long it is.
+            const needSec = remaining + sustainSec
+            let offsetSec = this.beatsToSeconds(alreadyBeats)
+            const loop = (needSec > buf.duration - 0.05 || offsetSec >= buf.duration)
+              ? this._getLoopMeta(bufKey, buf) : null
+            if (!loop && offsetSec >= buf.duration) { this._scheduledNoteKeys.add(noteKey); continue }
+            if (loop && offsetSec > loop.end) {
+              // Entering mid-note beyond the loop region: fold into the loop
+              offsetSec = loop.start + ((offsetSec - loop.start) % (loop.end - loop.start))
+            }
             const velGain = this.ctx.createGain()
             const target = (note.velocity ?? 100) / 127
             if (offsetSec > 0) {
@@ -1204,6 +1217,7 @@ export class DawEngine extends EventTarget {
             }
             const src = this.ctx.createBufferSource()
             src.buffer = buf
+            if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
             src.connect(velGain)
             velGain.connect(noteDest)
             src.start(startAt, offsetSec)
@@ -1214,6 +1228,11 @@ export class DawEngine extends EventTarget {
                 velGain.gain.setValueAtTime(target, startAt + remaining)
                 velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining + sustainSec)
                 src.stop(startAt + remaining + sustainSec + 0.05)
+              } else if (loop) {
+                // A looped note ends at full level — an 80ms release avoids the click
+                velGain.gain.setValueAtTime(target, Math.max(startAt, startAt + remaining - 0.08))
+                velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining)
+                src.stop(startAt + remaining + 0.02)
               } else {
                 src.stop(startAt + remaining)
               }
@@ -1588,6 +1607,63 @@ export class DawEngine extends EventTarget {
     const slice     = all.slice(idx)
     const arr       = slice.length >= 2 ? slice : [all[N - 1], all[N - 1]]
     return { curve: new Float32Array(arr.map(mapper)), durSec: remainSec }
+  }
+
+  // ── Sustain looping: notes longer than their sample ──────────────────────────
+  // A note can be stretched far past its sample's length: the engine loops a
+  // stable mid-sample region (zero-crossing snapped) until the note ends. Only
+  // sounds that actually sustain loop — naturally decaying sounds (piano hits,
+  // plucks) keep their real ending instead of looping a faded tail.
+
+  private _loopMeta = new Map<string, { start: number; end: number } | null>()
+
+  private _getLoopMeta(bufKey: string, buf: AudioBuffer): { start: number; end: number } | null {
+    const cached = this._loopMeta.get(bufKey)
+    if (cached !== undefined) return cached
+    const meta = DawEngine.computeSustainLoop(buf)
+    this._loopMeta.set(bufKey, meta)
+    return meta
+  }
+
+  static computeSustainLoop(buf: AudioBuffer): { start: number; end: number } | null {
+    const d = buf.duration
+    if (d < 0.8) return null  // one-shots don't sustain
+    const sr = buf.sampleRate
+    const ch = buf.getChannelData(0)
+
+    const rms = (fromSec: number, winSec = 0.25): number => {
+      const from = Math.max(0, Math.floor(fromSec * sr))
+      const to = Math.min(ch.length, from + Math.floor(winSec * sr))
+      let sum = 0
+      for (let i = from; i < to; i++) sum += ch[i] * ch[i]
+      return Math.sqrt(sum / Math.max(1, to - from))
+    }
+
+    // Loop the plateau: after the attack, before the release tail
+    let start = Math.min(1.2, d * 0.35)
+    let end = Math.max(start + 0.25, d * 0.9 - 0.05)
+    if (end - start < 0.2) return null
+
+    const rmsStart = rms(start)
+    const rmsEnd = rms(Math.max(start, end - 0.3))
+    if (rmsStart < 0.01) return null                 // silent sustain region
+    if (rmsEnd < 0.4 * rmsStart) return null          // decaying sound — let it end naturally
+
+    // Snap both points to positive-going zero crossings to minimise the click
+    const snap = (sec: number): number => {
+      const center = Math.floor(sec * sr)
+      const span = Math.floor(0.05 * sr)
+      for (let off = 0; off < span; off++) {
+        for (const i of [center + off, center - off]) {
+          if (i > 0 && i < ch.length && ch[i - 1] <= 0 && ch[i] > 0) return i / sr
+        }
+      }
+      return sec
+    }
+    start = snap(start)
+    end = snap(end)
+    if (end - start < 0.2) return null
+    return { start, end }
   }
 
   // ── Piano-roll clip sound settings (MidiClip.rollFx) ─────────────────────────
