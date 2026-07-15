@@ -1,5 +1,5 @@
 import { sql } from '@/lib/db'
-import type { ModuleKey } from '@/lib/editor-types'
+import { LAUNCH_MODULES, type ModuleKey } from '@/lib/editor-types'
 
 export interface PlatformFlags {
   enabledModules:    ModuleKey[]
@@ -11,7 +11,7 @@ export interface PlatformFlags {
 }
 
 const DEFAULTS: PlatformFlags = {
-  enabledModules:    ['audio', 'video', 'image'],
+  enabledModules:    ['audio'],
   enabledAudioModes: ['music', 'podcast'],
   communityScale:    'small',
 }
@@ -35,7 +35,7 @@ export async function getFlags(): Promise<PlatformFlags> {
     const rows = await sql`SELECT key, value FROM platform_config WHERE key IN ('enabled_modules','enabled_audio_modes','community_scale')`
     const map = Object.fromEntries(rows.map(r => [r.key as string, r.value]))
     return {
-      enabledModules:    (map['enabled_modules']    as ModuleKey[]           | undefined) ?? DEFAULTS.enabledModules,
+      enabledModules:    ((map['enabled_modules']   as ModuleKey[]           | undefined) ?? DEFAULTS.enabledModules).filter(m => LAUNCH_MODULES.includes(m)),
       enabledAudioModes: (map['enabled_audio_modes'] as ('music'|'podcast')[] | undefined) ?? DEFAULTS.enabledAudioModes,
       communityScale:    (map['community_scale']     as 'small'|'large'       | undefined) ?? DEFAULTS.communityScale,
     }

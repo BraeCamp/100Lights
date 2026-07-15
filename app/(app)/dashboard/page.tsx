@@ -156,7 +156,7 @@ export default function DashboardPage() {
   const ctxRef = useRef<HTMLDivElement>(null)
 
   // Platform flags — modules hidden in admin never appear on the dashboard
-  const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
+  const [enabledModules, setEnabledModules] = useState<string[]>(['audio'])
   useEffect(() => {
     fetch('/api/platform-flags')
       .then(r => r.ok ? r.json() : null)

@@ -4,31 +4,31 @@ import { auth } from '@clerk/nextjs/server'
 import {
   Zap, Check, ArrowRight,
   Layers, Music2, Sliders, CircleDot,
-  Camera, Film, Monitor, Mic2,
+  Library, Globe2, Users, AudioLines,
   Music,
 } from 'lucide-react'
 import PricingSection from '@/components/PricingSection'
 
 export const metadata: Metadata = {
-  title: { absolute: '100Lights — Professional Audio & Video Editing' },
-  description: 'A full digital audio workstation and live multi-camera video session editor. Available in the browser now — native apps for Mac, Windows, and mobile coming soon.',
-  keywords: ['audio editor', 'video editor', 'DAW', 'digital audio workstation', 'browser DAW', 'online audio editor', 'multi-camera editor', 'live session editor', 'Mac audio editor', 'Windows DAW', 'mobile video editor'],
+  title: { absolute: '100Lights — The Music Studio in Your Browser' },
+  description: 'A full digital audio workstation that runs in the browser: Session and Arrangement views, piano roll, drum rack, mixer, and a community of shared sounds and chord recipes. Free to start — no downloads.',
+  keywords: ['browser DAW', 'online music studio', 'digital audio workstation', 'online audio editor', 'make music in browser', 'free DAW', 'piano roll online', 'chord progressions', 'sample library', 'music collaboration'],
   openGraph: {
-    title: '100Lights — Professional Audio & Video Editing',
-    description: 'A full DAW and multi-camera live session editor built for the browser. No downloads, no plugins.',
+    title: '100Lights — The Music Studio in Your Browser',
+    description: 'A full DAW in the browser: Session View, piano roll, drum rack, mixer, and a community of shared sounds and recipes. No downloads, no plugins.',
     url: 'https://100lights.com',
     type: 'website',
     siteName: '100Lights',
   },
   twitter: {
     card: 'summary_large_image',
-    title: '100Lights — Professional Audio & Video Editing',
-    description: 'A full DAW and multi-camera live session editor built for the browser.',
+    title: '100Lights — The Music Studio in Your Browser',
+    description: 'A full DAW in the browser, with a community of shared sounds and chord recipes. Free to start.',
   },
   alternates: { canonical: 'https://100lights.com' },
 }
 
-const audioFeatures = [
+const studioFeatures = [
   {
     icon: Layers,
     title: 'Session & Arrangement View',
@@ -37,8 +37,8 @@ const audioFeatures = [
   },
   {
     icon: Music2,
-    title: 'Piano Roll & MIDI',
-    description: 'Write and edit MIDI patterns with a full piano roll. Add Arpeggiator, Chord, Scale, and Velocity MIDI effects.',
+    title: 'Piano Roll that listens',
+    description: 'A full piano roll with per-roll sustain and effects — plus voice mapping: sing a melody and see your pitch traced over the keys while you place the notes.',
     color: '#8b5cf6',
   },
   {
@@ -49,51 +49,51 @@ const audioFeatures = [
   },
   {
     icon: CircleDot,
-    title: 'Drum Rack',
-    description: 'Color-coded 8-pad drum rack with per-pad volume, pitch, pan, and mute controls. Acoustic and 808 packs included.',
+    title: 'Drum Rack & JAM',
+    description: 'Color-coded 8-pad drum rack with per-pad volume, pitch, pan, and mute — and JAM mode to capture a live take straight onto the timeline.',
     color: '#f59e0b',
   },
 ]
 
-const videoFeatures = [
+const beyondFeatures = [
   {
-    icon: Camera,
-    title: 'Live Camera Session',
-    description: 'Switch between camera angles in real time. Point the camera at the sound source automatically, or take manual control. The Session View model applied to live video.',
-    color: '#8b5cf6',
+    icon: Library,
+    title: 'A sound library that sustains',
+    description: 'Over a thousand built-in sounds across strings, keys, guitar, synths, brass, and drums. Every sample stretches to any note length — hold a violin for four bars and it keeps singing.',
+    color: '#14b8a6',
   },
   {
-    icon: Film,
-    title: 'Timeline Editing',
-    description: 'Multi-track video timeline with precise cut control, transitions, and a blade tool. Edit your footage with frame-accurate precision.',
-    color: '#3b82f6',
+    icon: Globe2,
+    title: 'Community sounds & recipes',
+    description: 'Share samples, packs, presets, and chord-progression recipes with a public link anyone can play — no account needed to listen. Pull anything you find straight into your library.',
+    color: '#34d399',
   },
   {
-    icon: Monitor,
-    title: 'Color Grading',
-    description: 'Built-in color tools with brightness, contrast, saturation, and highlights controls — all non-destructive. LUT support included.',
+    icon: Users,
+    title: 'Real-time collaboration',
+    description: 'Share a project link and work on the same session together, live. Keep it private with an invite list or open it up public — you control who can edit and who can listen.',
     color: '#ec4899',
   },
   {
-    icon: Mic2,
-    title: 'Audio Mixing',
-    description: 'Per-track audio channel strips with volume, solo, mute, and EQ. Sync your multi-camera audio in one place.',
-    color: '#14b8a6',
+    icon: AudioLines,
+    title: 'Podcast mode',
+    description: 'The same studio, tuned for talk: multitrack recording, level riding, and clean exports for your show.',
+    color: '#60a5fa',
   },
 ]
 
 const steps = [
   {
-    title: 'Open your project',
-    body: 'Choose Audio or Video, name your project, and jump straight into your editor — no downloads, no plugins, no waiting.',
+    title: 'Open the studio',
+    body: 'Name your project and you’re in — no downloads, no plugins, no waiting. Start from silence or drop a chord recipe on a track and build from there.',
   },
   {
-    title: 'Create and refine',
-    body: 'Arrange tracks, mix audio, launch clips live, or cut and grade your video. All professional tools, all in the browser.',
+    title: 'Make it yours',
+    body: 'Arrange tracks, write MIDI in the piano roll, capture live takes with JAM, and mix with the full effects chain. Every session sharpens your ear.',
   },
   {
-    title: 'Export and share',
-    body: 'Render your final audio mix or video cut and share it anywhere. Your projects are saved automatically.',
+    title: 'Share it',
+    body: 'Export your mix, invite a collaborator into the session, or publish sounds and recipes to the community with a link anyone can play.',
   },
 ]
 
@@ -102,8 +102,8 @@ const jsonLd = {
   '@type': 'SoftwareApplication',
   name: '100Lights',
   applicationCategory: 'MultimediaApplication',
-  operatingSystem: 'Web, macOS, Windows, iOS, Android',
-  description: 'Professional audio and video editing suite for the browser. Includes a full digital audio workstation and a live multi-camera video session editor.',
+  operatingSystem: 'Web, macOS, Windows',
+  description: 'A full digital audio workstation for the browser: Session and Arrangement views, piano roll, drum rack, mixer, real-time collaboration, and a community of shared sounds and chord recipes.',
   url: 'https://100lights.com',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
 }
@@ -139,8 +139,8 @@ export default async function LandingPage() {
 
             {/* Nav links */}
             <div className="hidden sm:flex items-center gap-6">
-              <Link href="#audio-editor" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Audio</Link>
-              <Link href="#video-editor" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Video</Link>
+              <Link href="#studio" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Studio</Link>
+              <Link href="/community" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Community</Link>
               <Link href="#pricing" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Pricing</Link>
             </div>
 
@@ -182,8 +182,8 @@ export default async function LandingPage() {
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-8"
               style={{ background: 'var(--accent-subtle)', color: 'var(--accent-light)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
             >
-              <Zap size={11} aria-hidden="true" />
-              Professional audio &amp; video editing
+              <Music size={11} aria-hidden="true" />
+              A full DAW in your browser
             </div>
 
             <h1
@@ -191,14 +191,16 @@ export default async function LandingPage() {
               className="text-3xl sm:text-5xl font-bold leading-tight tracking-tight mb-6"
               style={{ color: 'var(--text-primary)' }}
             >
-              Tools that{' '}
+              A studio that{' '}
               <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                train your ears
+                trains your ears
               </span>
             </h1>
 
             <p className="text-base sm:text-lg max-w-2xl mx-auto mb-10" style={{ color: 'var(--text-secondary)' }}>
-              Most editors do the work for you. 100Lights is built so the work makes you better — a full digital audio workstation and live multi-camera session editor where every session sharpens your ear and your eye. In the browser today; native apps for Mac, Windows, and mobile coming soon.
+              Most music software does the work for you. 100Lights is built so the work makes you better —
+              a real digital audio workstation with Session View, a piano roll that traces your singing,
+              and a community of sounds and chord recipes to learn from. In the browser, free to start.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -207,14 +209,14 @@ export default async function LandingPage() {
                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold"
                 style={{ background: 'var(--accent)', color: '#fff' }}
               >
-                Start for free <ArrowRight size={15} aria-hidden="true" />
+                Start making music <ArrowRight size={15} aria-hidden="true" />
               </Link>
               <Link
-                href="#audio-editor"
+                href="/community"
                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium"
                 style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
               >
-                See what&apos;s inside
+                Hear what people are making
               </Link>
             </div>
 
@@ -222,7 +224,7 @@ export default async function LandingPage() {
               className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 mt-10"
               role="list"
             >
-              {['Browser · Mac · Windows · Mobile', 'Free tier available', 'Cancel anytime'].map((item) => (
+              {['Runs in your browser — nothing to install', 'Free tier, no card required', 'Desktop app for Mac & Windows'].map((item) => (
                 <div key={item} className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }} role="listitem">
                   <Check size={12} color="var(--success)" aria-hidden="true" />
                   {item}
@@ -243,17 +245,17 @@ export default async function LandingPage() {
                 loop
                 playsInline
                 preload="metadata"
-                aria-label="30-second loop of the 100Lights audio editor: adding tracks, capturing a live take with JAM, and riding a volume fader"
+                aria-label="30-second loop of the 100Lights studio: adding tracks, capturing a live take with JAM, and riding a volume fader"
                 className="w-full block"
                 style={{ aspectRatio: '1280 / 800' }}
               />
             </div>
           </section>
 
-          {/* ── Audio Editor ── */}
+          {/* ── The Studio ── */}
           <section
-            id="audio-editor"
-            aria-labelledby="audio-heading"
+            id="studio"
+            aria-labelledby="studio-heading"
             className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24"
           >
             <div className="text-center mb-10 sm:mb-14">
@@ -262,18 +264,20 @@ export default async function LandingPage() {
                 style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.25)' }}
               >
                 <Music size={11} aria-hidden="true" />
-                Audio Editor
+                The Studio
               </div>
-              <h2 id="audio-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
-                A full DAW — in your browser
+              <h2 id="studio-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
+                Everything a DAW should have
               </h2>
               <p className="text-base max-w-2xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
-                Session View for live clip launching, a full Arrangement timeline, Piano Roll for MIDI composition, an 8-pad Drum Rack, and a complete effects chain — all running without a single download.
+                Session View for live clip launching, a full Arrangement timeline, MIDI composition with
+                Arpeggiator, Chord, Scale, and Velocity effects, and a complete mixing chain — all running
+                without a single download.
               </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {audioFeatures.map(({ icon: Icon, title, description, color }) => (
+              {studioFeatures.map(({ icon: Icon, title, description, color }) => (
                 <article
                   key={title}
                   className="p-6 rounded-xl border"
@@ -292,30 +296,31 @@ export default async function LandingPage() {
             </div>
           </section>
 
-          {/* ── Video Editor ── */}
+          {/* ── Beyond the timeline ── */}
           <section
-            id="video-editor"
-            aria-labelledby="video-heading"
+            id="community"
+            aria-labelledby="beyond-heading"
             className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24"
           >
             <div className="text-center mb-10 sm:mb-14">
               <div
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
-                style={{ background: 'rgba(139, 92, 246, 0.12)', color: '#a78bfa', border: '1px solid rgba(139, 92, 246, 0.25)' }}
+                style={{ background: 'rgba(52, 211, 153, 0.12)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.25)' }}
               >
-                <Film size={11} aria-hidden="true" />
-                Video Editor
+                <Globe2 size={11} aria-hidden="true" />
+                Sounds &amp; Community
               </div>
-              <h2 id="video-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Live multi-camera session editing
+              <h2 id="beyond-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
+                You never start from nothing
               </h2>
               <p className="text-base max-w-2xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
-                Apply the Session View model to video — switch camera angles live by sound source or manual control, then refine your cut in the multi-track timeline with color grading and audio mixing built in.
+                A deep built-in sound library, chord-progression recipes you can drag straight onto a track,
+                and a community where every share is a public link anyone can listen to.
               </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {videoFeatures.map(({ icon: Icon, title, description, color }) => (
+              {beyondFeatures.map(({ icon: Icon, title, description, color }) => (
                 <article
                   key={title}
                   className="p-6 rounded-xl border"
@@ -382,10 +387,10 @@ export default async function LandingPage() {
               style={{ background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(59, 130, 246, 0.08))', borderColor: 'rgba(139, 92, 246, 0.25)' }}
             >
               <h2 id="cta-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Ready to start creating?
+                Your first track is a click away
               </h2>
               <p className="text-base mb-8 max-w-lg" style={{ color: 'var(--text-secondary)' }}>
-                Open your audio or video project now — it&apos;s free to start, no downloads required.
+                Open the studio, drop a chord recipe on a track, and start shaping your sound — free, in the browser, right now.
               </p>
               <Link
                 href="/sign-up"
@@ -414,7 +419,8 @@ export default async function LandingPage() {
               </div>
               <nav aria-label="Footer navigation">
                 <div className="flex items-center gap-4">
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>© 2026 100Lights. Built for creators.</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>© 2026 100Lights. Built for musicians.</p>
+                  <Link href="/community" className="text-xs" style={{ color: 'var(--text-muted)' }}>Community</Link>
                   <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
                   <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>
                 </div>

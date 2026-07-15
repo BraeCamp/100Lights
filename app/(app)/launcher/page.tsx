@@ -459,7 +459,7 @@ function LauncherInner() {
     fetch('/api/platform-flags')
       .then(r => r.ok ? r.json() : null)
       .then((d: { enabledModules?: string[] } | null) => {
-        setEnabledModules(d?.enabledModules ?? ['audio', 'video', 'image'])
+        setEnabledModules(d?.enabledModules ?? ['audio'])
       })
       .catch(() => setEnabledModules(['audio', 'video', 'image']))
   }, [])

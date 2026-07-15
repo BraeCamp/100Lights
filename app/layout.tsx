@@ -13,19 +13,19 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://100lights.com'),
-  title: { template: '%s | 100Lights', default: '100Lights — Professional Audio & Video Editing' },
-  description: 'A full digital audio workstation and live multi-camera video session editor, built for the browser.',
+  title: { template: '%s | 100Lights', default: '100Lights — The Music Studio in Your Browser' },
+  description: 'A full digital audio workstation built for the browser — Session View, piano roll, drum rack, mixer, and a community of shared sounds and chord recipes.',
   openGraph: {
     type: 'website',
     siteName: '100Lights',
-    title: '100Lights — Professional Audio & Video Editing',
-    description: 'A full DAW and multi-camera live session editor built for the browser. No downloads, no plugins.',
+    title: '100Lights — The Music Studio in Your Browser',
+    description: 'A full DAW built for the browser, with a community of shared sounds and chord recipes. No downloads, no plugins.',
     url: 'https://100lights.com',
   },
   twitter: {
     card: 'summary_large_image',
-    title: '100Lights — Professional Audio & Video Editing',
-    description: 'A full DAW and multi-camera live session editor built for the browser.',
+    title: '100Lights — The Music Studio in Your Browser',
+    description: 'A full DAW built for the browser, with a community of shared sounds and chord recipes.',
   },
   robots: { index: true, follow: true },
 }

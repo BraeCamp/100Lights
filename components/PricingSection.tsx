@@ -13,10 +13,9 @@ const FREE_FEATURES = [
 ]
 
 const PRO_FEATURES = [
-  'Every editor included — audio + video',
-  '20 GB storage — multitrack sessions, stems, video',
+  '20 GB storage — multitrack sessions, stems, full albums',
   'Unlimited projects',
-  'Edit shared projects with collaborators',
+  'Edit shared projects live with collaborators',
   'Priority support',
 ]
 
@@ -32,7 +31,7 @@ export default function PricingSection() {
     <section id="pricing" aria-labelledby="pricing-heading" className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
       <div className="text-center mb-10 sm:mb-14">
         <h2 id="pricing-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>Simple, transparent pricing</h2>
-        <p className="text-base mb-6" style={{ color: 'var(--text-secondary)' }}>The audio editor is free forever. Upgrade when your library outgrows 500 MB — Pro adds space, unlimited projects, and every editor.</p>
+        <p className="text-base mb-6" style={{ color: 'var(--text-secondary)' }}>The audio editor is free forever. Upgrade when your library outgrows 500 MB — Pro adds space, unlimited projects, and live collaboration.</p>
 
         {/* Billing toggle */}
         <div className="inline-flex items-center gap-1 p-1 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>

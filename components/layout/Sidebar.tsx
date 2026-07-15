@@ -27,7 +27,7 @@ export default function Sidebar() {
   const { user } = useUser()
   const { showUpgrade } = useUpgradeModal()
   const [usage, setUsage] = useState<Usage | null>(null)
-  const [enabledModules, setEnabledModules] = useState<string[]>(['audio', 'video', 'image'])
+  const [enabledModules, setEnabledModules] = useState<string[]>(['audio'])
   const [isElectron, setIsElectron] = useState(false)
   const { padTrafficLights: isElectronMac } = useElectronChrome()
 
