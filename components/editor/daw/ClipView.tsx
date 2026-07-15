@@ -64,7 +64,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onResizeStart, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -74,6 +74,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
   onResizeStart?(): void
+  onResizeEnd?(): void
   onCrop(): void
   onCropChange?(trimStart: number, trimEnd: number): void
   onCropSnap?(beat: number): number
@@ -273,7 +274,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       if (!resizeRef.current) return
       onResize(Math.max(0.125, resizeRef.current.startDur + (ev.clientX - resizeRef.current.startX) / beatW), ev.altKey)
     }
-    function mu() { resizeRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    function mu() { resizeRef.current = null; onResizeEnd?.(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
@@ -364,6 +365,25 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
       : { label: 'Delete', fn: onDelete },
     { label: 'Splice at Playhead', fn: () => onSplice?.() },
+    // Dragging type — what the right edge does when you pull it: Loop repeats
+    // the content; Expand stretches it (MIDI scales the pattern, audio warps).
+    (() => {
+      const expand = isMidiClip(clip) ? !!(clip as MidiClip).stretchNotes : !!(clip as AudioClip).warpEnabled
+      return {
+        label: `Change Dragging Type → ${expand ? 'Loop' : 'Expand'}`,
+        fn: () => {
+          if (isMidiClip(clip)) {
+            dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: expand
+              ? { stretchNotes: false }
+              : { stretchNotes: true, loopEnabled: false, loopLengthBeats: undefined } })
+          } else {
+            dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: expand
+              ? { warpEnabled: false }
+              : { warpEnabled: true, loopEnabled: false } })
+          }
+        },
+      }
+    })(),
     ...(isAudioClip(clip) ? [
       { label: 'Clip Settings', fn: () => onSettings?.() },
       { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },

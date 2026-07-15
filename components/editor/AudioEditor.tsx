@@ -454,6 +454,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [engineForRender])
 
+
   useEffect(() => { projectRef.current = project }, [project])
 
   const readOnlyRef = useRef(!!props.readOnly)
@@ -751,6 +752,13 @@ export default function AudioEditor(props: AudioEditorProps) {
   const setSelectedReturnId = useCallback((id: string | null) => { setSelectedReturnId_(id); if (id) setSelectedTrackId_(null)  }, [])
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
+
+  // Dev console access to the multi-selection (window.__dawSelection)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      (window as unknown as { __dawSelection?: string[] }).__dawSelection = [...selectedClipIds]
+    }
+  })
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')

@@ -7,7 +7,7 @@ import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-sta
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
-import type { DawTrack, AudioClip, AutomationLane, TakeLane } from '@/lib/daw-types'
+import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
 import TrackInputCard from './TrackInputCard'
 // AudioInputSource and AUDIO_INPUT_LABELS removed — TrackInputCard handles device labels directly
@@ -242,6 +242,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
   // Originals captured when an edge-resize starts on a stretchNotes clip
   const stretchOriginRef = useRef<{ clipId: string; durationBeats: number; notes: import('@/lib/daw-types').MidiNote[] } | null>(null)
+  // Multi-select edge-resize: the whole selection moves as one block.
+  // 'expand' scales every member by the drag ratio (relations preserved);
+  // 'loop' tiles copies of the entire selection so the group repeats
+  // start-to-end instead of each clip looping at its own edge.
+  const groupResizeRef = useRef<{
+    clipId: string
+    grabbedDur: number
+    mode: 'expand' | 'loop'
+    groupStart: number
+    groupEnd: number
+    members: DawClip[]
+    lastDb?: number
+  } | null>(null)
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
@@ -877,9 +890,50 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     if (isMidiClip(clip) && clip.stretchNotes) {
                       stretchOriginRef.current = { clipId: clip.id, durationBeats: clip.durationBeats, notes: clip.notes }
                     }
+                    groupResizeRef.current = null
+                    if (selectedClipIds.size > 1 && selectedClipIds.has(clip.id)) {
+                      const members = project.arrangementClips
+                        .filter(c => selectedClipIds.has(c.id))
+                        .map(c => JSON.parse(JSON.stringify(c)) as DawClip)
+                      if (members.length > 1) {
+                        groupResizeRef.current = {
+                          clipId: clip.id,
+                          grabbedDur: clip.durationBeats,
+                          mode: (isMidiClip(clip) ? !!clip.stretchNotes : !!clip.warpEnabled) ? 'expand' : 'loop',
+                          groupStart: Math.min(...members.map(c => c.startBeat)),
+                          groupEnd: Math.max(...members.map(c => c.startBeat + c.durationBeats)),
+                          members,
+                        }
+                      }
+                    }
                   }}
                   onResize={(db, alt) => {
                     if (frozen) return
+                    const grp = groupResizeRef.current
+                    if (grp && grp.clipId === clip.id) {
+                      if (grp.mode === 'loop') {
+                        // preview only — tiles are placed on mouse-up
+                        grp.lastDb = Math.max(0.125, db)
+                        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: grp.lastDb } })
+                        return
+                      }
+                      // expand: scale the whole block by the drag ratio
+                      const ratio = Math.max(0.05, db / grp.grabbedDur)
+                      for (const m of grp.members) {
+                        const newStart = grp.groupStart + (m.startBeat - grp.groupStart) * ratio
+                        const newDur = Math.max(0.125, m.durationBeats * ratio)
+                        dispatch({ type: 'MOVE_CLIP', clipId: m.id, startBeat: newStart })
+                        if (isMidiClip(m) && m.stretchNotes) {
+                          dispatch({ type: 'UPDATE_CLIP', clipId: m.id, patch: {
+                            durationBeats: newDur,
+                            notes: m.notes.map(n => ({ ...n, startBeat: n.startBeat * ratio, durationBeats: n.durationBeats * ratio })),
+                          } })
+                        } else {
+                          dispatch({ type: 'UPDATE_CLIP', clipId: m.id, patch: { durationBeats: newDur } })
+                        }
+                      }
+                      return
+                    }
                     const endBeat = clip.startBeat + db
                     let snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
                     if (!alt) snappedEnd = snapToClipEdges(snappedEnd, new Set([clip.id]), 8 / beatW, project.arrangementClips)
@@ -915,6 +969,29 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       }
                     }
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
+                  }}
+                  onResizeEnd={() => {
+                    const grp = groupResizeRef.current
+                    groupResizeRef.current = null
+                    if (!grp || grp.clipId !== clip.id || grp.mode !== 'loop' || frozen) return
+                    const span = grp.groupEnd - grp.groupStart
+                    if (span <= 0.001) return
+                    // project in this closure is from mousedown-time — track the
+                    // drag's final duration in the ref instead
+                    const extension = (grp.lastDb ?? grp.grabbedDur) - grp.grabbedDur
+                    // back to the original length — the extension chose the tile count
+                    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: grp.grabbedDur } })
+                    const n = Math.min(24, Math.round(extension / span))
+                    if (n < 1) return
+                    for (let k = 1; k <= n; k++) {
+                      for (const m of grp.members) {
+                        const copy = JSON.parse(JSON.stringify(m)) as DawClip
+                        copy.id = crypto.randomUUID()
+                        copy.startBeat = m.startBeat + k * span
+                        if (isMidiClip(copy)) copy.notes = copy.notes.map(nt => ({ ...nt, id: crypto.randomUUID() }))
+                        dispatch({ type: 'ADD_CLIP', clip: copy })
+                      }
+                    }
                   }}
                   loopNativeBeats={isAudioClip(clip) && clip.loopEnabled && clip.bufferDuration
                     ? engine.secondsToBeats(clip.bufferDuration - clip.trimStart - clip.trimEnd)
