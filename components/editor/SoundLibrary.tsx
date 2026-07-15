@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
+import { Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
   initLibrary,
@@ -17,6 +17,7 @@ import { seedDefaultSamples } from '@/lib/default-samples'
 import { getAllChordRecipes } from '@/lib/practice-recipes'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
+import { SynthDesigner, LibrarySourcePicker, requestCreateRecipe, RECIPES_CHANGED_EVENT } from './SoundCreate'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
 
@@ -561,21 +562,29 @@ function applyEdits(
   fadeInFrac: number,
   fadeOutFrac: number,
   reversed: boolean,
+  speed = 1,
 ): AudioBuffer {
   const startSamp = Math.floor(trimStart * src.length)
   const endSamp   = Math.floor(trimEnd   * src.length)
   const len       = Math.max(1, endSamp - startSamp)
+  // tape-style speed: resample by linear interpolation (pitch follows speed)
+  const outLen    = Math.max(1, Math.round(len / speed))
 
-  const out = new AudioBuffer({ numberOfChannels: src.numberOfChannels, length: len, sampleRate: src.sampleRate })
+  const out = new AudioBuffer({ numberOfChannels: src.numberOfChannels, length: outLen, sampleRate: src.sampleRate })
 
   for (let ch = 0; ch < src.numberOfChannels; ch++) {
     const src_ = src.getChannelData(ch)
     const dst  = out.getChannelData(ch)
-    for (let i = 0; i < len; i++) dst[i] = (src_[startSamp + i] ?? 0) * gain
-    const fi = Math.floor(fadeInFrac * len)
+    for (let i = 0; i < outLen; i++) {
+      const pos = startSamp + i * speed
+      const i0 = Math.floor(pos), frac = pos - i0
+      const a = src_[i0] ?? 0, b = src_[i0 + 1] ?? a
+      dst[i] = (a + (b - a) * frac) * gain
+    }
+    const fi = Math.floor(fadeInFrac * outLen)
     for (let i = 0; i < fi; i++) dst[i] *= i / fi
-    const fo = Math.floor(fadeOutFrac * len)
-    for (let i = 0; i < fo; i++) dst[len - 1 - i] *= i / fo
+    const fo = Math.floor(fadeOutFrac * outLen)
+    for (let i = 0; i < fo; i++) dst[outLen - 1 - i] *= i / fo
     if (reversed) dst.reverse()
   }
   return out
@@ -589,7 +598,7 @@ export function AddToLibraryModal({
   onAdded:       () => void
   initialBuffer?: AudioBuffer
 }) {
-  type Mode = 'choose' | 'record' | 'edit'
+  type Mode = 'choose' | 'record' | 'edit' | 'synth' | 'library'
   const [mode, setMode]       = useState<Mode>(initialBuffer ? 'edit' : 'choose')
   const [recording, setRec]   = useState(false)
   const [srcBuf, setSrcBuf]   = useState<AudioBuffer | null>(initialBuffer ?? null)
@@ -604,13 +613,14 @@ export function AddToLibraryModal({
   const [fadeIn,    setFadeIn]    = useState(0)
   const [fadeOut,   setFadeOut]   = useState(0)
   const [reversed,  setReversed]  = useState(false)
+  const [speed,     setSpeed]     = useState(1)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef   = useRef<Blob[]>([])
   const previewRef  = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
   const [previewing, setPreviewing] = useState(false)
 
-  const trimmedDur = srcBuf ? ((trimEnd - trimStart) * srcBuf.duration).toFixed(2) : '0.00'
+  const trimmedDur = srcBuf ? ((trimEnd - trimStart) * srcBuf.duration / speed).toFixed(2) : '0.00'
 
   async function startRecord() {
     try {
@@ -651,10 +661,7 @@ export function AddToLibraryModal({
         const buf = ctx.createBuffer(channels.length, channels[0].length, sampleRate)
         for (let ch = 0; ch < channels.length; ch++) buf.getChannelData(ch).set(channels[ch])
         ctx.close()
-        setSrcBuf(buf)
-        setTrimStart(0); setTrimEnd(1)
-        setGain(1); setFadeIn(0); setFadeOut(0); setReversed(false)
-        setMode('edit')
+        enterEdit(buf)
       } catch { setError('Could not decode AIFF file') }
       return
     }
@@ -664,15 +671,20 @@ export function AddToLibraryModal({
     loadBlob(new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' }))
   }
 
+  function enterEdit(buf: AudioBuffer, suggestedName?: string) {
+    setSrcBuf(buf)
+    setTrimStart(0); setTrimEnd(1)
+    setGain(1); setFadeIn(0); setFadeOut(0); setReversed(false); setSpeed(1)
+    if (suggestedName) setName(suggestedName)
+    setMode('edit')
+  }
+
   async function loadBlob(blob: Blob) {
     try {
       const ctx = new AudioContext()
       const buf = await ctx.decodeAudioData(await blob.arrayBuffer())
       ctx.close()
-      setSrcBuf(buf)
-      setTrimStart(0); setTrimEnd(1)
-      setGain(1); setFadeIn(0); setFadeOut(0); setReversed(false)
-      setMode('edit')
+      enterEdit(buf)
     } catch { setError('Could not decode audio') }
   }
 
@@ -688,7 +700,7 @@ export function AddToLibraryModal({
   async function togglePreview() {
     if (previewing) { stopPreview(); return }
     if (!srcBuf) return
-    const edited = applyEdits(srcBuf, trimStart, trimEnd, gain, fadeIn, fadeOut, reversed)
+    const edited = applyEdits(srcBuf, trimStart, trimEnd, gain, fadeIn, fadeOut, reversed, speed)
     const ctx = new AudioContext()
     const src = ctx.createBufferSource()
     src.buffer = edited
@@ -710,7 +722,7 @@ export function AddToLibraryModal({
     stopPreview()
     setSaving(true)
     try {
-      const edited = applyEdits(srcBuf, trimStart, trimEnd, gain, fadeIn, fadeOut, reversed)
+      const edited = applyEdits(srcBuf, trimStart, trimEnd, gain, fadeIn, fadeOut, reversed, speed)
       const channels = Array.from({ length: edited.numberOfChannels }, (_, ch) => edited.getChannelData(ch))
       const wavBuf   = encodeWav(channels, edited.sampleRate)
       const blob     = new Blob([wavBuf], { type: 'audio/wav' })
@@ -758,18 +770,51 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
 
         {mode === 'choose' && (
           <>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={startRecord} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'rgba(220,38,38,0.12)', color: '#f87171', border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <button onClick={startRecord} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'rgba(220,38,38,0.12)', color: '#f87171', border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                 <Mic size={22} />
                 Record
               </button>
               <button onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*'; inp.onchange = () => inp.files?.[0] && loadFile(inp.files[0]); inp.click() }}
-                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                 <Upload size={22} />
                 Import
               </button>
+              <button onClick={() => setMode('synth')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'rgba(139,92,246,0.12)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.3)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                <Wand2 size={22} />
+                Synthesize
+              </button>
+              <button onClick={() => setMode('library')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid rgba(52,211,153,0.3)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                <Library size={22} />
+                From a sample
+              </button>
             </div>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
+              Synthesize builds a sound from scratch · From a sample starts with anything already in your library
+            </p>
             {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
+          </>
+        )}
+
+        {mode === 'synth' && (
+          <>
+            <SynthDesigner onUse={(buf, suggested) => enterEdit(buf, suggested)} />
+            <button onClick={() => setMode('choose')} style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
+              ← Back
+            </button>
+          </>
+        )}
+
+        {mode === 'library' && (
+          <>
+            <LibrarySourcePicker
+              onPick={(buf, entry) => enterEdit(buf, `${entry.name} 2`)}
+              onError={setError}
+            />
+            {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
+            <button onClick={() => { setError(''); setMode('choose') }} style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
+              ← Back
+            </button>
           </>
         )}
 
@@ -809,6 +854,14 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
                     onChange={e => setGain(Number(e.target.value))}
                     style={{ flex: 1, accentColor: 'var(--accent)' }} />
                   <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(gain * 100)}%</span>
+                </div>
+              ))}
+              {row('Speed', (
+                <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
+                  <input type="range" min={0.25} max={4} step={0.05} value={speed}
+                    onChange={e => setSpeed(Number(e.target.value))}
+                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
+                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{speed.toFixed(2)}×</span>
                 </div>
               ))}
               {row('Fade in', (
@@ -899,6 +952,12 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   }, [isLoaded, user?.id])
 
   const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
+  const [recipesVersion,   setRecipesVersion]   = useState(0)
+  useEffect(() => {
+    const bump = () => setRecipesVersion(v => v + 1)
+    window.addEventListener(RECIPES_CHANGED_EVENT, bump)
+    return () => window.removeEventListener(RECIPES_CHANGED_EVENT, bump)
+  }, [])
   const [auditioningRecipe, setAuditioningRecipe] = useState<string | null>(null)
   const recipeStopRef = useRef<() => void>(() => {})
   useEffect(() => () => { recipeStopRef.current() }, [])
@@ -1278,10 +1337,14 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
         </div>
   )
 
-  // Imported community recipes carry a `community-` id; everything else ships
-  // with the app. Shown as separate sections so the source is always clear.
+  // Recipe ids encode their source: `user-` = written here in the piano roll,
+  // `community-` = imported; everything else ships with the app. Shown as
+  // separate sections so the source is always clear. recipesVersion re-reads
+  // the list after a save-from-roll.
+  void recipesVersion
   const allRecipes = getAllChordRecipes()
-  const builtinRecipes = allRecipes.filter(r => !r.id.startsWith('community-'))
+  const userRecipes = allRecipes.filter(r => r.id.startsWith('user-'))
+  const builtinRecipes = allRecipes.filter(r => !r.id.startsWith('community-') && !r.id.startsWith('user-'))
   const communityRecipes = allRecipes.filter(r => r.id.startsWith('community-'))
   const recipeSectionHeader = (label: string, color: string) => (
     <div style={{ padding: '4px 2px 0', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color, textTransform: 'uppercase' }}>
@@ -1293,13 +1356,30 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
         Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
       </p>
+      <button
+        onClick={requestCreateRecipe}
+        title="Write your own recipe in the piano roll"
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          padding: '8px 0', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+          border: '1px dashed rgba(139,92,246,0.5)', background: 'rgba(139,92,246,0.08)', color: 'var(--accent-light)',
+        }}
+      >
+        + Create a recipe
+      </button>
+      {userRecipes.length > 0 && (
+        <>
+          {recipeSectionHeader('Your Recipes', '#a78bfa')}
+          {userRecipes.map(recipeCard)}
+        </>
+      )}
       {communityRecipes.length > 0 && (
         <>
           {recipeSectionHeader('From the Community', '#34d399')}
           {communityRecipes.map(recipeCard)}
         </>
       )}
-      {communityRecipes.length > 0 && recipeSectionHeader('100Lights Recipes', 'var(--text-muted)')}
+      {(communityRecipes.length > 0 || userRecipes.length > 0) && recipeSectionHeader('100Lights Recipes', 'var(--text-muted)')}
       {builtinRecipes.map(recipeCard)}
     </div>
   )

@@ -6,6 +6,7 @@ import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react
 import { useDaw } from '@/lib/daw-state'
 import { useVoiceMap, VoiceMapTrace, VoiceMapControls } from './VoiceMapKit'
 import { RollSettings } from './RollSettings'
+import { SaveRecipeButton } from '../SoundCreate'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
@@ -1130,6 +1131,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               canPreview={!!clip.presetId}
             />
           )}
+
+          <SaveRecipeButton clip={clip} />
 
           {/* Preset picker */}
           <div style={{ position: 'relative' }} ref={presetPickerRef}>

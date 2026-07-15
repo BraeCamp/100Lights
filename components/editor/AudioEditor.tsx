@@ -773,6 +773,38 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [saveError,  setSaveError]  = useState('')
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
 
+  // ── Create-recipe entry point: the sound library's "+ Create a recipe"
+  // button (this editor or the /library page) lands here — fresh track, empty
+  // 16-beat MIDI clip, piano roll open and ready to write.
+  useEffect(() => {
+    function createRecipeDraft() {
+      if (readOnlyRef.current) return
+      const trackId = crypto.randomUUID()
+      dispatch({ type: 'ADD_TRACK', id: trackId, name: 'New Recipe' })
+      const clipId = crypto.randomUUID()
+      void (async () => {
+        const { defaultPresetId } = await import('@/lib/midi-presets')
+        dispatch({
+          type: 'ADD_CLIP',
+          clip: {
+            kind: 'midi', id: clipId, trackId, name: 'New Recipe',
+            startBeat: 0, durationBeats: 16, isDrumClip: false, notes: [],
+            stretchNotes: true, rootNote: 0, presetId: defaultPresetId() ?? undefined,
+          },
+        })
+        setSelectedClipId(clipId)
+        setExpandedPianoRollClipId(clipId)
+      })()
+    }
+    void import('./SoundCreate').then(({ consumeCreateRecipeFlag, CREATE_RECIPE_EVENT }) => {
+      if (consumeCreateRecipeFlag()) createRecipeDraft()
+      window.addEventListener(CREATE_RECIPE_EVENT, onEvent)
+    })
+    function onEvent(e: Event) { e.preventDefault(); createRecipeDraft() }
+    return () => window.removeEventListener('100lights-create-recipe', onEvent)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
   useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
 
