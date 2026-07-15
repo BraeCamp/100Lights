@@ -494,6 +494,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
           data-help-id="track-head"
+          data-track-id={track.id}
           style={{
             width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: `4px ${isIndented ? 8 : 8}px`,
             paddingLeft: leftPad,

@@ -249,6 +249,7 @@ function EntryRow({
         e.dataTransfer.setDragImage(ghost, 0, 0)
         setTimeout(() => document.body.removeChild(ghost), 0)
       }}
+      data-entry-id={entry.id}
       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderLeft: `2px solid ${color}`, margin: '2px 0', cursor: 'grab', userSelect: 'none' }}
     >
       {/* Name */}

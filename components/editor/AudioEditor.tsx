@@ -19,6 +19,7 @@ import { captureAudioInput } from '@/lib/audio-capture'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import HelpButton from './daw/HelpButton'
+import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
@@ -1213,6 +1214,7 @@ export default function AudioEditor(props: AudioEditorProps) {
               <InspectorBridge />
               <DuplicateCleanup />
               <PracticeButton />
+              <InspectButton />
               <HelpButton />
             </div>
 

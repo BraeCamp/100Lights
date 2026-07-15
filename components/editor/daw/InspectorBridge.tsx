@@ -100,10 +100,10 @@ export function InspectorBridge() {
   return (
     <button
       onClick={() => {
-        window.open('/inspector', '100lights-inspector', 'width=420,height=760,menubar=no,toolbar=no')
+        window.open('/assistant', '100lights-assistant', 'width=420,height=760,menubar=no,toolbar=no')
         setOpen(true)
       }}
-      title="Open the Inspector — a separate window showing the settings of whatever you select (drag it to a second screen)"
+      title="Open the Assistant — a separate window showing the settings of whatever you select (drag it to a second screen)"
       data-help-id="inspector"
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',

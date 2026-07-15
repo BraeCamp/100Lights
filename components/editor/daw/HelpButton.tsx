@@ -49,6 +49,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: '⌘S', action: 'Save project' },
       { keys: 'Delete', action: 'Delete selected clips' },
       { keys: 'B', action: 'Toggle the sound library panel' },
+      { keys: 'I', action: 'Inspect mode — hover anything for its name and details' },
       { keys: 'H or ?', action: 'Open this help menu' },
     ],
   },
@@ -241,6 +242,14 @@ const FEATURES: Feature[] = [
 ]
 
 // ── Component ──────────────────────────────────────────────────────────────────
+
+/** Name + description for a data-help-id — powers Inspect mode's hover cards. */
+export function helpInfoFor(helpId: string): { name: string; description: string } | null {
+  for (const f of FEATURES) {
+    if (f.helpIds.includes(helpId)) return { name: f.name, description: f.description }
+  }
+  return null
+}
 
 export default function HelpButton() {
   const { audioMode } = useDaw()
