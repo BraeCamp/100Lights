@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { DawTrack, DawClip, AudioClip, MidiClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
@@ -8,6 +8,8 @@ import { useDaw } from '@/lib/daw-state'
 import { getPresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import { shareRecipe } from '@/lib/community'
 import { ShareCommunityDialog } from '../SoundCreate'
+import { RollSoundPanel } from './RollSettings'
+import { clampToViewport } from './menu-clamp'
 import Waveform from './Waveform'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -96,7 +98,15 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const resizeRef  = useRef<{ startX: number; startDur: number } | null>(null)
   const gainDragRef = useRef<{ startY: number; startGain: number; clipH: number } | null>(null)
   const [ctxPos, setCtxPos] = useState<{ x: number; y: number; beat: number } | null>(null)
-  const [ctxSoundMenu, setCtxSoundMenu] = useState(false)  // "Change Sound" submenu inside the ctx menu
+  // Which submenu the ctx menu is showing: edit ops, clip tools/sound extras,
+  // or the preset picker. null = the top level.
+  const [ctxSub, setCtxSub] = useState<null | 'edit' | 'more' | 'presets'>(null)
+  const [soundPanelAnchor, setSoundPanelAnchor] = useState<{ x: number; y: number } | null>(null)
+
+  // Menus open upward/leftward instead of running off the screen edge
+  useLayoutEffect(() => {
+    if (ctxPos) clampToViewport(menuRef.current, { x: ctxPos.x, y: ctxPos.y })
+  }, [ctxPos, ctxSub])
   const [shareOpen, setShareOpen] = useState(false)  // Share-as-recipe dialog
   const [hovered, setHovered] = useState(false)
   const [gainDragInfo, setGainDragInfo] = useState<{ gain: number; mouseX: number; mouseY: number } | null>(null)
@@ -358,7 +368,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   }
 
   const isMulti = multiSelected && !!onDeleteAll
-  const menuItems = [
+  type MenuItem = { label: string; fn: () => void; keepOpen?: boolean; heading?: boolean }
+  const back = (label: string): MenuItem => ({ label, fn: () => setCtxSub(null), keepOpen: true })
+
+  const editItems: MenuItem[] = [
+    back('← Back'),
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     isMulti
@@ -384,18 +398,30 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         },
       }
     })(),
-    ...(isAudioClip(clip) ? [
-      { label: 'Clip Settings', fn: () => onSettings?.() },
-      { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
-      { label: 'Isolate on Playhead', fn: () => onIsolate(ctxPos?.beat ?? clip.startBeat) },
-      { label: isMulti ? 'Replace Sample (All Selected)' : 'Replace Sample', fn: () => onReplaceSample?.() },
-      { label: 'Spectral Editor', fn: () => onSpectral?.() },
-      { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
-    ] : [
-      { label: 'Open Piano Roll', fn: onDoubleClick },
-      { label: 'Change Sound…', fn: () => setCtxSoundMenu(true), keepOpen: true },
-      { label: 'Share to Community…', fn: () => setShareOpen(true) },
-    ]),
+  ]
+
+  const moreItems: MenuItem[] = isAudioClip(clip) ? [
+    back('← Back'),
+    { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
+    { label: 'Isolate on Playhead', fn: () => onIsolate(ctxPos?.beat ?? clip.startBeat) },
+    { label: isMulti ? 'Replace Sample (All Selected)' : 'Replace Sample', fn: () => onReplaceSample?.() },
+    { label: 'Spectral Editor', fn: () => onSpectral?.() },
+    { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
+  ] : [
+    back('← Back'),
+    { label: 'Change Sound…', fn: () => setCtxSub('presets'), keepOpen: true },
+    { label: 'Share to Community…', fn: () => setShareOpen(true) },
+  ]
+
+  const menuItems: MenuItem[] = ctxSub === 'edit' ? editItems : ctxSub === 'more' ? moreItems : [
+    ...(isAudioClip(clip)
+      ? [{ label: 'Clip Settings', fn: () => onSettings?.() }]
+      : [
+          { label: 'Open Piano Roll', fn: onDoubleClick },
+          { label: 'Sound Settings…', fn: () => { if (ctxPos) setSoundPanelAnchor({ x: ctxPos.x, y: ctxPos.y }) } },
+        ]),
+    { label: 'Edit ▸', fn: () => setCtxSub('edit'), keepOpen: true },
+    { label: isAudioClip(clip) ? 'Tools ▸' : 'Sound ▸', fn: () => setCtxSub('more'), keepOpen: true },
   ]
 
   return (
@@ -412,7 +438,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           e.preventDefault(); e.stopPropagation()
           const rect = clipDivRef.current?.getBoundingClientRect()
           const beat = rect ? clip.startBeat + (e.clientX - rect.left) / beatW : clip.startBeat
-          setCtxSoundMenu(false)
+          setCtxSub(null)
           setCtxPos({ x: e.clientX, y: e.clientY, beat })
         }}
       >
@@ -684,23 +710,23 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
 
       {ctxPos && (
         <div ref={menuRef} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
-          {!ctxSoundMenu && menuItems.map(it => (
+          {ctxSub !== 'presets' && menuItems.map(it => (
             <button key={it.label} onClick={() => { it.fn(); if (!(it as { keepOpen?: boolean }).keepOpen) setCtxPos(null) }}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >{it.label}</button>
           ))}
-          {ctxSoundMenu && !isAudioClip(clip) && (() => {
+          {ctxSub === 'presets' && !isAudioClip(clip) && (() => {
             const presets = getPresets()
             const pick = (presetId: string | undefined) => {
               dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId } })
               engine.setPresets(presets)
-              setCtxSoundMenu(false); setCtxPos(null)
+              setCtxSub(null); setCtxPos(null)
             }
             return (
               <>
-                <button onClick={() => setCtxSoundMenu(false)}
+                <button onClick={() => setCtxSub('more')}
                   style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 10, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-muted)' }}>
                   ← Back
                 </button>
@@ -792,6 +818,23 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
           </div>
         </div>,
         document.body
+      )}
+      {soundPanelAnchor && isMidiClip(clip) && (
+        <RollSoundPanel
+          clip={clip as MidiClip}
+          dispatch={dispatch}
+          anchor={soundPanelAnchor}
+          onClose={() => setSoundPanelAnchor(null)}
+          presetLabel={(clip as MidiClip).presetId
+            ? getPresets().find(p => p.id === (clip as MidiClip).presetId)?.name ?? '?'
+            : track.instrument.type !== 'none' ? `${track.instrument.type} (track)` : 'None'}
+          onChangeSound={() => {
+            // hop back into the ctx menu's preset picker at the same spot
+            setSoundPanelAnchor(null)
+            setCtxSub('presets')
+            setCtxPos(prev => prev ?? { x: soundPanelAnchor.x, y: soundPanelAnchor.y, beat: clip.startBeat })
+          }}
+        />
       )}
       {shareOpen && (
         <ShareCommunityDialog

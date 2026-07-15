@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
@@ -9,6 +9,7 @@ import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
+import { clampToViewport } from './menu-clamp'
 import TrackInputCard from './TrackInputCard'
 // AudioInputSource and AUDIO_INPUT_LABELS removed — TrackInputCard handles device labels directly
 import { libraryGetAll } from '@/lib/sound-library'
@@ -262,6 +263,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [showInputCard,  setShowInputCard]  = useState(false)
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
   const [laneCtxMenu,    setLaneCtxMenu]   = useState<{ x: number; y: number; beat: number } | null>(null)
+  const laneMenuRef = useRef<HTMLDivElement>(null)
+  // Open upward/leftward at screen edges
+  useLayoutEffect(() => {
+    if (laneCtxMenu) clampToViewport(laneMenuRef.current, { x: laneCtxMenu.x, y: laneCtxMenu.y })
+  }, [laneCtxMenu])
   const frozen = track.frozen ?? false
   const [takesExpanded,  setTakesExpanded]  = useState(false)
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
@@ -1241,7 +1247,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
       {/* Lane context menu (empty-lane right-click) */}
       {laneCtxMenu && (
-        <div id={`lcm-${track.id}`} style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+        <div id={`lcm-${track.id}`} ref={laneMenuRef} style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
           <button
             onClick={() => {
               const clip = makeMidiClip(track.id, 'MIDI Clip', laneCtxMenu.beat, 4, { isDrumClip: track.instrument.type === 'drum' })
