@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Dices, BookmarkPlus, Search } from 'lucide-react'
+import { Play, Square, Dices, BookmarkPlus, Search, Plus, X } from 'lucide-react'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import { importRecipe } from '@/lib/practice-recipes'
@@ -450,6 +450,344 @@ export function SynthDesigner({ onUse }: { onUse: (buf: AudioBuffer, suggestedNa
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>
         Next step adds trim, speed, fades, and reverse before saving to your library.
       </p>
+    </div>
+  )
+}
+
+// ── Layered sample building ───────────────────────────────────────────────────
+// One sound = a stack of layers (each its own source, offset, and shaping)
+// mixed through motion effects whose parameters travel between two values
+// over the sound's length — a pocket version of the editor's FX lane.
+
+/** Trim/speed/gain/fade/reverse shaping for one buffer. Speed is tape-style:
+ *  resampled by linear interpolation, so pitch follows. */
+export function applyEdits(
+  src: AudioBuffer,
+  trimStart: number,
+  trimEnd: number,
+  gain: number,
+  fadeInFrac: number,
+  fadeOutFrac: number,
+  reversed: boolean,
+  speed = 1,
+): AudioBuffer {
+  const startSamp = Math.floor(trimStart * src.length)
+  const endSamp   = Math.floor(trimEnd   * src.length)
+  const len       = Math.max(1, endSamp - startSamp)
+  const outLen    = Math.max(1, Math.round(len / speed))
+
+  const out = new AudioBuffer({ numberOfChannels: src.numberOfChannels, length: outLen, sampleRate: src.sampleRate })
+
+  for (let ch = 0; ch < src.numberOfChannels; ch++) {
+    const src_ = src.getChannelData(ch)
+    const dst  = out.getChannelData(ch)
+    for (let i = 0; i < outLen; i++) {
+      const pos = startSamp + i * speed
+      const i0 = Math.floor(pos), frac = pos - i0
+      const a = src_[i0] ?? 0, b = src_[i0 + 1] ?? a
+      dst[i] = (a + (b - a) * frac) * gain
+    }
+    const fi = Math.floor(fadeInFrac * outLen)
+    for (let i = 0; i < fi; i++) dst[i] *= i / fi
+    const fo = Math.floor(fadeOutFrac * outLen)
+    for (let i = 0; i < fo; i++) dst[outLen - 1 - i] *= i / fo
+    if (reversed) dst.reverse()
+  }
+  return out
+}
+
+export interface SoundLayer {
+  id: string
+  name: string
+  buf: AudioBuffer
+  offset: number      // seconds into the composite
+  gain: number
+  speed: number
+  reversed: boolean
+  trimStart: number   // 0..1
+  trimEnd: number     // 0..1
+  fadeIn: number      // 0..0.5 fraction
+  fadeOut: number
+  pan: number         // -1..1
+}
+
+export function makeLayer(buf: AudioBuffer, name: string): SoundLayer {
+  return { id: crypto.randomUUID(), name, buf, offset: 0, gain: 1, speed: 1, reversed: false, trimStart: 0, trimEnd: 1, fadeIn: 0, fadeOut: 0, pan: 0 }
+}
+
+/** Audible length of a layer after trim and speed. */
+export function layerSpan(l: SoundLayer): number {
+  return Math.max(0.01, (l.trimEnd - l.trimStart) * l.buf.duration / l.speed)
+}
+
+export function compositeDuration(layers: SoundLayer[]): number {
+  return Math.max(0.1, ...layers.map(l => l.offset + layerSpan(l)))
+}
+
+export type MotionFxType = 'filter' | 'volume' | 'pan' | 'drive' | 'echo'
+export interface MotionFx { id: string; type: MotionFxType; from: number; to: number }
+
+export const MOTION_FX_DEFS: Record<MotionFxType, {
+  label: string; min: number; max: number; step: number
+  defaults: [number, number]; fmt: (v: number) => string
+}> = {
+  filter: { label: 'Filter sweep', min: 200, max: 12000, step: 10, defaults: [500, 8000], fmt: v => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz` },
+  volume: { label: 'Volume ride', min: 0, max: 1.5, step: 0.01, defaults: [0.2, 1], fmt: v => `${Math.round(v * 100)}%` },
+  pan:    { label: 'Pan sweep', min: -1, max: 1, step: 0.01, defaults: [-0.8, 0.8], fmt: v => v === 0 ? 'C' : v < 0 ? `L${Math.round(-v * 100)}` : `R${Math.round(v * 100)}` },
+  drive:  { label: 'Drive ramp', min: 0, max: 1, step: 0.01, defaults: [0, 0.6], fmt: v => `${Math.round(v * 100)}%` },
+  echo:   { label: 'Echo rise', min: 0, max: 0.8, step: 0.01, defaults: [0, 0.45], fmt: v => `${Math.round(v * 100)}%` },
+}
+
+export function makeMotionFx(type: MotionFxType): MotionFx {
+  const [from, to] = MOTION_FX_DEFS[type].defaults
+  return { id: crypto.randomUUID(), type, from, to }
+}
+
+/** Mixes the layer stack and runs it through the motion-FX chain. */
+export async function renderComposite(layers: SoundLayer[], fxs: MotionFx[]): Promise<AudioBuffer> {
+  const SR = 44100
+  const contentDur = compositeDuration(layers)
+  const tail = fxs.some(f => f.type === 'echo' && Math.max(f.from, f.to) > 0.02) ? 1.2 : 0.05
+  const total = contentDur + tail
+  const ctx = new OfflineAudioContext(2, Math.ceil(SR * total), SR)
+
+  const bus = ctx.createGain()
+  for (const l of layers) {
+    const edited = applyEdits(l.buf, l.trimStart, l.trimEnd, l.gain, l.fadeIn, l.fadeOut, l.reversed, l.speed)
+    const src = ctx.createBufferSource(); src.buffer = edited
+    const pan = ctx.createStereoPanner(); pan.pan.value = l.pan
+    src.connect(pan); pan.connect(bus)
+    src.start(l.offset)
+  }
+
+  // chain: drive → filter → echo → pan → volume; each ramps over the content
+  let node: AudioNode = bus
+  for (const fx of fxs) {
+    if (fx.type === 'drive') {
+      const pre = ctx.createGain()
+      pre.gain.setValueAtTime(1 + fx.from * 6, 0)
+      pre.gain.linearRampToValueAtTime(1 + fx.to * 6, contentDur)
+      const shaper = ctx.createWaveShaper()
+      const curve = new Float32Array(1024)
+      for (let i = 0; i < 1024; i++) { const x = (i / 511.5) - 1; curve[i] = Math.tanh(x) }
+      shaper.curve = curve
+      const post = ctx.createGain(); post.gain.value = 0.8
+      node.connect(pre); pre.connect(shaper); shaper.connect(post); node = post
+    } else if (fx.type === 'filter') {
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7
+      lp.frequency.setValueAtTime(Math.max(40, fx.from), 0)
+      lp.frequency.exponentialRampToValueAtTime(Math.max(40, fx.to), contentDur)
+      node.connect(lp); node = lp
+    } else if (fx.type === 'echo') {
+      const dly = ctx.createDelay(1); dly.delayTime.value = 0.25
+      const fb = ctx.createGain(); fb.gain.value = 0.45
+      const wet = ctx.createGain()
+      wet.gain.setValueAtTime(fx.from, 0)
+      wet.gain.linearRampToValueAtTime(fx.to, contentDur)
+      const sum = ctx.createGain()
+      dly.connect(fb); fb.connect(dly)
+      node.connect(sum)
+      node.connect(dly); dly.connect(wet); wet.connect(sum)
+      node = sum
+    } else if (fx.type === 'pan') {
+      const p = ctx.createStereoPanner()
+      p.pan.setValueAtTime(fx.from, 0)
+      p.pan.linearRampToValueAtTime(fx.to, contentDur)
+      node.connect(p); node = p
+    } else {
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(fx.from, 0)
+      g.gain.linearRampToValueAtTime(fx.to, contentDur)
+      node.connect(g); node = g
+    }
+  }
+  node.connect(ctx.destination)
+
+  const buf = await ctx.startRendering()
+  // clipping guard only — never boost, so deliberate quiet stays quiet
+  let peak = 0
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const d = buf.getChannelData(c)
+    for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]))
+  }
+  if (peak > 0.99) {
+    const g = 0.95 / peak
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c)
+      for (let i = 0; i < d.length; i++) d[i] *= g
+    }
+  }
+  return buf
+}
+
+// ── Layer rail (mini timeline) ────────────────────────────────────────────────
+
+function LayerBar({ layer, totalDur, selected, onSelect, onOffsetChange }: {
+  layer: SoundLayer; totalDur: number; selected: boolean
+  onSelect: () => void; onOffsetChange: (offset: number) => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ startX: number; startOffset: number } | null>(null)
+
+  const span = layerSpan(layer)
+  const leftPct = (layer.offset / totalDur) * 100
+  const widthPct = Math.max(3, (span / totalDur) * 100)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')!
+    const W = canvas.width, H = canvas.height
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = selected ? 'rgba(196,181,253,0.9)' : 'rgba(139,92,246,0.55)'
+    const d = layer.buf.getChannelData(0)
+    const s0 = Math.floor(layer.trimStart * d.length)
+    const s1 = Math.floor(layer.trimEnd * d.length)
+    const step = Math.max(1, Math.floor((s1 - s0) / W))
+    for (let x = 0; x < W; x++) {
+      let m = 0
+      const base = s0 + x * step
+      for (let i = 0; i < step; i += 8) m = Math.max(m, Math.abs(d[base + i] ?? 0))
+      const h = Math.max(1, m * H)
+      ctx.fillRect(x, (H - h) / 2, 1, h)
+    }
+  }, [layer.buf, layer.trimStart, layer.trimEnd, selected])
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      const drag = dragRef.current
+      const row = rowRef.current
+      if (!drag || !row) return
+      const pxPerSec = row.getBoundingClientRect().width / totalDur
+      onOffsetChange(Math.max(0, drag.startOffset + (e.clientX - drag.startX) / pxPerSec))
+    }
+    function onUp() { dragRef.current = null }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [totalDur, onOffsetChange])
+
+  return (
+    <div ref={rowRef} style={{ position: 'relative', height: 30, background: 'rgba(255,255,255,0.02)', borderRadius: 5 }}>
+      <div
+        onMouseDown={e => { onSelect(); dragRef.current = { startX: e.clientX, startOffset: layer.offset }; e.preventDefault() }}
+        title={`${layer.name} — drag to move in time`}
+        style={{
+          position: 'absolute', left: `${leftPct}%`, width: `${widthPct}%`, top: 2, bottom: 2,
+          borderRadius: 4, cursor: 'grab', overflow: 'hidden',
+          border: selected ? '1px solid rgba(196,181,253,0.9)' : '1px solid rgba(139,92,246,0.35)',
+          background: selected ? 'rgba(139,92,246,0.25)' : 'rgba(139,92,246,0.1)',
+        }}
+      >
+        <canvas ref={canvasRef} width={200} height={24} style={{ width: '100%', height: '100%', display: 'block' }} />
+        <span style={{ position: 'absolute', left: 4, top: 1, fontSize: 8, color: selected ? '#e9e4ff' : 'var(--text-muted)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+          {layer.name}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+export function LayerRail({ layers, selectedId, totalDur, onSelect, onOffsetChange, onRemove, onAddLayer }: {
+  layers: SoundLayer[]
+  selectedId: string | null
+  totalDur: number
+  onSelect: (id: string) => void
+  onOffsetChange: (id: string, offset: number) => void
+  onRemove: (id: string) => void
+  onAddLayer: () => void
+}) {
+  const ticks: number[] = []
+  const tickStep = totalDur > 6 ? 2 : totalDur > 3 ? 1 : 0.5
+  for (let t = 0; t <= totalDur; t += tickStep) ticks.push(t)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Layers</span>
+        <button onClick={onAddLayer} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: '1px dashed rgba(139,92,246,0.5)', background: 'rgba(139,92,246,0.08)', color: 'var(--accent-light)', cursor: 'pointer' }}>
+          <Plus size={10} /> Overlay a sound
+        </button>
+      </div>
+      {/* ruler */}
+      <div style={{ position: 'relative', height: 12 }}>
+        {ticks.map(t => (
+          <span key={t} style={{ position: 'absolute', left: `${(t / totalDur) * 100}%`, fontSize: 8, color: 'var(--text-muted)', transform: 'translateX(-50%)', fontVariantNumeric: 'tabular-nums' }}>
+            {t.toFixed(tickStep < 1 ? 1 : 0)}s
+          </span>
+        ))}
+      </div>
+      {layers.map(l => (
+        <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <LayerBar
+              layer={l} totalDur={totalDur} selected={l.id === selectedId}
+              onSelect={() => onSelect(l.id)}
+              onOffsetChange={o => onOffsetChange(l.id, o)}
+            />
+          </div>
+          <button
+            onClick={() => onRemove(l.id)} disabled={layers.length <= 1}
+            aria-label={`Remove layer ${l.name}`}
+            style={{ background: 'none', border: 'none', cursor: layers.length > 1 ? 'pointer' : 'default', color: layers.length > 1 ? 'var(--text-muted)' : 'transparent', display: 'flex', padding: 2, flexShrink: 0 }}
+          ><X size={11} /></button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Motion FX panel ───────────────────────────────────────────────────────────
+
+export function MotionFxPanel({ fxs, onChange }: { fxs: MotionFx[]; onChange: (fxs: MotionFx[]) => void }) {
+  const patch = (id: string, p: Partial<MotionFx>) => onChange(fxs.map(f => f.id === id ? { ...f, ...p } : f))
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Motion FX — start → end</span>
+        <button
+          onClick={() => onChange([...fxs, makeMotionFx('filter')])}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: '1px dashed rgba(52,211,153,0.5)', background: 'rgba(52,211,153,0.07)', color: '#34d399', cursor: 'pointer' }}
+        ><Plus size={10} /> Add effect</button>
+      </div>
+      {fxs.length === 0 && (
+        <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+          Effects that travel across the sound — a filter opening up, volume swelling in, echo rising at the end.
+        </p>
+      )}
+      {fxs.map(fx => {
+        const def = MOTION_FX_DEFS[fx.type]
+        return (
+          <div key={fx.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <select
+              value={fx.type}
+              onChange={e => {
+                const type = e.target.value as MotionFxType
+                const [from, to] = MOTION_FX_DEFS[type].defaults
+                patch(fx.id, { type, from, to })
+              }}
+              style={{ fontSize: 10, padding: '3px 5px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', width: 96, flexShrink: 0 }}
+            >
+              {(Object.keys(MOTION_FX_DEFS) as MotionFxType[]).map(t => <option key={t} value={t}>{MOTION_FX_DEFS[t].label}</option>)}
+            </select>
+            <input type="range" min={def.min} max={def.max} step={def.step} value={fx.from}
+              onChange={e => patch(fx.id, { from: Number(e.target.value) })}
+              title="Value at the start" style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 9, color: 'var(--text-secondary)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.from)}</span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>→</span>
+            <input type="range" min={def.min} max={def.max} step={def.step} value={fx.to}
+              onChange={e => patch(fx.id, { to: Number(e.target.value) })}
+              title="Value at the end" style={{ flex: 1, accentColor: '#34d399' }} />
+            <span style={{ fontSize: 9, color: 'var(--text-secondary)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.to)}</span>
+            <button onClick={() => onChange(fxs.filter(f => f.id !== fx.id))} aria-label="Remove effect"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2, flexShrink: 0 }}>
+              <X size={11} />
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }
