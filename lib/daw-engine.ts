@@ -989,7 +989,12 @@ export class DawEngine extends EventTarget {
           if (buf) {
             const target = (note.velocity ?? 100) / 127
             const loop = noteDur + sustainSec > buf.duration - 0.05 ? this._getLoopMeta(bufKey, buf) : null
-            const velGain = this.ctx.createGain(); velGain.gain.value = target
+            // 3ms attack — decoded sample edges rarely sit on a zero
+            // crossing, and an instant jump to full gain clicks like a
+            // tiny metronome tap on every note.
+            const velGain = this.ctx.createGain()
+            velGain.gain.setValueAtTime(0.0001, noteStartAt)
+            velGain.gain.linearRampToValueAtTime(target, noteStartAt + 0.003)
             const src = this.ctx.createBufferSource(); src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
             src.connect(velGain); velGain.connect(noteDest)
@@ -1000,11 +1005,14 @@ export class DawEngine extends EventTarget {
               velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur + sustainSec)
               src.stop(noteStartAt + noteDur + sustainSec + 0.05)
             } else if (loop) {
-              velGain.gain.setValueAtTime(target, Math.max(noteStartAt, noteStartAt + noteDur - 0.08))
+              velGain.gain.setValueAtTime(target, Math.max(noteStartAt + 0.003, noteStartAt + noteDur - 0.08))
               velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur)
               src.stop(noteStartAt + noteDur + 0.02)
             } else {
-              src.stop(noteStartAt + noteDur)
+              // micro-release — stopping mid-waveform clicks the same way
+              velGain.gain.setValueAtTime(target, Math.max(noteStartAt + 0.003, noteStartAt + noteDur - 0.008))
+              velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur)
+              src.stop(noteStartAt + noteDur + 0.01)
             }
             src.onended = () => { src.disconnect(); velGain.disconnect() }
           }
@@ -1292,13 +1300,10 @@ export class DawEngine extends EventTarget {
             }
             const velGain = this.ctx.createGain()
             const target = (note.velocity ?? 100) / 127
-            if (offsetSec > 0) {
-              // 5ms fade-in avoids the click of entering a waveform mid-cycle
-              velGain.gain.setValueAtTime(0, startAt)
-              velGain.gain.linearRampToValueAtTime(target, startAt + 0.005)
-            } else {
-              velGain.gain.value = target
-            }
+            // Fade in — 5ms entering mid-waveform, 3ms on a fresh onset:
+            // even sample starts click when they don't sit on a zero crossing.
+            velGain.gain.setValueAtTime(0.0001, startAt)
+            velGain.gain.linearRampToValueAtTime(target, startAt + (offsetSec > 0 ? 0.005 : 0.003))
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
@@ -1315,11 +1320,14 @@ export class DawEngine extends EventTarget {
                 src.stop(startAt + remaining + sustainSec + 0.05)
               } else if (loop) {
                 // A looped note ends at full level — an 80ms release avoids the click
-                velGain.gain.setValueAtTime(target, Math.max(startAt, startAt + remaining - 0.08))
+                velGain.gain.setValueAtTime(target, Math.max(startAt + 0.005, startAt + remaining - 0.08))
                 velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining)
                 src.stop(startAt + remaining + 0.02)
               } else {
-                src.stop(startAt + remaining)
+                // micro-release — stopping mid-waveform clicks
+                velGain.gain.setValueAtTime(target, Math.max(startAt + 0.005, startAt + remaining - 0.008))
+                velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining)
+                src.stop(startAt + remaining + 0.01)
               }
             }
             src.onended = () => { src.disconnect(); velGain.disconnect() }

@@ -14,6 +14,21 @@ import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
 
+/** Previews a buffer with a 3ms attack and a 120ms tail release — raw
+ *  start()/stop() at full gain clicks at both edges. */
+function playClickFree(ctx: AudioContext, src: AudioBufferSourceNode, dest: AudioNode, seconds: number) {
+  const g = ctx.createGain()
+  const t0 = ctx.currentTime
+  g.gain.setValueAtTime(0.0001, t0)
+  g.gain.linearRampToValueAtTime(1, t0 + 0.003)
+  g.gain.setValueAtTime(1, t0 + seconds - 0.12)
+  g.gain.linearRampToValueAtTime(0.0001, t0 + seconds)
+  src.connect(g); g.connect(dest)
+  src.start()
+  src.stop(t0 + seconds + 0.02)
+  src.onended = () => { src.disconnect(); g.disconnect() }
+}
+
 const NOTE_H      = 10
 const PIANO_W     = 52
 const TOOLBAR_H   = 32
@@ -518,9 +533,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       const buf = await engine.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
       const src = engine.ctx.createBufferSource()
       src.buffer = buf
-      src.connect(engine.masterGain)
-      src.start()
-      src.stop(engine.ctx.currentTime + 1.5)
+      playClickFree(engine.ctx, src, engine.masterGain, 1.5)
     } catch { /* ignore */ } finally {
       setTimeout(() => setPreviewing(false), 1500)
     }
@@ -554,9 +567,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             const buf = await engine.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
             const src = engine.ctx.createBufferSource()
             src.buffer = buf
-            src.connect(engine.masterGain)
-            src.start()
-            src.stop(engine.ctx.currentTime + 1.5)
+            playClickFree(engine.ctx, src, engine.masterGain, 1.5)
             return
           }
         }
