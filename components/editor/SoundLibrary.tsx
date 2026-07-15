@@ -581,6 +581,9 @@ export function AddToLibraryModal({
   const [selectedLayerId, setSelLayer] = useState<string | null>(layers[0]?.id ?? null)
   const [fxs, setFxs]                 = useState<MotionFx[]>([])
   const [addingLayer, setAddingLayer] = useState(false)
+  // The layer the synth panel writes to — re-applying updates it in place,
+  // so patch tweaks land on the same bar instead of stacking duplicates.
+  const [synthLayerId, setSynthLayerId] = useState<string | null>(null)
   const sel = layers.find(l => l.id === selectedLayerId) ?? layers[0] ?? null
   const updateLayer = (id: string, patch: Partial<SoundLayer>) =>
     setLayers(ls => ls.map(l => l.id === id ? { ...l, ...patch } : l))
@@ -640,6 +643,26 @@ export function AddToLibraryModal({
       setError('Audio files only'); return
     }
     loadBlob(new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' }))
+  }
+
+  function applySynth(buf: AudioBuffer, suggestedName: string) {
+    const existing = synthLayerId ? layers.find(l => l.id === synthLayerId) : null
+    if (existing) {
+      updateLayer(existing.id, { buf, name: suggestedName })
+      setSelLayer(existing.id)
+      return
+    }
+    const layer = makeLayer(buf, suggestedName)
+    if (addingLayer && layers.length > 0) {
+      setLayers(ls => [...ls, layer])
+      setAddingLayer(false)
+    } else {
+      setLayers([layer])
+      setFxs([])
+      setName(n => n || suggestedName)
+    }
+    setSynthLayerId(layer.id)
+    setSelLayer(layer.id)
   }
 
   function enterEdit(buf: AudioBuffer, suggestedName?: string) {
@@ -734,14 +757,120 @@ export function AddToLibraryModal({
     </div>
   )
 
+  const editStage = sel ? (
+    <>
+      <LayerRail
+        layers={layers}
+        selectedId={sel.id}
+        totalDur={totalDur}
+        onSelect={setSelLayer}
+        onOffsetChange={(id, offset) => updateLayer(id, { offset })}
+        onRemove={id => {
+          setLayers(ls => ls.filter(l => l.id !== id))
+          if (selectedLayerId === id) setSelLayer(null)
+          if (synthLayerId === id) setSynthLayerId(null)
+        }}
+        onAddLayer={() => { setAddingLayer(true); setSynthLayerId(null); setError(''); setMode('choose') }}
+      />
+
+      <div>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 5 }}>
+          <span style={{ color: 'var(--accent-light)', fontWeight: 700 }}>{sel.name}</span> — drag yellow handles to trim · {trimmedDur}s of {totalDur.toFixed(2)}s total
+        </div>
+        <WaveformTrimmer
+          buf={sel.buf}
+          trimStart={sel.trimStart}
+          trimEnd={sel.trimEnd}
+          onTrimChange={(s, e) => updateLayer(sel.id, { trimStart: s, trimEnd: e })}
+        />
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
+        {row('Gain', (
+          <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
+            <input type="range" min={0.1} max={3} step={0.05} value={sel.gain}
+              onChange={e => updateLayer(sel.id, { gain: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.gain * 100)}%</span>
+          </div>
+        ))}
+        {row('Speed', (
+          <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
+            <input type="range" min={0.25} max={4} step={0.05} value={sel.speed}
+              onChange={e => updateLayer(sel.id, { speed: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sel.speed.toFixed(2)}×</span>
+          </div>
+        ))}
+        {row('Pan', (
+          <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
+            <input type="range" min={-1} max={1} step={0.05} value={sel.pan}
+              onChange={e => updateLayer(sel.id, { pan: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sel.pan === 0 ? 'C' : sel.pan < 0 ? `L${Math.round(-sel.pan * 100)}` : `R${Math.round(sel.pan * 100)}`}</span>
+          </div>
+        ))}
+        {row('Fade in', (
+          <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
+            <input type="range" min={0} max={0.5} step={0.01} value={sel.fadeIn}
+              onChange={e => updateLayer(sel.id, { fadeIn: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.fadeIn * 100)}%</span>
+          </div>
+        ))}
+        {row('Fade out', (
+          <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
+            <input type="range" min={0} max={0.5} step={0.01} value={sel.fadeOut}
+              onChange={e => updateLayer(sel.id, { fadeOut: Number(e.target.value) })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.fadeOut * 100)}%</span>
+          </div>
+        ))}
+        {row('', (
+          <button onClick={() => updateLayer(sel.id, { reversed: !sel.reversed })} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, border: `1px solid ${sel.reversed ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, background: sel.reversed ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', color: sel.reversed ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 11 }}>
+            <RotateCcw size={10} /> {sel.reversed ? 'Reversed' : 'Reverse'}
+          </button>
+        ))}
+      </div>
+
+      <MotionFxPanel fxs={fxs} onChange={setFxs} />
+
+      <input value={name} onChange={e => setName(e.target.value)}
+        placeholder="Sound name (optional)"
+        style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}
+      />
+      <select value={category} onChange={e => setCat(e.target.value as LibraryCategory)}
+        style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+        {CATEGORY_GROUPS.map(g => (
+          <optgroup key={g.label} label={g.label}>
+            {g.categories.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+          </optgroup>
+        ))}
+      </select>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={togglePreview} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 8, border: `1px solid ${previewing ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, background: previewing ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)', color: previewing ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}>
+          {previewing ? <><Square size={10} fill="currentColor" /> Stop</> : <><Play size={10} fill="currentColor" style={{ marginLeft: 1 }} /> Preview</>}
+        </button>
+        <button onClick={() => { setMode('choose'); setLayers([]); setFxs([]); setAddingLayer(false); setSynthLayerId(null) }} style={{ flex: '0 0 auto', padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
+          ← Start over
+        </button>
+        <button onClick={save} disabled={saving} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: saving ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+          {saving ? 'Saving…' : 'Save to Library'}
+        </button>
+      </div>
+      {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
+    </>
+  ) : null
+
   return (
     <div
 className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 22, width: 'min(600px,94vw)', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 22, width: mode === 'synth' ? 'min(1020px,96vw)' : 'min(600px,94vw)', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '90vh', overflowY: 'auto' }}>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{mode === 'edit' ? 'Build a Sound' : 'Add to Library'}</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{mode === 'edit' || mode === 'synth' ? 'Build a Sound' : 'Add to Library'}</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={15} /></button>
         </div>
 
@@ -785,12 +914,28 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
         )}
 
         {mode === 'synth' && (
-          <>
-            <SynthDesigner onUse={(buf, suggested) => enterEdit(buf, suggested)} />
-            <button onClick={() => setMode('choose')} style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
-              ← Back
-            </button>
-          </>
+          <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            {/* Left: the patch. Right: the live sound it feeds — apply, hear
+                both, tweak, apply again. */}
+            <div style={{ flex: '1 1 300px', minWidth: 280, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <SynthDesigner
+                onUse={applySynth}
+                applyLabel={synthLayerId && layers.some(l => l.id === synthLayerId) ? 'Update layer ↻' : 'Add to sound →'}
+              />
+              <button onClick={() => { setSynthLayerId(null); setMode(layers.length ? 'edit' : 'choose') }} style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
+                {layers.length ? '← Close synth' : '← Back'}
+              </button>
+            </div>
+            <div style={{ flex: '1 1 340px', minWidth: 300, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {editStage ?? (
+                <div style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: '28px 18px', textAlign: 'center' }}>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+                    Your sound appears here.<br />Shape a patch on the left, press <b>Add to sound</b>, and keep tweaking — updates land on the same layer.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {mode === 'library' && (
@@ -821,110 +966,7 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
           </div>
         )}
 
-        {mode === 'edit' && sel && (
-          <>
-            <LayerRail
-              layers={layers}
-              selectedId={sel.id}
-              totalDur={totalDur}
-              onSelect={setSelLayer}
-              onOffsetChange={(id, offset) => updateLayer(id, { offset })}
-              onRemove={id => {
-                setLayers(ls => ls.filter(l => l.id !== id))
-                if (selectedLayerId === id) setSelLayer(null)
-              }}
-              onAddLayer={() => { setAddingLayer(true); setError(''); setMode('choose') }}
-            />
-
-            <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 5 }}>
-                <span style={{ color: 'var(--accent-light)', fontWeight: 700 }}>{sel.name}</span> — drag yellow handles to trim · {trimmedDur}s of {totalDur.toFixed(2)}s total
-              </div>
-              <WaveformTrimmer
-                buf={sel.buf}
-                trimStart={sel.trimStart}
-                trimEnd={sel.trimEnd}
-                onTrimChange={(s, e) => updateLayer(sel.id, { trimStart: s, trimEnd: e })}
-              />
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
-              {row('Gain', (
-                <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-                  <input type="range" min={0.1} max={3} step={0.05} value={sel.gain}
-                    onChange={e => updateLayer(sel.id, { gain: Number(e.target.value) })}
-                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.gain * 100)}%</span>
-                </div>
-              ))}
-              {row('Speed', (
-                <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-                  <input type="range" min={0.25} max={4} step={0.05} value={sel.speed}
-                    onChange={e => updateLayer(sel.id, { speed: Number(e.target.value) })}
-                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sel.speed.toFixed(2)}×</span>
-                </div>
-              ))}
-              {row('Pan', (
-                <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-                  <input type="range" min={-1} max={1} step={0.05} value={sel.pan}
-                    onChange={e => updateLayer(sel.id, { pan: Number(e.target.value) })}
-                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sel.pan === 0 ? 'C' : sel.pan < 0 ? `L${Math.round(-sel.pan * 100)}` : `R${Math.round(sel.pan * 100)}`}</span>
-                </div>
-              ))}
-              {row('Fade in', (
-                <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-                  <input type="range" min={0} max={0.5} step={0.01} value={sel.fadeIn}
-                    onChange={e => updateLayer(sel.id, { fadeIn: Number(e.target.value) })}
-                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.fadeIn * 100)}%</span>
-                </div>
-              ))}
-              {row('Fade out', (
-                <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-                  <input type="range" min={0} max={0.5} step={0.01} value={sel.fadeOut}
-                    onChange={e => updateLayer(sel.id, { fadeOut: Number(e.target.value) })}
-                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.fadeOut * 100)}%</span>
-                </div>
-              ))}
-              {row('', (
-                <button onClick={() => updateLayer(sel.id, { reversed: !sel.reversed })} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 6, border: `1px solid ${sel.reversed ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, background: sel.reversed ? 'rgba(139,92,246,0.15)' : 'var(--bg-card)', color: sel.reversed ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 11 }}>
-                  <RotateCcw size={10} /> {sel.reversed ? 'Reversed' : 'Reverse'}
-                </button>
-              ))}
-            </div>
-
-            <MotionFxPanel fxs={fxs} onChange={setFxs} />
-
-            <input value={name} onChange={e => setName(e.target.value)}
-              placeholder="Sound name (optional)"
-              style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}
-            />
-            <select value={category} onChange={e => setCat(e.target.value as LibraryCategory)}
-              style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-              {CATEGORY_GROUPS.map(g => (
-                <optgroup key={g.label} label={g.label}>
-                  {g.categories.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
-                </optgroup>
-              ))}
-            </select>
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={togglePreview} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 8, border: `1px solid ${previewing ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, background: previewing ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)', color: previewing ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}>
-                {previewing ? <><Square size={10} fill="currentColor" /> Stop</> : <><Play size={10} fill="currentColor" style={{ marginLeft: 1 }} /> Preview</>}
-              </button>
-              <button onClick={() => { setMode('choose'); setLayers([]); setFxs([]); setAddingLayer(false) }} style={{ flex: '0 0 auto', padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
-                ← Start over
-              </button>
-              <button onClick={save} disabled={saving} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: saving ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-                {saving ? 'Saving…' : 'Save to Library'}
-              </button>
-            </div>
-            {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
-          </>
-        )}
+        {mode === 'edit' && editStage}
       </div>
     </div>
   )

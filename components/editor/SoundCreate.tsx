@@ -327,7 +327,7 @@ function synthName(p: SynthParams): string {
   return `${WAVE_LABEL[p.wave1]} ${NOTE_NAMES_SHARP[p.note % 12]}${octave}`
 }
 
-export function SynthDesigner({ onUse }: { onUse: (buf: AudioBuffer, suggestedName: string) => void }) {
+export function SynthDesigner({ onUse, applyLabel = 'Use this sound \u2192' }: { onUse: (buf: AudioBuffer, suggestedName: string) => void; applyLabel?: string }) {
   const [p, setP] = useState<SynthParams>(SYNTH_DEFAULTS)
   const [busy, setBusy] = useState(false)
   const [previewing, setPreviewing] = useState(false)
@@ -444,12 +444,9 @@ export function SynthDesigner({ onUse }: { onUse: (buf: AudioBuffer, suggestedNa
         </button>
         <button onClick={() => void applySound()} disabled={busy}
           style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: busy ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-          {busy ? 'Rendering…' : 'Use this sound →'}
+          {busy ? 'Rendering…' : applyLabel}
         </button>
       </div>
-      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>
-        Next step adds trim, speed, fades, and reverse before saving to your library.
-      </p>
     </div>
   )
 }
