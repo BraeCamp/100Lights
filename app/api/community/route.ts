@@ -2,6 +2,7 @@ import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, LARGE_MODE_LIMITS } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 export const runtime = 'nodejs'
 
@@ -99,7 +100,7 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   await ensureTables()
 
-  let body: { kind?: string; name?: string; description?: string; payload?: unknown; r2Key?: string }
+  let body: { kind?: string; name?: string; description?: string; payload?: unknown; r2Key?: string; asOfficial?: boolean }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
   const { kind, name } = body
@@ -121,7 +122,9 @@ export async function POST(req: Request) {
   }
 
   const user = clerkId ? await currentUser() : null
-  const authorName = user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId)
+  // Admin-only: publish under the official 100Lights byline (seed content)
+  const official = body.asOfficial === true && await isAdminEmail()
+  const authorName = official ? '100Lights' : (user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId))
 
   const rows = await sql`
     INSERT INTO community_items (user_id, author_name, kind, name, description, payload, r2_key)
