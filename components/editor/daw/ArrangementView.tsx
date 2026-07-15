@@ -126,14 +126,12 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
         ref={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: RULER_H, cursor: 'pointer' }}
         onClick={e => {
-          const rect   = e.currentTarget.getBoundingClientRect()
-          const localY = e.clientY - rect.top
-          if (localY >= SEC_H) {
-            onEditTimeSig(e)
-          } else {
-            onSeek(Math.max(0, (e.clientX - rect.left + scrollLeft) / beatW))
-          }
+          // Clicks anywhere on the ruler — bars row included — move the
+          // playhead. Time-signature settings live on right-click now.
+          const rect = e.currentTarget.getBoundingClientRect()
+          onSeek(Math.max(0, (e.clientX - rect.left + scrollLeft) / beatW))
         }}
+        onContextMenu={e => { e.preventDefault(); onEditTimeSig(e) }}
         onDoubleClick={e => {
           const rect  = e.currentTarget.getBoundingClientRect()
           const localY = e.clientY - rect.top
@@ -185,8 +183,11 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
             const type = relX < 8 ? 'start' : relX > rect.width - 8 ? 'end' : 'move'
             loopDragRef.current = { type, startX: e.clientX, startLoopStart: loopStart, startLoopEnd: loopEnd }
             setLoopCursor(type === 'move' ? 'grabbing' : 'ew-resize')
+            let dragged = false
             function mm(ev: MouseEvent) {
               if (!loopDragRef.current) return
+              if (Math.abs(ev.clientX - loopDragRef.current.startX) > 3) dragged = true
+              if (!dragged) return
               const { type: t, startX, startLoopStart: s, startLoopEnd: en } = loopDragRef.current
               const db      = (ev.clientX - startX) / beatW
               const useSnap = ev.altKey ? 'off' as SnapMode : snap
@@ -202,11 +203,18 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
               }
               dispatch({ type: 'SET_LOOP', start: ns, end: ne })
             }
-            function mu() {
+            function mu(ev: MouseEvent) {
               loopDragRef.current = null
               setLoopCursor('grab')
               document.removeEventListener('mousemove', mm)
               document.removeEventListener('mouseup', mu)
+              // A plain click inside the loop region moves the playhead —
+              // the region itself only moves when actually dragged.
+              if (!dragged) {
+                // ruler-left = overlay-left minus the overlay's offset in it
+                const rulerLeft = rect.left - (loopStart * beatW - scrollLeft)
+                onSeek(Math.max(0, (ev.clientX - rulerLeft + scrollLeft) / beatW))
+              }
             }
             document.addEventListener('mousemove', mm)
             document.addEventListener('mouseup', mu)
@@ -261,11 +269,12 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
   const [tsPopover, setTsPopover]   = useState<{ x: number; y: number } | null>(null)
+  const [tsDraftBpm, setTsDraftBpm] = useState(120)
   const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
   // Group track fold state: set of group track IDs that are folded
@@ -433,9 +442,52 @@ export default function ArrangementView() {
     setArrangeTransientDialog(null)
   }
 
+  // Loop tool: armed by the transport's loop button. The next drag across the
+  // ruler or track lanes draws the loop region; Escape disarms.
+  const loopDrawRef = useRef<{ startBeat: number } | null>(null)
+  useEffect(() => {
+    if (!loopToolArmed) return
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setLoopToolArmed(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [loopToolArmed, setLoopToolArmed])
+
+  function onLoopToolMouseDown(e: React.MouseEvent) {
+    if (!loopToolArmed || e.button !== 0) return
+    const root = outerRef.current
+    if (!root) return
+    const rootRect = root.getBoundingClientRect()
+    if (e.clientX - rootRect.left < HDR_W) return  // headers stay interactive
+    e.preventDefault()
+    e.stopPropagation()
+    const timelineLeft = rootRect.left + HDR_W
+    const beatAt = (clientX: number) => Math.max(0, snapBeat((clientX - timelineLeft + scrollLeft) / beatW, snap, project.timeSignatureNum))
+    const startBeat = beatAt(e.clientX)
+    loopDrawRef.current = { startBeat }
+    const mm = (ev: MouseEvent) => {
+      if (!loopDrawRef.current) return
+      const b = beatAt(ev.clientX)
+      const s = Math.min(loopDrawRef.current.startBeat, b)
+      const en = Math.max(loopDrawRef.current.startBeat, b)
+      if (en - s >= 0.1) {
+        dispatch({ type: 'SET_LOOP', start: s, end: Math.max(en, s + 0.25) })
+        dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
+      }
+    }
+    const mu = () => {
+      loopDrawRef.current = null
+      setLoopToolArmed(false)
+      document.removeEventListener('mousemove', mm)
+      document.removeEventListener('mouseup', mu)
+    }
+    document.addEventListener('mousemove', mm)
+    document.addEventListener('mouseup', mu)
+  }
+
   function handleEditTimeSig(e: React.MouseEvent) {
     setTsDraftNum(project.timeSignatureNum)
     setTsDraftDen(project.timeSignatureDen)
+    setTsDraftBpm(project.tempo)
     setTsPopover({ x: e.clientX, y: e.clientY })
   }
 
@@ -895,7 +947,20 @@ export default function ArrangementView() {
   })
 
   return (
-    <div ref={outerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative' }}>
+    <div
+      ref={outerRef}
+      onMouseDownCapture={loopToolArmed ? onLoopToolMouseDown : undefined}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative', cursor: loopToolArmed ? 'crosshair' : undefined }}
+    >
+      {loopToolArmed && (
+        <div style={{
+          position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 30, pointerEvents: 'none',
+          display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 999,
+          background: 'rgba(16,20,30,0.95)', border: '1px solid rgba(61,143,239,0.5)',
+        }}>
+          <span style={{ fontSize: 10.5, color: '#9cc4f0', fontWeight: 600 }}>Loop tool — drag across the timeline to set the region · Esc to cancel</span>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div style={{ height: 30, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -1271,8 +1336,17 @@ export default function ArrangementView() {
               {[2, 4, 8, 16].map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.06em', marginTop: 2 }}>TEMPO</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="number" min={20} max={300} value={tsDraftBpm}
+              onChange={e => setTsDraftBpm(Math.max(20, Math.min(300, parseFloat(e.target.value) || 120)))}
+              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) } }}
+              style={{ width: 62, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
+            />
+            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>BPM</span>
+          </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); setTsPopover(null) }}
+            <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) }}
               style={{ flex: 1, background: 'var(--accent)', border: 'none', color: '#fff', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 600 }}>
               Apply
             </button>

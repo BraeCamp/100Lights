@@ -781,6 +781,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
   const [saveError,  setSaveError]  = useState('')
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
+  const [loopToolArmed, setLoopToolArmed] = useState(false)
 
   // ── Create-recipe entry point: the sound library's "+ Create a recipe"
   // button (this editor or the /library page) lands here — fresh track, empty
@@ -1013,6 +1014,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setShowPads,
     expandedPianoRollClipId,
     setExpandedPianoRollClipId,
+    loopToolArmed,
+    setLoopToolArmed,
     onSave: onSave ? () => { void handleSaveRef.current() } : undefined,
     isSaving,
     audioMode: props.audioMode,
@@ -1025,7 +1028,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
-    expandedPianoRollClipId, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
+    expandedPianoRollClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
     collabPeers,
   ])
 

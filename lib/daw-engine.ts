@@ -2209,6 +2209,13 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Live amplitude trail while recording — one entry every ~45ms, drawn by
+   *  the arrangement's recording ghost so you watch the take appear. */
+  recordingPeaks: number[] = []
+  private _recPeakTimer: number | null = null
+  private _recAnalyser: AnalyserNode | null = null
+  get recordingStartBeat(): number { return this._recStartBeat }
+
   async startRecording(): Promise<void> {
     if (this._mediaRecorder || this.isRecording) return
     if (this.ctx.state === 'suspended') await this.ctx.resume()
@@ -2225,11 +2232,30 @@ export class DawEngine extends EventTarget {
     this._mediaRecorder.onerror = e => console.error('[rec] MediaRecorder error:', e)
     this._mediaRecorder.start(100)
     this.isRecording = true
+    // live waveform trail
+    this.recordingPeaks = []
+    const an = this.ctx.createAnalyser()
+    an.fftSize = 2048
+    this.masterCompressor.connect(an)
+    this._recAnalyser = an
+    const peakBuf = new Float32Array(an.fftSize)
+    this._recPeakTimer = window.setInterval(() => {
+      an.getFloatTimeDomainData(peakBuf)
+      let m = 0
+      for (let i = 0; i < peakBuf.length; i += 4) m = Math.max(m, Math.abs(peakBuf[i]))
+      this.recordingPeaks.push(m)
+    }, 45)
     console.log('[rec] startRecording — beat:', this._recStartBeat, 'mime:', mime || '(default)', 'stream tracks:', this._captureNode.stream.getTracks().length)
     this.dispatchEvent(new CustomEvent('recording', { detail: { recording: true } }))
   }
 
+  private _stopRecPeaks(): void {
+    if (this._recPeakTimer !== null) { clearInterval(this._recPeakTimer); this._recPeakTimer = null }
+    if (this._recAnalyser) { try { this.masterCompressor.disconnect(this._recAnalyser) } catch { /* ok */ } this._recAnalyser = null }
+  }
+
   async stopRecording(): Promise<Blob | null> {
+    this._stopRecPeaks()
     if (!this._mediaRecorder) return null
     const endBeat = this.currentBeat  // capture before scheduler stops
     this.stopAllMicInputs()

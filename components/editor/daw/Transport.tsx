@@ -19,7 +19,7 @@ function fmtHMS(secs: number): string {
 }
 
 export default function Transport() {
-  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink } = useDaw()
+  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed } = useDaw()
   const { padTrafficLights } = useElectronChrome()
 
   // ── Refs ────────────────────────────────────────────────────────────────────
@@ -128,13 +128,18 @@ export default function Transport() {
           return
         }
 
-        // Armed tracks with no input → blink their input buttons
+        // Every armed track lacks an input → nothing can actually record.
+        // Blink the input pickers and stay stopped instead of rolling.
         const armedWithoutInput = armedTracks.filter(t => !t.inputSource)
         if (armedWithoutInput.length === armedTracks.length) {
           triggerBlink(armedWithoutInput.map(t => `input:${t.id}`))
+          setMicError('Pick an input on an armed track first — click its input selector')
+          setTimeout(() => setMicError(''), 5000)
+          return
         }
 
-        await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+        const recordableTracks = armedTracks.filter(t => t.inputSource)
+        await Promise.all(recordableTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
         if (!playing) engine.play()
         await engine.startRecording()
         setMicError('')
@@ -161,7 +166,24 @@ export default function Transport() {
   }
 
   function handleLoopToggle() {
-    dispatch({ type: 'SET_LOOP_ENABLED', enabled: !project.loopEnabled })
+    if (project.loopEnabled) {
+      dispatch({ type: 'SET_LOOP_ENABLED', enabled: false })
+      setLoopToolArmed(false)
+      return
+    }
+    // Arm the loop tool — the region appears once you drag it across the
+    // ruler or the track lanes. Double-click loops the whole project instead.
+    setLoopToolArmed(!loopToolArmed)
+  }
+
+  function handleLoopFullSpan() {
+    const clips = project.arrangementClips
+    if (clips.length === 0) return
+    const start = Math.min(...clips.map(c => c.startBeat))
+    const end   = Math.max(...clips.map(c => c.startBeat + c.durationBeats))
+    dispatch({ type: 'SET_LOOP', start, end })
+    dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
+    setLoopToolArmed(false)
   }
 
   function handleVolumeChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -341,9 +363,10 @@ export default function Transport() {
         )}
 
         <button
-          style={project.loopEnabled ? active : base}
+          style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgba(61,143,239,0.7)', color: '#7ab4f5' } : base}
           onClick={handleLoopToggle}
-          title="Toggle loop"
+          onDoubleClick={handleLoopFullSpan}
+          title="Loop — click, then drag across the timeline to set the region. Double-click to loop the whole project."
           data-help-id="loop"
         >
           <Repeat size={13} />
@@ -467,9 +490,10 @@ export default function Transport() {
       )}
 
       <button
-        style={project.loopEnabled ? active : base}
+        style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgba(61,143,239,0.7)', color: '#7ab4f5' } : base}
         onClick={handleLoopToggle}
-        title="Toggle loop"
+        onDoubleClick={handleLoopFullSpan}
+        title="Loop — click, then drag across the timeline to set the region. Double-click to loop the whole project."
         data-help-id="loop"
       >
         <Repeat size={13} />

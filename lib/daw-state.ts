@@ -562,6 +562,10 @@ export interface DawContextValue {
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void
   // Piano roll (inline, under track)
   expandedPianoRollClipId: string | null
+  /** Loop tool: armed by the transport's loop button — the next drag across
+   *  the ruler or track lanes draws the loop region. */
+  loopToolArmed: boolean
+  setLoopToolArmed: (v: boolean) => void
   setExpandedPianoRollClipId: (id: string | null) => void
   // Save
   onSave?: () => void

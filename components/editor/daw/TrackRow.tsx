@@ -26,6 +26,50 @@ const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: 
 const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
 const SoundLibrary = dynamic(() => import('../SoundLibrary'), { ssr: false })
 
+// Live take preview: while recording, armed tracks show the take growing
+// behind the playhead with its waveform drawn as it lands.
+function RecordingGhost({ beatW, height }: { beatW: number; height: number }) {
+  const { engine } = useDaw()
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    let raf = 0
+    const tick = () => {
+      const el = wrapRef.current, canvas = canvasRef.current
+      if (el && canvas && engine.isRecording) {
+        const start = engine.recordingStartBeat
+        const w = Math.max(2, (engine.currentBeat - start) * beatW)
+        el.style.left = `${start * beatW}px`
+        el.style.width = `${w}px`
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          const W = Math.min(1600, Math.max(10, Math.floor(w)))
+          if (canvas.width !== W) canvas.width = W
+          const H = canvas.height
+          ctx.clearRect(0, 0, W, H)
+          ctx.fillStyle = 'rgba(248,113,113,0.8)'
+          const peaks = engine.recordingPeaks
+          const n = peaks.length
+          for (let x = 0; x < W; x++) {
+            const p = n ? peaks[Math.min(n - 1, Math.floor((x / W) * n))] : 0
+            const h = Math.max(1, p * (H - 4))
+            ctx.fillRect(x, (H - h) / 2, 1, h)
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [engine, beatW])
+  return (
+    <div ref={wrapRef} style={{ position: 'absolute', top: 4, bottom: 4, left: 0, width: 2, background: 'rgba(220,38,38,0.08)', border: '1px dashed rgba(239,68,68,0.55)', borderRadius: 3, pointerEvents: 'none', overflow: 'hidden', zIndex: 3, boxSizing: 'border-box' }}>
+      <canvas ref={canvasRef} width={10} height={Math.max(8, height - 8)} style={{ width: '100%', height: '100%', display: 'block' }} />
+      <span style={{ position: 'absolute', top: 1, left: 4, fontSize: 8, fontWeight: 700, color: '#f87171', letterSpacing: '0.06em' }}>● REC</span>
+    </div>
+  )
+}
+
 export const HDR_W = 200
 const AUTO_H = 60
 const TAKE_H = 32
@@ -799,6 +843,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             ) : null
           })}
           <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
+            {recording && track.armed && !!track.inputSource && (
+              <RecordingGhost beatW={beatW} height={track.height} />
+            )}
             {visibleClips.map(clip => {
               const isClipSelected      = selectedClipId === clip.id
               const isMultiSelected = selectedClipIds.has(clip.id)
