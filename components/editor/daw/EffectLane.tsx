@@ -50,8 +50,35 @@ function hzToNoteName(hz: number): string {
 
 // ── Param editor popover ──────────────────────────────────────────────────────
 
-function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: () => void }) {
-  const { dispatch } = useDaw()
+// Hoisted so its identity is stable across renders — defined inside the
+// editor it remounted on every param dispatch, which broke slider drags.
+function FxSlider({ label, raw, min, max, log = false, color, onSet }: {
+  label: string; raw: number; min: number; max: number; log?: boolean; color: string
+  onSet: (v: number) => void
+}) {
+  const normalized = log
+    ? (Math.log(raw / min) / Math.log(max / min))
+    : ((raw - min) / (max - min))
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+      <span style={{ width: 60, flexShrink: 0 }}>{label}</span>
+      <input type="range" min={0} max={1} step={0.001} value={normalized}
+        onChange={e => {
+          const n = parseFloat(e.target.value)
+          onSet(log ? min * Math.pow(max / min, n) : min + n * (max - min))
+        }}
+        style={{ flex: 1, accentColor: color }} />
+      <span style={{ width: 40, fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-primary)', fontSize: 9 }}>
+        {raw.toFixed(raw < 10 ? 2 : 0)}
+      </span>
+    </label>
+  )
+}
+
+function EffectParamEditor({ effect: effectAtOpen, onClose }: { effect: ClipEffect; onClose: () => void }) {
+  const { dispatch, project } = useDaw()
+  // The open-time object goes stale as sliders dispatch — read the live one
+  const effect = project.clipEffects?.find(e => e.id === effectAtOpen.id) ?? effectAtOpen
   const [liveSemitones, setLiveSemitones] = useState(
     (effect.params as Record<string, number>).semitones ?? 0
   )
@@ -59,27 +86,13 @@ function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: (
     if (key === 'semitones') setLiveSemitones(val)
     dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { [key]: val } } })
   }
-  function Slider({ label, k, min, max, log = false }: { label: string; k: string; min: number; max: number; log?: boolean }) {
-    const raw = (effect.params as Record<string, number>)[k] ?? (min + max) / 2
-    const normalized = log
-      ? (Math.log(raw / min) / Math.log(max / min))
-      : ((raw - min) / (max - min))
-    return (
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-        <span style={{ width: 60, flexShrink: 0 }}>{label}</span>
-        <input type="range" min={0} max={1} step={0.001} value={normalized}
-          onChange={e => {
-            const n = parseFloat(e.target.value)
-            const v = log ? min * Math.pow(max / min, n) : min + n * (max - min)
-            set(k, v)
-          }}
-          style={{ flex: 1, accentColor: EFFECT_COLORS[effect.type] }} />
-        <span style={{ width: 40, fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-primary)', fontSize: 9 }}>
-          {raw.toFixed(raw < 10 ? 2 : 0)}
-        </span>
-      </label>
-    )
-  }
+  const params = effect.params as Record<string, number>
+  // plain function call (not JSX component) — a render-scoped component
+  // type would remount the input on every dispatch and break drags
+  const slider = (label: string, k: string, min: number, max: number, log = false) => (
+    <FxSlider key={k} label={label} raw={params[k] ?? (min + max) / 2} min={min} max={max} log={log}
+      color={EFFECT_COLORS[effect.type]} onSet={v => set(k, v)} />
+  )
 
   return (
     <div style={{ background: '#1e1e2e', border: `1px solid ${EFFECT_COLORS[effect.type]}`, borderRadius: 6, padding: '10px 12px', minWidth: 220, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
@@ -88,15 +101,15 @@ function EffectParamEditor({ effect, onClose }: { effect: ClipEffect; onClose: (
         <button onClick={onClose} style={{ fontSize: 9, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {effect.type === 'volume'     && <Slider label="Volume" k="gain" min={0} max={2} />}
-        {effect.type === 'reverb'     && <><Slider label="Wet" k="reverbWet" min={0} max={1} /><Slider label="Decay" k="reverbDecay" min={0.3} max={5} /></>}
-        {effect.type === 'delay'      && <><Slider label="Time" k="delayTime" min={0.05} max={2} /><Slider label="Feedback" k="feedback" min={0} max={0.95} /><Slider label="Wet" k="delayWet" min={0} max={1} /></>}
-        {effect.type === 'filter'     && <><Slider label="Freq" k="frequency" min={40} max={18000} log /><Slider label="Q" k="filterQ" min={0.1} max={20} log /></>}
-        {effect.type === 'tremolo'    && <><Slider label="Rate" k="tremoloRate" min={0.1} max={15} /><Slider label="Depth" k="tremoloDepth" min={0} max={1} /></>}
-        {effect.type === 'distortion' && <Slider label="Amount" k="distortion" min={0} max={1} />}
+        {effect.type === 'volume'     && slider('Volume', 'gain', 0, 2)}
+        {effect.type === 'reverb'     && <>{slider('Wet', 'reverbWet', 0, 1)}{slider('Decay', 'reverbDecay', 0.3, 5)}</>}
+        {effect.type === 'delay'      && <>{slider('Time', 'delayTime', 0.05, 2)}{slider('Feedback', 'feedback', 0, 0.95)}{slider('Wet', 'delayWet', 0, 1)}</>}
+        {effect.type === 'filter'     && <>{slider('Freq', 'frequency', 40, 18000, true)}{slider('Q', 'filterQ', 0.1, 20, true)}</>}
+        {effect.type === 'tremolo'    && <>{slider('Rate', 'tremoloRate', 0.1, 15)}{slider('Depth', 'tremoloDepth', 0, 1)}</>}
+        {effect.type === 'distortion' && slider('Amount', 'distortion', 0, 1)}
         {effect.type === 'pitch'      && (
           <>
-            <Slider label="Semitones" k="semitones" min={-24} max={24} />
+            {slider('Semitones', 'semitones', -24, 24)}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', paddingTop: 2 }}>
               <span style={{ width: 60, flexShrink: 0 }}>Note</span>
               <span style={{ fontFamily: 'monospace', fontSize: 9 }}>A4</span>
@@ -560,7 +573,10 @@ export default function EffectLaneView({
 
       {/* Param editor popover */}
       {editTarget && createPortal(
-        <div ref={editPopRef} style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
+        // React portals bubble events through the REACT tree — without the
+        // stops below, any click inside the popup reaches the lane's onClick,
+        // which closes the editor mid-adjustment.
+        <div ref={editPopRef} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
           <EffectParamEditor effect={editTarget.effect} onClose={() => setEditTarget(null)} />
         </div>,
         document.body
