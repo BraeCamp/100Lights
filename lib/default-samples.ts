@@ -481,6 +481,21 @@ export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
   if (!entry) return null
   if (entry.audioBlob) return entry
 
+  // Community-linked entries stream from the public audio endpoint on first
+  // use, then persist locally so later plays are instant and offline-safe.
+  if (entry.communityRef) {
+    try {
+      const { itemId, sampleIndex } = entry.communityRef
+      const url = `/api/community/${itemId}/audio${sampleIndex !== undefined ? `?i=${sampleIndex}` : ''}`
+      const res = await fetch(url)
+      if (!res.ok) return null
+      const blob = await res.blob()
+      const fulfilled: LibraryEntry = { ...entry, audioBlob: blob }
+      libraryAdd(fulfilled).catch(() => {})
+      return fulfilled
+    } catch { return null }
+  }
+
   const spec = entry.renderSpec
   if (!spec) return null
 

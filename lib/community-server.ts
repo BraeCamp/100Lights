@@ -6,6 +6,12 @@ export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'p
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 
 let tablesReady = false
+/** Route ids come straight from the URL — reject non-UUIDs before they hit
+ *  Postgres, which throws (500) instead of returning no rows. */
+export function isUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+}
+
 export async function ensureTables() {
   if (tablesReady) return
   await sql`

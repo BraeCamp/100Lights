@@ -28,6 +28,11 @@ export interface LibraryEntry {
   category:     LibraryCategory
   audioBlob?:   Blob           // undefined = stub not yet rendered
   renderSpec?:  RenderSpec     // present on auto-generated 100lights entries
+  /** Community-linked entries: no local copy — audio streams from the item's
+   *  public URL on first use, then caches. Keeps imports nearly free. */
+  communityRef?: { itemId: string; sampleIndex?: number }
+  /** Who shared it (community imports) — shown in the library */
+  authorName?:  string
   spectral?:    HitSpectral   // perceptual fingerprint — set for drum/instrument entries
   duration:     number        // seconds
   addedAt:      string        // ISO timestamp

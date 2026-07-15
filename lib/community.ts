@@ -3,7 +3,7 @@
 // folder's render specs (no blobs — notes re-render locally on demand);
 // recipes carry the note pattern itself.
 
-import { libraryGetAll, libraryAdd, getAudioDurationFromBlob, type LibraryEntry, type LibraryCategory } from './sound-library'
+import { libraryGetAll, libraryAdd, type LibraryEntry, type LibraryCategory } from './sound-library'
 import { libraryFulfill } from './default-samples'
 import { getPresets, addPreset, type MidiPreset } from './midi-presets'
 import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
@@ -225,7 +225,7 @@ export async function importItem(item: CommunityItem): Promise<string> {
     importRecipe({
       id: `community-${item.id}`,
       title: item.name,
-      tagline: item.description || `Shared by ${item.authorName}`,
+      tagline: item.description ? `${item.description} — by ${item.authorName}` : `Shared by ${item.authorName}`,
       annotation: item.description ? [item.description, `Shared by ${item.authorName}.`] : [`Shared by ${item.authorName}.`],
       spec: p.spec,
     })
@@ -252,27 +252,24 @@ export async function importItem(item: CommunityItem): Promise<string> {
   }
 
   if (item.kind === 'pack') {
-    const p = item.payload as { samples?: Array<{ name: string; category: string; duration: number; r2Key: string }> }
+    const p = item.payload as { samples?: Array<{ name: string; category: string; duration: number }> }
     const samples = p.samples ?? []
-    let added = 0
+    // Reference rows only — audio streams on first use and caches locally
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i]
-      const audio = await fetch(`/api/community/${item.id}/audio?i=${i}`)
-      if (!audio.ok) continue
-      const blob = await audio.blob()
       await libraryAdd({
         id: `community:${item.id}:${i}`,
         name: s.name,
         category: (s.category ?? 'other') as LibraryCategory,
-        audioBlob: blob,
-        duration: s.duration ?? await getAudioDurationFromBlob(blob).catch(() => 1),
+        duration: s.duration ?? 1,
         addedAt: new Date().toISOString(),
         folder: item.name.slice(0, 40), parentFolder: 'Community',
+        communityRef: { itemId: item.id, sampleIndex: i },
+        authorName: item.authorName,
       })
-      added++
     }
     void countDownload(item.id)
-    return `${added} sample${added !== 1 ? 's' : ''} added to your library under Community › ${item.name.slice(0, 40)}.`
+    return `${samples.length} sample${samples.length !== 1 ? 's' : ''} linked into your library under Community › ${item.name.slice(0, 40)}.`
   }
 
   if (item.kind === 'project') {
@@ -298,22 +295,20 @@ export async function importItem(item: CommunityItem): Promise<string> {
     return 'Song downloaded.'
   }
 
-  // sample
+  // sample: a reference row — audio streams from the community on first use,
+  // then caches locally. Import costs one tiny database row, not a download.
   if (!item.r2Key) throw new Error('sample has no audio key')
-  const signed = await fetch(`/api/media/signed-url?key=${encodeURIComponent(item.r2Key)}`)
-  if (!signed.ok) throw new Error('could not resolve sample audio')
-  const { url } = await signed.json() as { url: string }
-  const blob = await (await fetch(url)).blob()
   const meta = (item.payload ?? {}) as { category?: string; duration?: number }
   await libraryAdd({
     id: `community:${item.id}`,
     name: item.name,
     category: (meta.category ?? 'other') as LibraryCategory,
-    audioBlob: blob,
-    duration: meta.duration ?? await getAudioDurationFromBlob(blob).catch(() => 1),
+    duration: meta.duration ?? 1,
     addedAt: new Date().toISOString(),
     folder: 'Community', parentFolder: 'Community',
+    communityRef: { itemId: item.id },
+    authorName: item.authorName,
   })
   void countDownload(item.id)
-  return 'Added to your sound library under Community.'
+  return 'Linked into your sound library under Community.'
 }

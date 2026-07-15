@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { ensureTables, devTestUser, rowToItem, reactionMaps, REACTION_EMOJI, LARGE_MODE_LIMITS } from '@/lib/community-server'
+import { ensureTables, devTestUser, rowToItem, reactionMaps, REACTION_EMOJI, LARGE_MODE_LIMITS, isUuid } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
 
 export const runtime = 'nodejs'
@@ -12,6 +12,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   await ensureTables()
 
   const { id } = await params
+  if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
   const rows = await sql`SELECT * FROM community_items WHERE id = ${id}`
   if (rows.length === 0) return Response.json({ error: 'Not found' }, { status: 404 })
 
@@ -30,6 +31,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = clerkId ?? devTestUser(req)
 
   const { id } = await params
+  if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
   let body: { action?: string; emoji?: string; reason?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
@@ -108,6 +110,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
   const { isAdmin } = await import('@/lib/admin-auth')
   const admin = await isAdmin()
   const rows = await sql`DELETE FROM community_items WHERE id = ${id} AND (user_id = ${userId} OR ${admin}) RETURNING id`

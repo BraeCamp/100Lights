@@ -76,7 +76,7 @@ function EntryRow({
     if (pcmRef.current) return
     let blob = entry.audioBlob
     if (!blob) {
-      if (!entry.renderSpec) return
+      if (!entry.renderSpec && !entry.communityRef) return
       setFulfilling(true)
       try {
         const fulfilled = await libraryFulfill(entry.id)
@@ -258,7 +258,10 @@ function EntryRow({
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.authorName ? `Shared by ${entry.authorName}` : undefined}>
+              {entry.name}
+              {entry.authorName && <span style={{ color: '#34d399', fontSize: 8.5, marginLeft: 4 }}>by {entry.authorName.split(' ')[0]}</span>}
+            </span>
             <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.6 }}><Pencil size={8} /></button>
           </div>
         )}
@@ -1170,6 +1173,59 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, folders, searchQuery, activeTypeTag, activeCharTags])
 
+  // While a search or tag filter is active, collapsed folders would hide
+  // every match — so filtering forces all groups open.
+  const filtering = searchQuery.trim().length > 0 || activeTypeTag !== null || activeCharTags.size > 0
+
+  const renderParentGroup = (parentName: string, subFolders: Map<string, LibraryEntry[]>) => {
+    const parentKey = `parent:${parentName}`
+    const parentCollapsed = !filtering && !openFolders.has(parentKey)
+    const totalCount = [...subFolders.values()].reduce((n, arr) => n + arr.length, 0)
+    return (
+      <div key={parentName} style={{ borderBottom: '1px solid var(--border)' }}>
+        {/* Parent header */}
+        <div
+          onClick={() => toggleFolderCollapse(parentKey)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px',
+            background: 'rgba(61,143,239,0.06)', cursor: 'pointer',
+            borderLeft: '2px solid rgba(61,143,239,0.5)',
+          }}
+        >
+          {parentCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+          <FolderOpen size={10} style={{ color: 'rgba(61,143,239,0.7)', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgba(61,143,239,0.9)', letterSpacing: '0.04em' }}>{parentName}</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{totalCount}</span>
+        </div>
+
+        {/* Sub-folders */}
+        {!parentCollapsed && [...subFolders.entries()].map(([subName, subEntries]) => {
+          const subKey = `${parentKey}/${subName}`
+          const subCollapsed = !filtering && !openFolders.has(subKey)
+          return (
+            <div key={subName} style={{ paddingLeft: 10 }}>
+              <div
+                onClick={() => toggleFolderCollapse(subKey)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+                  borderTop: '1px solid var(--border)', cursor: 'pointer',
+                  background: 'var(--bg-surface)',
+                  borderLeft: '2px solid rgba(139,92,246,0.3)',
+                }}
+              >
+                {subCollapsed ? <ChevronRight size={9} /> : <ChevronDown size={9} />}
+                <Folder size={9} style={{ color: 'rgba(167,139,250,0.6)', flexShrink: 0 }} />
+                <span style={{ flex: 1, fontSize: 9, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}>{subName}</span>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{subEntries.length}</span>
+              </div>
+              {!subCollapsed && subEntries.map(entryRow)}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   const entryRow = (entry: LibraryEntry) => (
     <EntryRow
       key={entry.id}
@@ -1184,12 +1240,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     />
   )
 
-  const recipesBody = (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
-        Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
-      </p>
-      {getAllChordRecipes().map(r => (
+  const recipeCard = (r: ReturnType<typeof getAllChordRecipes>[number]) => (
         <div
           key={r.id}
           draggable
@@ -1225,7 +1276,31 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.tagline}</div>
           </div>
         </div>
-      ))}
+  )
+
+  // Imported community recipes carry a `community-` id; everything else ships
+  // with the app. Shown as separate sections so the source is always clear.
+  const allRecipes = getAllChordRecipes()
+  const builtinRecipes = allRecipes.filter(r => !r.id.startsWith('community-'))
+  const communityRecipes = allRecipes.filter(r => r.id.startsWith('community-'))
+  const recipeSectionHeader = (label: string, color: string) => (
+    <div style={{ padding: '4px 2px 0', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color, textTransform: 'uppercase' }}>
+      {label}
+    </div>
+  )
+  const recipesBody = (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
+        Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
+      </p>
+      {communityRecipes.length > 0 && (
+        <>
+          {recipeSectionHeader('From the Community', '#34d399')}
+          {communityRecipes.map(recipeCard)}
+        </>
+      )}
+      {communityRecipes.length > 0 && recipeSectionHeader('100Lights Recipes', 'var(--text-muted)')}
+      {builtinRecipes.map(recipeCard)}
     </div>
   )
 
@@ -1391,60 +1466,30 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           </div>
         ) : (
           <>
-            {/* 100lights Audio default sample groups — shown before user folders */}
-            {[...byParent.entries()].map(([parentName, subFolders]) => {
-              const parentKey = `parent:${parentName}`
-              const parentCollapsed = !openFolders.has(parentKey)
-              const totalCount = [...subFolders.values()].reduce((n, arr) => n + arr.length, 0)
-              return (
-                <div key={parentName} style={{ borderBottom: '1px solid var(--border)' }}>
-                  {/* Parent header */}
-                  <div
-                    onClick={() => toggleFolderCollapse(parentKey)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px',
-                      background: 'rgba(61,143,239,0.06)', cursor: 'pointer',
-                      borderLeft: '2px solid rgba(61,143,239,0.5)',
-                    }}
-                  >
-                    {parentCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
-                    <FolderOpen size={10} style={{ color: 'rgba(61,143,239,0.7)', flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgba(61,143,239,0.9)', letterSpacing: '0.04em' }}>{parentName}</span>
-                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{totalCount}</span>
-                  </div>
-
-                  {/* Sub-folders */}
-                  {!parentCollapsed && [...subFolders.entries()].map(([subName, subEntries]) => {
-                    const subKey = `${parentKey}/${subName}`
-                    const subCollapsed = !openFolders.has(subKey)
-                    return (
-                      <div key={subName} style={{ paddingLeft: 10 }}>
-                        <div
-                          onClick={() => toggleFolderCollapse(subKey)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-                            borderTop: '1px solid var(--border)', cursor: 'pointer',
-                            background: 'var(--bg-surface)',
-                            borderLeft: '2px solid rgba(139,92,246,0.3)',
-                          }}
-                        >
-                          {subCollapsed ? <ChevronRight size={9} /> : <ChevronDown size={9} />}
-                          <Folder size={9} style={{ color: 'rgba(167,139,250,0.6)', flexShrink: 0 }} />
-                          <span style={{ flex: 1, fontSize: 9, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}>{subName}</span>
-                          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{subEntries.length}</span>
-                        </div>
-                        {!subCollapsed && subEntries.map(entryRow)}
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
-
+            {/* Sections: community links first, then the built-in 100Lights
+                catalog, then the user's own folders — so it's always clear
+                what came from where. */}
+            {byParent.has('Community') && (
+              <div style={{ padding: '7px 10px 3px', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color: '#34d399', textTransform: 'uppercase' }}>
+                From the Community
+              </div>
+            )}
+            {[...byParent.entries()].filter(([n]) => n === 'Community').map(([parentName, subFolders]) => renderParentGroup(parentName, subFolders))}
+            {[...byParent.keys()].some(n => n !== 'Community') && (
+              <div style={{ padding: '7px 10px 3px', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                100Lights Sounds
+              </div>
+            )}
+            {[...byParent.entries()].filter(([n]) => n !== 'Community').map(([parentName, subFolders]) => renderParentGroup(parentName, subFolders))}
+            {(byFolder.size > 0 || unfiled.length > 0) && (
+              <div style={{ padding: '7px 10px 3px', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color: '#a78bfa', textTransform: 'uppercase' }}>
+                Your Sounds
+              </div>
+            )}
             {/* User folder sections */}
             {folders.map((folder, idx) => {
               const folderEntries = byFolder.get(folder) ?? []
-              const collapsed     = !openFolders.has(folder)
+              const collapsed     = !filtering && !openFolders.has(folder)
               const reorderBefore = folderDropTarget === folder && draggingFolder !== folder
               // show 'after' indicator on the last folder when drop target is '__end__'
               const reorderAfter  = folderDropTarget === '__end__' && idx === folders.length - 1

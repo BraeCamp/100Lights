@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { isUuid } from '@/lib/community-server'
 import { presignDownload } from '@/lib/r2'
 
 export const runtime = 'nodejs'
@@ -28,6 +29,7 @@ async function ensureStreamLog() {
 // redirects to a short-lived signed URL.
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
   const rows = await sql`SELECT kind, r2_key, payload FROM community_items WHERE id = ${id}`
   if (rows.length === 0) return Response.json({ error: 'Not found' }, { status: 404 })
 
