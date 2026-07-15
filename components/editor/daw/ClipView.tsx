@@ -7,6 +7,7 @@ import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
 import { getPresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import { shareRecipe } from '@/lib/community'
+import { ShareCommunityDialog } from '../SoundCreate'
 import Waveform from './Waveform'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -95,6 +96,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const gainDragRef = useRef<{ startY: number; startGain: number; clipH: number } | null>(null)
   const [ctxPos, setCtxPos] = useState<{ x: number; y: number; beat: number } | null>(null)
   const [ctxSoundMenu, setCtxSoundMenu] = useState(false)  // "Change Sound" submenu inside the ctx menu
+  const [shareOpen, setShareOpen] = useState(false)  // Share-as-recipe dialog
   const [hovered, setHovered] = useState(false)
   const [gainDragInfo, setGainDragInfo] = useState<{ gain: number; mouseX: number; mouseY: number } | null>(null)
   const [transientDialog, setTransientDialog] = useState<{
@@ -372,14 +374,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     ] : [
       { label: 'Open Piano Roll', fn: onDoubleClick },
       { label: 'Change Sound…', fn: () => setCtxSoundMenu(true), keepOpen: true },
-      { label: 'Share to Community…', fn: () => {
-        const name = window.prompt('Share this pattern as a recipe.\nName:', clip.name)
-        if (!name?.trim()) return
-        const description = window.prompt('Short description (optional):') ?? ''
-        shareRecipe(clip as MidiClip, name.trim(), description.trim())
-          .then(() => window.alert('Shared! It\u2019s now on the Community page.'))
-          .catch(err => window.alert(`Share failed: ${err instanceof Error ? err.message : err}`))
-      } },
+      { label: 'Share to Community…', fn: () => setShareOpen(true) },
     ]),
   ]
 
@@ -776,6 +771,14 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
           </div>
         </div>,
         document.body
+      )}
+      {shareOpen && (
+        <ShareCommunityDialog
+          kind="recipe"
+          defaultName={clip.name}
+          onClose={() => setShareOpen(false)}
+          onShare={(name, desc) => shareRecipe(clip as MidiClip, name, desc)}
+        />
       )}
     </>
   )

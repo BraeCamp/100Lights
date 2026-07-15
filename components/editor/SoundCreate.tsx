@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Dices, BookmarkPlus, Search, Plus, X } from 'lucide-react'
+import { Play, Square, Dices, BookmarkPlus, Search, Plus, X, Globe2 } from 'lucide-react'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import { importRecipe } from '@/lib/practice-recipes'
@@ -786,5 +786,100 @@ export function MotionFxPanel({ fxs, onChange }: { fxs: MotionFx[]; onChange: (f
         )
       })}
     </div>
+  )
+}
+
+// ── Share-to-Community dialog ─────────────────────────────────────────────────
+// In-app replacement for the old window.prompt share flow — prompts don't
+// exist in the desktop shell, and this also says plainly what kind the share
+// becomes (the kind is decided by what you're sharing, never a choice).
+
+const SHARE_KIND_INFO: Record<'sample' | 'recipe', { label: string; color: string; blurb: string }> = {
+  sample: { label: 'Sample', color: '#60a5fa', blurb: 'the audio itself — others stream it and can link it into their library' },
+  recipe: { label: 'Recipe', color: '#a78bfa', blurb: 'the note pattern — others drop it on a track and edit every note' },
+}
+
+export function ShareCommunityDialog({ kind, defaultName, onShare, onClose }: {
+  kind: 'sample' | 'recipe'
+  defaultName: string
+  onShare: (name: string, description: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(defaultName)
+  const [desc, setDesc] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState('')
+  const info = SHARE_KIND_INFO[kind]
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  async function share() {
+    if (!name.trim() || busy) return
+    setBusy(true); setError('')
+    try {
+      await onShare(name.trim(), desc.trim())
+      setDone(true)
+      setTimeout(onClose, 1600)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Share failed')
+    } finally { setBusy(false) }
+  }
+
+  return createPortal(
+    <div
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, width: 'min(380px,92vw)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Share to the Community</span>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}><X size={15} /></button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '8px 10px', borderRadius: 8, background: `${info.color}14`, border: `1px solid ${info.color}40` }}>
+          <Globe2 size={13} style={{ color: info.color, flexShrink: 0, marginTop: 1 }} />
+          <p style={{ fontSize: 10.5, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+            Shares as a <b style={{ color: info.color }}>{info.label}</b> — {info.blurb}. Anyone with the link can listen, no account needed.
+          </p>
+        </div>
+
+        {done ? (
+          <p style={{ fontSize: 12, color: '#34d399', margin: '4px 0', fontWeight: 700, textAlign: 'center' }}>
+            Shared! It&apos;s live on the Community page ✓
+          </p>
+        ) : (
+          <>
+            <input
+              autoFocus value={name} onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void share() }}
+              placeholder="Name"
+              style={{ fontSize: 12, padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }}
+            />
+            <textarea
+              value={desc} onChange={e => setDesc(e.target.value)}
+              placeholder="Description — what is it, how would you use it? (optional)"
+              rows={3}
+              style={{ fontSize: 12, padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={onClose} style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
+                Cancel
+              </button>
+              <button onClick={() => void share()} disabled={busy || !name.trim()}
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 0', borderRadius: 8, border: 'none', background: busy ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                <Globe2 size={12} /> {busy ? 'Sharing…' : 'Share'}
+              </button>
+            </div>
+            {error && <p style={{ fontSize: 11, color: '#ef4444', margin: 0, textAlign: 'center' }}>{error}</p>}
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
   )
 }

@@ -20,7 +20,7 @@ import { libraryFulfill } from '@/lib/default-samples'
 import {
   SynthDesigner, LibrarySourcePicker, requestCreateRecipe, RECIPES_CHANGED_EVENT,
   makeLayer, layerSpan, compositeDuration, renderComposite,
-  LayerRail, MotionFxPanel, type SoundLayer, type MotionFx,
+  LayerRail, MotionFxPanel, ShareCommunityDialog, type SoundLayer, type MotionFx,
 } from './SoundCreate'
 import { computeHitFeatures } from '@/lib/beat-features'
 import { encodeWav, decodeAiff } from '@/lib/wav-codec'
@@ -63,6 +63,7 @@ function EntryRow({
   const [playing, setPlaying]         = useState(false)
   const [folderOpen, setFolderOpen]   = useState(false)
   const [fulfilling, setFulfilling]   = useState(false)
+  const [sharing,    setSharing]      = useState(false)
   const folderRef = useRef<HTMLDivElement>(null)
 
   // Waveform / scrub refs
@@ -343,25 +344,23 @@ function EntryRow({
       )}
       {!onPick && !entry.id.startsWith('seed:') && !entry.id.startsWith('community:') && (
         <button
-          onClick={async e => {
-            e.stopPropagation()
-            const btn = e.currentTarget
-            const desc = window.prompt(`Share "${entry.name}" to the Community?\n\nOptional description:`)
-            if (desc === null) return
-            btn.disabled = true
-            try {
-              const { shareSample } = await import('@/lib/community')
-              await shareSample(entry, desc)
-              window.alert('Shared! Find it at /community — every share gets a public link.')
-            } catch (err) {
-              window.alert(err instanceof Error ? err.message : 'Share failed')
-            } finally { btn.disabled = false }
-          }}
+          onClick={e => { e.stopPropagation(); setSharing(true) }}
           title="Share to Community"
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}
         >
           <Globe2 size={10} />
         </button>
+      )}
+      {sharing && (
+        <ShareCommunityDialog
+          kind="sample"
+          defaultName={entry.name}
+          onClose={() => setSharing(false)}
+          onShare={async (shareName, desc) => {
+            const { shareSample } = await import('@/lib/community')
+            await shareSample({ ...entry, name: shareName }, desc)
+          }}
+        />
       )}
       {!onPick && (
         <button onClick={() => onDelete(entry.id)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
