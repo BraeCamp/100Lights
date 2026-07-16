@@ -631,10 +631,13 @@ export default function AudioEditor(props: AudioEditorProps) {
               const url = URL.createObjectURL(blob)
               const dur = Math.max(0.25, endBeat - startBeat)
               const track = projectRef.current.tracks.find(t => t.id === trackId)
+              // latency compensation — the take is heard/captured late by the
+              // audio pipeline's round trip; place it where it was played
+              const latBeats = engineRef.current?.secondsToBeats(engineRef.current.recordLatencySec()) ?? 0
               const clip  = makeAudioClip(
                 trackId,
                 `${track?.name ?? 'Input'} Recording`,
-                startBeat, dur,
+                Math.max(0, startBeat - latBeats), dur,
                 { audioUrl: url },
               )
               dispatch({ type: 'ADD_CLIP', clip })
@@ -680,7 +683,8 @@ export default function AudioEditor(props: AudioEditorProps) {
       })()
       console.log('[rec] onRecordingComplete — trackId:', trackId, 'audioTracks:', p.tracks.filter(t => t.type === 'audio').map(t => t.name))
       if (!trackId) return
-      const clip = makeAudioClip(trackId, 'Recording', startBeat, durationBeats, { audioUrl: url })
+      const latBeats2 = engineRef.current?.secondsToBeats(engineRef.current.recordLatencySec()) ?? 0
+      const clip = makeAudioClip(trackId, 'Recording', Math.max(0, startBeat - latBeats2), durationBeats, { audioUrl: url })
       dispatch({ type: 'ADD_CLIP', clip })
       const pendingFx = engineRef.current?.pendingRecordFx ?? []
       pendingFx.forEach((fx, i) => {

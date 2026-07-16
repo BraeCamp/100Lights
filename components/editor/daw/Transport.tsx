@@ -115,6 +115,20 @@ export default function Transport() {
   const [monitorOn, setMonitorOn] = useState(false)
   const [recFx, setRecFx] = useState<MonitorFx[]>([])
   const [countInBars, setCountInBars] = useState(0)
+  const [latencyMs, setLatencyMs] = useState<number>(() => {
+    try {
+      const s = typeof localStorage !== 'undefined' ? localStorage.getItem('100lights-rec-latency-ms') : null
+      if (s !== null) return Number(s)
+    } catch { /* ok */ }
+    return -1  // -1 = auto
+  })
+  function commitLatency(v: number) {
+    setLatencyMs(v)
+    try {
+      if (v < 0) localStorage.removeItem('100lights-rec-latency-ms')
+      else localStorage.setItem('100lights-rec-latency-ms', String(v))
+    } catch { /* ok */ }
+  }
 
   function recordableInput(): string | null {
     const t = project.tracks.find(t => t.type === 'audio' && t.armed && t.inputSource)
@@ -288,6 +302,17 @@ export default function Transport() {
               </div>
             )
           })}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: '#999', width: 62, flexShrink: 0 }}>Timing</span>
+          <input type="range" min={-1} max={250} step={1} value={latencyMs}
+            onChange={e => commitLatency(Number(e.target.value))}
+            title="Recorded takes are placed this much earlier to cancel the audio pipeline's delay. Auto uses the browser's estimate."
+            style={{ flex: 1, accentColor: '#dc2626' }} />
+          <span style={{ fontSize: 9.5, color: '#ccc', width: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            {latencyMs < 0 ? `auto ${Math.round(engine.recordLatencySec() * 1000)}ms` : `${latencyMs}ms`}
+          </span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

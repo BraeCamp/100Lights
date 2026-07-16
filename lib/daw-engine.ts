@@ -2202,6 +2202,17 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Recording latency compensation in seconds: manual override from
+   *  settings, else the context's own estimate. Recorded clips are shifted
+   *  earlier by this much so takes line up with what the performer heard. */
+  recordLatencySec(): number {
+    try {
+      const stored = localStorage.getItem('100lights-rec-latency-ms')
+      if (stored !== null) return Math.max(0, Number(stored)) / 1000
+    } catch { /* ssr/no storage */ }
+    return this.ctx.baseLatency + (this.ctx.outputLatency ?? 0)
+  }
+
   /** Stem export: tap each listed track's post-fader output with a
    *  MediaStreamDestination so one playback pass captures every stem.
    *  Returns the taps; call the returned dispose() when done. */
