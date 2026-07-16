@@ -69,7 +69,8 @@ export function InspectButton() {
       if (clipId) {
         const clip = project.arrangementClips.find(c => c.id === clipId)
         if (!clip) return null
-        const at = `${clip.durationBeats} beats from beat ${clip.startBeat}`
+        const fmt = (n: number) => Math.round(n * 100) / 100
+        const at = `${fmt(clip.durationBeats)} beats from beat ${fmt(clip.startBeat)}`
         if (clip.kind === 'midi') {
           const m = clip as MidiClip
           const lines = [`${m.notes.length} note${m.notes.length !== 1 ? 's' : ''} · ${at}`]
@@ -78,7 +79,7 @@ export function InspectButton() {
             if (preset) lines.push(`Sound: ${preset.name}`)
           }
           if (m.rollFx?.sustain) lines.push(`Sustain ${m.rollFx.sustain.toFixed(1)}s`)
-          if (m.loopEnabled) lines.push(`Loops every ${m.loopLengthBeats} beats`)
+          if (m.loopEnabled && m.loopLengthBeats != null) lines.push(`Loops every ${Math.round(m.loopLengthBeats * 100) / 100} beats`)
           if (m.stretchNotes) lines.push('Recipe clip — edge-resize stretches the pattern')
           if (m.voiceMap) lines.push('Has a voice-map trace')
           return { title: m.name, kind: m.isDrumClip ? 'Drum pattern' : 'MIDI pattern', color: KIND_COLORS.clip, lines }
