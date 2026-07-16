@@ -419,6 +419,9 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Per-track external input recording ──────────────────────────────────────
   type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
+  // Loop recording: pass counter + wrap watcher (each loop pass becomes a take)
+  const recPassRef = useRef(0)
+  const wrapWatchRef = useRef<number | null>(null)
   const inputStreamsRef = useRef<Map<string, MediaStream>>(new Map())
   // Seed default samples once per browser (no-op if already done)
   // Seeding moved to SoundLibrary: it must run AFTER initLibrary(user) —
@@ -561,11 +564,79 @@ export default function AudioEditor(props: AudioEditorProps) {
     const onTransport = (e: Event) => {
       setPlaying((e as CustomEvent<{ playing: boolean }>).detail.playing)
     }
+    // Builds a clip from a finished pass. Pass 0 lands on the arrangement
+    // (with the record-setup FX bars); later passes stack as take lanes.
+    const finalizePassClip = (trackId: string, blob: Blob, startBeat: number, endBeat: number, passIndex: number) => {
+      if (blob.size === 0) return
+      const url = URL.createObjectURL(blob)
+      const dur = Math.max(0.25, endBeat - startBeat)
+      const track = projectRef.current.tracks.find(t => t.id === trackId)
+      const latBeats = engineRef.current?.secondsToBeats(engineRef.current.recordLatencySec()) ?? 0
+      const placed = Math.max(0, startBeat - latBeats)
+      if (passIndex === 0) {
+        const clip = makeAudioClip(trackId, `${track?.name ?? 'Input'} Recording`, placed, dur, { audioUrl: url })
+        dispatch({ type: 'ADD_CLIP', clip })
+        const pendingFx = engineRef.current?.pendingRecordFx ?? []
+        pendingFx.forEach((fx, i) => {
+          dispatch({ type: 'ADD_CLIP_EFFECT', effect: {
+            id: crypto.randomUUID(), trackId, type: fx.type,
+            startBeat: placed, durationBeats: dur, row: i,
+            params: monitorFxParams(fx),
+          } })
+        })
+        void uploadRecordingBlob(blob, clip.id).then(key => {
+          if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+        })
+      } else {
+        const clip = makeAudioClip(trackId, `Take ${passIndex + 1}`, placed, dur, { audioUrl: url })
+        dispatch({ type: 'ADD_TAKE_LANE', lane: { id: crypto.randomUUID(), trackId, name: `Take ${passIndex + 1}`, clips: [clip] } })
+        void uploadRecordingBlob(blob, clip.id).then(key => {
+          if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+        })
+      }
+    }
+
+    // Loop wrap during recording: close every per-track recorder into a
+    // pass clip and immediately start fresh ones for the next pass.
+    const rotateLoopPass = (wrapToBeat: number) => {
+      const passIndex = recPassRef.current
+      recPassRef.current++
+      const endBeat = projectRef.current.loopEnd
+      for (const [trackId, entry] of [...inputRecsRef.current]) {
+        const { recorder, startBeat, chunks } = entry
+        if (recorder.state === 'inactive') continue
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
+          finalizePassClip(trackId, blob, startBeat, endBeat, passIndex)
+        }
+        recorder.stop()
+        const stream = recorder.stream
+        const fresh = new MediaRecorder(stream, recorder.mimeType ? { mimeType: recorder.mimeType } : undefined)
+        const freshChunks: Blob[] = []
+        fresh.ondataavailable = (ev: BlobEvent) => { if (ev.data.size > 0) freshChunks.push(ev.data) }
+        fresh.start(100)
+        inputRecsRef.current.set(trackId, { recorder: fresh, startBeat: wrapToBeat, chunks: freshChunks })
+      }
+    }
+
     const onRecording = (e: Event) => {
       const rec = (e as CustomEvent<{ recording: boolean }>).detail.recording
       setRecording(rec)
 
       if (rec) {
+        recPassRef.current = 0
+        // Loop recording: when the transport wraps, finalize the pass into a
+        // take lane and start fresh recorders — every loop pass is kept.
+        if (projectRef.current.loopEnabled && wrapWatchRef.current === null) {
+          let lastBeat = engineRef.current?.currentBeat ?? 0
+          wrapWatchRef.current = window.setInterval(() => {
+            const eng = engineRef.current
+            if (!eng || !eng.isRecording) return
+            const b = eng.currentBeat
+            if (lastBeat - b > 1) rotateLoopPass(b)
+            lastBeat = b
+          }, 90)
+        }
         // Start a MediaRecorder for every armed audio track that has an inputSource set.
         // Tracks sharing the same source reuse one MediaStream (avoid double permission prompt).
         ;(async () => {
@@ -603,6 +674,8 @@ export default function AudioEditor(props: AudioEditorProps) {
         })()
       } else {
         // Stop all active input recorders; dispatch a clip for each when its data arrives.
+        if (wrapWatchRef.current !== null) { clearInterval(wrapWatchRef.current); wrapWatchRef.current = null }
+        const finalPass = recPassRef.current
         const endBeat = engineRef.current!.currentBeat
         let pending = 0
 
@@ -626,35 +699,8 @@ export default function AudioEditor(props: AudioEditorProps) {
           recorder.onstop = () => {
             const mime = recorder.mimeType || 'audio/webm'
             const blob = new Blob(chunks, { type: mime })
-            console.log('[rec] per-track onstop — trackId:', trackId, 'blobSize:', blob.size, 'chunks:', chunks.length, 'startBeat:', startBeat, 'endBeat:', endBeat)
-            if (blob.size > 0) {
-              const url = URL.createObjectURL(blob)
-              const dur = Math.max(0.25, endBeat - startBeat)
-              const track = projectRef.current.tracks.find(t => t.id === trackId)
-              // latency compensation — the take is heard/captured late by the
-              // audio pipeline's round trip; place it where it was played
-              const latBeats = engineRef.current?.secondsToBeats(engineRef.current.recordLatencySec()) ?? 0
-              const clip  = makeAudioClip(
-                trackId,
-                `${track?.name ?? 'Input'} Recording`,
-                Math.max(0, startBeat - latBeats), dur,
-                { audioUrl: url },
-              )
-              dispatch({ type: 'ADD_CLIP', clip })
-              // FX chosen in the record-setup box land as bars under the take
-              const pendingFx = engineRef.current?.pendingRecordFx ?? []
-              pendingFx.forEach((fx, i) => {
-                dispatch({ type: 'ADD_CLIP_EFFECT', effect: {
-                  id: crypto.randomUUID(), trackId, type: fx.type,
-                  startBeat, durationBeats: dur, row: i,
-                  params: monitorFxParams(fx),
-                } })
-              })
-              console.log('[rec] per-track clip dispatched:', clip.id, 'at beat', startBeat)
-              void uploadRecordingBlob(blob, clip.id).then(key => {
-                if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
-              })
-            }
+            console.log('[rec] per-track onstop — trackId:', trackId, 'blobSize:', blob.size, 'startBeat:', startBeat, 'endBeat:', endBeat, 'pass:', finalPass)
+            finalizePassClip(trackId, blob, startBeat, endBeat, finalPass)
             pending--
             if (pending === 0) cleanup()
           }
