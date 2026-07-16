@@ -781,6 +781,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
   const [saveError,  setSaveError]  = useState('')
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
+  const expandedRollRef = useRef<string | null>(null)
+  useEffect(() => { expandedRollRef.current = expandedPianoRollClipId }, [expandedPianoRollClipId])
   const [loopToolArmed, setLoopToolArmed] = useState(false)
 
   // ── Create-recipe entry point: the sound library's "+ Create a recipe"
@@ -950,13 +952,17 @@ export default function AudioEditor(props: AudioEditorProps) {
       }
 
       if (e.code === 'Delete' || e.code === 'Backspace') {
-        const ids = selectedClipIdsRef.current
+        // The clip open in the piano roll is off-limits — pressing Delete
+        // with a note selected must never nuke the clip itself, even when
+        // focus drifted out of the roll. Other clips still delete normally.
+        const rollClip = expandedRollRef.current
+        const ids = new Set([...selectedClipIdsRef.current].filter(id => id !== rollClip))
         if (ids.size > 0) {
           e.preventDefault()
           ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
           setSelectedClipIds(new Set())
           setSelectedClipId(null)
-        } else if (selectedClipIdRef.current) {
+        } else if (selectedClipIdRef.current && selectedClipIdRef.current !== rollClip) {
           e.preventDefault()
           dispatch({ type: 'REMOVE_CLIP', clipId: selectedClipIdRef.current })
           setSelectedClipId(null)
