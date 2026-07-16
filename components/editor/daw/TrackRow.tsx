@@ -970,19 +970,24 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: grp.lastDb } })
                         return
                       }
-                      // expand: scale the whole block by the drag ratio
+                      // expand: scale the whole block by the drag ratio.
+                      // Content stretches with the window — MIDI patterns
+                      // scale their notes, audio members warp — so nothing
+                      // is left with a silent tail.
                       const ratio = Math.max(0.05, db / grp.grabbedDur)
                       for (const m of grp.members) {
                         const newStart = grp.groupStart + (m.startBeat - grp.groupStart) * ratio
                         const newDur = Math.max(0.125, m.durationBeats * ratio)
                         dispatch({ type: 'MOVE_CLIP', clipId: m.id, startBeat: newStart })
-                        if (isMidiClip(m) && m.stretchNotes) {
-                          dispatch({ type: 'UPDATE_CLIP', clipId: m.id, patch: {
+                        if (isMidiClip(m)) {
+                          const patch: Record<string, unknown> = {
                             durationBeats: newDur,
                             notes: m.notes.map(n => ({ ...n, startBeat: n.startBeat * ratio, durationBeats: n.durationBeats * ratio })),
-                          } })
+                          }
+                          if (m.loopEnabled && m.loopLengthBeats) patch.loopLengthBeats = m.loopLengthBeats * ratio
+                          dispatch({ type: 'UPDATE_CLIP', clipId: m.id, patch })
                         } else {
-                          dispatch({ type: 'UPDATE_CLIP', clipId: m.id, patch: { durationBeats: newDur } })
+                          dispatch({ type: 'UPDATE_CLIP', clipId: m.id, patch: { durationBeats: newDur, warpEnabled: true } })
                         }
                       }
                       return
