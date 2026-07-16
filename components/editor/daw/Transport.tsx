@@ -1,6 +1,7 @@
 'use client'
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
+import { type MonitorFx } from '@/lib/daw-engine'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2 } from 'lucide-react'
@@ -16,6 +17,15 @@ function fmtHMS(secs: number): string {
   const m = Math.floor((secs % 3600) / 60)
   const s = Math.floor(secs % 60)
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+const REC_FX_DEFS: Record<MonitorFx['type'], { label: string; min: number; max: number; step: number; def: number; fmt: (v: number) => string }> = {
+  volume:     { label: 'Volume',     min: 0,   max: 2,     step: 0.01, def: 1,    fmt: v => `${Math.round(v * 100)}%` },
+  filter:     { label: 'Filter',     min: 200, max: 12000, step: 10,   def: 6000, fmt: v => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz` },
+  reverb:     { label: 'Reverb',     min: 0,   max: 1,     step: 0.01, def: 0.3,  fmt: v => `${Math.round(v * 100)}%` },
+  delay:      { label: 'Delay',      min: 0,   max: 1,     step: 0.01, def: 0.3,  fmt: v => `${Math.round(v * 100)}%` },
+  distortion: { label: 'Distortion', min: 0,   max: 1,     step: 0.01, def: 0.3,  fmt: v => `${Math.round(v * 100)}%` },
+  tremolo:    { label: 'Tremolo',    min: 0,   max: 1,     step: 0.01, def: 0.5,  fmt: v => `${Math.round(v * 100)}%` },
 }
 
 export default function Transport() {
@@ -100,58 +110,191 @@ export default function Transport() {
     }
   }
 
+  // Record-setup box: monitor the input (with effects) before rolling
+  const [recordSetup, setRecordSetup] = useState(false)
+  const [monitorOn, setMonitorOn] = useState(false)
+  const [recFx, setRecFx] = useState<MonitorFx[]>([])
+
+  function recordableInput(): string | null {
+    const t = project.tracks.find(t => t.type === 'audio' && t.armed && t.inputSource)
+    return t?.inputSource ?? null
+  }
+
+  function closeRecordSetup() {
+    engine.stopMonitor()
+    setMonitorOn(false)
+    setRecordSetup(false)
+  }
+
+  async function toggleMonitor() {
+    if (monitorOn) {
+      engine.stopMonitor()
+      setMonitorOn(false)
+      return
+    }
+    const input = recordableInput()
+    if (!input) return
+    try {
+      await engine.startMonitor(input, recFx)
+      setMonitorOn(true)
+    } catch (err) {
+      const msg = err instanceof DOMException && err.name === 'NotAllowedError'
+        ? 'Mic permission denied — allow access in system settings'
+        : err instanceof Error ? err.message : 'Input access failed'
+      setMicError(msg)
+      setTimeout(() => setMicError(''), 8000)
+    }
+  }
+
+  function patchRecFx(next: MonitorFx[]) {
+    setRecFx(next)
+    engine.updateMonitorFx(next)
+  }
+
+  async function startRecordingNow() {
+    engine.stopMonitor()
+    setMonitorOn(false)
+    setRecordSetup(false)
+    try {
+      const armedTracks = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)
+      engine.setPendingRecordFx(recFx)
+      await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+      if (!playing) engine.play()
+      await engine.startRecording()
+      setMicError('')
+    } catch (err) {
+      const msg = err instanceof DOMException && err.name === 'NotAllowedError'
+        ? 'Mic permission denied — allow access in system settings'
+        : err instanceof Error ? err.message : 'Microphone access failed'
+      setMicError(msg)
+      setTimeout(() => setMicError(''), 12000)
+    }
+  }
+
   async function handleRecord() {
     if (recording) {
       if (playing) engine.stop()
       await engine.stopRecording()
+    } else if (recordSetup) {
+      closeRecordSetup()
     } else {
-      try {
-        const audioTracks = project.tracks.filter(t => t.type === 'audio')
-        const armedTracks = audioTracks.filter(t => t.armed)
+      const audioTracks = project.tracks.filter(t => t.type === 'audio')
+      const armedTracks = audioTracks.filter(t => t.armed)
 
-        // No tracks at all → blink the +Track button
-        if (project.tracks.length === 0) {
-          triggerBlink(['add-track'])
-          return
-        }
-
-        // Tracks exist but none armed → blink all arm buttons
-        if (armedTracks.length === 0) {
-          const inputTracks = audioTracks.filter(t => t.inputSource)
-          triggerBlink(
-            (inputTracks.length > 0 ? inputTracks : audioTracks).map(t => `arm:${t.id}`)
-          )
-          setMicError(inputTracks.length > 0
-            ? `Arm a track to record — click ● on "${inputTracks[0].name}"`
-            : 'Arm a track to record — click ● on a track')
-          setTimeout(() => setMicError(''), 5000)
-          return
-        }
-
-        // Every armed track lacks an input → nothing can actually record.
-        // Blink the input pickers and stay stopped instead of rolling.
-        const armedWithoutInput = armedTracks.filter(t => !t.inputSource)
-        if (armedWithoutInput.length === armedTracks.length) {
-          triggerBlink(armedWithoutInput.map(t => `input:${t.id}`))
-          setMicError('Pick an input on an armed track first — click its input selector')
-          setTimeout(() => setMicError(''), 5000)
-          return
-        }
-
-        const recordableTracks = armedTracks.filter(t => t.inputSource)
-        await Promise.all(recordableTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
-        if (!playing) engine.play()
-        await engine.startRecording()
-        setMicError('')
-      } catch (err) {
-        const msg = err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Mic permission denied — allow access in system settings'
-          : err instanceof Error ? err.message : 'Microphone access failed'
-        setMicError(msg)
-        setTimeout(() => setMicError(''), 12000)
+      // No tracks at all → blink the +Track button
+      if (project.tracks.length === 0) {
+        triggerBlink(['add-track'])
+        return
       }
+
+      // Tracks exist but none armed → blink all arm buttons
+      if (armedTracks.length === 0) {
+        const inputTracks = audioTracks.filter(t => t.inputSource)
+        triggerBlink(
+          (inputTracks.length > 0 ? inputTracks : audioTracks).map(t => `arm:${t.id}`)
+        )
+        setMicError(inputTracks.length > 0
+          ? `Arm a track to record — click ● on "${inputTracks[0].name}"`
+          : 'Arm a track to record — click ● on a track')
+        setTimeout(() => setMicError(''), 5000)
+        return
+      }
+
+      // Every armed track lacks an input → nothing can actually record.
+      // Blink the input pickers and stay stopped instead of rolling.
+      const armedWithoutInput = armedTracks.filter(t => !t.inputSource)
+      if (armedWithoutInput.length === armedTracks.length) {
+        triggerBlink(armedWithoutInput.map(t => `input:${t.id}`))
+        setMicError('Pick an input on an armed track first — click its input selector')
+        setTimeout(() => setMicError(''), 5000)
+        return
+      }
+
+      // Guards pass — open the setup box: test the sound, add effects,
+      // then start the take from there.
+      setRecordSetup(true)
     }
   }
+
+  const armedReady = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)
+  const recordSetupPanel = recordSetup && typeof document !== 'undefined' ? createPortal(
+    <div
+      onMouseDown={e => { if (e.target === e.currentTarget) closeRecordSetup() }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div style={{ background: '#161616', border: '1px solid #2e2e2e', borderRadius: 12, padding: '16px 18px', width: 'min(400px,92vw)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: '#eee' }}>● Record — set your sound</span>
+          <button onClick={closeRecordSetup} aria-label="Close" style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 13 }}>✕</button>
+        </div>
+        <p style={{ fontSize: 10.5, color: '#888', margin: 0, lineHeight: 1.5 }}>
+          Recording to: {armedReady.map(t => t.name).join(', ') || '—'}. Toggle the monitor to hear yourself with the effects before the take.
+        </p>
+
+        <button
+          onClick={() => void toggleMonitor()}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+            padding: '9px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+            border: monitorOn ? '1px solid rgba(34,197,94,0.6)' : '1px solid #2e2e2e',
+            background: monitorOn ? 'rgba(34,197,94,0.14)' : '#1e1e1e',
+            color: monitorOn ? '#4ade80' : '#aaa',
+          }}
+        >
+          🎧 Monitor {monitorOn ? 'ON — you should hear yourself' : 'off'}
+        </button>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid #242424', borderRadius: 9, padding: '9px 11px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: '#777' }}>EFFECTS ON THE TAKE</span>
+            <select
+              value=""
+              onChange={e => {
+                const type = e.target.value as MonitorFx['type']
+                if (!type) return
+                patchRecFx([...recFx, { type, value: REC_FX_DEFS[type].def }])
+              }}
+              style={{ fontSize: 10, padding: '2px 5px', borderRadius: 5, border: '1px solid #2e2e2e', background: '#1e1e1e', color: '#aaa', cursor: 'pointer' }}
+            >
+              <option value="">+ Add effect</option>
+              {(Object.keys(REC_FX_DEFS) as MonitorFx['type'][]).map(t => <option key={t} value={t}>{REC_FX_DEFS[t].label}</option>)}
+            </select>
+          </div>
+          {recFx.length === 0 && (
+            <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
+              None yet — the take records clean. Anything you add here is heard in the monitor and lands as FX bars under the recording.
+            </p>
+          )}
+          {recFx.map((fx, i) => {
+            const def = REC_FX_DEFS[fx.type]
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, color: '#bbb', width: 62, flexShrink: 0 }}>{def.label}</span>
+                <input type="range" min={def.min} max={def.max} step={def.step} value={fx.value}
+                  onChange={e => patchRecFx(recFx.map((f, j) => j === i ? { ...f, value: Number(e.target.value) } : f))}
+                  style={{ flex: 1, accentColor: '#dc2626' }} />
+                <span style={{ fontSize: 9.5, color: '#ccc', width: 38, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.value)}</span>
+                <button onClick={() => patchRecFx(recFx.filter((_, j) => j !== i))} aria-label="Remove effect"
+                  style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+              </div>
+            )
+          })}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={closeRecordSetup}
+            style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid #2e2e2e', background: '#1e1e1e', color: '#888', cursor: 'pointer', fontSize: 12 }}>
+            Cancel
+          </button>
+          <button onClick={() => void startRecordingNow()}
+            style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}>
+            ● Start recording
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  ) : null
 
   function handleRewind() {
     engine.seek(0)
@@ -326,6 +469,7 @@ export default function Transport() {
   if (audioMode === 'podcast') {
     return (
       <div style={wrapStyle} className={wrapClass}>
+        {recordSetupPanel}
         {/* Transport controls */}
         <button style={base} onClick={handlePodcastRewind} title="Rewind to start" data-help-id="rewind">
           <SkipBack size={13} />
@@ -434,6 +578,7 @@ export default function Transport() {
 
   return (
     <div style={wrapStyle} className={wrapClass}>
+      {recordSetupPanel}
       {/* Transport controls */}
       <button style={base} onClick={handleRewind} title="Rewind to start" data-help-id="rewind">
         <SkipBack size={13} />

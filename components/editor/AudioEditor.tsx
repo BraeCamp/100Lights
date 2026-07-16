@@ -16,6 +16,7 @@ import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import type { Caption } from '@/lib/types'
 import { captureAudioInput } from '@/lib/audio-capture'
+import { monitorFxParams } from '@/lib/daw-engine'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import HelpButton from './daw/HelpButton'
@@ -610,6 +611,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         }
 
         const cleanup = () => {
+          if (engineRef.current) engineRef.current.pendingRecordFx = []
           inputRecsRef.current.clear()
           for (const stream of inputStreamsRef.current.values()) {
             stream.getTracks().forEach(t => t.stop())
@@ -636,6 +638,15 @@ export default function AudioEditor(props: AudioEditorProps) {
                 { audioUrl: url },
               )
               dispatch({ type: 'ADD_CLIP', clip })
+              // FX chosen in the record-setup box land as bars under the take
+              const pendingFx = engineRef.current?.pendingRecordFx ?? []
+              pendingFx.forEach((fx, i) => {
+                dispatch({ type: 'ADD_CLIP_EFFECT', effect: {
+                  id: crypto.randomUUID(), trackId, type: fx.type,
+                  startBeat, durationBeats: dur, row: i,
+                  params: monitorFxParams(fx),
+                } })
+              })
               console.log('[rec] per-track clip dispatched:', clip.id, 'at beat', startBeat)
               void uploadRecordingBlob(blob, clip.id).then(key => {
                 if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
@@ -671,6 +682,15 @@ export default function AudioEditor(props: AudioEditorProps) {
       if (!trackId) return
       const clip = makeAudioClip(trackId, 'Recording', startBeat, durationBeats, { audioUrl: url })
       dispatch({ type: 'ADD_CLIP', clip })
+      const pendingFx = engineRef.current?.pendingRecordFx ?? []
+      pendingFx.forEach((fx, i) => {
+        dispatch({ type: 'ADD_CLIP_EFFECT', effect: {
+          id: crypto.randomUUID(), trackId, type: fx.type,
+          startBeat, durationBeats, row: i,
+          params: monitorFxParams(fx),
+        } })
+      })
+      if (engineRef.current) engineRef.current.pendingRecordFx = []
       console.log('[rec] master bus clip dispatched:', clip.id, 'at beat', startBeat)
       void uploadRecordingBlob(blob, clip.id).then(key => {
         if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })

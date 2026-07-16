@@ -109,7 +109,7 @@ const FEATURES: Feature[] = [
   { group: 'Transport', name: 'Play / Stop', helpIds: ['play'],
     description: 'Start and stop playback from the current playhead position. The transport keeps time in beats and bars, and Space toggles it from anywhere in the editor.' },
   { group: 'Transport', name: 'Record', helpIds: ['record'],
-    description: 'Record audio into new clips on every armed track, or onto the master bus when nothing is armed. Recording starts playback automatically if it isn’t already running.' },
+    description: 'Opens the record setup box: toggle the monitor to hear yourself, add effects to the take, then start recording into new clips on every armed track. Effects land as FX bars under the recording.' },
   { group: 'Transport', name: 'Rewind', helpIds: ['rewind'],
     description: 'Jump the playhead straight back to the start of the project — the quickest way to audition your arrangement from the top right after an edit.' },
   { group: 'Transport', name: 'Loop', helpIds: ['loop'],

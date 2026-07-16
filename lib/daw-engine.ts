@@ -11,6 +11,22 @@ import { libraryFulfill } from './default-samples'
 import type { MidiPreset } from './midi-presets'
 import { captureAudioInput } from './audio-capture'
 
+/** One record-setup effect: a type plus its headline parameter value. */
+export interface MonitorFx { type: 'volume' | 'filter' | 'reverb' | 'delay' | 'distortion' | 'tremolo'; value: number }
+
+/** Maps a record-setup effect to FX-lane params for the bar added under the take. */
+export function monitorFxParams(fx: MonitorFx): Record<string, number> {
+  switch (fx.type) {
+    case 'volume': return { gain: fx.value }
+    case 'filter': return { frequency: fx.value }
+    case 'reverb': return { reverbWet: fx.value }
+    case 'delay': return { delayWet: fx.value }
+    case 'distortion': return { distortion: fx.value }
+    case 'tremolo': return { tremoloDepth: fx.value }
+  }
+}
+
+
 // Per-track Web Audio routing nodes
 interface TrackNodes {
   gain: GainNode
@@ -2229,6 +2245,98 @@ export class DawEngine extends EventTarget {
   private _recPeakTimer: number | null = null
   private _recAnalyser: AnalyserNode | null = null
   get recordingStartBeat(): number { return this._recStartBeat }
+
+  // ── Input monitoring (record-setup box) ──────────────────────────────────
+  // A live mic preview with the chosen effects, routed STRAIGHT to the
+  // hardware output — bypassing masterCompressor keeps it out of the
+  // recorder tap, so monitoring is never captured.
+  private _monitor: { stream: MediaStream; src: MediaStreamAudioSourceNode; nodes: AudioNode[]; oscs: OscillatorNode[] } | null = null
+  /** Effects chosen in the record-setup box — attached as FX-lane bars under
+   *  the recorded clips when they land. */
+  pendingRecordFx: MonitorFx[] = []
+  setPendingRecordFx(fxs: MonitorFx[]): void { this.pendingRecordFx = fxs }
+
+  get monitorActive(): boolean { return !!this._monitor }
+
+  async startMonitor(source: string, fxs: MonitorFx[]): Promise<void> {
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
+    this.stopMonitor()
+    const stream = await captureAudioInput(source)
+    const src = this.ctx.createMediaStreamSource(stream)
+    this._monitor = { stream, src, nodes: [], oscs: [] }
+    this._buildMonitorChain(fxs)
+  }
+
+  updateMonitorFx(fxs: MonitorFx[]): void {
+    if (this._monitor) this._buildMonitorChain(fxs)
+  }
+
+  stopMonitor(): void {
+    const m = this._monitor
+    if (!m) return
+    for (const o of m.oscs) { try { o.stop() } catch { /* ok */ } }
+    for (const n of m.nodes) { try { n.disconnect() } catch { /* ok */ } }
+    try { m.src.disconnect() } catch { /* ok */ }
+    m.stream.getTracks().forEach(t => t.stop())
+    this._monitor = null
+  }
+
+  private _buildMonitorChain(fxs: MonitorFx[]): void {
+    const m = this._monitor
+    if (!m) return
+    for (const o of m.oscs) { try { o.stop() } catch { /* ok */ } }
+    for (const n of m.nodes) { try { n.disconnect() } catch { /* ok */ } }
+    try { m.src.disconnect() } catch { /* ok */ }
+    m.nodes = []; m.oscs = []
+    const ctx = this.ctx
+    const reg = <T extends AudioNode>(n: T): T => { m.nodes.push(n); return n }
+    let node: AudioNode = m.src
+    for (const fx of fxs) {
+      switch (fx.type) {
+        case 'volume': {
+          const g = reg(ctx.createGain()); g.gain.value = fx.value
+          node.connect(g); node = g; break
+        }
+        case 'filter': {
+          const f = reg(ctx.createBiquadFilter()); f.type = 'lowpass'; f.frequency.value = fx.value; f.Q.value = 1
+          node.connect(f); node = f; break
+        }
+        case 'distortion': {
+          const ws = reg(ctx.createWaveShaper())
+          ws.curve = this._makeDistortionCurve(fx.value); ws.oversample = '2x'
+          node.connect(ws); node = ws; break
+        }
+        case 'reverb': {
+          const dry = reg(ctx.createGain()); dry.gain.value = 1 - fx.value
+          const wet = reg(ctx.createGain()); wet.gain.value = fx.value
+          const conv = reg(ctx.createConvolver()); conv.buffer = this._makeIR(2)
+          const mix = reg(ctx.createGain())
+          node.connect(dry); dry.connect(mix)
+          node.connect(conv); conv.connect(wet); wet.connect(mix)
+          node = mix; break
+        }
+        case 'delay': {
+          const dry = reg(ctx.createGain()); dry.gain.value = 1 - fx.value
+          const dl = reg(ctx.createDelay(2)); dl.delayTime.value = 0.375
+          const fb = reg(ctx.createGain()); fb.gain.value = 0.4
+          const wet = reg(ctx.createGain()); wet.gain.value = fx.value
+          const mix = reg(ctx.createGain())
+          node.connect(dry); dry.connect(mix)
+          node.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(mix)
+          node = mix; break
+        }
+        case 'tremolo': {
+          const out = reg(ctx.createGain()); out.gain.value = 1 - fx.value * 0.5
+          const lg = reg(ctx.createGain()); lg.gain.value = fx.value * 0.5
+          const lfo = ctx.createOscillator(); m.oscs.push(lfo)
+          lfo.type = 'sine'; lfo.frequency.value = 5
+          lfo.connect(lg); lg.connect(out.gain); lfo.start()
+          node.connect(out); node = out; break
+        }
+      }
+    }
+    node.connect(ctx.destination)
+  }
 
   async startRecording(): Promise<void> {
     if (this._mediaRecorder || this.isRecording) return
