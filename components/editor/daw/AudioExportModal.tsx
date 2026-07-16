@@ -16,7 +16,7 @@ interface Props {
   defaultFormat?: ExportFormat
 }
 
-type ExportFormat  = 'webm' | 'wav'
+type ExportFormat  = 'webm' | 'wav' | 'stems'
 
 const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const keyLabel = (key: unknown, scale: unknown) => `${typeof key === 'number' ? KEY_NAMES[key % 12] ?? 'C' : key} ${scale}`
@@ -102,7 +102,69 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     if (engine.isRecording) { engine.stop(); void engine.stopRecording() }
   }, [engine])
 
+  // One playback pass; every track's post-fader output is tapped by its own
+  // recorder, then each becomes a WAV inside a single zip.
+  async function startStemExport() {
+    const stemTracks = project.tracks.filter(t =>
+      project.arrangementClips.some(c => c.trackId === t.id))
+    if (stemTracks.length === 0) { setPhase('error'); return }
+    setPhase('recording')
+    setStatusMessage('recording')
+    setProgress(0)
+    engine.seek(0)
+    const { taps, dispose } = engine.tapTrackOutputs(stemTracks.map(t => t.id))
+    const recs = new Map<string, { rec: MediaRecorder; chunks: Blob[] }>()
+    const mime = ['audio/webm;codecs=opus', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m)) ?? ''
+    for (const [id, dest] of taps) {
+      const chunks: Blob[] = []
+      const rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined)
+      rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+      rec.start(200)
+      recs.set(id, { rec, chunks })
+    }
+    engine.play()
+
+    ivRef.current = setInterval(() => {
+      const beat = engine.currentBeat
+      setProgress(Math.min(0.99, beat / endBeat))
+      if (beat >= endBeat) {
+        clearInterval(ivRef.current!)
+        ivRef.current = null
+        engine.stop()
+        void (async () => {
+          try {
+            setStatusMessage('converting')
+            const files: Array<{ name: string; blob: Blob }> = []
+            for (const t of stemTracks) {
+              const entry = recs.get(t.id)
+              if (!entry) continue
+              await new Promise<void>(res => { entry.rec.onstop = () => res(); entry.rec.stop() })
+              const blob = new Blob(entry.chunks, { type: mime || 'audio/webm' })
+              if (blob.size === 0) continue
+              const audioBuffer = await blobToAudioBuffer(blob)
+              const safe = t.name.replace(/[^\w\- ]+/g, '').trim() || 'track'
+              files.push({ name: `${safe}.wav`, blob: audioBufferToWav(audioBuffer) })
+            }
+            dispose()
+            if (files.length === 0) { setPhase('error'); return }
+            const { makeZip } = await import('@/lib/zip')
+            const zip = await makeZip(files)
+            finalBlobRef.current = zip
+            setDownloadUrl(URL.createObjectURL(zip))
+            setProgress(1)
+            setStatusMessage('done')
+            setPhase('done')
+          } catch {
+            dispose()
+            setPhase('error')
+          }
+        })()
+      }
+    }, 100)
+  }
+
   async function startExport() {
+    if (format === 'stems') { await startStemExport(); return }
     setPhase('recording')
     setStatusMessage('recording')
     setProgress(0)
@@ -150,7 +212,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     }, 100)
   }
 
-  const ext = format === 'wav' ? 'wav' : 'webm'
+  const ext = format === 'stems' ? 'zip' : format === 'wav' ? 'wav' : 'webm'
 
   // Filename: slug from podcast metadata or project name
   const filename = (() => {
@@ -217,7 +279,7 @@ style={{
                   Format
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  {(['webm', 'wav'] as ExportFormat[]).map(f => (
+                  {(['webm', 'wav', 'stems'] as ExportFormat[]).map(f => (
                     <button
                       key={f}
                       onClick={() => setFormat(f)}
@@ -229,7 +291,7 @@ style={{
                         color: format === f ? 'var(--accent)' : 'var(--text-secondary)',
                       }}
                     >
-                      {f === 'webm' ? 'WebM / Opus' : 'WAV (lossless)'}
+                      {f === 'webm' ? 'WebM / Opus' : f === 'wav' ? 'WAV (lossless)' : 'Stems (zip of WAVs)'}
                     </button>
                   ))}
                 </div>

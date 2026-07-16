@@ -2202,6 +2202,30 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Stem export: tap each listed track's post-fader output with a
+   *  MediaStreamDestination so one playback pass captures every stem.
+   *  Returns the taps; call the returned dispose() when done. */
+  tapTrackOutputs(trackIds: string[]): { taps: Map<string, MediaStreamAudioDestinationNode>; dispose: () => void } {
+    const taps = new Map<string, MediaStreamAudioDestinationNode>()
+    for (const id of trackIds) {
+      this.ensureTrack(id)
+      const nodes = this.trackNodes.get(id)
+      if (!nodes) continue
+      const dest = this.ctx.createMediaStreamDestination()
+      nodes.analyser.connect(dest)  // post-fader, post-pan — what the mix hears
+      taps.set(id, dest)
+    }
+    return {
+      taps,
+      dispose: () => {
+        for (const [id, dest] of taps) {
+          try { this.trackNodes.get(id)?.analyser.disconnect(dest) } catch { /* ok */ }
+        }
+        taps.clear()
+      },
+    }
+  }
+
   /** Count-in: metronome clicks for N beats before a take starts. Clicks go
    *  straight to the hardware output so they're never captured. Resolves when
    *  the last click has sounded. */
