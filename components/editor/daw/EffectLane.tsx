@@ -394,6 +394,25 @@ export default function EffectLaneView({
   const [addMenu,          setAddMenu]          = useState<{ x: number; y: number; beat: number; row: number } | null>(null)
   const [editTarget,       setEditTarget]       = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
   const [ctxMenu,          setCtxMenu]          = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
+
+  // Menus are portals with no backdrop — close them on outside clicks and Escape.
+  useEffect(() => {
+    if (!addMenu && !ctxMenu) return
+    const onPointerDown = (e: PointerEvent) => {
+      if ((e.target as HTMLElement).closest?.('[data-fx-menu]')) return
+      setAddMenu(null); setCtxMenu(null)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setAddMenu(null); setCtxMenu(null) }
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [addMenu, ctxMenu])
+
   const [shapeTarget,      setShapeTarget]      = useState<{ effect: ClipEffect; mode: 'volume' | 'pitch' } | null>(null)
   const [expandedEffectId, setExpandedEffectId] = useState<string | null>(null)
   const [rubberBand,       setRubberBand]       = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
@@ -541,6 +560,9 @@ export default function EffectLaneView({
       {/* Right-click dropdown */}
       {addMenu && createPortal(
         <div
+          data-fx-menu
+          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
           style={{ position: 'fixed', zIndex: 1500, left: addMenu.x, top: addMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
           onMouseLeave={() => setAddMenu(null)}
         >
@@ -585,6 +607,9 @@ export default function EffectLaneView({
       {/* Effect right-click context menu */}
       {ctxMenu && createPortal(
         <div
+          data-fx-menu
+          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
           style={{ position: 'fixed', zIndex: 1500, left: ctxMenu.x, top: ctxMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
           onMouseLeave={() => setCtxMenu(null)}
         >

@@ -590,6 +590,14 @@ export function AddToLibraryModal({
     setLayers(ls => ls.map(l => l.id === id ? { ...l, ...patch } : l))
   const totalDur = layers.length ? compositeDuration(layers) : 0.1
 
+  // Escape closes the modal — capture phase, since focus usually sits on a
+  // button inside the modal and handlers along that path stop propagation.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef   = useRef<Blob[]>([])
   const previewRef  = useRef<{ src: AudioBufferSourceNode; ctx: AudioContext } | null>(null)
