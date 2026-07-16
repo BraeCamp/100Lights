@@ -183,6 +183,41 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
 
   // ── Transient split ──────────────────────────────────────────────────────────
 
+  // Chops the clip at detected transients and files every slice as a library
+  // sound (folder named after the clip) — instant sampling material for pads
+  // and new tracks.
+  async function handleSliceToLibrary() {
+    const a = clip as AudioClip
+    const buf = await engine.loadClipBuffer(a)
+    if (!buf) return
+    const transientBeats = detectTransients(buf, a.startBeat, project.tempo, 2.0, a.trimStart ?? 0)
+      .filter(b => b > a.startBeat + 0.01 && b < a.startBeat + a.durationBeats - 0.01)
+    const sr = buf.sampleRate
+    const beatToSec = (b: number) => engine.beatsToSeconds(b - a.startBeat) + (a.trimStart ?? 0)
+    const cuts = [a.trimStart ?? 0, ...transientBeats.map(beatToSec), Math.min(buf.duration, beatToSec(a.startBeat + a.durationBeats))]
+    const { libraryAdd } = await import('@/lib/sound-library')
+    const folder = `Slices — ${clip.name}`.slice(0, 40)
+    let added = 0
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const s = Math.floor(cuts[i] * sr)
+      const e = Math.floor(cuts[i + 1] * sr)
+      const len = e - s
+      if (len < sr * 0.03) continue  // skip sub-30ms slivers
+      const channels = Array.from({ length: buf.numberOfChannels }, (_, ch) => buf.getChannelData(ch).slice(s, e))
+      const wav = encodeWav(channels, sr)
+      await libraryAdd({
+        id: crypto.randomUUID(), name: `${clip.name} ${i + 1}`, category: 'custom',
+        audioBlob: new Blob([wav], { type: 'audio/wav' }), duration: len / sr,
+        addedAt: new Date().toISOString(), folder,
+      })
+      added++
+    }
+    window.dispatchEvent(new Event('100lights-library-changed'))
+    setJustSaved(true)
+    setTimeout(() => setJustSaved(false), 1200)
+    console.log(`[slice] ${added} slices → library folder "${folder}"`)
+  }
+
   async function handleSplitAtTransients() {
     if (!isAudioClip(clip)) return
     let buf = engine.bufferCache.get(clip.id)
@@ -455,6 +490,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     { label: isMulti ? 'Replace Sample (All Selected)' : 'Replace Sample', fn: () => onReplaceSample?.() },
     { label: 'Spectral Editor', fn: () => onSpectral?.() },
     { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
+    { label: 'Slice to Library', fn: () => { setCtxPos(null); void handleSliceToLibrary() } },
   ] : [
     back('← Back'),
     { label: 'Change Sound…', fn: () => setCtxSub('presets'), keepOpen: true },
