@@ -595,6 +595,8 @@ export interface DawProject {
   cueMarkers: CueMarker[]
   /** Tempo changes: playback switches BPM when the playhead crosses a marker. */
   tempoMarkers?: Array<{ id: string; beat: number; tempo: number }>
+  /** Arranger sections: each runs from its beat to the next section (or the end). */
+  sections?: Array<{ id: string; beat: number; name: string; color: string }>
   key: number               // 0-11 (C=0), displayed in transport
   scale: string             // 'major' | 'minor' | etc.
 }

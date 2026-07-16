@@ -39,6 +39,8 @@ export type DawAction =
   | { type: 'SET_TIME_SIG'; num: number; den: number }
   | { type: 'ADD_TEMPO_MARKER'; marker: { id: string; beat: number; tempo: number } }
   | { type: 'REMOVE_TEMPO_MARKER'; markerId: string }
+  | { type: 'ADD_SECTION'; section: { id: string; beat: number; name: string; color: string } }
+  | { type: 'REMOVE_SECTION'; sectionId: string }
   | { type: 'SET_LOOP'; start: number; end: number }
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
@@ -279,6 +281,12 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'REMOVE_TEMPO_MARKER':
       return { ...project, tempoMarkers: (project.tempoMarkers ?? []).filter(m => m.id !== action.markerId) }
 
+    case 'ADD_SECTION':
+      return { ...project, sections: [...(project.sections ?? []).filter(s => Math.abs(s.beat - action.section.beat) > 0.01), action.section].sort((a, b) => a.beat - b.beat) }
+
+    case 'REMOVE_SECTION':
+      return { ...project, sections: (project.sections ?? []).filter(s => s.id !== action.sectionId) }
+
     case 'SET_TEMPO':
       return { ...project, tempo: Math.max(40, Math.min(300, action.tempo)) }
 
@@ -438,6 +446,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         swing:           p.swing           ?? 0,
         cueMarkers:      p.cueMarkers      ?? [],
         tempoMarkers:    p.tempoMarkers    ?? [],
+        sections:        p.sections        ?? [],
         key:             p.key             ?? 0,
         scale:           p.scale           ?? 'major',
       }

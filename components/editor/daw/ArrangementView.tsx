@@ -36,8 +36,9 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const loopDragRef  = useRef<{ type: 'start'|'end'|'move'; startX: number; startLoopStart: number; startLoopEnd: number } | null>(null)
   const [loopCursor, setLoopCursor] = useState('grab')
+  const [renamingSection, setRenamingSection] = useState<string | null>(null)
   const { project, dispatch } = useDaw()
-  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [] } = project
+  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [], sections = [] } = project
   const pxPerSec = beatW * tempo / 60
 
   useEffect(() => {
@@ -145,6 +146,43 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
           dispatch({ type: 'ADD_CUE_MARKER', marker: { id: `cue-${Date.now()}`, beat, name } })
         }}
       />
+      {/* Arranger sections — colored bands between consecutive section starts */}
+      {sections.map((s, i) => {
+        const from = s.beat * beatW - scrollLeft
+        const nextBeat = sections[i + 1]?.beat ?? (s.beat + 64)
+        const width = Math.max(10, (nextBeat - s.beat) * beatW)
+        if (from + width < 0 || from > 9999) return null
+        return (
+          <div key={s.id} style={{ position: 'absolute', top: 0, left: from, width, height: 8, background: `${s.color}55`, borderLeft: `2px solid ${s.color}`, zIndex: 1, pointerEvents: 'none' }}>
+            {renamingSection === s.id ? (
+              <input
+                autoFocus
+                defaultValue={s.name}
+                onFocus={e => e.currentTarget.select()}
+                onClick={e => e.stopPropagation()}
+                onKeyDown={e => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                  if (e.key === 'Escape') { e.currentTarget.value = s.name; e.currentTarget.blur() }
+                }}
+                onBlur={e => {
+                  const name = e.currentTarget.value.trim()
+                  if (name && name !== s.name) dispatch({ type: 'ADD_SECTION', section: { ...s, name } })
+                  setRenamingSection(null)
+                }}
+                style={{ position: 'absolute', top: -2, left: 3, width: 90, fontSize: 9, fontWeight: 700, color: s.color, background: '#111', border: `1px solid ${s.color}`, borderRadius: 2, padding: '0 3px', outline: 'none', pointerEvents: 'auto', zIndex: 5 }}
+              />
+            ) : (
+              <span
+                title={`${s.name} — double-click to rename, right-click to remove`}
+                onDoubleClick={e => { e.stopPropagation(); setRenamingSection(s.id) }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_SECTION', sectionId: s.id }) }}
+                style={{ position: 'absolute', top: -1, left: 3, fontSize: 7.5, fontWeight: 800, color: s.color, letterSpacing: '0.05em', whiteSpace: 'nowrap', pointerEvents: 'auto', cursor: 'context-menu' }}
+              >{s.name.toUpperCase()}</span>
+            )}
+          </div>
+        )
+      })}
       {/* Tempo markers */}
       {(tempoMarkers ?? []).map(m => {
         const mx = m.beat * beatW - scrollLeft
@@ -1380,6 +1418,17 @@ export default function ArrangementView() {
             />
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>BPM</span>
           </div>
+          <button
+            onClick={() => {
+              const palette = ['#60a5fa', '#34d399', '#f472b6', '#facc15', '#a78bfa', '#fb923c']
+              const n = (project.sections ?? []).length
+              dispatch({ type: 'ADD_SECTION', section: { id: crypto.randomUUID(), beat: tsPopover?.beat ?? 0, name: `Section ${n + 1}`, color: palette[n % palette.length] } })
+              setTsPopover(null)
+            }}
+            title="Marks an arrangement section (verse, chorus…) from this bar to the next section"
+            style={{ background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.4)', color: '#60a5fa', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
+            ▭ Section starts here
+          </button>
           <button
             onClick={() => {
               dispatch({ type: 'ADD_TEMPO_MARKER', marker: { id: crypto.randomUUID(), beat: tsPopover?.beat ?? 0, tempo: tsDraftBpm } })

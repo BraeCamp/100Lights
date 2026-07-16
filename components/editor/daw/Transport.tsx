@@ -804,7 +804,19 @@ export default function Transport() {
 
       {/* Swing */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-help-id="swing">
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>SWING</span>
+        <span
+          onClick={() => {
+            // groove presets: click the label to cycle through named feels
+            const GROOVES = [0, 0.12, 0.25, 0.33, 0.5]
+            const cur = project.swing ?? 0
+            const idx = GROOVES.findIndex(g => Math.abs(g - cur) < 0.03)
+            const next = GROOVES[(idx + 1) % GROOVES.length] ?? 0
+            dispatch({ type: 'SET_SWING', swing: next })
+            engine.swing = next
+          }}
+          title="Click to cycle groove presets: straight → light → classic swing → triplet feel → hard shuffle"
+          style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em', cursor: 'pointer' }}
+        >SWING</span>
         <input
           type="range" min={0} max={0.5} step={0.01}
           value={project.swing ?? 0}
