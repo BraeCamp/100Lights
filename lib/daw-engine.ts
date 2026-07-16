@@ -1966,6 +1966,20 @@ export class DawEngine extends EventTarget {
         const ws = n(ctx.createWaveShaper())
         ws.curve = this._makeDistortionCurve(eff.params.distortion ?? 0.5)
         ws.oversample = '2x'
+        if (eff.automation?.points.length) {
+          // The shaper curve itself can't be automated — crossfade clean and
+          // distorted paths along the drawn curve, like reverb/delay wet.
+          const dry  = n(ctx.createGain())
+          const wetG = n(ctx.createGain())
+          const mix  = n(ctx.createGain()); mix.gain.value = 1
+          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
+          const dryCurve = new Float32Array(wetCurve.map(v => 1 - v))
+          wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, durSec)
+          dry.gain.setValueCurveAtTime(dryCurve, effContextStart, durSec)
+          input.connect(dry); dry.connect(mix)
+          input.connect(ws); ws.connect(wetG); wetG.connect(mix)
+          return { output: mix, extraNodes, extraOscs }
+        }
         input.connect(ws)
         return { output: ws, extraNodes, extraOscs }
       }

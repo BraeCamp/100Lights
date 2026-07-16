@@ -416,9 +416,28 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         label: `Change Dragging Type → ${expand ? 'Loop' : 'Expand'}`,
         fn: () => {
           if (isMidiClip(clip)) {
-            dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: expand
-              ? { stretchNotes: false }
-              : { stretchNotes: true, loopEnabled: false, loopLengthBeats: undefined } })
+            if (expand) {
+              dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { stretchNotes: false } })
+              return
+            }
+            // Switching a looping clip to Expand: bake the audible repeats
+            // into real notes first, otherwise the loop tiles vanish and
+            // most of the clip goes silent.
+            const m = clip as MidiClip
+            let notes = m.notes
+            if (m.loopEnabled && m.loopLengthBeats) {
+              const L = m.loopLengthBeats
+              const out: typeof m.notes = []
+              for (let k = 0; k * L < m.durationBeats; k++) {
+                for (const nt of m.notes) {
+                  const start = k * L + nt.startBeat
+                  if (start >= m.durationBeats) continue
+                  out.push({ ...nt, id: crypto.randomUUID(), startBeat: start, durationBeats: Math.min(nt.durationBeats, m.durationBeats - start) })
+                }
+              }
+              notes = out
+            }
+            dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { stretchNotes: true, loopEnabled: false, loopLengthBeats: undefined, notes } })
           } else {
             dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: expand
               ? { warpEnabled: false }

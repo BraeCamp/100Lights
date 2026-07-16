@@ -70,6 +70,20 @@ function RecordingGhost({ beatW, height }: { beatW: number; height: number }) {
   )
 }
 
+// Hold E or L while grabbing a clip edge to force Expand or Loop for that
+// drag, regardless of the clip's dragging type.
+const _heldKeys = new Set<string>()
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', e => { _heldKeys.add(e.key.toLowerCase()) })
+  window.addEventListener('keyup', e => { _heldKeys.delete(e.key.toLowerCase()) })
+  window.addEventListener('blur', () => _heldKeys.clear())
+}
+function heldDragMode(): 'expand' | 'loop' | null {
+  if (_heldKeys.has('e')) return 'expand'
+  if (_heldKeys.has('l')) return 'loop'
+  return null
+}
+
 export const HDR_W = 200
 const AUTO_H = 60
 const TAKE_H = 32
@@ -287,6 +301,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
   // Originals captured when an edge-resize starts on a stretchNotes clip
   const stretchOriginRef = useRef<{ clipId: string; durationBeats: number; notes: import('@/lib/daw-types').MidiNote[] } | null>(null)
+  // Drag-scoped override from held E/L keys, sampled when the drag starts
+  const dragForceRef = useRef<'expand' | 'loop' | null>(null)
   // Multi-select edge-resize: the whole selection moves as one block.
   // 'expand' scales every member by the drag ratio (relations preserved);
   // 'loop' tiles copies of the entire selection so the group repeats
@@ -940,8 +956,27 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     }
                   }}
                   onResizeStart={() => {
-                    if (isMidiClip(clip) && clip.stretchNotes) {
-                      stretchOriginRef.current = { clipId: clip.id, durationBeats: clip.durationBeats, notes: clip.notes }
+                    dragForceRef.current = heldDragMode()
+                    const wantExpand = dragForceRef.current
+                      ? dragForceRef.current === 'expand'
+                      : isMidiClip(clip) && !!clip.stretchNotes
+                    if (isMidiClip(clip)) {
+                      // Forced expand on a looping clip: bake the repeats into
+                      // the originals so the stretch keeps the audible pattern.
+                      let notes = clip.notes
+                      if (wantExpand && clip.loopEnabled && clip.loopLengthBeats) {
+                        const L = clip.loopLengthBeats
+                        const out: typeof notes = []
+                        for (let k = 0; k * L < clip.durationBeats; k++) {
+                          for (const nt of clip.notes) {
+                            const start = k * L + nt.startBeat
+                            if (start >= clip.durationBeats) continue
+                            out.push({ ...nt, id: crypto.randomUUID(), startBeat: start, durationBeats: Math.min(nt.durationBeats, clip.durationBeats - start) })
+                          }
+                        }
+                        notes = out
+                      }
+                      stretchOriginRef.current = { clipId: clip.id, durationBeats: clip.durationBeats, notes }
                     }
                     groupResizeRef.current = null
                     if (selectedClipIds.size > 1 && selectedClipIds.has(clip.id)) {
@@ -952,7 +987,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         groupResizeRef.current = {
                           clipId: clip.id,
                           grabbedDur: clip.durationBeats,
-                          mode: (isMidiClip(clip) ? !!clip.stretchNotes : !!clip.warpEnabled) ? 'expand' : 'loop',
+                          mode: dragForceRef.current ?? ((isMidiClip(clip) ? !!clip.stretchNotes : !!clip.warpEnabled) ? 'expand' : 'loop'),
                           groupStart: Math.min(...members.map(c => c.startBeat)),
                           groupEnd: Math.max(...members.map(c => c.startBeat + c.durationBeats)),
                           members,
@@ -996,24 +1031,35 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     let snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
                     if (!alt) snappedEnd = snapToClipEdges(snappedEnd, new Set([clip.id]), 8 / beatW, project.arrangementClips)
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
-                    // Stretch clips (recipes): scale the whole note pattern to the
-                    // new length — from the originals captured at resize start, so
-                    // repeated drag events don't compound rounding.
+                    // The drag's mode: held E/L wins, then the clip's own type
+                    const forced = dragForceRef.current
+                    const wantExpand = forced ? forced === 'expand'
+                      : isMidiClip(clip) ? !!clip.stretchNotes : !!clip.warpEnabled
+                    // Expand: scale the whole note pattern to the new length —
+                    // from the originals captured at resize start, so repeated
+                    // drag events don't compound rounding.
                     const so = stretchOriginRef.current
-                    if (isMidiClip(clip) && clip.stretchNotes && so?.clipId === clip.id) {
+                    if (isMidiClip(clip) && wantExpand && so?.clipId === clip.id) {
                       const ratio = newDurBeats / so.durationBeats
                       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
                         durationBeats: newDurBeats,
                         notes: so.notes.map(n => ({ ...n, startBeat: n.startBeat * ratio, durationBeats: n.durationBeats * ratio })),
+                        ...(forced === 'expand' ? { stretchNotes: true, loopEnabled: false, loopLengthBeats: undefined } : {}),
                       } })
                       return
                     }
                     const patch: Record<string, unknown> = { durationBeats: newDurBeats }
                     if (isAudioClip(clip) && clip.bufferDuration) {
-                      const nativeSec = clip.bufferDuration - clip.trimStart - clip.trimEnd
-                      const newDurSec = engine.beatsToSeconds(newDurBeats)
-                      // Only enable loop when dragging past native duration. NEVER change trimEnd/trimStart.
-                      if (newDurSec > nativeSec + 0.001) patch.loopEnabled = true
+                      if (wantExpand) {
+                        patch.warpEnabled = true
+                        patch.loopEnabled = false
+                      } else {
+                        const nativeSec = clip.bufferDuration - clip.trimStart - clip.trimEnd
+                        const newDurSec = engine.beatsToSeconds(newDurBeats)
+                        // Only enable loop when dragging past native duration. NEVER change trimEnd/trimStart.
+                        if (newDurSec > nativeSec + 0.001) patch.loopEnabled = true
+                        if (forced === 'loop') patch.warpEnabled = false
+                      }
                     } else if (isMidiClip(clip) && clip.notes.length > 0) {
                       // Dragging past the note pattern loops it — pattern length is the
                       // content end rounded up to a whole bar (stable across drags).

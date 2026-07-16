@@ -50,6 +50,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: 'Delete', action: 'Delete selected clips' },
       { keys: 'B', action: 'Toggle the sound library panel' },
       { keys: 'I', action: 'Inspect mode — hover anything for its name and details' },
+      { keys: 'Hold E / L', action: 'While dragging a clip edge — force Expand or Loop for that drag' },
       { keys: 'H or ?', action: 'Open this help menu' },
     ],
   },
