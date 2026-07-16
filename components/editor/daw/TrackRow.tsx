@@ -461,6 +461,25 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     e.preventDefault()
     const rect  = e.currentTarget.getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
+    // .mid files dropped from the desktop become MIDI clips
+    const midFile = [...(e.dataTransfer.files ?? [])].find(f => /\.midi?$/i.test(f.name))
+    if (midFile) {
+      try {
+        const { parseMidiFile } = await import('@/lib/midi-file')
+        const parsed = parseMidiFile(await midFile.arrayBuffer())
+        if (parsed.notes.length === 0) return
+        const bar = project.timeSignatureNum || 4
+        const contentEnd = Math.max(...parsed.notes.map(n => n.startBeat + n.durationBeats))
+        const clip = makeMidiClip(track.id, parsed.name || midFile.name.replace(/\.midi?$/i, ''), snapBeat(beatX, snap, bar), Math.max(bar, Math.ceil(contentEnd / bar) * bar), { isDrumClip: false })
+        clip.notes = parsed.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
+        dispatch({ type: 'ADD_CLIP', clip })
+        setSelectedClipId(clip.id)
+        setExpandedPianoRollClipId(clip.id)
+      } catch (err) {
+        console.warn('MIDI import failed:', err)
+      }
+      return
+    }
     const recipeId = e.dataTransfer.getData('application/x-recipe-id')
     if (recipeId) {
       const recipe = getAllChordRecipes().find(r => r.id === recipeId)

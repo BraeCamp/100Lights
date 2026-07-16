@@ -458,6 +458,17 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   ] : [
     back('← Back'),
     { label: 'Change Sound…', fn: () => setCtxSub('presets'), keepOpen: true },
+    { label: 'Export MIDI (.mid)', fn: () => {
+      void import('@/lib/midi-file').then(({ writeMidiFile }) => {
+        const m = clip as MidiClip
+        const blob = writeMidiFile(m.notes, project.tempo, m.name)
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = `${m.name.replace(/[^\w\- ]+/g, '') || 'pattern'}.mid`
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+      })
+    } },
   ]
 
   const menuItems: MenuItem[] = ctxSub === 'edit' ? editItems : ctxSub === 'more' ? moreItems : [
