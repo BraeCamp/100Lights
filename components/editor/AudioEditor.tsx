@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
@@ -72,6 +73,49 @@ const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
 // ── Podcast Setup Panel ───────────────────────────────────────────────────────
 
 type MicPermState = 'checking' | 'granted' | 'denied' | 'prompt' | 'unavailable'
+
+// Share button shown before the first save: saving is what creates the
+// project id (and its collab room), so sharing simply saves first. The real
+// Share button (CollabInvite) takes over the slot once the id exists and
+// finishes the gesture via window.__openShareWhenReady.
+function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    const find = () => {
+      const el = document.getElementById('transport-collab-slot')
+      if (el) setSlot(el)
+      return !!el
+    }
+    if (find()) return
+    const t = setInterval(() => { if (find()) clearInterval(t) }, 200)
+    return () => clearInterval(t)
+  }, [])
+  if (!slot) return null
+  return createPortal(
+    <button
+      onClick={() => {
+        if (busy) return
+        setBusy(true)
+        ;(window as unknown as { __openShareWhenReady?: boolean }).__openShareWhenReady = true
+        void onShare().finally(() => setBusy(false))
+      }}
+      title="Share this project (saves it first)"
+      data-help-id="invite"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 5,
+        fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,
+        border: '1px solid #2e2e2e',
+        background: 'rgba(61,143,239,0.08)', color: '#7ab4f5',
+        cursor: busy ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
+      }}
+    >
+      <span style={{ fontSize: 11 }}>⊕</span>
+      {busy ? 'Saving…' : 'Share'}
+    </button>,
+    slot,
+  )
+}
 
 function PodcastSetupPanel() {
   const { project, dispatch } = useDaw()
@@ -1123,6 +1167,10 @@ export default function AudioEditor(props: AudioEditorProps) {
           overflow: 'hidden',
         }}
       >
+        {/* Pre-save Share: saves the project, then CollabInvite opens */}
+        {!props.projectId && props.onSave && !props.readOnly && (
+          <UnsavedShareButton onShare={() => handleSaveRef.current()} />
+        )}
         {/* Collab layer (Liveblocks room + presence bar) — saved projects only, lazy-loaded */}
         {props.projectId && (
           <CollabLayer

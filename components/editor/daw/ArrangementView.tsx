@@ -1031,7 +1031,7 @@ export default function ArrangementView() {
           display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 999,
           background: 'rgba(16,20,30,0.95)', border: '1px solid rgba(61,143,239,0.5)',
         }}>
-          <span style={{ fontSize: 10.5, color: '#9cc4f0', fontWeight: 600 }}>Loop tool — drag across the timeline to set the region · Esc to cancel</span>
+          <span style={{ fontSize: 10.5, color: '#9cc4f0', fontWeight: 600 }}>Drag along the track or timeline to set the loop duration, or double-click Loop to loop the whole project · Esc to cancel</span>
         </div>
       )}
 

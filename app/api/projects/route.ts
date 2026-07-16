@@ -98,7 +98,12 @@ export async function GET() {
 
 // POST /api/projects — upsert a project for the current user
 export async function POST(req: Request) {
-  const { userId } = await auth()
+  const { userId: clerkUserId } = await auth()
+  // DEV_OPEN test collaborators (mirrors the project GET route) — dev builds only
+  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
+    ? req.headers.get('x-test-user')
+    : null
+  const userId = clerkUserId ?? testUser
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   let body: CfProjFile

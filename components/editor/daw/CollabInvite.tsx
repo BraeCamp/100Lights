@@ -26,6 +26,26 @@ export function CollabInvite({ projectId }: { projectId: string }) {
   const popRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
 
+  // A Share click on a not-yet-saved project saves first; once this real
+  // button mounts, it finishes the gesture by opening the popover.
+  useEffect(() => {
+    const w = window as unknown as { __openShareWhenReady?: boolean }
+    if (!w.__openShareWhenReady) return
+    // Consume the flag inside the timer — StrictMode's throwaway first mount
+    // cancels its timer on unmount, and the real mount must still see the flag
+    const t = setTimeout(() => {
+      if (!w.__openShareWhenReady) return
+      w.__openShareWhenReady = false
+      const r = btnRef.current?.getBoundingClientRect()
+      if (!r) return
+      setPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) })
+      setOpen(true)
+      void loadSharing()
+    }, 150)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {

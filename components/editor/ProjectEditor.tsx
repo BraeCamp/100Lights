@@ -311,6 +311,9 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const [pendingModules, setPendingModules] = useState<ModuleKey[] | null>(null)
   const [syncItems, setSyncItems]       = useState<SyncItem[] | null>(null)
   const savedProjectId = useRef(projectId ?? crypto.randomUUID())
+  // Becomes the real id after the first save of a /new session, so id-gated
+  // features (collab room, Share) come alive without a remount
+  const [liveProjectId, setLiveProjectId] = useState<string | undefined>(projectId)
   // False when this project was opened via an invite link (not the owner):
   // edits sync live through the room, but persistence belongs to the owner.
   const [isOwner, setIsOwner] = useState(true)
@@ -451,6 +454,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     if (!projectId && typeof window !== 'undefined' && window.location.pathname === '/new') {
       window.history.replaceState(null, '', `/projects/${savedProjectId.current}`)
     }
+    if (!projectId) setLiveProjectId(savedProjectId.current)
   }
 
   function commitName(name: string) {
@@ -642,7 +646,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   }
 
   const audioProps = {
-    projectId,
+    projectId: liveProjectId,
     projectName: localName,
     captions,
     currentTime,

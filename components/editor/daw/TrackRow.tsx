@@ -333,6 +333,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
   const inputBtnRef        = useRef<HTMLButtonElement>(null)
   const multiDragOrigins   = useRef<Record<string, number>>({})
+  const multiDragTrackOrigins = useRef<Record<string, string>>({})
   const rippleOriginsRef   = useRef<Record<string, number>>({})
   const [showLibraryPicker, setShowLibraryPicker] = useState(false)
   const [pickerInsertBeat, setPickerInsertBeat] = useState<number | null>(null)  // null = replace selected clip's sample
@@ -918,10 +919,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   }}
                   onDragStart={() => {
                     const origins: Record<string, number> = {}
+                    const trackOrigins: Record<string, string> = {}
                     for (const c of project.arrangementClips) {
-                      if (selectedClipIds.has(c.id)) origins[c.id] = c.startBeat
+                      if (selectedClipIds.has(c.id)) { origins[c.id] = c.startBeat; trackOrigins[c.id] = c.trackId }
                     }
                     multiDragOrigins.current = origins
+                    multiDragTrackOrigins.current = trackOrigins
                     // Capture original positions of all clips for ripple editing
                     if (rippleEdit) {
                       const rOrigins: Record<string, number> = {}
@@ -950,10 +953,21 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       let snappedNew = alt ? Math.max(0, origin + delta) : snapBeat(Math.max(0, origin + delta), snap, project.timeSignatureNum)
                       if (!alt) snappedNew = snapToClipEdges(snappedNew, selectedClipIds, clipThreshold, project.arrangementClips)
                       const snappedDelta = snappedNew - origin
+                      // Vertical: shift every selected clip by the same number of
+                      // track rows as the grabbed clip, clamped to real tracks
+                      const rows = project.tracks.filter(t => t.type === 'audio').map(t => t.id)
+                      const grabbedFrom = multiDragTrackOrigins.current[clip.id] ?? track.id
+                      const idxTo = rows.indexOf(tid), idxFrom = rows.indexOf(grabbedFrom)
+                      const rowDelta = idxTo === -1 || idxFrom === -1 ? 0 : idxTo - idxFrom
                       for (const c of project.arrangementClips) {
                         if (!selectedClipIds.has(c.id)) continue
                         const cOrigin = multiDragOrigins.current[c.id] ?? c.startBeat
-                        dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOrigin + snappedDelta), trackId: c.trackId })
+                        const cFrom = multiDragTrackOrigins.current[c.id] ?? c.trackId
+                        const cIdx = rows.indexOf(cFrom)
+                        const target = rowDelta !== 0 && cIdx !== -1
+                          ? rows[Math.max(0, Math.min(rows.length - 1, cIdx + rowDelta))]
+                          : cFrom
+                        dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOrigin + snappedDelta), trackId: target })
                       }
                     } else {
                       let snappedSb = alt ? sb : snapBeat(sb, snap, project.timeSignatureNum)
@@ -1104,14 +1118,28 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     const extension = (grp.lastDb ?? grp.grabbedDur) - grp.grabbedDur
                     // back to the original length — the extension chose the tile count
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: grp.grabbedDur } })
-                    const n = Math.min(24, Math.round(extension / span))
-                    if (n < 1) return
+                    if (extension < 0.05) return
+                    const n = Math.min(24, Math.floor(extension / span))
+                    const makeCopy = (m: DawClip, offset: number) => {
+                      const copy = JSON.parse(JSON.stringify(m)) as DawClip
+                      copy.id = crypto.randomUUID()
+                      copy.startBeat = m.startBeat + offset
+                      if (isMidiClip(copy)) copy.notes = copy.notes.map(nt => ({ ...nt, id: crypto.randomUUID() }))
+                      return copy
+                    }
                     for (let k = 1; k <= n; k++) {
+                      for (const m of grp.members) dispatch({ type: 'ADD_CLIP', clip: makeCopy(m, k * span) })
+                    }
+                    // Partial last tile: any drag shorter than a full span still
+                    // loops — members are cropped where the drag stopped, so the
+                    // loop cuts exactly like a loop region would
+                    const remainder = extension - n * span
+                    if (remainder > 0.05 && n < 24) {
                       for (const m of grp.members) {
-                        const copy = JSON.parse(JSON.stringify(m)) as DawClip
-                        copy.id = crypto.randomUUID()
-                        copy.startBeat = m.startBeat + k * span
-                        if (isMidiClip(copy)) copy.notes = copy.notes.map(nt => ({ ...nt, id: crypto.randomUUID() }))
+                        const offsetInSpan = m.startBeat - grp.groupStart
+                        if (offsetInSpan >= remainder) continue
+                        const copy = makeCopy(m, (n + 1) * span)
+                        copy.durationBeats = Math.min(copy.durationBeats, remainder - offsetInSpan)
                         dispatch({ type: 'ADD_CLIP', clip: copy })
                       }
                     }
