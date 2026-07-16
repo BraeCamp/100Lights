@@ -243,6 +243,9 @@ export default function Transport() {
         >
           🎧 Monitor {monitorOn ? 'ON — you should hear yourself' : 'off'}
         </button>
+        <p style={{ fontSize: 9, color: '#666', margin: '-4px 0 0', lineHeight: 1.4 }}>
+          Use wired headphones for the tightest monitoring — Bluetooth adds delay no software can remove.
+        </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid #242424', borderRadius: 9, padding: '9px 11px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

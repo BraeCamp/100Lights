@@ -169,7 +169,7 @@ export class DawEngine extends EventTarget {
 
   constructor() {
     super()
-    this.ctx = new AudioContext()
+    this.ctx = new AudioContext({ latencyHint: 'interactive' })
 
     // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
     // sustained loud element (stacked drones, held chords) sat above threshold,
@@ -2250,7 +2250,7 @@ export class DawEngine extends EventTarget {
   // A live mic preview with the chosen effects, routed STRAIGHT to the
   // hardware output — bypassing masterCompressor keeps it out of the
   // recorder tap, so monitoring is never captured.
-  private _monitor: { stream: MediaStream; src: MediaStreamAudioSourceNode; nodes: AudioNode[]; oscs: OscillatorNode[] } | null = null
+  private _monitor: { ctx: AudioContext; stream: MediaStream; src: MediaStreamAudioSourceNode; nodes: AudioNode[]; oscs: OscillatorNode[] } | null = null
   /** Effects chosen in the record-setup box — attached as FX-lane bars under
    *  the recorded clips when they land. */
   pendingRecordFx: MonitorFx[] = []
@@ -2259,11 +2259,15 @@ export class DawEngine extends EventTarget {
   get monitorActive(): boolean { return !!this._monitor }
 
   async startMonitor(source: string, fxs: MonitorFx[]): Promise<void> {
-    if (this.ctx.state === 'suspended') await this.ctx.resume()
     this.stopMonitor()
+    // A dedicated context requesting zero latency gets a smaller output
+    // buffer than the engine's ctx (which carries the whole mix graph) —
+    // this is what makes the monitor feel immediate.
+    const monCtx = new AudioContext({ latencyHint: 0 })
+    if (monCtx.state === 'suspended') await monCtx.resume()
     const stream = await captureAudioInput(source)
-    const src = this.ctx.createMediaStreamSource(stream)
-    this._monitor = { stream, src, nodes: [], oscs: [] }
+    const src = monCtx.createMediaStreamSource(stream)
+    this._monitor = { ctx: monCtx, stream, src, nodes: [], oscs: [] }
     this._buildMonitorChain(fxs)
   }
 
@@ -2278,6 +2282,7 @@ export class DawEngine extends EventTarget {
     for (const n of m.nodes) { try { n.disconnect() } catch { /* ok */ } }
     try { m.src.disconnect() } catch { /* ok */ }
     m.stream.getTracks().forEach(t => t.stop())
+    void m.ctx.close().catch(() => {})
     this._monitor = null
   }
 
@@ -2288,7 +2293,7 @@ export class DawEngine extends EventTarget {
     for (const n of m.nodes) { try { n.disconnect() } catch { /* ok */ } }
     try { m.src.disconnect() } catch { /* ok */ }
     m.nodes = []; m.oscs = []
-    const ctx = this.ctx
+    const ctx = m.ctx
     const reg = <T extends AudioNode>(n: T): T => { m.nodes.push(n); return n }
     let node: AudioNode = m.src
     for (const fx of fxs) {

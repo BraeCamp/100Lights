@@ -181,7 +181,10 @@ export async function captureAudioInput(source: string): Promise<MediaStream> {
       echoCancellation:  false,
       noiseSuppression:  false,
       autoGainControl:   false,
+      // ask for the smallest input buffering the platform allows — matters
+      // for live monitoring, harmless elsewhere
+      latency: 0,
       ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-    },
+    } as MediaTrackConstraints,
   })
 }
