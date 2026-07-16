@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
@@ -14,7 +15,8 @@ import { useUser } from '@clerk/nextjs'
 
 let _recipeCtx: AudioContext | null = null
 import { seedDefaultSamples } from '@/lib/default-samples'
-import { getAllChordRecipes } from '@/lib/practice-recipes'
+import { getAllChordRecipes, RECIPE_GENRE_ORDER, type PracticeRecipe } from '@/lib/practice-recipes'
+import { clampToViewport } from './daw/menu-clamp'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
 import {
@@ -290,7 +292,13 @@ function EntryRow({
         />
       )}
 
-      {/* Duration */}
+      {/* Type tag + duration */}
+      {getTypeTag(entry) !== 'Other' && (
+        <span title={[getTypeTag(entry), ...getCharTags(entry)].join(' · ')}
+          style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 99, background: 'rgba(96,165,250,0.13)', color: '#60a5fa', flexShrink: 0 }}>
+          {getTypeTag(entry)}
+        </span>
+      )}
       <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>
         {entry.duration.toFixed(1)}s
       </span>
@@ -982,6 +990,114 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
   )
 }
 
+// ── Recipe detail card ────────────────────────────────────────────────────────
+// Opens on row click: piano-roll note map + description. Keeps the list rows
+// compact (the description used to live inline).
+
+type RecipeSpec = ReturnType<PracticeRecipe['build']>
+
+function RecipeDetailCard({ recipe, spec, anchor, playing, onAudition, onClose }: {
+  recipe: PracticeRecipe
+  spec: RecipeSpec
+  anchor: { x: number; y: number }
+  playing: boolean
+  onAudition: () => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (ref.current) clampToViewport(ref.current, anchor)
+  }, [anchor])
+
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (ref.current?.contains(e.target as Node)) return
+      onClose()
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [onClose])
+
+  const notes = spec.notes
+  const lo = notes.length ? Math.min(...notes.map(n => n.pitch)) : 60
+  const hi = notes.length ? Math.max(...notes.map(n => n.pitch)) : 72
+  const range = Math.max(hi - lo + 1, 8)
+  const beats = Math.max(spec.durationBeats, ...notes.map(n => n.startBeat + n.durationBeats), 1)
+  const bars = Math.max(1, Math.round(beats / 4))
+
+  const chip = (label: string, color: string) => (
+    <span key={label} style={{ fontSize: 8.5, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: `${color}22`, color, letterSpacing: '0.04em' }}>{label}</span>
+  )
+
+  return createPortal(
+    <div
+      ref={ref}
+      onClick={e => e.stopPropagation()}
+      onMouseDown={e => e.stopPropagation()}
+      style={{
+        position: 'fixed', left: anchor.x, top: anchor.y, zIndex: 1600, width: 320,
+        background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
+        padding: '12px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.7)',
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.3 }}>♪ {recipe.title}</span>
+        <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0 }}><X size={12} /></button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+        {recipe.genre && chip(recipe.genre, '#a78bfa')}
+        {chip(`${bars} bar${bars !== 1 ? 's' : ''}`, '#34d399')}
+        {chip(spec.isDrumClip ? 'Drums' : 'Chords / melody', '#60a5fa')}
+      </div>
+
+      {/* Piano-roll note map */}
+      <svg viewBox={`0 0 ${beats} ${range}`} preserveAspectRatio="none" aria-hidden
+        style={{ width: '100%', height: 84, display: 'block', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border)', borderRadius: 6 }}>
+        {Array.from({ length: Math.max(0, Math.ceil(beats / 4) - 1) }, (_, i) => (
+          <line key={i} x1={(i + 1) * 4} y1={0} x2={(i + 1) * 4} y2={range} stroke="rgba(255,255,255,0.09)" strokeWidth={0.06} />
+        ))}
+        {notes.map((n, i) => (
+          <rect key={i} x={n.startBeat} y={hi - n.pitch + (range - (hi - lo + 1)) / 2}
+            width={Math.max(n.durationBeats - 0.08, 0.15)} height={0.82} rx={0.12}
+            fill="#a78bfa" opacity={0.45 + 0.55 * ((n.velocity ?? 100) / 127)} />
+        ))}
+      </svg>
+
+      <p style={{ fontSize: 10.5, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{recipe.tagline}</p>
+      {recipe.annotation.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {recipe.annotation.map((a, i) => (
+            <li key={i} style={{ fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>{a}</li>
+          ))}
+        </ul>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={onAudition}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, fontWeight: 700,
+            padding: '6px 12px', borderRadius: 7, cursor: 'pointer', border: 'none',
+            background: playing ? 'var(--accent)' : 'rgba(167,139,250,0.16)', color: playing ? '#fff' : '#a78bfa',
+          }}
+        >
+          {playing ? <Square size={9} fill="currentColor" /> : <Play size={10} />} {playing ? 'Stop' : 'Listen'}
+        </button>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Drag the row onto a track to add it</span>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // ── Tag helpers ───────────────────────────────────────────────────────────────
 
 function getTypeTag(entry: LibraryEntry): string {
@@ -1016,6 +1132,8 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
 
   const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
   const [recipesVersion,   setRecipesVersion]   = useState(0)
+  const [recipeDetail,     setRecipeDetail]     = useState<{ id: string; x: number; y: number } | null>(null)
+  const [openGenres,       setOpenGenres]       = useState<Set<string>>(new Set())
   const [auditioningRecipe, setAuditioningRecipe] = useState<string | null>(null)
   const recipeStopRef = useRef<() => void>(() => {})
   useEffect(() => () => { recipeStopRef.current() }, [])
@@ -1369,7 +1487,11 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     />
   )
 
-  const recipeCard = (r: ReturnType<typeof getAllChordRecipes>[number]) => (
+  const recipeCard = (r: ReturnType<typeof getAllChordRecipes>[number], showGenre = false) => {
+    const spec = recipeSpecs.get(r.id)
+    const beats = spec ? Math.max(spec.durationBeats, ...spec.notes.map(n => n.startBeat + n.durationBeats), 1) : 4
+    const bars = Math.max(1, Math.round(beats / 4))
+    return (
         <div
           key={r.id}
           draggable
@@ -1377,11 +1499,13 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             e.dataTransfer.setData('application/x-recipe-id', r.id)
             e.dataTransfer.effectAllowed = 'copy'
           }}
-          title={r.tagline}
+          onClick={e => setRecipeDetail(d => d?.id === r.id ? null : { id: r.id, x: e.clientX + 8, y: e.clientY + 8 })}
+          title={`${r.tagline} — click for details`}
           style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '8px 10px', borderRadius: 7, cursor: 'grab',
-            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', gap: 7,
+            padding: '4px 8px', borderRadius: 6, cursor: 'pointer',
+            background: recipeDetail?.id === r.id ? 'rgba(167,139,250,0.12)' : 'var(--bg-card)',
+            border: recipeDetail?.id === r.id ? '1px solid rgba(167,139,250,0.45)' : '1px solid var(--border)',
           }}
         >
           <button
@@ -1391,31 +1515,42 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             title={auditioningRecipe === r.id ? 'Stop' : 'Listen (piano preview)'}
             aria-label={auditioningRecipe === r.id ? 'Stop recipe preview' : 'Play recipe preview'}
             style={{
-              width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+              width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: 'none', cursor: 'pointer',
               background: auditioningRecipe === r.id ? 'var(--accent)' : 'rgba(167,139,250,0.16)',
               color: auditioningRecipe === r.id ? '#fff' : '#a78bfa',
             }}
           >
-            {auditioningRecipe === r.id ? <Square size={9} fill="currentColor" /> : <Play size={10} style={{ marginLeft: 1 }} />}
+            {auditioningRecipe === r.id ? <Square size={8} fill="currentColor" /> : <Play size={9} style={{ marginLeft: 1 }} />}
           </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>♪ {r.title}</div>
-            <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.tagline}</div>
-          </div>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
+          {showGenre && r.genre && (
+            <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(167,139,250,0.13)', color: '#a78bfa', flexShrink: 0 }}>{r.genre}</span>
+          )}
+          <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(52,211,153,0.13)', color: '#34d399', flexShrink: 0 }}>{bars} bar{bars !== 1 ? 's' : ''}</span>
         </div>
-  )
+    )
+  }
 
   // Recipe ids encode their source: `user-` = written here in the piano roll,
   // `community-` = imported; everything else ships with the app. Shown as
   // separate sections so the source is always clear. recipesVersion re-reads
   // the list after a save-from-roll.
-  void recipesVersion
-  const allRecipes = getAllChordRecipes()
+  // Catalog + materialized note data, built once per change (localStorage is
+  // only re-parsed when recipesVersion bumps — browsing stays free)
+  const { allRecipes, recipeSpecs } = useMemo(() => {
+    void recipesVersion
+    const all = getAllChordRecipes()
+    return { allRecipes: all, recipeSpecs: new Map(all.map(r => [r.id, r.build()])) }
+  }, [recipesVersion])
   const userRecipes = allRecipes.filter(r => r.id.startsWith('user-'))
   const builtinRecipes = allRecipes.filter(r => !r.id.startsWith('community-') && !r.id.startsWith('user-'))
   const communityRecipes = allRecipes.filter(r => r.id.startsWith('community-'))
+  const detailRecipe = recipeDetail ? allRecipes.find(x => x.id === recipeDetail.id) : undefined
+  const detailSpec = detailRecipe ? recipeSpecs.get(detailRecipe.id) : undefined
+  const handleDetailAudition = () => { if (detailRecipe) auditionRecipe(detailRecipe.id) }
+  const handleDetailClose = () => setRecipeDetail(null)
   const recipeSectionHeader = (label: string, color: string) => (
     <div style={{ padding: '4px 2px 0', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color, textTransform: 'uppercase' }}>
       {label}
@@ -1424,7 +1559,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   const recipesBody = (
     <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
-        Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
+        Drag a recipe onto a track; click one for its piano roll and description. Notes and sound stay editable, and dragging the clip edge stretches the progression to fit.
       </p>
       <div style={{ display: 'flex', gap: 6 }}>
         <button
@@ -1449,17 +1584,50 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       {userRecipes.length > 0 && (
         <>
           {recipeSectionHeader('Your Recipes', '#a78bfa')}
-          {userRecipes.map(recipeCard)}
+          {userRecipes.map(r => recipeCard(r, true))}
         </>
       )}
       {communityRecipes.length > 0 && (
         <>
           {recipeSectionHeader('From the Community', '#34d399')}
-          {communityRecipes.map(recipeCard)}
+          {communityRecipes.map(r => recipeCard(r, true))}
         </>
       )}
       {(communityRecipes.length > 0 || userRecipes.length > 0) && recipeSectionHeader('100Lights Recipes', 'var(--text-muted)')}
-      {builtinRecipes.map(recipeCard)}
+      {/* Built-ins grouped into genre folders */}
+      {RECIPE_GENRE_ORDER.filter(g => builtinRecipes.some(r => (r.genre ?? 'Other') === g)).map(g => {
+        const inGenre = builtinRecipes.filter(r => (r.genre ?? 'Other') === g)
+        const open = openGenres.has(g)
+        return (
+          <div key={g} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <button
+              onClick={() => setOpenGenres(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n })}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 6,
+                cursor: 'pointer', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',
+                color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 700, textAlign: 'left',
+              }}
+            >
+              {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              <Folder size={10} style={{ color: '#a78bfa' }} />
+              <span style={{ flex: 1 }}>{g}</span>
+              <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>{inGenre.length}</span>
+            </button>
+            {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 10 }}>{inGenre.map(r => recipeCard(r))}</div>}
+          </div>
+        )
+      })}
+      {/* Detail card for the clicked recipe */}
+      {detailRecipe && detailSpec && recipeDetail && (
+        <RecipeDetailCard
+          recipe={detailRecipe}
+          spec={detailSpec}
+          anchor={{ x: recipeDetail.x, y: recipeDetail.y }}
+          playing={auditioningRecipe === detailRecipe.id}
+          onAudition={handleDetailAudition}
+          onClose={handleDetailClose}
+        />
+      )}
     </div>
   )
 

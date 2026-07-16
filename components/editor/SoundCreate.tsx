@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import { Play, Square, Dices, BookmarkPlus, Search, Plus, X, Globe2 } from 'lucide-react'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
-import { importRecipe } from '@/lib/practice-recipes'
+import { importRecipe, RECIPE_GENRE_ORDER } from '@/lib/practice-recipes'
 import { shareRecipe } from '@/lib/community'
 import type { MidiClip } from '@/lib/daw-types'
 
@@ -41,12 +41,13 @@ export function consumeCreateRecipeFlag(): boolean {
 }
 
 /** Persists the clip as a personal recipe; optionally shares to the Community. */
-export async function saveUserRecipe(clip: MidiClip, title: string, tagline: string, share: boolean): Promise<void> {
+export async function saveUserRecipe(clip: MidiClip, title: string, tagline: string, share: boolean, genre?: string): Promise<void> {
   importRecipe({
     id: `user-${crypto.randomUUID()}`,
     title,
     tagline: tagline || 'My recipe',
     annotation: [],
+    genre,
     spec: {
       trackName: title,
       instrument: { type: 'none', params: {} },
@@ -67,6 +68,7 @@ export function SaveRecipeButton({ clip }: { clip: MidiClip }) {
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [share, setShare] = useState(false)
+  const [genre, setGenre] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -89,7 +91,7 @@ export function SaveRecipeButton({ clip }: { clip: MidiClip }) {
     const t = title.trim() || clip.name
     setBusy(true); setMsg('')
     try {
-      await saveUserRecipe(clip, t, desc.trim(), share)
+      await saveUserRecipe(clip, t, desc.trim(), share, genre || undefined)
       setMsg(share ? 'Saved to your library and shared ✓' : 'Saved to your library ✓')
       setTimeout(() => setPos(null), 1200)
     } catch {
@@ -106,6 +108,7 @@ export function SaveRecipeButton({ clip }: { clip: MidiClip }) {
           const r = btnRef.current!.getBoundingClientRect()
           setTitle(clip.name)
           setDesc('')
+          setGenre('')
           setShare(false)
           setMsg('')
           setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) })
@@ -144,6 +147,13 @@ export function SaveRecipeButton({ clip }: { clip: MidiClip }) {
                 value={desc} onChange={e => setDesc(e.target.value)} placeholder="What makes it work? (optional)"
                 style={{ fontSize: 11, padding: '6px 9px', borderRadius: 6, background: '#101010', border: '1px solid #2e2e2e', color: '#ddd', outline: 'none' }}
               />
+              <select
+                value={genre} onChange={e => setGenre(e.target.value)}
+                style={{ fontSize: 11, padding: '6px 7px', borderRadius: 6, background: '#101010', border: '1px solid #2e2e2e', color: genre ? '#ddd' : '#777', outline: 'none' }}
+              >
+                <option value="">Genre (optional)</option>
+                {RECIPE_GENRE_ORDER.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: '#aaa', cursor: 'pointer' }}>
                 <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} style={{ accentColor: '#34d399' }} />
                 Also share to the Community

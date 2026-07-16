@@ -11,6 +11,8 @@ export interface PracticeRecipe {
   id: string
   title: string
   tagline: string
+  /** Genre folder in the library (see RECIPE_GENRES for built-in assignments). */
+  genre?: string
   /** Study notes shown after loading — the "annotation" on the project file. */
   annotation: string[]
   /** Builds the notes + instrument for a fresh clip at load time. */
@@ -327,6 +329,7 @@ export interface StoredRecipeSpec {
   title: string
   tagline: string
   annotation: string[]
+  genre?: string
   spec: ReturnType<PracticeRecipe['build']>
 }
 
@@ -334,7 +337,7 @@ export function getImportedRecipes(): PracticeRecipe[] {
   if (typeof window === 'undefined') return []
   try {
     const raw = JSON.parse(localStorage.getItem(IMPORTED_KEY) || '[]') as StoredRecipeSpec[]
-    return raw.map(r => ({ id: r.id, title: r.title, tagline: r.tagline, annotation: r.annotation ?? [], build: () => r.spec }))
+    return raw.map(r => ({ id: r.id, title: r.title, tagline: r.tagline, annotation: r.annotation ?? [], genre: r.genre, build: () => r.spec }))
   } catch { return [] }
 }
 
@@ -344,9 +347,37 @@ export function importRecipe(stored: StoredRecipeSpec): void {
   localStorage.setItem(IMPORTED_KEY, JSON.stringify(next))
 }
 
+/** Genre folders shown in the library, in display order. */
+export const RECIPE_GENRE_ORDER = ['Pop', 'Rock', 'Jazz', 'Blues', 'Soul', 'Electronic', 'Classical', 'Cinematic', 'World', 'Other'] as const
+
+/** Genre assignments for the built-in recipes (imported/user recipes carry their own). */
+const RECIPE_GENRES: Record<string, string> = {
+  'pop-progression':    'Pop',
+  'royal-road':         'Pop',
+  'axis-minor':         'Pop',
+  'emotional-iv':       'Pop',
+  'uplift':             'Pop',
+  'creep-move':         'Rock',
+  'mixolydian-rock':    'Rock',
+  'line-cliche':        'Rock',
+  'minor-251':          'Jazz',
+  'jazz-251':           'Jazz',
+  'rhythm-turnaround':  'Jazz',
+  'ragtime-turnaround': 'Jazz',
+  'walking-bass':       'Jazz',
+  'blues-12':           'Blues',
+  'doo-wop':            'Soul',
+  'neo-soul-vamp':      'Soul',
+  'minor-rise':         'Electronic',
+  'four-on-floor':      'Electronic',
+  'canon':              'Classical',
+  'lydian-lift':        'Cinematic',
+  'andalusian':         'World',
+}
+
 /** Built-in chord recipes plus anything imported from the community. */
 export function getAllChordRecipes(): PracticeRecipe[] {
-  return [...CHORD_RECIPES, ...getImportedRecipes()]
+  return [...CHORD_RECIPES, ...getImportedRecipes()].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
 }
 
 /** Materializes a recipe into a clip for a given track, with fresh ids. */
