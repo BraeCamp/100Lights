@@ -336,7 +336,9 @@ export default function AudioEditor(props: AudioEditorProps) {
   const isRemoteRef   = useRef(false)
 
   // Actions that shouldn't be synced to collaborators (view/UI preferences)
-  const NO_BROADCAST = new Set<DawAction['type']>(['LOAD_PROJECT', 'SET_WAVEFORM_ZOOM', 'SET_CROSSFADER'])
+  // Loop region/toggle are deliberately local: each collaborator loops their
+  // own playback without yanking everyone else's transport around.
+  const NO_BROADCAST = new Set<DawAction['type']>(['LOAD_PROJECT', 'SET_WAVEFORM_ZOOM', 'SET_CROSSFADER', 'SET_LOOP', 'SET_LOOP_ENABLED'])
 
   // ── Blink guidance — local only, never broadcast ─────────────────────────────
   const [blinkIds, setBlinkIds] = useState<Set<string>>(new Set())

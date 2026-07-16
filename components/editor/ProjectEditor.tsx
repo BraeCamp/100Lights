@@ -17,6 +17,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useAuth } from '@clerk/nextjs'
 import dynamic from 'next/dynamic'
 import type { Caption, Output } from '@/lib/types'
 import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
@@ -314,14 +315,39 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   // edits sync live through the room, but persistence belongs to the owner.
   const [isOwner, setIsOwner] = useState(true)
   const [viewOnly, setViewOnly] = useState(false)
+  // Why the project couldn't load — never silently fall back to another module
+  const [loadError, setLoadError] = useState<'unauthenticated' | 'no-access' | 'error' | null>(null)
+  const { isLoaded: authLoaded, isSignedIn } = useAuth()
 
   // ── Load project from API ──────────────────────────────────
+  // Waits for Clerk (a fetch fired before the session token is ready 401s),
+  // retries transient failures, and surfaces access problems as a screen —
+  // a failed load must never silently open a different module.
   useEffect(() => {
-    if (isNewProject) return
-    fetch(`/api/projects/${projectId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(async (data: CfProjFile | null) => {
-        if (!data) { setActiveModules(['video']); return }
+    if (isNewProject || !authLoaded) return
+    let alive = true
+
+    async function fetchProject(): Promise<Response> {
+      let res = await fetch(`/api/projects/${projectId}`)
+      // 401 right after page load is usually the session token still settling
+      for (let attempt = 0; !res.ok && res.status === 401 && attempt < 2; attempt++) {
+        await new Promise(r => setTimeout(r, 800 * (attempt + 1)))
+        res = await fetch(`/api/projects/${projectId}`)
+      }
+      return res
+    }
+
+    fetchProject()
+      .then(async r => {
+        if (!alive) return
+        if (!r.ok) {
+          if (r.status === 401 && !isSignedIn) setLoadError('unauthenticated')
+          else if (r.status === 401 || r.status === 403 || r.status === 404) setLoadError('no-access')
+          else setLoadError('error')
+          return
+        }
+        const data: CfProjFile = await r.json()
+        if (!alive) return
         if ((data as CfProjFile & { _isOwner?: boolean })._isOwner === false) setIsOwner(false)
         if ((data as CfProjFile & { _access?: string })._access === 'view') setViewOnly(true)
         setSavedData(data)
@@ -335,12 +361,15 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
         // Resolve audio media to playable URLs before AudioEditor mounts
         if (data.audioMedia?.length) {
           const tracks = await resolveAudioMediaToTracks(data.audioMedia)
+          if (!alive) return
           setInitAudioTracks(tracks)
         }
+        setLoadError(null)
         setActiveModules(data.modules ?? ['video'])
       })
-      .catch(() => setActiveModules(['video']))
-  }, [projectId]) // eslint-disable-line
+      .catch(() => { if (alive) setLoadError('error') })
+    return () => { alive = false }
+  }, [projectId, authLoaded]) // eslint-disable-line
 
   // ── Save ──────────────────────────────────────────────────
   // Demo projects (no projectId, allowImport=false) are read-only — never persisted
@@ -543,6 +572,42 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       podcastMeta: meta?.podcastMeta,
       dawProject: meta?.dawProject,
     })
+  }
+
+  // ── Load failure: explain, never guess at a module ────────
+  if (loadError) {
+    const backHref = loadError === 'unauthenticated'
+      ? `/sign-in?redirect_url=${encodeURIComponent(typeof window !== 'undefined' ? window.location.pathname : '/dashboard')}`
+      : '/dashboard'
+    return (
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ maxWidth: 420, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center' }}>
+          <div style={{ fontSize: 34 }}>{loadError === 'unauthenticated' ? '🔑' : loadError === 'no-access' ? '🔒' : '⚠️'}</div>
+          <h2 style={{ fontSize: 17, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+            {loadError === 'unauthenticated' ? 'Sign in to open this project'
+              : loadError === 'no-access' ? 'You don\u2019t have access to this project'
+              : 'Couldn\u2019t load this project'}
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6 }}>
+            {loadError === 'unauthenticated'
+              ? 'This project link needs an account to open. Sign in (or create a free account) and you\u2019ll come right back here.'
+              : loadError === 'no-access'
+              ? 'Ask the project owner to share it with you \u2014 they can add your email in the project\u2019s Share settings, or switch the link to public.'
+              : 'Something went wrong while loading. Check your connection and try again.'}
+          </p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {loadError === 'error' && (
+              <button onClick={() => window.location.reload()} style={{ padding: '9px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, background: 'var(--accent)', color: '#fff' }}>
+                Try again
+              </button>
+            )}
+            <a href={backHref} style={{ padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', background: loadError === 'unauthenticated' ? 'var(--accent)' : 'var(--bg-card)', color: loadError === 'unauthenticated' ? '#fff' : 'var(--text-primary)', border: loadError === 'unauthenticated' ? 'none' : '1px solid var(--border)' }}>
+              {loadError === 'unauthenticated' ? 'Sign in' : 'Go to dashboard'}
+            </a>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // ── Loading state ─────────────────────────────────────────

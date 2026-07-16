@@ -38,7 +38,13 @@ function projectFingerprint(p: DawProject): string {
   for (const c of p.arrangementClips) {
     mix(`${c.id}:${c.startBeat}:${c.durationBeats}:${'notes' in c ? (c as { notes: unknown[] }).notes.length : 'a'}`)
   }
-  mix(String((p.clipEffects ?? []).length))
+  // Content-level FX hash: a lost UPDATE_CLIP_EFFECT (params, duration,
+  // automation graph) must trip the self-heal, not just count changes
+  for (const e of p.clipEffects ?? []) {
+    mix(`${e.id}:${e.startBeat}:${e.durationBeats}:${JSON.stringify(e.params)}:${e.automation ? JSON.stringify(e.automation.points) : ''}`)
+  }
+  mix(JSON.stringify(p.tempoMarkers ?? []))
+  mix(JSON.stringify(p.sections ?? []))
   return h.toString(36)
 }
 
@@ -163,8 +169,11 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef, projectRe
     if (e.type === 'SYNC_STATE' && e.project && e.to === selfIdRef.current) {
       if (Date.now() > awaitingSyncUntil.current) return  // stale — we've been editing already
       awaitingSyncUntil.current = 0  // apply at most once
+      // Looping is per-client — keep ours instead of adopting the sender's
+      const mine = projectRef.current
+      const project = { ...e.project, loopStart: mine.loopStart, loopEnd: mine.loopEnd, loopEnabled: mine.loopEnabled }
       isRemoteRef.current = true
-      rawDispatch({ type: 'LOAD_PROJECT', project: e.project })
+      rawDispatch({ type: 'LOAD_PROJECT', project })
       isRemoteRef.current = false
     }
   })

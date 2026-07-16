@@ -1384,7 +1384,7 @@ export default function ArrangementView() {
 
       {/* Global playhead overlay — clipped to track content area so it stays behind the header */}
       <div style={{ position: 'absolute', left: HDR_W, right: 0, top: 30 + RULER_H, bottom: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 10 }}>
-        <div ref={playheadRef} style={{ position: 'absolute', top: 0, bottom: 0, width: 1, background: '#ef4444' }} />
+        <div ref={playheadRef} style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: '#ff5a5a', boxShadow: '0 0 6px rgba(255,80,80,0.9), 0 0 1px rgba(255,255,255,0.6)', zIndex: 5, pointerEvents: 'none' }} />
       </div>
 
       {/* Time signature popover */}
