@@ -114,6 +114,7 @@ export default function Transport() {
   const [recordSetup, setRecordSetup] = useState(false)
   const [monitorOn, setMonitorOn] = useState(false)
   const [recFx, setRecFx] = useState<MonitorFx[]>([])
+  const [countInBars, setCountInBars] = useState(0)
 
   function recordableInput(): string | null {
     const t = project.tracks.find(t => t.type === 'audio' && t.armed && t.inputSource)
@@ -156,6 +157,11 @@ export default function Transport() {
     setMonitorOn(false)
     setRecordSetup(false)
     try {
+      if (countInBars > 0) {
+        setMicError(`Count-in — ${countInBars} bar${countInBars > 1 ? 's' : ''}…`)
+        await engine.countIn(countInBars * project.timeSignatureNum, project.tempo)
+        setMicError('')
+      }
       const armedTracks = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)
       engine.setPendingRecordFx(recFx)
       await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
@@ -282,6 +288,20 @@ export default function Transport() {
               </div>
             )
           })}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: '#999' }}>Count-in</span>
+          {[0, 1, 2].map(b => (
+            <button key={b} onClick={() => setCountInBars(b)}
+              style={{
+                fontSize: 10, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontWeight: 700,
+                border: countInBars === b ? '1px solid rgba(220,38,38,0.6)' : '1px solid #2e2e2e',
+                background: countInBars === b ? 'rgba(220,38,38,0.14)' : '#1e1e1e',
+                color: countInBars === b ? '#f87171' : '#888',
+              }}
+            >{b === 0 ? 'Off' : `${b} bar${b > 1 ? 's' : ''}`}</button>
+          ))}
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>

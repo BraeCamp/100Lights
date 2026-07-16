@@ -2202,6 +2202,28 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Count-in: metronome clicks for N beats before a take starts. Clicks go
+   *  straight to the hardware output so they're never captured. Resolves when
+   *  the last click has sounded. */
+  async countIn(beats: number, tempo: number): Promise<void> {
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
+    const secPerBeat = 60 / tempo
+    const start = this.ctx.currentTime + 0.06
+    for (let i = 0; i < beats; i++) {
+      const isDownbeat = (i % this._beatsPerBar) === 0
+      const buf = isDownbeat ? this._tickBuf : this._tockBuf
+      if (!buf) continue
+      const src = this.ctx.createBufferSource()
+      src.buffer = buf
+      const g = this.ctx.createGain()
+      g.gain.value = 0.7
+      src.connect(g); g.connect(this.ctx.destination)
+      src.start(start + i * secPerBeat)
+      src.onended = () => { src.disconnect(); g.disconnect() }
+    }
+    await new Promise(r => setTimeout(r, (0.06 + beats * secPerBeat) * 1000))
+  }
+
   // ── Recording ─────────────────────────────────────────────────────────────
 
   private _mediaRecorder: MediaRecorder | null = null
