@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
+import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
   initLibrary,
@@ -572,6 +572,7 @@ export function AddToLibraryModal({
   const [name, setName]       = useState('')
   const [category, setCat]    = useState<LibraryCategory>('custom')
   const [saving, setSaving]   = useState(false)
+  const [savedOk, setSavedOk] = useState(false)
   const [error, setError]     = useState('')
 
   // The sound is a stack of layers plus motion FX (see SoundCreate.tsx).
@@ -745,7 +746,8 @@ export function AddToLibraryModal({
         addedAt:   new Date().toISOString(),
       })
       onAdded()
-      onClose()
+      setSavedOk(true)
+      setTimeout(onClose, 900)
     } catch { setError('Failed to save sound') }
     finally { setSaving(false) }
   }
@@ -855,8 +857,8 @@ export function AddToLibraryModal({
         <button onClick={() => { setMode('choose'); setLayers([]); setFxs([]); setAddingLayer(false); setSynthLayerId(null) }} style={{ flex: '0 0 auto', padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
           ← Start over
         </button>
-        <button onClick={save} disabled={saving} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: saving ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-          {saving ? 'Saving…' : 'Save to Library'}
+        <button onClick={save} disabled={saving || savedOk} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: savedOk ? '#22c55e' : saving ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: savedOk ? '#062812' : '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+          {savedOk ? 'Saved ✓' : saving ? 'Saving…' : 'Save to Library'}
         </button>
       </div>
       {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
@@ -1006,11 +1008,6 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
 
   const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
   const [recipesVersion,   setRecipesVersion]   = useState(0)
-  useEffect(() => {
-    const bump = () => setRecipesVersion(v => v + 1)
-    window.addEventListener(RECIPES_CHANGED_EVENT, bump)
-    return () => window.removeEventListener(RECIPES_CHANGED_EVENT, bump)
-  }, [])
   const [auditioningRecipe, setAuditioningRecipe] = useState<string | null>(null)
   const recipeStopRef = useRef<() => void>(() => {})
   useEffect(() => () => { recipeStopRef.current() }, [])
@@ -1289,6 +1286,18 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   // every match — so filtering forces all groups open.
   const filtering = searchQuery.trim().length > 0 || activeTypeTag !== null || activeCharTags.size > 0
 
+  useEffect(() => {
+    const bump = () => setRecipesVersion(v => v + 1)
+    const reload = () => { void load() }
+    window.addEventListener(RECIPES_CHANGED_EVENT, bump)
+    window.addEventListener('100lights-library-changed', reload)
+    return () => {
+      window.removeEventListener(RECIPES_CHANGED_EVENT, bump)
+      window.removeEventListener('100lights-library-changed', reload)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const renderParentGroup = (parentName: string, subFolders: Map<string, LibraryEntry[]>) => {
     const parentKey = `parent:${parentName}`
     const parentCollapsed = !filtering && !openFolders.has(parentKey)
@@ -1409,17 +1418,26 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
         Chord progressions — drag one onto a track. Notes and sound are editable in the piano roll; dragging the clip edge stretches the progression to fit.
       </p>
-      <button
-        onClick={requestCreateRecipe}
-        title="Write your own recipe in the piano roll"
-        style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-          padding: '8px 0', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700,
-          border: '1px dashed rgba(139,92,246,0.5)', background: 'rgba(139,92,246,0.08)', color: 'var(--accent-light)',
-        }}
-      >
-        + Create a recipe
-      </button>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          onClick={requestCreateRecipe}
+          title="Write your own recipe in the piano roll"
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            padding: '8px 0', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+            border: '1px dashed rgba(139,92,246,0.5)', background: 'rgba(139,92,246,0.08)', color: 'var(--accent-light)',
+          }}
+        >
+          + Create a recipe
+        </button>
+        <button
+          onClick={() => { void load(); window.dispatchEvent(new Event(RECIPES_CHANGED_EVENT)) }}
+          title="Reload — pick up newly added sounds and recipes"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, borderRadius: 7, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}
+        >
+          <RotateCw size={11} />
+        </button>
+      </div>
       {userRecipes.length > 0 && (
         <>
           {recipeSectionHeader('Your Recipes', '#a78bfa')}
@@ -1473,6 +1491,13 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             Find sounds ↗
           </a>
         )}
+        <button
+          onClick={() => { void load(); window.dispatchEvent(new Event(RECIPES_CHANGED_EVENT)) }}
+          title="Reload — pick up newly added sounds and recipes"
+          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '3px 7px', borderRadius: 4, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}
+        >
+          <RotateCw size={10} />
+        </button>
         <button
           onClick={() => setAddingFolder(true)}
           title="New folder"

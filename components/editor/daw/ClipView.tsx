@@ -7,7 +7,8 @@ import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
 import { getPresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import { shareRecipe } from '@/lib/community'
-import { ShareCommunityDialog } from '../SoundCreate'
+import { ShareCommunityDialog, saveUserRecipe } from '../SoundCreate'
+import { encodeWav } from '@/lib/wav-codec'
 import { RollSoundPanel } from './RollSettings'
 import { clampToViewport } from './menu-clamp'
 import Waveform from './Waveform'
@@ -107,7 +108,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   useLayoutEffect(() => {
     if (ctxPos) clampToViewport(menuRef.current, { x: ctxPos.x, y: ctxPos.y })
   }, [ctxPos, ctxSub])
-  const [shareOpen, setShareOpen] = useState(false)  // Share-as-recipe dialog
+  const [shareOpen, setShareOpen] = useState(false)  // Share-to-community dialog
+  const [justSaved, setJustSaved] = useState(false)  // 'Saved ✓' flash on the library item
   const [hovered, setHovered] = useState(false)
   const [gainDragInfo, setGainDragInfo] = useState<{ gain: number; mouseX: number; mouseY: number } | null>(null)
   const [transientDialog, setTransientDialog] = useState<{
@@ -368,13 +370,40 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   }
 
   const isMulti = multiSelected && !!onDeleteAll
-  type MenuItem = { label: string; fn: () => void; keepOpen?: boolean; heading?: boolean }
+  type MenuItem = { label: string; fn: () => void; keepOpen?: boolean; color?: string }
   const back = (label: string): MenuItem => ({ label, fn: () => setCtxSub(null), keepOpen: true })
+
+  // Renders the audio clip's (trimmed) buffer to a WAV blob — shared by
+  // Save-to-Library and Share-to-Community for audio clips.
+  async function audioClipBlob(): Promise<{ blob: Blob; duration: number } | null> {
+    const a = clip as AudioClip
+    const buf = await engine.loadClipBuffer(a)
+    if (!buf) return null
+    const sr = buf.sampleRate
+    const s = Math.floor((a.trimStart ?? 0) * sr)
+    const e = buf.length - Math.floor((a.trimEnd ?? 0) * sr)
+    const len = Math.max(1, e - s)
+    const channels = Array.from({ length: buf.numberOfChannels }, (_, ch) => buf.getChannelData(ch).slice(s, s + len))
+    return { blob: new Blob([encodeWav(channels, sr)], { type: 'audio/wav' }), duration: len / sr }
+  }
+
+  async function saveClipToLibrary() {
+    if (isMidiClip(clip)) {
+      await saveUserRecipe(clip as MidiClip, clip.name, '', false)
+    } else {
+      const rendered = await audioClipBlob()
+      if (!rendered) throw new Error('audio still loading — try again in a second')
+      const { libraryAdd } = await import('@/lib/sound-library')
+      await libraryAdd({
+        id: crypto.randomUUID(), name: clip.name, category: 'custom',
+        audioBlob: rendered.blob, duration: rendered.duration, addedAt: new Date().toISOString(),
+      })
+      window.dispatchEvent(new Event('100lights-library-changed'))
+    }
+  }
 
   const editItems: MenuItem[] = [
     back('← Back'),
-    { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
-    ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     isMulti
       ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
       : { label: 'Delete', fn: onDelete },
@@ -410,7 +439,6 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   ] : [
     back('← Back'),
     { label: 'Change Sound…', fn: () => setCtxSub('presets'), keepOpen: true },
-    { label: 'Share to Community…', fn: () => setShareOpen(true) },
   ]
 
   const menuItems: MenuItem[] = ctxSub === 'edit' ? editItems : ctxSub === 'more' ? moreItems : [
@@ -420,8 +448,26 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           { label: 'Open Piano Roll', fn: onDoubleClick },
           { label: 'Sound Settings…', fn: () => { if (ctxPos) setSoundPanelAnchor({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
+    { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
+    ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     { label: 'Edit ▸', fn: () => setCtxSub('edit'), keepOpen: true },
     { label: isAudioClip(clip) ? 'Tools ▸' : 'Sound ▸', fn: () => setCtxSub('more'), keepOpen: true },
+    // Library & Community actions live together at the bottom
+    {
+      label: justSaved ? 'Saved ✓' : isMidiClip(clip) ? 'Save Recipe to Library' : 'Save Sample to Library',
+      color: justSaved ? '#22c55e' : undefined,
+      keepOpen: true,
+      fn: () => {
+        if (justSaved) return
+        void saveClipToLibrary()
+          .then(() => {
+            setJustSaved(true)
+            setTimeout(() => { setCtxPos(null); setJustSaved(false) }, 1000)
+          })
+          .catch(() => { setCtxPos(null) })
+      },
+    },
+    { label: 'Share to Community…', fn: () => setShareOpen(true) },
   ]
 
   return (
@@ -712,7 +758,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         <div ref={menuRef} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
           {ctxSub !== 'presets' && menuItems.map(it => (
             <button key={it.label} onClick={() => { it.fn(); if (!(it as { keepOpen?: boolean }).keepOpen) setCtxPos(null) }}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: (it as { color?: string }).color ?? 'var(--text-primary)', fontWeight: (it as { color?: string }).color ? 700 : 400 }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >{it.label}</button>
@@ -838,10 +884,19 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
       )}
       {shareOpen && (
         <ShareCommunityDialog
-          kind="recipe"
+          kind={isMidiClip(clip) ? 'recipe' : 'sample'}
           defaultName={clip.name}
           onClose={() => setShareOpen(false)}
-          onShare={(name, desc) => shareRecipe(clip as MidiClip, name, desc)}
+          onShare={async (name, desc) => {
+            if (isMidiClip(clip)) { await shareRecipe(clip as MidiClip, name, desc); return }
+            const rendered = await audioClipBlob()
+            if (!rendered) throw new Error('audio still loading — try again in a second')
+            const { shareSample } = await import('@/lib/community')
+            await shareSample({
+              id: `clip-${clip.id}`, name, category: 'custom',
+              audioBlob: rendered.blob, duration: rendered.duration, addedAt: new Date().toISOString(),
+            }, desc)
+          }}
         />
       )}
     </>
