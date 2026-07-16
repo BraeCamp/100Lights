@@ -593,6 +593,8 @@ export interface DawProject {
   waveformZoom: number      // 1–8 vertical zoom multiplier for arrangement waveforms
   swing: number             // 0–1 (0 = straight, 0.5 = full swing)
   cueMarkers: CueMarker[]
+  /** Tempo changes: playback switches BPM when the playhead crosses a marker. */
+  tempoMarkers?: Array<{ id: string; beat: number; tempo: number }>
   key: number               // 0-11 (C=0), displayed in transport
   scale: string             // 'major' | 'minor' | etc.
 }

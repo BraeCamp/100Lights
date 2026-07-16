@@ -37,6 +37,8 @@ export type DawAction =
   // Transport / project
   | { type: 'SET_TEMPO'; tempo: number }
   | { type: 'SET_TIME_SIG'; num: number; den: number }
+  | { type: 'ADD_TEMPO_MARKER'; marker: { id: string; beat: number; tempo: number } }
+  | { type: 'REMOVE_TEMPO_MARKER'; markerId: string }
   | { type: 'SET_LOOP'; start: number; end: number }
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
@@ -264,6 +266,19 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, scenes }
     }
 
+    case 'ADD_TEMPO_MARKER': {
+      const markers = [...(project.tempoMarkers ?? [])]
+      // first marker: pin the current tempo at beat 0 so the song's start keeps its feel
+      if (markers.length === 0 && action.marker.beat > 0.01) {
+        markers.push({ id: crypto.randomUUID(), beat: 0, tempo: project.tempo })
+      }
+      const filtered = markers.filter(m => Math.abs(m.beat - action.marker.beat) > 0.01)
+      return { ...project, tempoMarkers: [...filtered, action.marker].sort((a, b) => a.beat - b.beat) }
+    }
+
+    case 'REMOVE_TEMPO_MARKER':
+      return { ...project, tempoMarkers: (project.tempoMarkers ?? []).filter(m => m.id !== action.markerId) }
+
     case 'SET_TEMPO':
       return { ...project, tempo: Math.max(40, Math.min(300, action.tempo)) }
 
@@ -422,6 +437,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         waveformZoom:    p.waveformZoom    ?? 1,
         swing:           p.swing           ?? 0,
         cueMarkers:      p.cueMarkers      ?? [],
+        tempoMarkers:    p.tempoMarkers    ?? [],
         key:             p.key             ?? 0,
         scale:           p.scale           ?? 'major',
       }

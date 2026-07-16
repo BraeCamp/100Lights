@@ -31,13 +31,13 @@ const MAX_BEAT_W = 200
 function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
   beatW: number; scrollLeft: number; snap: SnapMode
   onSeek: (beat: number) => void
-  onEditTimeSig: (e: React.MouseEvent) => void
+  onEditTimeSig: (e: React.MouseEvent, beat: number) => void
 }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const loopDragRef  = useRef<{ type: 'start'|'end'|'move'; startX: number; startLoopStart: number; startLoopEnd: number } | null>(null)
   const [loopCursor, setLoopCursor] = useState('grab')
   const { project, dispatch } = useDaw()
-  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [] } = project
+  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [] } = project
   const pxPerSec = beatW * tempo / 60
 
   useEffect(() => {
@@ -131,7 +131,11 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
           const rect = e.currentTarget.getBoundingClientRect()
           onSeek(Math.max(0, (e.clientX - rect.left + scrollLeft) / beatW))
         }}
-        onContextMenu={e => { e.preventDefault(); onEditTimeSig(e) }}
+        onContextMenu={e => {
+          e.preventDefault()
+          const rect = e.currentTarget.getBoundingClientRect()
+          onEditTimeSig(e, Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, sigNum)))
+        }}
         onDoubleClick={e => {
           const rect  = e.currentTarget.getBoundingClientRect()
           const localY = e.clientY - rect.top
@@ -141,6 +145,22 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
           dispatch({ type: 'ADD_CUE_MARKER', marker: { id: `cue-${Date.now()}`, beat, name } })
         }}
       />
+      {/* Tempo markers */}
+      {(tempoMarkers ?? []).map(m => {
+        const mx = m.beat * beatW - scrollLeft
+        if (mx < -8 || mx > 9999) return null
+        return (
+          <div key={m.id} style={{ position: 'absolute', top: 0, left: mx, width: 1, height: RULER_H, background: '#fb923c', zIndex: 2, pointerEvents: 'none' }}>
+            <div
+              title={`Tempo ${m.tempo} BPM from here — right-click to remove`}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_TEMPO_MARKER', markerId: m.id }) }}
+              style={{ position: 'absolute', bottom: 0, left: 0, background: '#fb923c', color: '#241203', fontSize: 8, padding: '0 3px', borderRadius: '0 2px 0 0', whiteSpace: 'nowrap', fontWeight: 800, cursor: 'context-menu', pointerEvents: 'auto' }}
+            >
+              ♩{m.tempo}
+            </div>
+          </div>
+        )
+      })}
       {/* Cue markers */}
       {cueMarkers.map(marker => {
         const mx = marker.beat * beatW - scrollLeft
@@ -273,7 +293,7 @@ export default function ArrangementView() {
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
-  const [tsPopover, setTsPopover]   = useState<{ x: number; y: number } | null>(null)
+  const [tsPopover, setTsPopover]   = useState<{ x: number; y: number; beat?: number } | null>(null)
   const [tsDraftBpm, setTsDraftBpm] = useState(120)
   const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
@@ -484,12 +504,27 @@ export default function ArrangementView() {
     document.addEventListener('mouseup', mu)
   }
 
-  function handleEditTimeSig(e: React.MouseEvent) {
+  function handleEditTimeSig(e: React.MouseEvent, beat = 0) {
     setTsDraftNum(project.timeSignatureNum)
     setTsDraftDen(project.timeSignatureDen)
     setTsDraftBpm(project.tempo)
-    setTsPopover({ x: e.clientX, y: e.clientY })
+    setTsPopover({ x: e.clientX, y: e.clientY, beat })
   }
+
+  // Tempo markers: the current tempo follows the playhead — the last marker
+  // at or before the position wins. Runs on a light interval so seeks and
+  // playback both pick up changes.
+  useEffect(() => {
+    const markers = project.tempoMarkers ?? []
+    if (markers.length === 0) return
+    const iv = setInterval(() => {
+      const beat = engine.currentBeat
+      const active = [...markers].filter(m => m.beat <= beat + 0.001).sort((a, b) => b.beat - a.beat)[0]
+      const want = active?.tempo ?? markers[0].tempo
+      if (Math.abs(want - project.tempo) > 0.01) dispatch({ type: 'SET_TEMPO', tempo: want })
+    }, 150)
+    return () => clearInterval(iv)
+  }, [project.tempoMarkers, project.tempo, engine, dispatch])
 
   function handleWheel(e: React.WheelEvent) {
     if (e.ctrlKey || e.metaKey) {
@@ -1345,6 +1380,15 @@ export default function ArrangementView() {
             />
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>BPM</span>
           </div>
+          <button
+            onClick={() => {
+              dispatch({ type: 'ADD_TEMPO_MARKER', marker: { id: crypto.randomUUID(), beat: tsPopover?.beat ?? 0, tempo: tsDraftBpm } })
+              setTsPopover(null)
+            }}
+            title="Playback switches to this BPM when the playhead reaches this bar"
+            style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.45)', color: '#fb923c', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
+            ♩ Tempo change here → {tsDraftBpm} BPM
+          </button>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) }}
               style={{ flex: 1, background: 'var(--accent)', border: 'none', color: '#fff', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 600 }}>
