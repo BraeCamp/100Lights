@@ -12,6 +12,7 @@ import { renderMarkdown } from '@/lib/simple-markdown'
 import { initLibrary, libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import { getAllChordRecipes } from '@/lib/practice-recipes'
+import { groupIntoChords } from '@/lib/chord-analysis'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { encodeWav } from '@/lib/wav-codec'
 
@@ -117,7 +118,7 @@ export default function ArticlesPanel() {
   }
 
   // Upload a blob into learn-audio/ and insert the @audio marker
-  async function uploadBlobAsArticleAudio(blob: Blob, name: string) {
+  async function uploadBlobReturnUrl(blob: Blob, name: string): Promise<string> {
     const type = blob.type || 'audio/wav'
     // Bytes go to our server, which pushes to R2 — no browser→R2 request, so
     // no cross-origin CORS/CSP to fail on
@@ -129,7 +130,12 @@ export default function ArticlesPanel() {
     } catch { throw new Error('Could not reach the server. Check your connection and try again.') }
     const d = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(d.error ?? `Upload failed (${r.status})`)
-    appendToBody(`@audio(${d.url}) ${name}`)
+    return d.url as string
+  }
+
+  async function uploadBlobAsArticleAudio(blob: Blob, name: string) {
+    const url = await uploadBlobReturnUrl(blob, name)
+    appendToBody(`@audio(${url}) ${name}`)
   }
 
   async function insertLibrarySample(entry: LibraryEntry) {
@@ -171,9 +177,14 @@ export default function ArticlesPanel() {
       const rendered = await off.startRendering()
       const channels = Array.from({ length: rendered.numberOfChannels }, (_, ch) => rendered.getChannelData(ch))
       const blob = new Blob([encodeWav(channels, rate)], { type: 'audio/wav' })
-      await uploadBlobAsArticleAudio(blob, `${recipe.title} (piano)`)
+      // Upload the piano render, then insert a @progression carrying the chord
+      // data inline so the article's interactive piano works without a fetch
+      const url = await uploadBlobReturnUrl(blob, `${recipe.title} (piano)`)
+      const chords = groupIntoChords(spec.notes)
+      const payload = { chords, audioUrl: url, originalKey: 0 }
+      appendToBody(`@progression(${encodeURIComponent(JSON.stringify(payload))}) ${recipe.title}`)
       setLibPicker(false)
-      setMsg('Recipe rendered & inserted ✓')
+      setMsg('Recipe inserted with interactive piano ✓')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Insert failed') } finally { setBusy(null) }
   }
 

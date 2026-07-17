@@ -1,0 +1,186 @@
+'use client'
+
+// Interactive chord-progression viewer for Learn articles. Shows the audio
+// player, then a "See more" that expands (animated) into a digital piano
+// lighting the keys of the active chord, a key/transpose selector, and a
+// play button that steps the highlight through the progression in time.
+//
+// Data-driven by the recipe's real notes (passed inline in the @progression
+// marker), so it's exact and needs no fetch. SEO note: the chord names and
+// key render as real text and stay in the DOM even when collapsed.
+
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { Play, Square, ChevronDown } from 'lucide-react'
+import { playMelodicNote } from '@/lib/instrument-synth'
+import { KEY_NAMES, transposeChords, type Chord } from '@/lib/chord-analysis'
+
+export interface ProgressionData {
+  chords: Chord[]
+  audioUrl?: string
+  caption?: string
+  originalKey?: number   // pitch class the recipe was authored in (default C = 0)
+}
+
+let _ctx: AudioContext | null = null
+const ctx = () => (_ctx ??= new AudioContext())
+
+// Two octaves from C — enough to show any triad/7th voicing clearly.
+const LOW = 48 // C3
+const KEYS = Array.from({ length: 25 }, (_, i) => LOW + i)
+const isBlack = (m: number) => [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)
+
+export default function ArticleProgression({ data }: { data: ProgressionData }) {
+  const [open, setOpen] = useState(false)
+  const [keyPc, setKeyPc] = useState(data.originalKey ?? 0)
+  const [active, setActive] = useState<number | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const stopRef = useRef<() => void>(() => {})
+
+  const semis = keyPc - (data.originalKey ?? 0)
+  const chords = useMemo(() => transposeChords(data.chords, semis), [data.chords, semis])
+
+  useEffect(() => () => stopRef.current(), [])
+
+  // Which pitch classes are lit: the active chord, or the first when idle
+  const litPitches = new Set((chords[active ?? 0]?.pitches ?? []).map(p => ((p % 12) + 12) % 12))
+
+  function playFrom(index: number, sequence: boolean) {
+    stopRef.current()
+    const c = ctx()
+    void c.resume()
+    const g = c.createGain()
+    g.gain.value = 0.7
+    g.connect(c.destination)
+    const spb = 60 / 100
+    const t0 = c.currentTime + 0.05
+    const timers: number[] = []
+    let clock = 0
+    const list = sequence ? chords.slice(index) : [chords[index]]
+    list.forEach((chord, i) => {
+      const when = t0 + clock
+      for (const p of chord.pitches) playMelodicNote(c, 'piano-grand', p, when, 0.9, g)
+      const idx = index + i
+      timers.push(window.setTimeout(() => setActive(idx), clock * 1000))
+      clock += Math.max(0.5, chord.dur) * spb
+    })
+    setPlaying(true)
+    const done = window.setTimeout(() => stopRef.current(), clock * 1000 + 400)
+    stopRef.current = () => {
+      timers.forEach(clearTimeout); clearTimeout(done)
+      g.gain.setTargetAtTime(0, c.currentTime, 0.03)
+      setTimeout(() => g.disconnect(), 250)
+      setPlaying(false)
+      stopRef.current = () => {}
+    }
+  }
+
+  return (
+    <figure style={{ margin: '24px 0' }}>
+      {data.audioUrl && (
+        <audio controls preload="none" src={data.audioUrl} style={{ width: '100%', height: 40, display: 'block' }} aria-label={data.caption || 'Chord progression'} />
+      )}
+      {/* Always in the DOM (crawlable): chord names + key */}
+      <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.6 }}>
+        {data.caption && <span style={{ fontWeight: 600 }}>{data.caption} · </span>}
+        Chords: {chords.map(c => c.name).join(' – ')} <span style={{ color: 'var(--text-muted)' }}>(key of {KEY_NAMES[keyPc]})</span>
+      </div>
+
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 8,
+          fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 8,
+          border: '1px solid var(--border)', background: 'var(--bg-card)', color: '#a78bfa', cursor: 'pointer',
+        }}
+      >
+        <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+        {open ? 'Hide the piano' : 'See more — show it on a piano'}
+      </button>
+
+      {/* Animated expander. Kept in the DOM; the piano SVG only mounts once
+          opened, so it stays lazy. */}
+      <div
+        style={{
+          // Fixed generous ceiling (content is a fixed-height piano + wrapping
+          // chips, always well under this) so the reveal animates without
+          // reading layout during render
+          maxHeight: open ? 900 : 0,
+          overflow: 'hidden', transition: 'max-height 0.35s ease',
+        }}
+      >
+        {open && (
+          <div style={{ padding: '14px 2px 2px' }}>
+            {/* Key selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginRight: 2 }}>KEY</span>
+              {KEY_NAMES.map((k, pc) => (
+                <button key={k} onClick={() => setKeyPc(pc)}
+                  style={{
+                    fontSize: 11, fontWeight: 700, minWidth: 26, padding: '3px 6px', borderRadius: 6, cursor: 'pointer',
+                    border: pc === keyPc ? '1px solid #a78bfa' : '1px solid var(--border)',
+                    background: pc === keyPc ? 'rgba(167,139,250,0.18)' : 'transparent',
+                    color: pc === keyPc ? '#a78bfa' : 'var(--text-secondary)',
+                  }}>{k}</button>
+              ))}
+            </div>
+
+            <Piano lit={litPitches} />
+
+            {/* Chord chips + play */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
+              <button
+                onClick={() => playing ? stopRef.current() : playFrom(0, true)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700,
+                  padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: playing ? 'var(--accent)' : 'rgba(167,139,250,0.18)', color: playing ? '#fff' : '#a78bfa',
+                }}
+              >
+                {playing ? <Square size={12} fill="currentColor" /> : <Play size={13} />} {playing ? 'Stop' : 'Play chords'}
+              </button>
+              {chords.map((c, i) => (
+                <button key={i}
+                  onClick={() => { setActive(i); playFrom(i, false) }}
+                  onMouseEnter={() => !playing && setActive(i)}
+                  style={{
+                    fontSize: 12, fontWeight: 700, padding: '5px 11px', borderRadius: 8, cursor: 'pointer',
+                    border: active === i ? '1px solid #a78bfa' : '1px solid var(--border)',
+                    background: active === i ? 'rgba(167,139,250,0.2)' : 'var(--bg-card)',
+                    color: active === i ? '#a78bfa' : 'var(--text-primary)',
+                  }}>{c.name}</button>
+              ))}
+            </div>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8 }}>
+              Lit keys are the notes to press for the highlighted chord. Change the KEY to transpose the whole progression.
+            </p>
+          </div>
+        )}
+      </div>
+    </figure>
+  )
+}
+
+function Piano({ lit }: { lit: Set<number> }) {
+  const whites = KEYS.filter(m => !isBlack(m))
+  const W = 26, H = 96, BW = 16, BH = 60
+  const width = whites.length * W
+  return (
+    <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-base)', padding: 8 }}>
+      <svg viewBox={`0 0 ${width} ${H}`} width={width} height={H} style={{ display: 'block', maxWidth: '100%' }} role="img" aria-label="Piano keys for the chord">
+        {whites.map((m, i) => {
+          const on = lit.has(((m % 12) + 12) % 12)
+          return <rect key={m} x={i * W} y={0} width={W - 1} height={H} rx={3}
+            fill={on ? '#a78bfa' : '#f4f4f8'} stroke="#3a3a44" strokeWidth={0.5} />
+        })}
+        {KEYS.filter(isBlack).map(m => {
+          // position a black key just after its white neighbor
+          const whiteIndex = whites.filter(w => w < m).length
+          const on = lit.has(((m % 12) + 12) % 12)
+          return <rect key={m} x={whiteIndex * W - BW / 2} y={0} width={BW} height={BH} rx={2}
+            fill={on ? '#7c3aed' : '#1a1a22'} stroke="#000" strokeWidth={0.5} />
+        })}
+      </svg>
+    </div>
+  )
+}

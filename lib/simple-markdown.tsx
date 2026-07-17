@@ -9,6 +9,7 @@
 
 import React from 'react'
 import ArticleSoundEmbed from '@/components/ArticleSoundEmbed'
+import ArticleProgression, { type ProgressionData } from '@/components/ArticleProgression'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
@@ -106,6 +107,19 @@ export function renderMarkdown(md: string): React.ReactNode {
     if (b.startsWith('@sound')) {
       const m = b.match(/^@sound\(([^)]+)\)\s*([\s\S]*)$/)
       if (m) out.push(<ArticleSoundEmbed key={key} itemId={m[1].trim()} caption={m[2]?.trim() ?? ''} />)
+      return
+    }
+    // @progression(<uri-encoded json>) caption — chord progression with the
+    // interactive piano viewer (see-more, transpose, per-chord highlight)
+    if (b.startsWith('@progression')) {
+      const m = b.match(/^@progression\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) {
+        try {
+          const parsed = JSON.parse(decodeURIComponent(m[1])) as ProgressionData
+          if (m[2]?.trim()) parsed.caption = m[2].trim()
+          if (parsed.chords?.length) out.push(<ArticleProgression key={key} data={parsed} />)
+        } catch { /* malformed payload — skip */ }
+      }
       return
     }
     if (/^#{1,3}\s/.test(b)) {
