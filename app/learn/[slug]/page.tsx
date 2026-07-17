@@ -64,4 +64,10 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
   )
 }
 
-export const dynamic = 'force-dynamic'
+export const revalidate = 60
+
+// Pre-render the published articles at build (fast first paint); DB-only
+// articles render on demand and then cache for the revalidate window.
+export async function generateStaticParams() {
+  return (await getArticles({ includeDrafts: false })).map(a => ({ slug: a.slug }))
+}

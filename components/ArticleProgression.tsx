@@ -25,25 +25,30 @@ export interface ProgressionData {
 let _ctx: AudioContext | null = null
 const ctx = () => (_ctx ??= new AudioContext())
 
-// Two octaves from C — enough to show any triad/7th voicing clearly.
-const LOW = 48 // C3
-const KEYS = Array.from({ length: 25 }, (_, i) => LOW + i)
 const isBlack = (m: number) => [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)
+// Octave number in the common "middle C = C4" convention (MIDI 60 → C4).
+const octaveOf = (m: number) => Math.floor(m / 12) - 1
 
 export default function ArticleProgression({ data }: { data: ProgressionData }) {
   const [open, setOpen] = useState(false)
   const [keyPc, setKeyPc] = useState(data.originalKey ?? 0)
   const [active, setActive] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
+  const [octave, setOctave] = useState(0)
   const stopRef = useRef<() => void>(() => {})
 
-  const semis = keyPc - (data.originalKey ?? 0)
+  const semis = (keyPc - (data.originalKey ?? 0)) + octave * 12
   const chords = useMemo(() => transposeChords(data.chords, semis), [data.chords, semis])
 
   useEffect(() => () => stopRef.current(), [])
 
-  // Which pitch classes are lit: the active chord, or the first when idle
-  const litPitches = new Set((chords[active ?? 0]?.pitches ?? []).map(p => ((p % 12) + 12) % 12))
+  // Range spans EVERY note so the piano doesn't resize between chords; only the
+  // active chord's EXACT notes light (the specific C that plays, not all C's).
+  const allNotes = chords.flatMap(c => c.pitches)
+  const litNotes = new Set(chords[active ?? 0]?.pitches ?? [])
+  // Octave headroom guards — keep the shifted notes on a real piano
+  const canUp = Math.max(...allNotes) + 12 <= 100
+  const canDown = Math.min(...allNotes) - 12 >= 24
 
   // The recipe's distinct notes → a real MIDI file, built client-side from the
   // CURRENTLY transposed chords, so the download matches the selected key. This
@@ -139,9 +144,15 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
                     color: pc === keyPc ? '#a78bfa' : 'var(--text-secondary)',
                   }}>{k}</button>
               ))}
+              <span style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>OCT</span>
+              <button onClick={() => setOctave(o => o - 1)} disabled={!canDown} aria-label="Octave down"
+                style={{ fontSize: 13, fontWeight: 800, width: 26, padding: '2px 0', borderRadius: 6, cursor: canDown ? 'pointer' : 'default', border: '1px solid var(--border)', background: 'transparent', color: canDown ? 'var(--text-secondary)' : 'var(--text-muted)', opacity: canDown ? 1 : 0.4 }}>–</button>
+              <button onClick={() => setOctave(o => o + 1)} disabled={!canUp} aria-label="Octave up"
+                style={{ fontSize: 13, fontWeight: 800, width: 26, padding: '2px 0', borderRadius: 6, cursor: canUp ? 'pointer' : 'default', border: '1px solid var(--border)', background: 'transparent', color: canUp ? 'var(--text-secondary)' : 'var(--text-muted)', opacity: canUp ? 1 : 0.4 }}>+</button>
             </div>
 
-            <Piano lit={litPitches} />
+            <Piano notes={allNotes} lit={litNotes} />
 
             {/* Chord chips + play */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
@@ -186,22 +197,31 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
   )
 }
 
-function Piano({ lit }: { lit: Set<number> }) {
-  const whites = KEYS.filter(m => !isBlack(m))
-  const W = 26, H = 96, BW = 16, BH = 60
+function Piano({ notes, lit }: { notes: number[]; lit: Set<number> }) {
+  // Whole-octave window that comfortably contains the progression's notes
+  const lo = Math.floor(Math.min(...notes) / 12) * 12
+  const hi = (Math.floor(Math.max(...notes) / 12) + 1) * 12   // exclusive
+  const keys = Array.from({ length: hi - lo }, (_, i) => lo + i)
+  const whites = keys.filter(m => !isBlack(m))
+  const W = 30, H = 108, BW = 18, BH = 66
   const width = whites.length * W
   return (
     <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-base)', padding: 8 }}>
-      <svg viewBox={`0 0 ${width} ${H}`} width={width} height={H} style={{ display: 'block', maxWidth: '100%' }} role="img" aria-label="Piano keys for the chord">
+      <svg viewBox={`0 0 ${width} ${H}`} width={width} height={H} style={{ display: 'block', maxWidth: '100%', minWidth: Math.min(width, 320) }} role="img" aria-label="Piano keys for the chord">
         {whites.map((m, i) => {
-          const on = lit.has(((m % 12) + 12) % 12)
-          return <rect key={m} x={i * W} y={0} width={W - 1} height={H} rx={3}
-            fill={on ? '#a78bfa' : '#f4f4f8'} stroke="#3a3a44" strokeWidth={0.5} />
+          const on = lit.has(m)
+          return (
+            <g key={m}>
+              <rect x={i * W} y={0} width={W - 1} height={H} rx={3} fill={on ? '#a78bfa' : '#f4f4f8'} stroke="#3a3a44" strokeWidth={0.5} />
+              {m % 12 === 0 && (
+                <text x={i * W + (W - 1) / 2} y={H - 6} textAnchor="middle" fontSize={8} fill={on ? '#2a1a4a' : '#8a8a9a'} fontWeight={700}>C{octaveOf(m)}</text>
+              )}
+            </g>
+          )
         })}
-        {KEYS.filter(isBlack).map(m => {
-          // position a black key just after its white neighbor
+        {keys.filter(isBlack).map(m => {
           const whiteIndex = whites.filter(w => w < m).length
-          const on = lit.has(((m % 12) + 12) % 12)
+          const on = lit.has(m)
           return <rect key={m} x={whiteIndex * W - BW / 2} y={0} width={BW} height={BH} rx={2}
             fill={on ? '#7c3aed' : '#1a1a22'} stroke="#000" strokeWidth={0.5} />
         })}
