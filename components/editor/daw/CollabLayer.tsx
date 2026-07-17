@@ -24,6 +24,7 @@ interface Props {
   editingClipId: string | null
   view: DawView
   onOthers: (peers: CollabPeer[]) => void
+  getPlayhead?: () => number | null
 }
 
 // Portals the avatars + invite button into the transport row's collab slot
@@ -55,7 +56,7 @@ function CollabTransportSlot({ projectId }: { projectId: string }) {
 
 export default function CollabLayer({
   projectId, broadcastRef, rawDispatch, isRemoteRef, projectRef,
-  selectedTrackId, selectedClipId, editingClipId, view, onOthers,
+  selectedTrackId, selectedClipId, editingClipId, view, onOthers, getPlayhead,
 }: Props) {
   return (
     <RoomProvider
@@ -70,6 +71,7 @@ export default function CollabLayer({
         selectedClipId={selectedClipId}
         editingClipId={editingClipId}
         view={view}
+        getPlayhead={getPlayhead}
       />
       <CollabTransportSlot projectId={projectId} />
     </RoomProvider>

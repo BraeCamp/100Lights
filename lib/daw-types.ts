@@ -470,6 +470,8 @@ export interface AudioClip {
   name: string
   /** Who added this clip (collab attribution) — stamped at creation. */
   createdBy?: string
+  /** When it was added (ISO) — powers the away-recap. */
+  createdAt?: string
   startBeat: number
   durationBeats: number
   r2Key?: string
@@ -514,6 +516,8 @@ export interface MidiClip {
   name: string
   /** Who added this clip (collab attribution) — stamped at creation. */
   createdBy?: string
+  /** When it was added (ISO) — powers the away-recap. */
+  createdAt?: string
   startBeat: number
   durationBeats: number
   notes: MidiNote[]
@@ -558,6 +562,8 @@ export interface CollabPeer {
   selectedClipId: string | null
   /** Clip open in their piano roll — treat as a soft edit lock */
   editingClipId: string | null
+  /** Their transport position while playing (beats) — null when stopped */
+  playheadBeat?: number | null
 }
 
 // ── Scene ─────────────────────────────────────────────────────────────────────

@@ -12,6 +12,8 @@ export type CollabPresence = {
   /** Clip currently open in this user's piano roll — a soft edit lock */
   editingClipId: string | null
   view: string
+  /** Where this user's transport is (beats) while playing — null when stopped */
+  playheadBeat?: number | null
 }
 
 const client = createClient({

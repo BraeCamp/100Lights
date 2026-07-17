@@ -71,6 +71,7 @@ const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: 
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
+const SessionRecap = dynamic(() => import('./daw/SessionRecap'), { ssr: false })
 
 // ── Podcast Setup Panel ───────────────────────────────────────────────────────
 
@@ -518,6 +519,13 @@ export default function AudioEditor(props: AudioEditorProps) {
   const userNameRef = useRef<string>('')
   useEffect(() => { userNameRef.current = user?.firstName || user?.username || '' }, [user])
 
+  // Stable playhead getter for presence (a fresh closure each render would
+  // restart the presence interval)
+  const getPlayheadRef = useRef(() => {
+    const eng = engineRef.current
+    return eng && eng.isPlaying ? eng.currentBeat : null
+  })
+
   const dispatch = useCallback((action: DawAction) => {
     // View-only collaborators: their room access is read-only server-side, so
     // local edits would silently diverge from the real project. Drop them here
@@ -530,8 +538,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (action.type === 'ADD_TRACK' && !action.id) action = { ...action, id: crypto.randomUUID() }
     if (action.type === 'ADD_SCENE' && !action.id) action = { ...action, id: crypto.randomUUID() }
     if (action.type === 'DUPLICATE_TRACK' && !action.seed) action = { ...action, seed: crypto.randomUUID() }
-    if (action.type === 'ADD_CLIP' && !action.clip.createdBy && userNameRef.current) {
-      action = { ...action, clip: { ...action.clip, createdBy: userNameRef.current } }
+    if (action.type === 'ADD_CLIP' && !action.clip.createdAt) {
+      action = { ...action, clip: { ...action.clip, createdAt: new Date().toISOString(), ...(userNameRef.current && !action.clip.createdBy ? { createdBy: userNameRef.current } : {}) } }
     }
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-49), { before: projectRef.current, action }]
@@ -1188,6 +1196,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           overflow: 'hidden',
         }}
       >
+        {props.projectId && <SessionRecap projectId={props.projectId} />}
         {/* Pre-save Share: saves the project, then CollabInvite opens */}
         {!props.projectId && props.onSave && !props.readOnly && (
           <UnsavedShareButton onShare={() => handleSaveRef.current()} />
@@ -1205,6 +1214,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             editingClipId={expandedPianoRollClipId}
             view={view}
             onOthers={setCollabPeers}
+            getPlayhead={getPlayheadRef.current}
           />
         )}
         <Transport />

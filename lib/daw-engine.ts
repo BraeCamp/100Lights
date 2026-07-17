@@ -459,9 +459,27 @@ export class DawEngine extends EventTarget {
     if (bus) bus.panner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.01)
   }
 
-  setTrackVolume(id: string, volume: number) {
+  // "My mix": per-track local gain multipliers that never touch project state —
+  // each collaborator can rebalance their own headphones without moving the
+  // shared faders. Multiplied into every volume write below.
+  private _localMix = new Map<string, number>()
+  private _baseVol  = new Map<string, number>()
+
+  setLocalTrackGain(id: string, mult: number) {
+    if (Math.abs(mult - 1) < 0.001) this._localMix.delete(id)
+    else this._localMix.set(id, mult)
     const nodes = this.trackNodes.get(id)
-    if (nodes) nodes.gain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.01)
+    if (nodes) nodes.gain.gain.setTargetAtTime((this._baseVol.get(id) ?? 1) * mult, this.ctx.currentTime, 0.01)
+  }
+
+  getLocalTrackGain(id: string): number {
+    return this._localMix.get(id) ?? 1
+  }
+
+  setTrackVolume(id: string, volume: number) {
+    this._baseVol.set(id, volume)
+    const nodes = this.trackNodes.get(id)
+    if (nodes) nodes.gain.gain.setTargetAtTime(volume * (this._localMix.get(id) ?? 1), this.ctx.currentTime, 0.01)
   }
 
   setTrackPan(id: string, pan: number) {
@@ -1376,7 +1394,8 @@ export class DawEngine extends EventTarget {
     const t = this.ctx.currentTime
 
     if (parameter === 'volume') {
-      nodes.gain.gain.setTargetAtTime(value, t, 0.01)
+      this._baseVol.set(trackId, value)
+      nodes.gain.gain.setTargetAtTime(value * (this._localMix.get(trackId) ?? 1), t, 0.01)
       return
     }
     if (parameter === 'pan') {

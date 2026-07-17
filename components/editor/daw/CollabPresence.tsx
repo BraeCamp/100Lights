@@ -185,14 +185,29 @@ export function CollabBridge({ broadcastRef, rawDispatch, isRemoteRef, projectRe
 // ── CollabSelfPresence ────────────────────────────────────────────────────────
 // Syncs local Clerk user info + current UI state into Liveblocks presence.
 
-export function CollabSelfPresence({ selectedTrackId, selectedClipId, editingClipId, view }: {
+export function CollabSelfPresence({ selectedTrackId, selectedClipId, editingClipId, view, getPlayhead }: {
   selectedTrackId: string | null
   selectedClipId: string | null
   editingClipId: string | null
   view: string
+  getPlayhead?: () => number | null
 }) {
   const { user } = useUser()
   const updatePresence = useUpdateMyPresence()
+
+  // Playhead ghost: share where our transport is while playing (null = stopped).
+  // 400ms is smooth enough for a "they're listening here" line without spam.
+  useEffect(() => {
+    if (!getPlayhead) return
+    let last: number | null = null
+    const iv = setInterval(() => {
+      const beat = getPlayhead()
+      if (beat === last) return
+      last = beat
+      updatePresence({ playheadBeat: beat })
+    }, 400)
+    return () => clearInterval(iv)
+  }, [getPlayhead, updatePresence])
 
   // Sync user identity once on mount / user change
   useEffect(() => {
@@ -230,6 +245,7 @@ export function CollabOthersBridge({ onOthers }: {
         selectedTrackId: p?.selectedTrackId ?? null,
         selectedClipId: p?.selectedClipId ?? null,
         editingClipId: p?.editingClipId ?? null,
+        playheadBeat: p?.playheadBeat ?? null,
       }
     }))
   }, [others, onOthers])

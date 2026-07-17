@@ -423,8 +423,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   }
 
   async function saveClipToLibrary() {
+    // Attribution follows the clip into your library — in a shared session
+    // you can pull a collaborator's take and it stays "by them"
+    const author = clip.createdBy
     if (isMidiClip(clip)) {
-      await saveUserRecipe(clip as MidiClip, clip.name, '', false)
+      await saveUserRecipe(clip as MidiClip, clip.name, author ? `by ${author}` : '', false)
     } else {
       const rendered = await audioClipBlob()
       if (!rendered) throw new Error('audio still loading — try again in a second')
@@ -432,6 +435,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       await libraryAdd({
         id: crypto.randomUUID(), name: clip.name, category: 'custom',
         audioBlob: rendered.blob, duration: rendered.duration, addedAt: new Date().toISOString(),
+        ...(author ? { authorName: author } : {}),
       })
       window.dispatchEvent(new Event('100lights-library-changed'))
     }

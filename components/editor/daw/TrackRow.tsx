@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus } from 'lucide-react'
+import { Plus, Headphones } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
@@ -307,6 +307,27 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   // 'expand' scales every member by the drag ratio (relations preserved);
   // 'loop' tiles copies of the entire selection so the group repeats
   // start-to-end instead of each clip looping at its own edge.
+  // "My mix": local-only gain for this track (engine-side, never synced)
+  const [myMixOpen, setMyMixOpen] = useState<{ x: number; y: number } | null>(null)
+  const [myMixGain, setMyMixGain] = useState(() => engine.getLocalTrackGain(track.id))
+  const myMixBtnRef = useRef<HTMLButtonElement>(null)
+  const myMixPopRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!myMixOpen) return
+    const onDown = (e: PointerEvent) => {
+      if (myMixPopRef.current?.contains(e.target as Node)) return
+      if (myMixBtnRef.current?.contains(e.target as Node)) return
+      setMyMixOpen(null)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMyMixOpen(null) }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [myMixOpen])
+
   const groupResizeRef = useRef<{
     clipId: string
     grabbedDur: number
@@ -701,6 +722,45 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
               style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
             >FX</button>
+            {collabPeers.length > 0 && (
+              <button
+                ref={myMixBtnRef}
+                title="My mix — adjust this track just for you (collaborators keep their own balance)"
+                onClick={e => {
+                  e.stopPropagation()
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  setMyMixOpen(v => v ? null : { x: r.left - 60, y: r.bottom + 6 })
+                }}
+                style={{ width: 18, height: 14, borderRadius: 2, border: `1px solid ${Math.abs(myMixGain - 1) > 0.01 ? '#34d399' : 'var(--border)'}`, background: myMixOpen ? 'rgba(52,211,153,0.2)' : 'var(--bg-surface)', color: Math.abs(myMixGain - 1) > 0.01 ? '#34d399' : 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              ><Headphones size={9} /></button>
+            )}
+            {myMixOpen && createPortal(
+              <div
+                ref={myMixPopRef}
+                onClick={e => e.stopPropagation()}
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  position: 'fixed', zIndex: 1500,
+                  left: myMixOpen.x,
+                  top: myMixOpen.y,
+                  background: 'var(--bg-surface)', border: '1px solid rgba(52,211,153,0.4)', borderRadius: 8,
+                  padding: '8px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.6)', width: 180,
+                  display: 'flex', flexDirection: 'column', gap: 5,
+                }}
+              >
+                <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', letterSpacing: '0.06em' }}>MY MIX · {Math.round(myMixGain * 100)}%</span>
+                <input
+                  type="range" min={0} max={2} step={0.01} value={myMixGain}
+                  onChange={e => { const v = parseFloat(e.target.value); setMyMixGain(v); engine.setLocalTrackGain(track.id, v) }}
+                  className="cf-slider" style={{ accentColor: '#34d399' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>Only you hear this change</span>
+                  <button onClick={() => { setMyMixGain(1); engine.setLocalTrackGain(track.id, 1) }} style={{ fontSize: 8.5, fontWeight: 700, padding: '2px 7px', borderRadius: 99, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>Reset</button>
+                </div>
+              </div>,
+              document.body,
+            )}
             {takeLanes.length > 0 && (
               <button
                 title={takesExpanded ? 'Hide takes' : 'Show takes'}

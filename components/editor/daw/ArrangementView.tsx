@@ -351,7 +351,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -1412,6 +1412,18 @@ export default function ArrangementView() {
       {/* Global playhead overlay — clipped to track content area so it stays behind the header */}
       <div style={{ position: 'absolute', left: HDR_W, right: 0, top: 30 + RULER_H, bottom: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 10 }}>
         <div ref={playheadRef} style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: '#ff5a5a', boxShadow: '0 0 6px rgba(255,80,80,0.9), 0 0 1px rgba(255,255,255,0.6)', zIndex: 5, pointerEvents: 'none' }} />
+        {/* Collaborators' playheads — where each of them is listening right now */}
+        {collabPeers.filter(pr => pr.playheadBeat != null).map(pr => {
+          const gx = (pr.playheadBeat as number) * beatW - scrollLeft
+          if (gx < -4 || gx > viewWidth + 4) return null
+          return (
+            <div key={pr.connectionId} style={{ position: 'absolute', top: 0, bottom: 0, left: gx, width: 1.5, background: pr.color, opacity: 0.65, zIndex: 4, pointerEvents: 'none' }}>
+              <span style={{ position: 'absolute', top: 2, left: 3, fontSize: 7.5, fontWeight: 800, color: pr.color, background: 'rgba(10,10,16,0.85)', padding: '0 4px', borderRadius: 3, whiteSpace: 'nowrap' }}>
+                ▶ {pr.name.split(' ')[0]}
+              </span>
+            </div>
+          )
+        })}
       </div>
 
       {/* Time signature popover */}
