@@ -33,6 +33,9 @@ export default function ArticlesPanel() {
   const [msg, setMsg] = useState('')
   const [genTopic, setGenTopic] = useState('')
   const [genNotes, setGenNotes] = useState('')
+  const [soundPicker, setSoundPicker] = useState(false)
+  const [soundQuery, setSoundQuery] = useState('')
+  const [soundResults, setSoundResults] = useState<Array<{ id: string; name: string; kind: string; authorName: string }> | null>(null)
 
   const load = useCallback(async () => {
     const r = await fetch('/api/admin/articles').catch(() => null)
@@ -89,6 +92,35 @@ export default function ArticlesPanel() {
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Generation failed') } finally { setBusy(null) }
   }
 
+  function appendToBody(line: string) {
+    setSel(s => s ? { ...s, body: `${s.body.replace(/\s+$/, '')}\n\n${line}\n` } : s)
+  }
+
+  async function uploadAudio(file: File) {
+    setBusy('upload'); setMsg('')
+    try {
+      const r = await fetch('/api/admin/articles/audio', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error ?? 'Upload slot failed')
+      const put = await fetch(d.url, { method: 'PUT', headers: { 'Content-Type': file.type || 'audio/mpeg' }, body: file })
+      if (!put.ok) throw new Error('Upload failed')
+      appendToBody(`@audio(/api/learn-audio?key=${encodeURIComponent(d.key)}) ${file.name.replace(/\.[^.]+$/, '')}`)
+      setMsg('Audio inserted ✓')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Upload failed') } finally { setBusy(null) }
+  }
+
+  async function searchSounds(q: string) {
+    setSoundQuery(q)
+    const r = await fetch(`/api/community?q=${encodeURIComponent(q)}&sort=new`).catch(() => null)
+    if (r?.ok) {
+      const d = await r.json()
+      setSoundResults((d.items as Array<{ id: string; name: string; kind: string; authorName: string }>).slice(0, 12))
+    }
+  }
+
   if (sel) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -131,8 +163,35 @@ export default function ArticlesPanel() {
               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>TAGS (comma-separated)</label>
               <input style={input} value={sel.tags} onChange={e => setSel({ ...sel, tags: e.target.value })} />
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                {busy === 'upload' ? 'Uploading…' : '⬆ Upload audio file'}
+                <input type="file" accept="audio/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) void uploadAudio(f); e.target.value = '' }} />
+              </label>
+              <button
+                onClick={() => { setSoundPicker(v => !v); if (soundResults === null) void searchSounds('') }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed var(--border)', background: soundPicker ? 'var(--bg-card)' : 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >♪ Insert sample or recipe from Community</button>
+              <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Library sounds: share them to the Community first, then insert here.</span>
+            </div>
+            {soundPicker && (
+              <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <input style={input} placeholder="Search community sounds…" value={soundQuery} onChange={e => void searchSounds(e.target.value)} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 200, overflowY: 'auto' }}>
+                  {soundResults?.map(it => (
+                    <button key={it.id} onClick={() => { appendToBody(`@sound(${it.id}) ${it.name}`); setSoundPicker(false); setMsg('Embed inserted ✓') }}
+                      style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</span>
+                      <span style={{ fontSize: 9.5, color: '#a78bfa', flexShrink: 0 }}>{it.kind}</span>
+                      <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>{it.authorName.split(' ')[0]}</span>
+                    </button>
+                  ))}
+                  {soundResults?.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No matches.</span>}
+                </div>
+              </div>
+            )}
             <div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>BODY — markdown; use `@video caption` for a clip slot, `@video(url) caption` once recorded</label>
+              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>BODY — markdown; `@video caption` = clip slot · `@audio(url) caption` = audio file · `@sound(id) caption` = community embed</label>
               <textarea
                 style={{ ...input, minHeight: 420, fontFamily: 'var(--font-geist-mono)', fontSize: 12.5, lineHeight: 1.6, resize: 'vertical' }}
                 value={sel.body}

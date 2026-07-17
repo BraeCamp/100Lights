@@ -8,6 +8,7 @@
 // renders the actual player once a URL is added.
 
 import React from 'react'
+import ArticleSoundEmbed from '@/components/ArticleSoundEmbed'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
@@ -86,6 +87,25 @@ export function renderMarkdown(md: string): React.ReactNode {
     if (b.startsWith('@video')) {
       const m = b.match(/^@video(?:\(([^)]+)\))?\s*([\s\S]*)$/)
       out.push(<VideoSlot key={key} url={m?.[1] ?? null} caption={m?.[2]?.trim() ?? ''} />)
+      return
+    }
+    // @audio(url) caption — plain audio file player (uploaded or any URL)
+    if (b.startsWith('@audio')) {
+      const m = b.match(/^@audio\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) {
+        out.push(
+          <figure key={key} style={{ margin: '24px 0' }}>
+            <audio controls preload="none" src={m[1]} style={{ width: '100%', height: 40, display: 'block' }} aria-label={m[2]?.trim() ? `Audio: ${m[2].trim()}` : 'Audio clip'} />
+            {m[2]?.trim() && <figcaption style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>{m[2].trim()}</figcaption>}
+          </figure>
+        )
+      }
+      return
+    }
+    // @sound(communityItemId) caption — embeds a shared sample/recipe/song
+    if (b.startsWith('@sound')) {
+      const m = b.match(/^@sound\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) out.push(<ArticleSoundEmbed key={key} itemId={m[1].trim()} caption={m[2]?.trim() ?? ''} />)
       return
     }
     if (/^#{1,3}\s/.test(b)) {
