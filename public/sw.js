@@ -16,8 +16,15 @@ const PAGE_CACHE = `100l-pages-${VERSION}`
 const ASSET_CACHE = `100l-assets-${VERSION}`
 const KEEP = new Set([STATIC_CACHE, PAGE_CACHE, ASSET_CACHE])
 
-self.addEventListener('install', () => {
+self.addEventListener('install', event => {
   self.skipWaiting()
+  // Best-effort precache of the landing page so a network blip on first
+  // visit to / still has something to show
+  event.waitUntil(
+    caches.open(PAGE_CACHE)
+      .then(cache => cache.add('/'))
+      .catch(() => {})
+  )
 })
 
 self.addEventListener('activate', event => {
@@ -67,9 +74,20 @@ function networkFirstNavigation(request) {
         // Same path, different query (e.g. /new?modules=audio&…)
         const samePath = await cache.match(request, { ignoreSearch: true })
         if (samePath) return samePath
+        // Self-healing fallback: momentary DNS/network blips are far more
+        // common than true offline — retry quietly and reload the moment the
+        // connection answers, instead of stranding the user on a dead end.
         return new Response(
-          '<!doctype html><html><body style="background:#0d0d14;color:#e5e5e5;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1 style="font-size:20px">You&rsquo;re offline</h1><p style="color:#9a9aa5;font-size:13px">This page hasn&rsquo;t been cached yet. Reconnect and try again.</p></div></body></html>',
-          { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+          '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connection hiccup</title></head>' +
+          '<body style="background:#0d0d14;color:#e5e5e5;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">' +
+          '<div style="text-align:center;max-width:340px;padding:0 20px">' +
+          '<h1 style="font-size:20px;margin:0 0 10px">Connection hiccup</h1>' +
+          '<p style="color:#9a9aa5;font-size:13px;line-height:1.6;margin:0 0 18px">Couldn&rsquo;t reach the server just now. Retrying automatically&hellip;</p>' +
+          '<button onclick="location.reload()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer">Retry now</button>' +
+          '</div>' +
+          '<script>(function(){var n=0;function t(){n++;fetch(location.href,{cache:"no-store",method:"HEAD"}).then(function(r){if(r.ok||r.status<500)location.reload()}).catch(function(){if(n<40)setTimeout(t,3000)})}setTimeout(t,2000)})()<\/script>' +
+          '</body></html>',
+          { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
         )
       })
   )
