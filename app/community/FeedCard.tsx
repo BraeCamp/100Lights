@@ -236,7 +236,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
 
       {/* Actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-        <button onClick={signedIn ? onVote : () => { window.location.assign('/sign-in') }} title={item.votedByMe ? 'Remove vote' : 'Vote up'} style={{
+        <button onClick={signedIn ? onVote : () => { window.location.assign('/sign-in') }} title={item.votedByMe ? 'Remove vote' : 'Vote up'} aria-label={item.votedByMe ? `Remove your vote (${item.votes} votes)` : `Vote up (${item.votes} votes)`} style={{
           display: 'flex', alignItems: 'center', gap: 4, padding: '5px 11px', borderRadius: 999, cursor: 'pointer', fontSize: 12, fontWeight: 700,
           background: item.votedByMe ? 'rgba(124,58,237,0.18)' : 'transparent',
           border: item.votedByMe ? '1px solid rgba(167,139,250,0.5)' : '1px solid var(--border)',
@@ -289,7 +289,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {onDelete && (
-            <button onClick={onDelete} title="Remove your item" style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
+            <button onClick={onDelete} title="Remove your item" aria-label={`Delete ${item.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
               <Trash2 size={14} />
             </button>
           )}

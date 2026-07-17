@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import DemoVideo from '@/components/DemoVideo'
 import { auth } from '@clerk/nextjs/server'
 import {
   Zap, Check, ArrowRight,
@@ -97,6 +98,39 @@ const steps = [
   },
 ]
 
+const faqs = [
+  {
+    q: 'Is 100Lights really free?',
+    a: 'Yes — the studio is free to use: tracks, piano roll, mixer, effects, recording, and WAV export all work on the free plan. Pro removes project limits and unlocks live co-editing for collaborators.',
+  },
+  {
+    q: 'Do I need to install anything to make music?',
+    a: 'No. 100Lights runs entirely in your browser — no downloads, no plugins, no drivers. There is also an optional desktop app for macOS and Windows if you want computer-audio capture and a dedicated window.',
+  },
+  {
+    q: 'Can I record my voice or instrument?',
+    a: 'Yes. Arm a track, pick your input, and record with a metronome count-in, live waveform, loop takes, and a latency-compensated result. A built-in monitor lets you hear yourself with effects while you record.',
+  },
+  {
+    q: 'Can I make music with friends?',
+    a: 'Yes — share a project link and collaborate live: everyone sees the same tracks, hears each other\u2019s recordings, and can chat, comment on the timeline, and keep their own headphone mix.',
+  },
+  {
+    q: 'What can I export?',
+    a: 'Full mixes as WAV (44.1 or 48 kHz) or WebM, per-track stems as a zip of WAVs, and MIDI files from any pattern. Your sounds and chord recipes can also be published to the community.',
+  },
+]
+
+const faqJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map(f => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+}
+
 const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
@@ -116,6 +150,10 @@ export default async function LandingPage() {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
 
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
@@ -237,17 +275,10 @@ export default async function LandingPage() {
               className="mt-12 sm:mt-16 rounded-2xl border overflow-hidden mx-auto"
               style={{ borderColor: 'var(--border)', background: 'var(--bg-card)', boxShadow: '0 24px 60px rgba(0,0,0,0.45)', maxWidth: 960 }}
             >
-              <video
+              <DemoVideo
                 src="/demo/daw-loop.webm"
                 poster="/demo/daw-poster.jpg"
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="metadata"
-                aria-label="30-second loop of the 100Lights studio: adding tracks, capturing a live take with JAM, and riding a volume fader"
-                className="w-full block"
-                style={{ aspectRatio: '1280 / 800' }}
+                ariaLabel="30-second loop of the 100Lights studio: adding tracks, capturing a live take with JAM, and riding a volume fader"
               />
             </div>
           </section>
@@ -376,6 +407,28 @@ export default async function LandingPage() {
 
           {/* ── Pricing ── */}
           <PricingSection />
+
+          {/* ── FAQ ── */}
+          <section aria-labelledby="faq-heading" className="max-w-3xl mx-auto px-6 pb-16 sm:pb-24">
+            <h2 id="faq-heading" className="text-2xl sm:text-3xl font-bold mb-8 text-center" style={{ color: 'var(--text-primary)' }}>
+              Common questions
+            </h2>
+            <div className="flex flex-col gap-3">
+              {faqs.map(f => (
+                <details
+                  key={f.q}
+                  className="rounded-xl border px-5 py-4 group"
+                  style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
+                >
+                  <summary className="cursor-pointer text-sm font-semibold list-none flex items-center justify-between gap-4" style={{ color: 'var(--text-primary)' }}>
+                    {f.q}
+                    <span aria-hidden="true" className="transition-transform group-open:rotate-45 text-lg leading-none" style={{ color: 'var(--text-muted)' }}>+</span>
+                  </summary>
+                  <p className="text-sm mt-3 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{f.a}</p>
+                </details>
+              ))}
+            </div>
+          </section>
 
           {/* ── CTA ── */}
           <section

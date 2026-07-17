@@ -2,7 +2,18 @@ import Link from 'next/link'
 import { UserButton } from '@clerk/nextjs'
 import type { Metadata } from 'next'
 
-export const metadata: Metadata = { title: 'Community' }
+export const metadata: Metadata = {
+  title: 'Community — Free Sounds, Samples & Chord Recipes',
+  description: 'Browse and play free samples, chord progressions, presets, and full songs shared by 100Lights producers. Listen in the browser, no account needed — import anything into your own project with one click.',
+  alternates: { canonical: 'https://100lights.com/community' },
+  openGraph: {
+    title: '100Lights Community — Free Sounds & Chord Recipes',
+    description: 'Free samples, chord progressions, presets, and songs from 100Lights producers. Listen instantly, import with one click.',
+    url: 'https://100lights.com/community',
+    type: 'website',
+    siteName: '100Lights',
+  },
+}
 
 // The community feed lives outside the (app) group on purpose: it's a public
 // square, not a workspace, so it gets its own minimal chrome instead of the

@@ -9,7 +9,7 @@
   --border-light: #2e2e50;
   --text-primary: #f0effe;
   --text-secondary: #9998bb;
-  --text-muted: #6a6a88;
+  --text-muted: #7d7d9c; /* ≥4.5:1 on --bg-base (WCAG AA) */
   --accent: #7c3aed;
   --accent-hover: #6d28d9;
   --accent-light: #8b5cf6;

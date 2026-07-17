@@ -1,6 +1,12 @@
 import Link from 'next/link'
 import { headers } from 'next/headers'
 
+export const metadata = {
+  title: 'Download the Desktop App',
+  description: 'Get 100Lights for macOS and Windows — the full browser studio as a desktop app, with computer-audio capture and offline-friendly windows.',
+  alternates: { canonical: 'https://100lights.com/download' },
+}
+
 const GITHUB_RELEASES = 'https://github.com/BraeCamp/100Lights/releases/latest'
 
 async function getLatestRelease(): Promise<{ version: string; macDmg: string; macArm: string; winExe: string } | null> {

@@ -34,7 +34,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return {
     title,
     description,
-    openGraph: { title, description, type: 'music.song', siteName: '100Lights Community' },
+    alternates: { canonical: `https://100lights.com/community/${id}` },
+    openGraph: { title, description, type: 'music.song', siteName: '100Lights Community', url: `https://100lights.com/community/${id}` },
     twitter: { card: 'summary_large_image', title, description },
   }
 }
@@ -43,5 +44,21 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
   const { id } = await params
   const item = await fetchItem(id)
   if (!item) notFound()
-  return <ItemClient id={id} />
+  // Structured data: shared music as MusicRecording so search results carry
+  // the author and can surface rich snippets
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'MusicRecording',
+    name: item.name,
+    byArtist: { '@type': 'Person', name: item.author_name },
+    datePublished: item.created_at ? new Date(item.created_at as string).toISOString().slice(0, 10) : undefined,
+    url: `https://100lights.com/community/${id}`,
+    ...(item.description ? { description: item.description } : {}),
+  }
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <ItemClient id={id} />
+    </>
+  )
 }
