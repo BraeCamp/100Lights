@@ -384,15 +384,27 @@ export default function Transport() {
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 
+  function applyTempo(n: number) {
+    dispatch({ type: 'SET_TEMPO', tempo: n })
+    // With tempo markers on the timeline, the marker at the playhead governs —
+    // update it too, or the marker watcher snaps the BPM right back.
+    const markers = project.tempoMarkers ?? []
+    if (markers.length > 0) {
+      const beat = engine.currentBeat
+      const active = [...markers].filter(m => m.beat <= beat + 0.001).sort((a, b) => b.beat - a.beat)[0] ?? markers[0]
+      dispatch({ type: 'ADD_TEMPO_MARKER', marker: { ...active, tempo: n } })
+    }
+  }
+
   function handleBpmCommit(value: string) {
     const n = parseFloat(value)
-    if (!isNaN(n) && n > 0) dispatch({ type: 'SET_TEMPO', tempo: n })
+    if (!isNaN(n) && n > 0) applyTempo(n)
     setEditingBpm(false)
   }
 
   function handleTap() {
     const bpm = engine.tap()
-    if (bpm !== null) dispatch({ type: 'SET_TEMPO', tempo: bpm })
+    if (bpm !== null) applyTempo(bpm)
   }
 
   function handleMetronomeToggle() {

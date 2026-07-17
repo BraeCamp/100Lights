@@ -274,7 +274,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -288,6 +288,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onPasteClips?: () => void
   onCopyEffects?: (ids: Set<string>) => void
   onPasteEffects?: () => void
+  /** Beat-span of the rubber-band selection — group loop/expand treat it as the unit, blank space included. Getter so it's read at event time, not render time. */
+  getSelectionRegion?: () => { start: number; end: number } | null
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
@@ -1077,12 +1079,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         .filter(c => selectedClipIds.has(c.id))
                         .map(c => JSON.parse(JSON.stringify(c)) as DawClip)
                       if (members.length > 1) {
+                        // A rubber-band region defines the loop unit — the
+                        // selected bar(s) tile as drawn, blank space included,
+                        // instead of snapping to the clips' content bounds
+                        const sel = getSelectionRegion?.() ?? null
+                        const region = sel && members.every(c =>
+                          c.startBeat >= sel.start - 0.001 && c.startBeat < sel.end + 0.001)
+                          ? sel : null
                         groupResizeRef.current = {
                           clipId: clip.id,
                           grabbedDur: clip.durationBeats,
                           mode: dragForceRef.current ?? ((isMidiClip(clip) ? !!clip.stretchNotes : !!clip.warpEnabled) ? 'expand' : 'loop'),
-                          groupStart: Math.min(...members.map(c => c.startBeat)),
-                          groupEnd: Math.max(...members.map(c => c.startBeat + c.durationBeats)),
+                          groupStart: region ? region.start : Math.min(...members.map(c => c.startBeat)),
+                          groupEnd: region ? region.end : Math.max(...members.map(c => c.startBeat + c.durationBeats)),
                           members,
                         }
                       }
@@ -1174,8 +1183,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     const span = grp.groupEnd - grp.groupStart
                     if (span <= 0.001) return
                     // project in this closure is from mousedown-time — track the
-                    // drag's final duration in the ref instead
-                    const extension = (grp.lastDb ?? grp.grabbedDur) - grp.grabbedDur
+                    // drag's final duration in the ref instead. Extension is
+                    // measured from the GROUP/region end, so trailing blank
+                    // space in a region counts toward the loop unit.
+                    const extension = clip.startBeat + (grp.lastDb ?? grp.grabbedDur) - grp.groupEnd
                     // back to the original length — the extension chose the tile count
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: grp.grabbedDur } })
                     if (extension < 0.05) return

@@ -97,6 +97,7 @@ export class DawEngine extends EventTarget {
   private trackNodes = new Map<string, TrackNodes>()
   private returnBuses = new Map<string, ReturnBus>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
+  private _chainSigs = new Map<string, string>()
   private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private mixerEqNodes = new Map<string, { low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
   private maskingAnalysers = new Map<string, AnalyserNode>()
@@ -275,9 +276,18 @@ export class DawEngine extends EventTarget {
       this.maskingBridges.set(id, maskBridge)
     }
 
-    // (Re)build effects chain when effects array is provided
+    // (Re)build effects chain when effects array is provided — but only when
+    // it actually changed. Rebuilding on every dispatch cuts delay/reverb
+    // tails and churns the graph audibly (worst while dragging BPM, which
+    // fires updateProject per step). Tempo joins the signature only when a
+    // delay is tempo-synced, since that's the one tempo-dependent build.
     if (effects !== undefined) {
-      this._rebuildEffectsChain(id, effects)
+      const tempoDependent = effects.some(e => e.type === 'delay' && (e.params as { syncToTempo?: boolean }).syncToTempo)
+      const sig = JSON.stringify(effects) + (tempoDependent ? `@${this.tempo}` : '')
+      if (this._chainSigs.get(id) !== sig) {
+        this._chainSigs.set(id, sig)
+        this._rebuildEffectsChain(id, effects)
+      }
     }
   }
 
@@ -328,6 +338,7 @@ export class DawEngine extends EventTarget {
   }
 
   removeTrack(id: string) {
+    this._chainSigs.delete(id)
     const nodes = this.trackNodes.get(id)
     if (!nodes) return
     const chain = this.effectsChains.get(id)
@@ -486,6 +497,9 @@ export class DawEngine extends EventTarget {
     const nodes = this.trackNodes.get(id)
     if (nodes) nodes.panner.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.01)
   }
+
+  /** Engine-local loop switch (project state untouched) — export passes must run to the end. */
+  setLoopEnabled(v: boolean) { this.loopEnabled = v }
 
   setMasterVolume(v: number) {
     this.masterGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02)
@@ -673,7 +687,23 @@ export class DawEngine extends EventTarget {
 
   updateProject(project: DawProject) {
     if (this.ctx.state === 'closed') return
-    this.tempo        = project.tempo
+    if (project.tempo !== this.tempo) {
+      // Rebase the transport clock BEFORE swapping tempo: currentBeat is
+      // startBeat + elapsed × (tempo/60), so changing the multiplier without
+      // rebasing re-scales the whole elapsed time — the playhead leaps, and a
+      // backward leap makes the scheduler re-fire clips on top of their
+      // still-playing sources (stacking louder with every BPM nudge).
+      const beatNow = this.currentBeat
+      const sessionNow = this._sessionClockRunning ? this._sessionBeat() : null
+      this.tempo = project.tempo
+      if (this.isPlaying) {
+        this._startBeat = beatNow
+        this._startCtxTime = this.ctx.currentTime
+      }
+      if (sessionNow !== null) {
+        this._sessionClockStartCtxTime = this.ctx.currentTime - sessionNow * (60 / this.tempo)
+      }
+    }
     this.loopEnabled  = project.loopEnabled
     this.loopStart    = project.loopStart
     this.loopEnd      = project.loopEnd

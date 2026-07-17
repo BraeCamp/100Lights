@@ -9,7 +9,7 @@ import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip, DawClip } from '@/lib/daw-types'
 
 // Module-level clipboards — persist across renders in the same session
-interface ClipboardEntry { clips: DawClip[]; originBeat: number; buffers: [string, AudioBuffer][] }
+interface ClipboardEntry { clips: DawClip[]; originBeat: number; regionSpan?: number | null; buffers: [string, AudioBuffer][] }
 let _clipboard: ClipboardEntry | null = null
 let _effectClipboard: import('@/lib/daw-types').ClipEffect[] | null = null
 let _lastCopied: 'clips' | 'effects' | null = null
@@ -388,6 +388,15 @@ export default function ArrangementView() {
   const rafRef      = useRef<number | undefined>(undefined)
   const [viewWidth, setViewWidth] = useState(800)
   const [rubberBand, setRubberBand] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  // Beat-span of the last rubber-band selection (grid-snapped). Copy and
+  // group-loop use it so "the whole bar" — blank space included — is the unit.
+  const [selectionRegion, setSelectionRegion] = useState<{ start: number; end: number } | null>(null)
+  // Event handlers (ctx-menu copy, resize-start) fire from children whose
+  // closures can be a render behind — they read the region through this ref
+  const selectionRegionRef = useRef(selectionRegion)
+  useEffect(() => {
+    selectionRegionRef.current = selectionRegion
+  }, [selectionRegion])
   const [prHint, setPrHint] = useState<string | null>(null)  // transient note under the PIANO ROLL button
 
   useEffect(() => {
@@ -709,10 +718,15 @@ export default function ArrangementView() {
 
     const sx = e.clientX
     const sy = e.clientY
-    setRubberBand({ x1: sx, y1: sy, x2: sx, y2: sy })
+    // The band snaps to the grid horizontally, so a drag-select IS a musical
+    // region ("this bar"), not a pixel rectangle
+    const toBeat = (clientX: number) => Math.max(0, (clientX - laneRect.left - HDR_W + scrollLeft) / beatW)
+    const toX    = (beat: number) => laneRect.left + HDR_W + beat * beatW - scrollLeft
+    const snapX  = (clientX: number) => toX(snapBeat(toBeat(clientX), snap, project.timeSignatureNum))
+    setRubberBand({ x1: snapX(sx), y1: sy, x2: snapX(sx), y2: sy })
 
     function onMove(ev: MouseEvent) {
-      setRubberBand({ x1: sx, y1: sy, x2: ev.clientX, y2: ev.clientY })
+      setRubberBand({ x1: snapX(sx), y1: sy, x2: snapX(ev.clientX), y2: ev.clientY })
     }
 
     function onUp(ev: MouseEvent) {
@@ -722,10 +736,12 @@ export default function ArrangementView() {
 
       const dx = Math.abs(ev.clientX - sx)
       const dy = Math.abs(ev.clientY - sy)
-      if (dx < 5 && dy < 5) return // treat as plain click — TrackRow already cleared selection
+      if (dx < 5 && dy < 5) { setSelectionRegion(null); return } // plain click — TrackRow already cleared selection
 
-      const selL = Math.min(sx, ev.clientX)
-      const selR = Math.max(sx, ev.clientX)
+      const regionStart = Math.min(snapBeat(toBeat(sx), snap, project.timeSignatureNum), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum))
+      const regionEnd   = Math.max(snapBeat(toBeat(sx), snap, project.timeSignatureNum), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum))
+      const selL = toX(regionStart)
+      const selR = toX(regionEnd)
       const selT = Math.min(sy, ev.clientY)
       const selB = Math.max(sy, ev.clientY)
 
@@ -738,12 +754,11 @@ export default function ArrangementView() {
         if (tr.bottom < selT || tr.top > selB) continue
         for (const clip of project.arrangementClips) {
           if (clip.trackId !== trackId) continue
-          const clipL = laneRect.left + HDR_W + clip.startBeat * beatW - scrollLeft
-          const clipR = clipL + clip.durationBeats * beatW
-          if (clipR < selL || clipL > selR) continue
+          if (clip.startBeat + clip.durationBeats <= regionStart || clip.startBeat >= regionEnd) continue
           newIds.add(clip.id)
         }
       }
+      setSelectionRegion(regionEnd - regionStart > 0.001 ? { start: regionStart, end: regionEnd } : null)
 
       // FX-lane effects live in per-track sub-lanes — intersect their DOM rects.
       // Skip rects hidden under the header column (lanes clip overflow, rects don't).
@@ -774,26 +789,34 @@ export default function ArrangementView() {
   function handleCopyClips(ids: Set<string>) {
     const clipsToCopy = project.arrangementClips.filter(c => ids.has(c.id))
     if (clipsToCopy.length === 0) return
-    const originBeat = Math.min(...clipsToCopy.map(c => c.startBeat))
+    // A rubber-band region copies the whole SPACE — leading/trailing silence
+    // included — so pasted bars land exactly a bar apart
+    const sel = selectionRegionRef.current
+    const region = sel && clipsToCopy.every(c =>
+      c.startBeat >= sel.start - 0.001 && c.startBeat < sel.end + 0.001)
+      ? sel : null
+    const originBeat = region ? region.start : Math.min(...clipsToCopy.map(c => c.startBeat))
+    const regionSpan = region ? region.end - region.start : null
     const buffers: [string, AudioBuffer][] = []
     for (const c of clipsToCopy) {
       const buf = engine.bufferCache.get(c.id)
       if (buf) buffers.push([c.id, buf])
     }
-    _clipboard = { clips: clipsToCopy, originBeat, buffers }
+    _clipboard = { clips: clipsToCopy, originBeat, regionSpan, buffers }
     _lastCopied = 'clips'
   }
 
   function handlePasteClips() {
     if (!_clipboard) return
-    const { clips, originBeat, buffers } = _clipboard
+    const { clips, originBeat, regionSpan, buffers } = _clipboard
     const pasteAt = engine.currentBeat
     let delta = pasteAt - originBeat
     // Pasting with the playhead still at the source (the common copy→paste
     // without moving) would overlay identical clips invisibly — place the
-    // copies right after the copied span instead.
+    // copies right after the copied span instead. A region copy uses the
+    // region's span, so a copied bar repeats on the next bar.
     if (Math.abs(delta) < 1e-6) {
-      const span = Math.max(...clips.map(c => c.startBeat + c.durationBeats)) - originBeat
+      const span = regionSpan ?? (Math.max(...clips.map(c => c.startBeat + c.durationBeats)) - originBeat)
       delta = span
     }
     const bufMap = new Map(buffers)
@@ -1355,6 +1378,7 @@ export default function ArrangementView() {
             onGroupTracks={handleGroupTracks}
             rippleEdit={rippleEdit}
             onCopyClips={handleCopyClips}
+            getSelectionRegion={() => selectionRegionRef.current}
             onPasteClips={handlePasteClips}
             onCopyEffects={handleCopyEffects}
             onPasteEffects={handlePasteEffects}

@@ -825,7 +825,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       )}
 
       {ctxPos && (
-        <div ref={menuRef} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
+        // Clicks inside the menu must not bubble through the React tree to the
+        // lane's mousedown — that starts a zero-distance rubber band which
+        // clears the selection region before the menu action runs
+        <div ref={menuRef} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
           {ctxSub !== 'presets' && menuItems.map(it => (
             <button key={it.label} onClick={() => { it.fn(); if (!(it as { keepOpen?: boolean }).keepOpen) setCtxPos(null) }}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: (it as { color?: string }).color ?? 'var(--text-primary)', fontWeight: (it as { color?: string }).color ? 700 : 400 }}

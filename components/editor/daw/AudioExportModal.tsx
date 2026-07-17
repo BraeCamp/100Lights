@@ -7,6 +7,18 @@ import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
+
+// Resample to the chosen export rate via OfflineAudioContext — the browser's
+// resampler, no dependency. Skipped when the buffer is already at the target.
+async function resampleBuffer(buffer: AudioBuffer, targetRate: number): Promise<AudioBuffer> {
+  if (Math.abs(buffer.sampleRate - targetRate) < 1) return buffer
+  const ctx = new OfflineAudioContext(buffer.numberOfChannels, Math.ceil(buffer.duration * targetRate), targetRate)
+  const src = ctx.createBufferSource()
+  src.buffer = buffer
+  src.connect(ctx.destination)
+  src.start(0)
+  return ctx.startRendering()
+}
 import { shareSong, shareProjectStarter } from '@/lib/community'
 
 interface Props {
@@ -69,6 +81,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   useEffect(() => { phaseRef.current = phase }, [phase])
   const [progress, setProgress]           = useState(0)
   const [downloadUrl, setDownloadUrl]     = useState<string | null>(null)
+  const [sampleRate, setSampleRate]       = useState<44100 | 48000>(48000)
   const [format, setFormat]               = useState<ExportFormat>(defaultFormat ?? 'webm')
   const [normalize, setNormalize]         = useState(false)
   const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
@@ -112,6 +125,8 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     setStatusMessage('recording')
     setProgress(0)
     engine.seek(0)
+    // The pass must reach the end — with looping on, it never would
+    engine.setLoopEnabled(false)
     const { taps, dispose } = engine.tapTrackOutputs(stemTracks.map(t => t.id))
     const recs = new Map<string, { rec: MediaRecorder; chunks: Blob[] }>()
     const mime = ['audio/webm;codecs=opus', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m)) ?? ''
@@ -141,7 +156,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
               await new Promise<void>(res => { entry.rec.onstop = () => res(); entry.rec.stop() })
               const blob = new Blob(entry.chunks, { type: mime || 'audio/webm' })
               if (blob.size === 0) continue
-              const audioBuffer = await blobToAudioBuffer(blob)
+              const audioBuffer = await resampleBuffer(await blobToAudioBuffer(blob), sampleRate)
               const safe = t.name.replace(/[^\w\- ]+/g, '').trim() || 'track'
               files.push({ name: `${safe}.wav`, blob: audioBufferToWav(audioBuffer) })
             }
@@ -169,6 +184,8 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     setStatusMessage('recording')
     setProgress(0)
     engine.seek(0)
+    // The pass must reach the end — with looping on, it never would
+    engine.setLoopEnabled(false)
     await engine.startRecording()
     engine.play()
 
@@ -193,6 +210,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
                 setStatusMessage('normalizing')
                 finalBuffer = await normalizeAudioBuffer(audioBuffer)
               }
+              finalBuffer = await resampleBuffer(finalBuffer, sampleRate)
 
               finalBlob = audioBufferToWav(finalBuffer)
             } else {
@@ -299,6 +317,23 @@ style={{
                   <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
                     Converts after recording — slightly slower, lossless 16-bit PCM
                   </p>
+                )}
+                {(format === 'wav' || format === 'stems') && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>Sample rate</span>
+                    {([44100, 48000] as const).map(r => (
+                      <button key={r}
+                        onClick={() => setSampleRate(r)}
+                        title={r === 44100 ? 'CD / streaming standard' : 'Video / broadcast standard (recording rate — no resample)'}
+                        style={{
+                          padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                          border: sampleRate === r ? '1px solid var(--accent)' : '1px solid var(--border)',
+                          background: sampleRate === r ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'transparent',
+                          color: sampleRate === r ? 'var(--accent)' : 'var(--text-secondary)',
+                        }}
+                      >{r === 44100 ? '44.1 kHz' : '48 kHz'}</button>
+                    ))}
+                  </div>
                 )}
               </div>
 
