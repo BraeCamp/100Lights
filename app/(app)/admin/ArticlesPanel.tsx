@@ -6,7 +6,7 @@
 // Anthropic API. Repo articles are editable too: saving one writes a DB row
 // with the same slug, which overrides the file.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { renderMarkdown } from '@/lib/simple-markdown'
 import { initLibrary, libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
@@ -31,6 +31,12 @@ const input: React.CSSProperties = {
   background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none',
 }
 
+const playBtn: React.CSSProperties = {
+  flexShrink: 0, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
+  fontSize: 10, borderRadius: '50%', border: '1px solid rgba(52,211,153,0.5)', background: 'transparent',
+  color: '#34d399', cursor: 'pointer', lineHeight: 1, padding: 0,
+}
+
 export default function ArticlesPanel() {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [sel, setSel] = useState<Row | null>(null)
@@ -46,7 +52,52 @@ export default function ArticlesPanel() {
   const [libTab, setLibTab] = useState<'samples' | 'recipes'>('samples')
   const [libQuery, setLibQuery] = useState('')
   const [libEntries, setLibEntries] = useState<LibraryEntry[] | null>(null)
+  const [auditioning, setAuditioning] = useState<string | null>(null) // id of the row currently playing / loading
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUrlRef = useRef<string | null>(null)
   const { user } = useUser()
+
+  // Stop any audition in flight and release its object URL
+  const stopAudition = useCallback(() => {
+    audioRef.current?.pause()
+    audioRef.current = null
+    if (audioUrlRef.current) { URL.revokeObjectURL(audioUrlRef.current); audioUrlRef.current = null }
+    setAuditioning(null)
+  }, [])
+
+  useEffect(() => () => stopAudition(), [stopAudition]) // clean up on unmount
+
+  // Play a blob through a single shared <audio>; clicking a playing row stops it
+  const auditionBlob = useCallback((id: string, blob: Blob) => {
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
+    audioRef.current?.pause()
+    const url = URL.createObjectURL(blob)
+    audioUrlRef.current = url
+    const el = new Audio(url)
+    audioRef.current = el
+    el.onended = () => setAuditioning(a => (a === id ? null : a))
+    setAuditioning(id)
+    void el.play().catch(() => setAuditioning(a => (a === id ? null : a)))
+  }, [])
+
+  async function auditionSample(entry: LibraryEntry) {
+    if (auditioning === entry.id) { stopAudition(); return }
+    setAuditioning(entry.id)
+    try {
+      let blob = entry.audioBlob
+      if (!blob) blob = (await libraryFulfill(entry.id))?.audioBlob ?? undefined
+      if (!blob) { setAuditioning(null); setMsg('This sound has no audio yet — play it once in the library, then retry'); return }
+      auditionBlob(entry.id, blob)
+    } catch { setAuditioning(null) }
+  }
+
+  async function auditionRecipe(recipeId: string) {
+    if (auditioning === recipeId) { stopAudition(); return }
+    setAuditioning(recipeId)
+    try {
+      auditionBlob(recipeId, await renderRecipeBlob(recipeId))
+    } catch { setAuditioning(null) }
+  }
 
   const load = useCallback(async () => {
     const r = await fetch('/api/admin/articles').catch(() => null)
@@ -143,29 +194,36 @@ export default function ArticlesPanel() {
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Insert failed') } finally { setBusy(null) }
   }
 
+  // Render a recipe's piano audition offline (100 bpm, 16-beat cap) into a WAV —
+  // the synthesis is oscillator-based, so it renders without loading samples.
+  // Shared by the play button (audition) and insert.
+  async function renderRecipeBlob(recipeId: string): Promise<Blob> {
+    const recipe = getAllChordRecipes().find(r => r.id === recipeId)
+    if (!recipe) throw new Error('Recipe not found')
+    const spec = recipe.build()
+    const spb = 60 / 100
+    const capBeats = Math.min(16, Math.max(spec.durationBeats, ...spec.notes.map(n => n.startBeat + n.durationBeats)))
+    const durSec = capBeats * spb + 2
+    const rate = 44100
+    const off = new OfflineAudioContext(2, Math.ceil(durSec * rate), rate)
+    const g = off.createGain()
+    g.gain.value = 0.7
+    g.connect(off.destination)
+    for (const n of spec.notes) {
+      if (n.startBeat >= 16) continue
+      playMelodicNote(off as unknown as AudioContext, 'piano-grand', n.pitch, 0.05 + n.startBeat * spb, (n.velocity ?? 100) / 127, g)
+    }
+    const rendered = await off.startRendering()
+    const channels = Array.from({ length: rendered.numberOfChannels }, (_, ch) => rendered.getChannelData(ch))
+    return new Blob([encodeWav(channels, rate)], { type: 'audio/wav' })
+  }
+
   async function insertLibraryRecipe(recipeId: string) {
     setBusy('lib'); setMsg('')
     try {
       const recipe = getAllChordRecipes().find(r => r.id === recipeId)
       if (!recipe) throw new Error('Recipe not found')
-      const spec = recipe.build()
-      // Render a piano audition offline (100 bpm, 16-beat cap) into a WAV —
-      // the synthesis is oscillator-based, so it renders without loading samples
-      const spb = 60 / 100
-      const capBeats = Math.min(16, Math.max(spec.durationBeats, ...spec.notes.map(n => n.startBeat + n.durationBeats)))
-      const durSec = capBeats * spb + 2
-      const rate = 44100
-      const off = new OfflineAudioContext(2, Math.ceil(durSec * rate), rate)
-      const g = off.createGain()
-      g.gain.value = 0.7
-      g.connect(off.destination)
-      for (const n of spec.notes) {
-        if (n.startBeat >= 16) continue
-        playMelodicNote(off as unknown as AudioContext, 'piano-grand', n.pitch, 0.05 + n.startBeat * spb, (n.velocity ?? 100) / 127, g)
-      }
-      const rendered = await off.startRendering()
-      const channels = Array.from({ length: rendered.numberOfChannels }, (_, ch) => rendered.getChannelData(ch))
-      const blob = new Blob([encodeWav(channels, rate)], { type: 'audio/wav' })
+      const blob = await renderRecipeBlob(recipeId)
       await uploadBlobAsArticleAudio(blob, `${recipe.title} (piano)`)
       setLibPicker(false)
       setMsg('Recipe rendered & inserted ✓')
@@ -268,26 +326,36 @@ export default function ArticlesPanel() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
                   {libTab === 'samples' && (libEntries ?? [])
-                    .filter(e => !libQuery || e.name.toLowerCase().includes(libQuery.toLowerCase()))
+                    .filter(e => !libQuery || e.name.toLowerCase().includes(libQuery.toLowerCase()) || (e.folder ?? '').toLowerCase().includes(libQuery.toLowerCase()))
                     .slice(0, 40)
                     .map(e => (
-                      <button key={e.id} disabled={busy === 'lib'} onClick={() => void insertLibrarySample(e)}
-                        style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                      <div key={e.id} onClick={() => { if (busy !== 'lib') void insertLibrarySample(e) }}
+                        title="Insert this sample"
+                        style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: busy === 'lib' ? 'default' : 'pointer', opacity: busy === 'lib' ? 0.6 : 1 }}>
+                        <button onClick={ev => { ev.stopPropagation(); void auditionSample(e) }} title={auditioning === e.id ? 'Stop' : 'Play'}
+                          style={playBtn}>{auditioning === e.id ? '◼' : '▶'}</button>
+                        <span style={{ flexShrink: 0, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          📁 {e.folder || 'No folder'}{e.category ? ` · ${e.category}` : ''}
+                        </span>
                         {!e.audioBlob && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>renders on insert</span>}
                         <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>{e.duration.toFixed(1)}s</span>
-                      </button>
+                      </div>
                     ))}
                   {libTab === 'samples' && libEntries !== null && libEntries.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No sounds in your library on this browser.</span>}
                   {libTab === 'recipes' && getAllChordRecipes()
-                    .filter(r => !libQuery || r.title.toLowerCase().includes(libQuery.toLowerCase()))
+                    .filter(r => !libQuery || r.title.toLowerCase().includes(libQuery.toLowerCase()) || (r.genre ?? '').toLowerCase().includes(libQuery.toLowerCase()))
                     .slice(0, 40)
                     .map(r => (
-                      <button key={r.id} disabled={busy === 'lib'} onClick={() => void insertLibraryRecipe(r.id)}
-                        style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>♪ {r.title}</span>
+                      <div key={r.id} onClick={() => { if (busy !== 'lib') void insertLibraryRecipe(r.id) }}
+                        title="Insert this recipe (renders a piano WAV)"
+                        style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: busy === 'lib' ? 'default' : 'pointer', opacity: busy === 'lib' ? 0.6 : 1 }}>
+                        <button onClick={ev => { ev.stopPropagation(); void auditionRecipe(r.id) }} title={auditioning === r.id ? 'Stop' : 'Play piano preview'}
+                          style={playBtn}>{auditioning === r.id ? '◼' : '▶'}</button>
+                        <span style={{ flexShrink: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>♪ {r.title}</span>
+                        {r.genre && <span style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>📁 {r.genre}</span>}
                         <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>renders piano WAV</span>
-                      </button>
+                      </div>
                     ))}
                 </div>
               </div>
