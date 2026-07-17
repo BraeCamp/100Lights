@@ -8,6 +8,7 @@ import FeedbackPanel from './FeedbackPanel'
 import PotentialSamplesPanel from './PotentialSamplesPanel'
 import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
+import ArticlesPanel from './ArticlesPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 
@@ -122,6 +123,19 @@ export default async function AdminPage() {
                 description="Control which modules are live for all users. Hidden modules disappear from the launcher, dashboard sidebar, and the new-project page — use this to ship modules one at a time."
               />
               <PlatformFlagsPanel initial={flags} />
+            </>
+          ),
+        },
+        {
+          id: 'articles',
+          label: 'Articles',
+          content: (
+            <>
+              <PanelIntro
+                title="Learn Articles"
+                description="The editorial desk for 100lights.com/learn. Edit anything, publish instantly with the toggle, or generate a new draft — repo-based drafts (written by Claude in dev sessions) appear here too and become editable database copies when saved."
+              />
+              <ArticlesPanel />
             </>
           ),
         },

@@ -145,7 +145,7 @@ const jsonLd = {
 
 export default async function LandingPage() {
   const { userId } = await auth()
-  const hasGuides = getArticles({ includeDrafts: false }).length > 0
+  const hasGuides = (await getArticles({ includeDrafts: false })).length > 0
 
   return (
     <>

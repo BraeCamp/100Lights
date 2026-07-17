@@ -6,7 +6,7 @@ import { renderMarkdown } from '@/lib/simple-markdown'
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params
-  const a = getArticle(slug)
+  const a = await getArticle(slug)
   if (!a) return { title: 'Not found' }
   return {
     title: a.title,
@@ -20,7 +20,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function LearnArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const a = getArticle(slug)
+  const a = await getArticle(slug)
   if (!a) notFound()
 
   const jsonLd = {
@@ -64,6 +64,4 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
   )
 }
 
-export function generateStaticParams() {
-  return getArticles({ includeDrafts: false }).map(a => ({ slug: a.slug }))
-}
+export const dynamic = 'force-dynamic'

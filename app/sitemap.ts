@@ -18,7 +18,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ]
 
   // Learn guides — published only; the index page joins once one is live
-  const published = getArticles({ includeDrafts: false })
+  const published = await getArticles({ includeDrafts: false })
   const learn: MetadataRoute.Sitemap = published.length === 0 ? [] : [
     { url: `${base}/learn`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.8 },
     ...published.map(a => ({

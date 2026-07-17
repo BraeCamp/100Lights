@@ -15,8 +15,10 @@ export const metadata: Metadata = {
   },
 }
 
-export default function LearnIndex() {
-  const articles = getArticles()
+export const dynamic = 'force-dynamic'
+
+export default async function LearnIndex() {
+  const articles = await getArticles()
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
       <main id="main" className="max-w-3xl mx-auto px-6 py-14">
