@@ -45,6 +45,7 @@ function projectFingerprint(p: DawProject): string {
   }
   mix(JSON.stringify(p.tempoMarkers ?? []))
   mix(JSON.stringify(p.sections ?? []))
+  mix(JSON.stringify(p.comments ?? []))
   return h.toString(36)
 }
 

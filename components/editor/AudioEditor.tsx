@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useUser } from '@clerk/nextjs'
+import { computeRevertPatch } from '@/lib/daw-undo'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
@@ -369,8 +371,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const engineForRender = engineRef.current
 
   // ── Undo history ────────────────────────────────────────────────────────────
-  const historyRef = useRef<DawProject[]>([])
-  const redoRef    = useRef<DawProject[]>([])
+  const historyRef = useRef<Array<{ before: DawProject; action: DawAction }>>([])
+  const redoRef    = useRef<Array<{ before: DawProject; action: DawAction }>>([])
   const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
   const voiceChainAppliedRef = useRef(false)
@@ -510,6 +512,12 @@ export default function AudioEditor(props: AudioEditorProps) {
   const readOnlyRef = useRef(!!props.readOnly)
   useEffect(() => { readOnlyRef.current = !!props.readOnly }, [props.readOnly])
 
+  // Collab attribution: stamp who created clips (dispatch-time, so the stamp
+  // travels with the broadcast and every client stores the same author)
+  const { user } = useUser()
+  const userNameRef = useRef<string>('')
+  useEffect(() => { userNameRef.current = user?.firstName || user?.username || '' }, [user])
+
   const dispatch = useCallback((action: DawAction) => {
     // View-only collaborators: their room access is read-only server-side, so
     // local edits would silently diverge from the real project. Drop them here
@@ -522,8 +530,11 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (action.type === 'ADD_TRACK' && !action.id) action = { ...action, id: crypto.randomUUID() }
     if (action.type === 'ADD_SCENE' && !action.id) action = { ...action, id: crypto.randomUUID() }
     if (action.type === 'DUPLICATE_TRACK' && !action.seed) action = { ...action, seed: crypto.randomUUID() }
+    if (action.type === 'ADD_CLIP' && !action.clip.createdBy && userNameRef.current) {
+      action = { ...action, clip: { ...action.clip, createdBy: userNameRef.current } }
+    }
     if (action.type !== 'LOAD_PROJECT') {
-      historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
+      historyRef.current = [...historyRef.current.slice(-49), { before: projectRef.current, action }]
       redoRef.current = []
     }
     rawDispatch(action)
@@ -1047,22 +1058,32 @@ export default function AudioEditor(props: AudioEditorProps) {
         return
       }
 
+      // Undo/redo revert only the popped action's own footprint (computed
+      // against CURRENT state, so collaborators' concurrent edits survive)
+      // and broadcast the patch so the room follows instead of self-healing
+      // the undo away.
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) {
         e.preventDefault()
-        const prev = historyRef.current.pop()
-        if (prev) {
-          redoRef.current = [...redoRef.current.slice(-49), projectRef.current]
-          rawDispatch({ type: 'LOAD_PROJECT', project: prev })
+        const entry = historyRef.current.pop()
+        if (entry) {
+          redoRef.current = [...redoRef.current.slice(-49), { before: projectRef.current, action: entry.action }]
+          const patch = computeRevertPatch(entry.before, projectRef.current, entry.action)
+          const patchAction: DawAction = { type: 'PATCH_PROJECT', patch }
+          rawDispatch(patchAction)
+          if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
         }
         return
       }
 
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.shiftKey) {
         e.preventDefault()
-        const next = redoRef.current.pop()
-        if (next) {
-          historyRef.current = [...historyRef.current.slice(-49), projectRef.current]
-          rawDispatch({ type: 'LOAD_PROJECT', project: next })
+        const entry = redoRef.current.pop()
+        if (entry) {
+          historyRef.current = [...historyRef.current.slice(-49), { before: projectRef.current, action: entry.action }]
+          const patch = computeRevertPatch(entry.before, projectRef.current, entry.action)
+          const patchAction: DawAction = { type: 'PATCH_PROJECT', patch }
+          rawDispatch(patchAction)
+          if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
         }
         return
       }
@@ -1138,7 +1159,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     setExpandedPianoRollClipId,
     loopToolArmed,
     setLoopToolArmed,
-    onSave: onSave ? () => { void handleSaveRef.current() } : undefined,
+    onSave: onSave ? () => handleSaveRef.current() : undefined,
     isSaving,
     audioMode: props.audioMode,
     podcastMeta,

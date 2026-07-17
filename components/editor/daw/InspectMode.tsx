@@ -82,10 +82,12 @@ export function InspectButton() {
           if (m.loopEnabled && m.loopLengthBeats != null) lines.push(`Loops every ${Math.round(m.loopLengthBeats * 100) / 100} beats`)
           if (m.stretchNotes) lines.push('Recipe clip — edge-resize stretches the pattern')
           if (m.voiceMap) lines.push('Has a voice-map trace')
+          if (m.createdBy) lines.push(`Added by ${m.createdBy}`)
           return { title: m.name, kind: m.isDrumClip ? 'Drum pattern' : 'MIDI pattern', color: KIND_COLORS.clip, lines }
         }
         const a = clip as AudioClip
         const lines = [at]
+        if (a.createdBy) lines.push(`Added by ${a.createdBy}`)
         if (a.gain !== 1) lines.push(`Gain ${Math.round(a.gain * 100)}%`)
         if (a.reverse) lines.push('Reversed')
         if (a.loopEnabled) lines.push('Looping')

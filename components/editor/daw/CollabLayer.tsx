@@ -6,6 +6,7 @@ import type { Dispatch, RefObject } from 'react'
 import { RoomProvider } from '@/lib/liveblocks.config'
 import { CollabBridge, CollabAvatars, CollabSelfPresence, CollabOthersBridge } from './CollabPresence'
 import { CollabInvite } from './CollabInvite'
+import CollabChat from './CollabChat'
 import type { DawAction } from '@/lib/daw-state'
 import type { DawView, CollabPeer, DawProject } from '@/lib/daw-types'
 
@@ -63,6 +64,7 @@ export default function CollabLayer({
     >
       <CollabBridge broadcastRef={broadcastRef} rawDispatch={rawDispatch} isRemoteRef={isRemoteRef} projectRef={projectRef as React.MutableRefObject<DawProject>} />
       <CollabOthersBridge onOthers={onOthers} />
+      <CollabChat />
       <CollabSelfPresence
         selectedTrackId={selectedTrackId}
         selectedClipId={selectedClipId}

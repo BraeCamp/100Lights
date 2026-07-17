@@ -468,6 +468,8 @@ export interface AudioClip {
   id: string
   trackId: string
   name: string
+  /** Who added this clip (collab attribution) — stamped at creation. */
+  createdBy?: string
   startBeat: number
   durationBeats: number
   r2Key?: string
@@ -510,6 +512,8 @@ export interface MidiClip {
   id: string
   trackId: string
   name: string
+  /** Who added this clip (collab attribution) — stamped at creation. */
+  createdBy?: string
   startBeat: number
   durationBeats: number
   notes: MidiNote[]
@@ -597,8 +601,20 @@ export interface DawProject {
   tempoMarkers?: Array<{ id: string; beat: number; tempo: number }>
   /** Arranger sections: each runs from its beat to the next section (or the end). */
   sections?: Array<{ id: string; beat: number; name: string; color: string }>
+  /** Timeline comments: beat-anchored feedback threads from collaborators. */
+  comments?: TimelineComment[]
   key: number               // 0-11 (C=0), displayed in transport
   scale: string             // 'major' | 'minor' | etc.
+}
+
+export interface TimelineComment {
+  id: string
+  beat: number
+  author: string
+  text: string
+  createdAt: string          // ISO
+  resolved?: boolean
+  replies?: Array<{ id: string; author: string; text: string; createdAt: string }>
 }
 
 // ── UI state ──────────────────────────────────────────────────────────────────

@@ -41,6 +41,11 @@ export type DawAction =
   | { type: 'REMOVE_TEMPO_MARKER'; markerId: string }
   | { type: 'ADD_SECTION'; section: { id: string; beat: number; name: string; color: string } }
   | { type: 'REMOVE_SECTION'; sectionId: string }
+  | { type: 'ADD_COMMENT'; comment: import('./daw-types').TimelineComment }
+  | { type: 'UPDATE_COMMENT'; commentId: string; patch: Partial<import('./daw-types').TimelineComment> }
+  | { type: 'REMOVE_COMMENT'; commentId: string }
+  /** Shallow project patch — collab-safe undo/redo reverts exactly the slices it computed. */
+  | { type: 'PATCH_PROJECT'; patch: Partial<DawProject> }
   | { type: 'SET_LOOP'; start: number; end: number }
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
@@ -287,6 +292,18 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'REMOVE_SECTION':
       return { ...project, sections: (project.sections ?? []).filter(s => s.id !== action.sectionId) }
 
+    case 'ADD_COMMENT':
+      return { ...project, comments: [...(project.comments ?? []), action.comment] }
+
+    case 'UPDATE_COMMENT':
+      return { ...project, comments: (project.comments ?? []).map(c => c.id === action.commentId ? { ...c, ...action.patch } : c) }
+
+    case 'REMOVE_COMMENT':
+      return { ...project, comments: (project.comments ?? []).filter(c => c.id !== action.commentId) }
+
+    case 'PATCH_PROJECT':
+      return { ...project, ...action.patch }
+
     case 'SET_TEMPO':
       return { ...project, tempo: Math.max(40, Math.min(300, action.tempo)) }
 
@@ -447,6 +464,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         cueMarkers:      p.cueMarkers      ?? [],
         tempoMarkers:    p.tempoMarkers    ?? [],
         sections:        p.sections        ?? [],
+        comments:        p.comments        ?? [],
         key:             p.key             ?? 0,
         scale:           p.scale           ?? 'major',
       }
@@ -593,7 +611,7 @@ export interface DawContextValue {
   setLoopToolArmed: (v: boolean) => void
   setExpandedPianoRollClipId: (id: string | null) => void
   // Save
-  onSave?: () => void
+  onSave?: () => void | Promise<void>
   isSaving: boolean
   // Podcast / audio mode
   audioMode?: 'music' | 'podcast'

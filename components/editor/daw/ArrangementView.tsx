@@ -15,6 +15,8 @@ let _effectClipboard: import('@/lib/daw-types').ClipEffect[] | null = null
 let _lastCopied: 'clips' | 'effects' | null = null
 import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
+import { CommentComposer, CommentThread } from './TimelineComments'
+import VersionHistory from './VersionHistory'
 import { detectTransients } from './ClipView'
 import dynamic from 'next/dynamic'
 
@@ -28,17 +30,18 @@ const MAX_BEAT_W = 200
 
 // ── Ruler ─────────────────────────────────────────────────────────────────────
 
-function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
+function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }: {
   beatW: number; scrollLeft: number; snap: SnapMode
   onSeek: (beat: number) => void
   onEditTimeSig: (e: React.MouseEvent, beat: number) => void
+  onOpenComment: (commentId: string, x: number, y: number) => void
 }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const loopDragRef  = useRef<{ type: 'start'|'end'|'move'; startX: number; startLoopStart: number; startLoopEnd: number } | null>(null)
   const [loopCursor, setLoopCursor] = useState('grab')
   const [renamingSection, setRenamingSection] = useState<string | null>(null)
   const { project, dispatch } = useDaw()
-  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [], sections = [] } = project
+  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [], sections = [], comments = [] } = project
   const pxPerSec = beatW * tempo / 60
 
   useEffect(() => {
@@ -218,6 +221,27 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, snap }: {
           </div>
         )
       })}
+      {/* Comment pins */}
+      {comments.map(c => {
+        const cx = c.beat * beatW - scrollLeft
+        if (cx < -12 || cx > 9999) return null
+        return (
+          <button
+            key={c.id}
+            title={`${c.author}: ${c.text.slice(0, 60)}`}
+            onClick={e => { e.stopPropagation(); onOpenComment(c.id, e.clientX, e.clientY) }}
+            onMouseDown={e => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: SEC_H - 1, left: cx - 7, zIndex: 3,
+              width: 14, height: 14, borderRadius: '50% 50% 50% 0', transform: 'rotate(-45deg)',
+              background: c.resolved ? '#3a3f4a' : '#f59e0b', border: '1px solid rgba(0,0,0,0.5)',
+              cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <span style={{ transform: 'rotate(45deg)', fontSize: 7, lineHeight: 1, color: c.resolved ? '#888' : '#1a1206', fontWeight: 800 }}>{(c.replies?.length ?? 0) + 1}</span>
+          </button>
+        )
+      })}
       {loopEnabled && loopR > loopL && (
         <div
           style={{
@@ -332,6 +356,8 @@ export default function ArrangementView() {
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
   const [tsPopover, setTsPopover]   = useState<{ x: number; y: number; beat?: number } | null>(null)
+  const [openComment, setOpenComment]   = useState<{ id: string; x: number; y: number } | null>(null)
+  const [newCommentAt, setNewCommentAt] = useState<{ beat: number; x: number; y: number } | null>(null)
   const [tsDraftBpm, setTsDraftBpm] = useState(120)
   const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
@@ -1251,13 +1277,14 @@ export default function ArrangementView() {
             letterSpacing: '0.04em', marginLeft: 4,
           }}>{isSaving ? 'SAVING…' : 'SAVE'}</button>
         )}
+        <VersionHistory />
       </div>
 
       {/* Ruler row */}
       <div style={{ display: 'flex', flexShrink: 0 }} onWheel={handleWheel}>
         <div style={{ width: HDR_W, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <Ruler beatW={beatW} scrollLeft={scrollLeft} snap={snap} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} />
+          <Ruler beatW={beatW} scrollLeft={scrollLeft} snap={snap} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} onOpenComment={(id, x, y) => setOpenComment({ id, x, y })} />
         </div>
       </div>
 
@@ -1388,6 +1415,12 @@ export default function ArrangementView() {
       </div>
 
       {/* Time signature popover */}
+      {newCommentAt && (
+        <CommentComposer beat={newCommentAt.beat} anchor={{ x: newCommentAt.x, y: newCommentAt.y }} onClose={() => setNewCommentAt(null)} />
+      )}
+      {openComment && (
+        <CommentThread commentId={openComment.id} anchor={{ x: openComment.x, y: openComment.y }} onClose={() => setOpenComment(null)} />
+      )}
       {tsPopover && createPortal(
         <div ref={tsPopoverRef} style={{
           position: 'fixed', top: tsPopover.y - 110, left: tsPopover.x,
@@ -1418,6 +1451,15 @@ export default function ArrangementView() {
             />
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>BPM</span>
           </div>
+          <button
+            onClick={() => {
+              setNewCommentAt({ beat: tsPopover?.beat ?? 0, x: tsPopover?.x ?? 200, y: tsPopover?.y ?? 200 })
+              setTsPopover(null)
+            }}
+            title="Pin feedback to this spot — collaborators see it on the timeline"
+            style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
+            💬 Comment here
+          </button>
           <button
             onClick={() => {
               const palette = ['#60a5fa', '#34d399', '#f472b6', '#facc15', '#a78bfa', '#fb923c']
