@@ -30,6 +30,11 @@ export async function presignDownload(key: string, expiresIn = 3600) {
   )
 }
 
+export async function putObject(key: string, body: Uint8Array | ArrayBuffer, contentType: string) {
+  const bytes = body instanceof Uint8Array ? body : new Uint8Array(body)
+  await client().send(new PutObjectCommand({ Bucket: BUCKET(), Key: key, Body: bytes, ContentType: contentType }))
+}
+
 export async function deleteObject(key: string) {
   await client().send(new DeleteObjectCommand({ Bucket: BUCKET(), Key: key }))
 }

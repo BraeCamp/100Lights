@@ -46,6 +46,7 @@ export default function ArticlesPanel() {
   const [libTab, setLibTab] = useState<'samples' | 'recipes'>('samples')
   const [libQuery, setLibQuery] = useState('')
   const [libEntries, setLibEntries] = useState<LibraryEntry[] | null>(null)
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const { user } = useUser()
 
   const load = useCallback(async () => {
@@ -116,15 +117,17 @@ export default function ArticlesPanel() {
   // Upload a blob into learn-audio/ and insert the @audio marker
   async function uploadBlobAsArticleAudio(blob: Blob, name: string) {
     const type = blob.type || 'audio/wav'
-    const r = await fetch('/api/admin/articles/audio', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: `${name.replace(/[^\w.-]+/g, '_')}.${type.includes('wav') ? 'wav' : type.includes('webm') ? 'webm' : 'mp3'}`, contentType: type }),
-    })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error ?? 'Upload slot failed')
-    const put = await fetch(d.url, { method: 'PUT', headers: { 'Content-Type': type }, body: blob })
-    if (!put.ok) throw new Error('Upload failed')
-    appendToBody(`@audio(/api/learn-audio?key=${encodeURIComponent(d.key)}) ${name}`)
+    // Bytes go to our server, which pushes to R2 — no browser→R2 request, so
+    // no cross-origin CORS/CSP to fail on
+    let r: Response
+    try {
+      r = await fetch(`/api/admin/articles/audio?name=${encodeURIComponent(name)}`, {
+        method: 'POST', headers: { 'Content-Type': type }, body: blob,
+      })
+    } catch { throw new Error('Could not reach the server. Check your connection and try again.') }
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(d.error ?? `Upload failed (${r.status})`)
+    appendToBody(`@audio(${d.url}) ${name}`)
   }
 
   async function insertLibrarySample(entry: LibraryEntry) {
@@ -179,16 +182,9 @@ export default function ArticlesPanel() {
   async function uploadAudio(file: File) {
     setBusy('upload'); setMsg('')
     try {
-      const r = await fetch('/api/admin/articles/audio', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' }),
-      })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error ?? 'Upload slot failed')
-      const put = await fetch(d.url, { method: 'PUT', headers: { 'Content-Type': file.type || 'audio/mpeg' }, body: file })
-      if (!put.ok) throw new Error('Upload failed')
-      appendToBody(`@audio(/api/learn-audio?key=${encodeURIComponent(d.key)}) ${file.name.replace(/\.[^.]+$/, '')}`)
-      setMsg('Audio inserted ✓')
+      const named = file.type && !/^audio\//.test(file.type) ? new Blob([file], { type: 'audio/mpeg' }) : file
+      await uploadBlobAsArticleAudio(named, file.name.replace(/\.[^.]+$/, ''))
+      setMsg('Audio uploaded & inserted ✓')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Upload failed') } finally { setBusy(null) }
   }
 
@@ -267,18 +263,49 @@ export default function ArticlesPanel() {
                   <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{busy === 'lib' ? 'Uploading…' : 'Copies the sound to the site — no community share needed'}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
-                  {libTab === 'samples' && (libEntries ?? [])
-                    .filter(e => !libQuery || e.name.toLowerCase().includes(libQuery.toLowerCase()))
-                    .slice(0, 40)
-                    .map(e => (
+                  {libTab === 'samples' && (() => {
+                    const entries = (libEntries ?? []).filter(e => !libQuery || e.name.toLowerCase().includes(libQuery.toLowerCase()))
+                    // Group by folder (parentFolder › folder), like the library panel.
+                    // A search flattens the tree so matches are never buried.
+                    const groups = new Map<string, LibraryEntry[]>()
+                    for (const e of entries) {
+                      const label = libQuery ? '' : [e.parentFolder, e.folder].filter(Boolean).join(' › ')
+                      const g = groups.get(label) ?? []
+                      g.push(e)
+                      groups.set(label, g)
+                    }
+                    const sampleRow = (e: LibraryEntry) => (
                       <button key={e.id} disabled={busy === 'lib'} onClick={() => void insertLibrarySample(e)}
                         style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
                         {!e.audioBlob && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>renders on insert</span>}
                         <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>{e.duration.toFixed(1)}s</span>
                       </button>
-                    ))}
-                  {libTab === 'samples' && libEntries !== null && libEntries.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No sounds in your library on this browser.</span>}
+                    )
+                    // Flat (searching) or ungrouped-only: no folder headers
+                    if (libQuery || (groups.size === 1 && groups.has(''))) {
+                      return entries.slice(0, 60).map(sampleRow)
+                    }
+                    const labels = [...groups.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+                    return labels.map(label => {
+                      const items = groups.get(label)!
+                      if (label === '') return items.map(sampleRow)  // unfiled: show inline
+                      const open = openFolders.has(label)
+                      return (
+                        <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <button
+                            onClick={() => setOpenFolders(prev => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n })}
+                            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, textAlign: 'left' }}>
+                            <span style={{ fontSize: 9 }}>{open ? '▼' : '▶'}</span>
+                            <span style={{ flex: 1 }}>📁 {label}</span>
+                            <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>{items.length}</span>
+                          </button>
+                          {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 10 }}>{items.map(sampleRow)}</div>}
+                        </div>
+                      )
+                    })
+                  })()}
+                  {libTab === 'samples' && libEntries !== null && libEntries.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No sounds in your library on this browser. Your library lives in the browser you built it in — open the admin panel there.</span>}
                   {libTab === 'recipes' && getAllChordRecipes()
                     .filter(r => !libQuery || r.title.toLowerCase().includes(libQuery.toLowerCase()))
                     .slice(0, 40)
