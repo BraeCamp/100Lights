@@ -39,6 +39,8 @@ export default function ArticlesPanel() {
   const [msg, setMsg] = useState('')
   const [genTopic, setGenTopic] = useState('')
   const [genNotes, setGenNotes] = useState('')
+  const [reviseInstr, setReviseInstr] = useState('')
+  const [prevBody, setPrevBody] = useState<string | null>(null)
   const [soundPicker, setSoundPicker] = useState(false)
   const [soundQuery, setSoundQuery] = useState('')
   const [soundResults, setSoundResults] = useState<Array<{ id: string; name: string; kind: string; authorName: string }> | null>(null)
@@ -174,6 +176,26 @@ export default function ArticlesPanel() {
       setMsg('Recipe rendered & inserted ✓')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Insert failed') } finally { setBusy(null) }
   }
+
+  async function reviseArticle() {
+    const instruction = reviseInstr.trim()
+    if (!instruction || !sel) return
+    setBusy('revise'); setMsg('')
+    try {
+      const r = await fetch('/api/admin/articles/revise', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: sel.body, instruction }),
+      }).catch(() => { throw new Error('Could not reach the server') })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error ?? `Revision failed (${r.status})`)
+      setPrevBody(sel.body)                       // enable one-step undo
+      setSel(s => s ? { ...s, body: d.body } : s)
+      setReviseInstr('')
+      setMsg('Revised ✓ — review the body, then Save')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Revision failed') } finally { setBusy(null) }
+  }
+
+  const REVISE_PRESETS = ['Make it more casual', 'Make it more concise', 'Add a beginner tip box to each section', 'Expand the intro']
 
   function appendToBody(line: string) {
     setSel(s => s ? { ...s, body: `${s.body.replace(/\s+$/, '')}\n\n${line}\n` } : s)
@@ -336,6 +358,34 @@ export default function ArticlesPanel() {
               </div>
             )}
             <div>
+              <div style={{ border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(124,58,237,0.06)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: '#a78bfa' }}>Ask the AI to revise this article</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    style={{ ...input, flex: 1, width: 'auto' }}
+                    placeholder="Add, remove, or change tone — e.g. “add a section on EQ”, “cut the FAQ”, “make it more casual”"
+                    value={reviseInstr}
+                    onChange={e => setReviseInstr(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') void reviseArticle() }}
+                  />
+                  <button onClick={() => void reviseArticle()} disabled={busy === 'revise' || !reviseInstr.trim()}
+                    style={{ fontSize: 12, fontWeight: 700, padding: '6px 16px', borderRadius: 8, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer', opacity: reviseInstr.trim() ? 1 : 0.5, whiteSpace: 'nowrap' }}>
+                    {busy === 'revise' ? 'Revising…' : 'Apply'}
+                  </button>
+                  {prevBody !== null && (
+                    <button onClick={() => { setSel(s => s && prevBody !== null ? { ...s, body: prevBody } : s); setPrevBody(null); setMsg('Reverted') }}
+                      style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      Undo
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {REVISE_PRESETS.map(p => (
+                    <button key={p} onClick={() => setReviseInstr(p)}
+                      style={{ fontSize: 10, padding: '3px 9px', borderRadius: 99, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>{p}</button>
+                  ))}
+                </div>
+              </div>
               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>BODY — markdown; `@video caption` = clip slot · `@audio(url) caption` = audio file · `@sound(id) caption` = community embed</label>
               <textarea
                 style={{ ...input, minHeight: 420, fontFamily: 'var(--font-geist-mono)', fontSize: 12.5, lineHeight: 1.6, resize: 'vertical' }}

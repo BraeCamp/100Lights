@@ -1,5 +1,6 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { getArticles } from '@/lib/learn-articles'
+import { ARTICLE_VOICE } from '@/lib/article-voice'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -8,26 +9,6 @@ export const maxDuration = 120
 // user-facing product — 100Lights ships no AI features; this is an editorial
 // tool behind the admin gate. Needs ANTHROPIC_API_KEY in the environment.
 
-const VOICE = `You write practical music-production guides for 100Lights, a free browser-based DAW (digital audio workstation).
-
-About the product (be accurate — never invent features):
-- Runs fully in the browser, free to start, no downloads or plugins; optional desktop app for macOS/Windows
-- Arrangement timeline + Session view, piano roll (with a STEP drum grid), mixer with sends/returns and per-track effect chains (EQ, compressor, reverb, delay, and more)
-- Recording: count-in, input monitoring with effects, loop takes, latency compensation, live waveform
-- Drag-and-drop "chord recipes" (pre-built progressions with study notes) and a 1000+ sound library
-- Real-time collaboration: shared project links, live co-editing, timeline comments, session chat
-- Export: WAV (44.1/48 kHz), WebM, per-track stems as zip, MIDI files
-- Community: publish/browse samples, presets, recipes, and songs at 100lights.com/community
-
-Voice and rules:
-- Practical and confident, light on jargon; explain any theory term in one clause
-- Everything you suggest must be doable start-to-finish in the free studio, and say so naturally
-- Exactly one link to https://100lights.com/community and one or two links to https://100lights.com where natural — no keyword stuffing
-- Where a short screen recording would help, insert a line on its own: @video <one-line description of the clip to record>
-- Output pure markdown: a single # H1 title, ## sections, short paragraphs, lists where they help
-- 900–1400 words
-
-Return ONLY the markdown article, starting with the # H1. No preamble, no frontmatter.`
 
 export async function POST(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
@@ -51,7 +32,7 @@ export async function POST(req: Request) {
     body: JSON.stringify({
       model: 'claude-sonnet-5',
       max_tokens: 4000,
-      system: VOICE,
+      system: ARTICLE_VOICE,
       messages: [{
         role: 'user',
         content: `Write a guide on: ${topic}\n${body.notes?.trim() ? `Extra direction from the editor: ${body.notes.trim()}\n` : ''}Existing articles (do not duplicate their angles): ${existing || 'none yet'}`,
