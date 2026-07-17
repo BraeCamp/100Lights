@@ -7,7 +7,13 @@
 // with the same slug, which overrides the file.
 
 import { useState, useEffect, useCallback } from 'react'
+import { useUser } from '@clerk/nextjs'
 import { renderMarkdown } from '@/lib/simple-markdown'
+import { initLibrary, libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
+import { getAllChordRecipes } from '@/lib/practice-recipes'
+import { playMelodicNote } from '@/lib/instrument-synth'
+import { encodeWav } from '@/lib/wav-codec'
 
 interface Row {
   slug: string
@@ -36,6 +42,11 @@ export default function ArticlesPanel() {
   const [soundPicker, setSoundPicker] = useState(false)
   const [soundQuery, setSoundQuery] = useState('')
   const [soundResults, setSoundResults] = useState<Array<{ id: string; name: string; kind: string; authorName: string }> | null>(null)
+  const [libPicker, setLibPicker] = useState(false)
+  const [libTab, setLibTab] = useState<'samples' | 'recipes'>('samples')
+  const [libQuery, setLibQuery] = useState('')
+  const [libEntries, setLibEntries] = useState<LibraryEntry[] | null>(null)
+  const { user } = useUser()
 
   const load = useCallback(async () => {
     const r = await fetch('/api/admin/articles').catch(() => null)
@@ -90,6 +101,75 @@ export default function ArticlesPanel() {
       setMsg('Draft generated — review, edit, and save.')
       setGenTopic(''); setGenNotes('')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Generation failed') } finally { setBusy(null) }
+  }
+
+  async function openLibraryPicker() {
+    setLibPicker(v => !v)
+    if (libEntries === null) {
+      // The library IndexedDB is scoped per user — must be initialized before reading
+      initLibrary(user?.id ?? null)
+      const all = await libraryGetAll().catch(() => [] as LibraryEntry[])
+      setLibEntries(all.sort((a, b) => (b.addedAt ?? '').localeCompare(a.addedAt ?? '')))
+    }
+  }
+
+  // Upload a blob into learn-audio/ and insert the @audio marker
+  async function uploadBlobAsArticleAudio(blob: Blob, name: string) {
+    const type = blob.type || 'audio/wav'
+    const r = await fetch('/api/admin/articles/audio', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: `${name.replace(/[^\w.-]+/g, '_')}.${type.includes('wav') ? 'wav' : type.includes('webm') ? 'webm' : 'mp3'}`, contentType: type }),
+    })
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error ?? 'Upload slot failed')
+    const put = await fetch(d.url, { method: 'PUT', headers: { 'Content-Type': type }, body: blob })
+    if (!put.ok) throw new Error('Upload failed')
+    appendToBody(`@audio(/api/learn-audio?key=${encodeURIComponent(d.key)}) ${name}`)
+  }
+
+  async function insertLibrarySample(entry: LibraryEntry) {
+    setBusy('lib'); setMsg('')
+    try {
+      let blob = entry.audioBlob
+      if (!blob) {
+        // Stub entry — render it first (same path the library's play button uses)
+        const fulfilled = await libraryFulfill(entry.id)
+        blob = fulfilled?.audioBlob ?? undefined
+      }
+      if (!blob) throw new Error('This sound has no audio yet — play it once in the library, then retry')
+      await uploadBlobAsArticleAudio(blob, entry.name)
+      setLibPicker(false)
+      setMsg('Sample uploaded & inserted ✓')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Insert failed') } finally { setBusy(null) }
+  }
+
+  async function insertLibraryRecipe(recipeId: string) {
+    setBusy('lib'); setMsg('')
+    try {
+      const recipe = getAllChordRecipes().find(r => r.id === recipeId)
+      if (!recipe) throw new Error('Recipe not found')
+      const spec = recipe.build()
+      // Render a piano audition offline (100 bpm, 16-beat cap) into a WAV —
+      // the synthesis is oscillator-based, so it renders without loading samples
+      const spb = 60 / 100
+      const capBeats = Math.min(16, Math.max(spec.durationBeats, ...spec.notes.map(n => n.startBeat + n.durationBeats)))
+      const durSec = capBeats * spb + 2
+      const rate = 44100
+      const off = new OfflineAudioContext(2, Math.ceil(durSec * rate), rate)
+      const g = off.createGain()
+      g.gain.value = 0.7
+      g.connect(off.destination)
+      for (const n of spec.notes) {
+        if (n.startBeat >= 16) continue
+        playMelodicNote(off as unknown as AudioContext, 'piano-grand', n.pitch, 0.05 + n.startBeat * spb, (n.velocity ?? 100) / 127, g)
+      }
+      const rendered = await off.startRendering()
+      const channels = Array.from({ length: rendered.numberOfChannels }, (_, ch) => rendered.getChannelData(ch))
+      const blob = new Blob([encodeWav(channels, rate)], { type: 'audio/wav' })
+      await uploadBlobAsArticleAudio(blob, `${recipe.title} (piano)`)
+      setLibPicker(false)
+      setMsg('Recipe rendered & inserted ✓')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Insert failed') } finally { setBusy(null) }
   }
 
   function appendToBody(line: string) {
@@ -169,11 +249,49 @@ export default function ArticlesPanel() {
                 <input type="file" accept="audio/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) void uploadAudio(f); e.target.value = '' }} />
               </label>
               <button
+                onClick={() => void openLibraryPicker()}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(52,211,153,0.5)', background: libPicker ? 'rgba(52,211,153,0.08)' : 'transparent', color: '#34d399', cursor: 'pointer' }}
+              >♫ From my library</button>
+              <button
                 onClick={() => { setSoundPicker(v => !v); if (soundResults === null) void searchSounds('') }}
                 style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed var(--border)', background: soundPicker ? 'var(--bg-card)' : 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
-              >♪ Insert sample or recipe from Community</button>
-              <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Library sounds: share them to the Community first, then insert here.</span>
+              >♪ From the Community</button>
             </div>
+            {libPicker && (
+              <div style={{ border: '1px solid rgba(52,211,153,0.35)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {(['samples', 'recipes'] as const).map(t => (
+                    <button key={t} onClick={() => setLibTab(t)} style={{ fontSize: 10.5, fontWeight: 700, padding: '4px 12px', borderRadius: 99, border: '1px solid var(--border)', background: libTab === t ? 'rgba(52,211,153,0.15)' : 'transparent', color: libTab === t ? '#34d399' : 'var(--text-muted)', cursor: 'pointer', textTransform: 'capitalize' }}>{t}</button>
+                  ))}
+                  <input style={{ ...input, flex: 1, width: 'auto' }} placeholder="Search…" value={libQuery} onChange={e => setLibQuery(e.target.value)} />
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{busy === 'lib' ? 'Uploading…' : 'Copies the sound to the site — no community share needed'}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+                  {libTab === 'samples' && (libEntries ?? [])
+                    .filter(e => !libQuery || e.name.toLowerCase().includes(libQuery.toLowerCase()))
+                    .slice(0, 40)
+                    .map(e => (
+                      <button key={e.id} disabled={busy === 'lib'} onClick={() => void insertLibrarySample(e)}
+                        style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                        {!e.audioBlob && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>renders on insert</span>}
+                        <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>{e.duration.toFixed(1)}s</span>
+                      </button>
+                    ))}
+                  {libTab === 'samples' && libEntries !== null && libEntries.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No sounds in your library on this browser.</span>}
+                  {libTab === 'recipes' && getAllChordRecipes()
+                    .filter(r => !libQuery || r.title.toLowerCase().includes(libQuery.toLowerCase()))
+                    .slice(0, 40)
+                    .map(r => (
+                      <button key={r.id} disabled={busy === 'lib'} onClick={() => void insertLibraryRecipe(r.id)}
+                        style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', fontSize: 12, padding: '6px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>♪ {r.title}</span>
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>renders piano WAV</span>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
             {soundPicker && (
               <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <input style={input} placeholder="Search community sounds…" value={soundQuery} onChange={e => void searchSounds(e.target.value)} />
