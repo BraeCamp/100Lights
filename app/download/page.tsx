@@ -15,6 +15,8 @@ async function getLatestRelease(): Promise<{ version: string; macDmg: string; ma
     const res = await fetch(
       'https://api.github.com/repos/BraeCamp/100Lights/releases/latest',
       {
+        // A hung GitHub API connection must not stall the whole page render
+        signal: AbortSignal.timeout(3000),
         next: { revalidate: 300 },
         headers: {
           'User-Agent': '100Lights-Site',
