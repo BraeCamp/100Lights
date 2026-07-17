@@ -10,9 +10,10 @@
 // key render as real text and stay in the DOM even when collapsed.
 
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { Play, Square, ChevronDown } from 'lucide-react'
+import { Play, Square, ChevronDown, Download } from 'lucide-react'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { KEY_NAMES, transposeChords, type Chord } from '@/lib/chord-analysis'
+import { writeMidiFile } from '@/lib/midi-file'
 
 export interface ProgressionData {
   chords: Chord[]
@@ -43,6 +44,21 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
 
   // Which pitch classes are lit: the active chord, or the first when idle
   const litPitches = new Set((chords[active ?? 0]?.pitches ?? []).map(p => ((p % 12) + 12) % 12))
+
+  // The recipe's distinct notes → a real MIDI file, built client-side from the
+  // CURRENTLY transposed chords, so the download matches the selected key. This
+  // is the note data itself (which key/when/how long) — the format a pianist
+  // actually wants, unlike a rendered audio recording.
+  function downloadMidi() {
+    const notes = chords.flatMap(ch => ch.pitches.map(p => ({ pitch: p, startBeat: ch.beat, durationBeats: ch.dur, velocity: 100 })))
+    const name = `${(data.caption || 'progression').replace(/[^\w-]+/g, '-')}-${KEY_NAMES[keyPc]}`
+    const blob = writeMidiFile(notes, 100, name)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${name}.mid`
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
 
   function playFrom(index: number, sequence: boolean) {
     stopRef.current()
@@ -150,6 +166,15 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
                     color: active === i ? '#a78bfa' : 'var(--text-primary)',
                   }}>{c.name}</button>
               ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+              <button
+                onClick={downloadMidi}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >
+                <Download size={12} /> Download MIDI ({KEY_NAMES[keyPc]})
+              </button>
+              <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Open it in any DAW or notation app — it carries the exact notes, in the key you picked.</span>
             </div>
             <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8 }}>
               Lit keys are the notes to press for the highlighted chord. Change the KEY to transpose the whole progression.
