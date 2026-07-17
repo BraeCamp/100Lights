@@ -76,7 +76,7 @@ export function touchedByAction(action: DawAction): Touched {
     case 'UPDATE_TAKE_LANE':     return { whole: [], entities: { takeLanes: [action.laneId] } }
 
     // ── project scalars ──
-    case 'SET_TEMPO':          return { whole: ['tempo'] }
+    case 'SET_TEMPO':          return { whole: ['tempo', 'arrangementClips'] }  // rescales unwarped audio lengths
     case 'SET_TIME_SIG':       return { whole: ['timeSignatureNum', 'timeSignatureDen'] }
     case 'SET_MASTER_VOLUME':  return { whole: ['masterVolume'] }
     case 'SET_SWING':          return { whole: ['swing'] }

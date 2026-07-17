@@ -304,8 +304,23 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'PATCH_PROJECT':
       return { ...project, ...action.patch }
 
-    case 'SET_TEMPO':
-      return { ...project, tempo: Math.max(40, Math.min(300, action.tempo)) }
+    case 'SET_TEMPO': {
+      const tempo = Math.max(40, Math.min(300, action.tempo))
+      // Non-warped audio keeps its absolute length: its BEAT length rescales
+      // with tempo. Without this, lowering the BPM stretches the beat-window
+      // past the sample's audio and loop-enabled clips audibly start an extra
+      // repeat (and non-looping ones trail silence). Warped clips stretch
+      // with tempo by design; MIDI is beat-native — both untouched.
+      // seconds = beats × 60/tempo, so keeping seconds fixed means
+      // beats scale by NEW/OLD (faster tempo → same audio spans more beats)
+      const ratio = tempo / project.tempo
+      const arrangementClips = Math.abs(ratio - 1) < 1e-9 ? project.arrangementClips : project.arrangementClips.map(c =>
+        c.kind === 'audio' && !c.warpEnabled
+          ? { ...c, durationBeats: Math.max(0.125, c.durationBeats * ratio) }
+          : c
+      )
+      return { ...project, tempo, arrangementClips }
+    }
 
     case 'SET_TIME_SIG':
       return { ...project, timeSignatureNum: action.num, timeSignatureDen: action.den }
