@@ -21,6 +21,7 @@ const isPublicRoute = createRouteMatcher([
   '/settings',
   '/trash',
   '/download',
+  '/learn(.*)',
   '/legal/(.*)',
   '/community(.*)',
   '/inspector',

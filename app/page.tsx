@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import DemoVideo from '@/components/DemoVideo'
 import { auth } from '@clerk/nextjs/server'
+import { getArticles } from '@/lib/learn-articles'
 import {
   Zap, Check, ArrowRight,
   Layers, Music2, Sliders, CircleDot,
@@ -144,6 +145,7 @@ const jsonLd = {
 
 export default async function LandingPage() {
   const { userId } = await auth()
+  const hasGuides = getArticles({ includeDrafts: false }).length > 0
 
   return (
     <>
@@ -474,6 +476,7 @@ export default async function LandingPage() {
                 <div className="flex items-center gap-4">
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>© 2026 100Lights. Built for musicians.</p>
                   <Link href="/community" className="text-xs" style={{ color: 'var(--text-muted)' }}>Community</Link>
+                  {hasGuides && <Link href="/learn" className="text-xs" style={{ color: 'var(--text-muted)' }}>Learn</Link>}
                   <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
                   <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>
                 </div>
