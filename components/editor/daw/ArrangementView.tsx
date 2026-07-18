@@ -710,6 +710,7 @@ export default function ArrangementView() {
 
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
+    const preSelected = new Set(selectedClipIds)   // sample to loop, if any
     const laneEl = laneRef.current
     if (!laneEl) return
     const laneRect = laneEl.getBoundingClientRect()
@@ -780,15 +781,35 @@ export default function ArrangementView() {
       if (ev.altKey) {
         setSelectedClipIds(prev => new Set([...prev, ...newIds]))
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
-      } else if (newIds.size === 0 && newEffIds.size === 0 && regionEnd - regionStart > 0.001) {
-        // Dragging across empty background — no clips or FX under the band —
-        // sets the loop to that span (grid-snapped), so you can frame a loop
-        // over silence just like over sound. Selection is cleared.
-        dispatch({ type: 'SET_LOOP', start: regionStart, end: regionEnd })
-        dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
-        setSelectedClipIds(new Set())
-        setSelectedClipId(null)
-        setSelectedEffectIds(new Set())
+      } else if (newIds.size === 0 && newEffIds.size === 0 && regionEnd - regionStart > 0.001 && preSelected.size === 1) {
+        // Dragging across empty background with a clip already selected LOOPS
+        // that sample into the dragged span: repeats of the clip are tiled on
+        // its own track, filling from the drag start to the drag end (both
+        // grid-snapped), the last one cropped to the region. Nothing else
+        // was under the band, so it's empty space getting filled with sound.
+        const src = project.arrangementClips.find(c => c.id === [...preSelected][0])
+        if (src) {
+          const dur = src.durationBeats
+          const from = Math.max(regionStart, src.startBeat + (regionStart >= src.startBeat && regionStart < src.startBeat + dur ? dur : 0))
+          const addedIds = new Set<string>()
+          let placed = 0
+          for (let start = from; start < regionEnd - 0.001 && placed < 128; start += dur) {
+            // don't stack a copy exactly on an existing clip at this spot
+            if (project.arrangementClips.some(c => c.trackId === src.trackId && Math.abs(c.startBeat - start) < 0.001)) continue
+            const copy = JSON.parse(JSON.stringify(src)) as DawClip
+            copy.id = crypto.randomUUID()
+            copy.startBeat = start
+            if (start + dur > regionEnd) copy.durationBeats = regionEnd - start
+            if (isMidiClip(copy)) copy.notes = copy.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
+            if (isAudioClip(src)) { const buf = engine.bufferCache.get(src.id); if (buf) engine.bufferCache.set(copy.id, buf) }
+            dispatch({ type: 'ADD_CLIP', clip: copy })
+            addedIds.add(copy.id)
+            placed++
+          }
+          setSelectedClipIds(addedIds)
+          setSelectedClipId(null)
+          setSelectedEffectIds(new Set())
+        }
       } else {
         setSelectedClipIds(newIds)
         setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
