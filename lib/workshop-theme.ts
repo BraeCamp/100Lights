@@ -359,4 +359,67 @@ export const BUILTIN_PRESETS: WorkshopTheme[] = [
     },
     pattern: { type: 'none', opacity: 0.5, scale: 22 }, accentSync: false,
   },
+  {
+    version: THEME_VERSION, id: 'preset-ocean', name: 'Ocean',
+    colors: {
+      bgBase: '#0a1622', bgSurface: '#10202f', bgCard: '#152838', bgCardHover: '#1b3345',
+      border: '#223c50', borderLight: '#2c4c64', textPrimary: '#e6f2fb',
+      textSecondary: '#9fc0d6', textMuted: '#6f92a8', accent: '#38bdf8',
+    },
+    pattern: { type: 'grid', color: '#2c4c64', opacity: 0.5, scale: 26 }, accentSync: true,
+  },
+  {
+    version: THEME_VERSION, id: 'preset-rose', name: 'Rose Quartz',
+    colors: {
+      bgBase: '#1a0f16', bgSurface: '#241521', bgCard: '#2c1a29', bgCardHover: '#371f32',
+      border: '#3e2438', borderLight: '#522f49', textPrimary: '#fce9f3',
+      textSecondary: '#d5a6c2', textMuted: '#a67c96', accent: '#ec4899',
+    },
+    pattern: { type: 'dots', color: '#522f49', opacity: 0.55, scale: 22 }, accentSync: true,
+  },
+  {
+    version: THEME_VERSION, id: 'preset-amber', name: 'Amber',
+    colors: {
+      bgBase: '#14100a', bgSurface: '#1c160d', bgCard: '#221a10', bgCardHover: '#2a2015',
+      border: '#322818', borderLight: '#443619', textPrimary: '#f6efe1',
+      textSecondary: '#cbb894', textMuted: '#9a8a68', accent: '#f59e0b',
+    },
+    pattern: { type: 'grid', color: '#443619', opacity: 0.45, scale: 24 }, accentSync: true,
+  },
+  {
+    version: THEME_VERSION, id: 'preset-neon', name: 'Neon',
+    colors: {
+      bgBase: '#0a0a12', bgSurface: '#101020', bgCard: '#14142a', bgCardHover: '#1a1a36',
+      border: '#24244a', borderLight: '#33336a', textPrimary: '#eef0ff',
+      textSecondary: '#a6a8d8', textMuted: '#7676a8', accent: '#d946ef',
+    },
+    pattern: { type: 'cross', color: '#33336a', opacity: 0.6, scale: 20 }, accentSync: true,
+  },
+  {
+    version: THEME_VERSION, id: 'preset-slate', name: 'Slate',
+    colors: {
+      bgBase: '#0f1117', bgSurface: '#161922', bgCard: '#1b1f2a', bgCardHover: '#222634',
+      border: '#2a2f3d', borderLight: '#363c4e', textPrimary: '#eef1f6',
+      textSecondary: '#aab3c5', textMuted: '#7c8598', accent: '#6366f1',
+    },
+    pattern: { type: 'none', opacity: 0.5, scale: 22 }, accentSync: true,
+  },
+  {
+    version: THEME_VERSION, id: 'preset-vapor', name: 'Vaporwave',
+    colors: {
+      bgBase: '#120a1e', bgSurface: '#1a0f2b', bgCard: '#221436', bgCardHover: '#2b1a44',
+      border: '#38235a', borderLight: '#4a2f75', textPrimary: '#f3e9ff',
+      textSecondary: '#c4a6e0', textMuted: '#9678b8', accent: '#f472b6',
+    },
+    pattern: { type: 'diagonal', color: '#4a2f75', opacity: 0.5, scale: 18, angle: 60 }, accentSync: true,
+  },
+  {
+    version: THEME_VERSION, id: 'preset-contrast', name: 'High Contrast',
+    colors: {
+      bgBase: '#000000', bgSurface: '#0a0a0a', bgCard: '#111111', bgCardHover: '#1a1a1a',
+      border: '#333333', borderLight: '#4d4d4d', textPrimary: '#ffffff',
+      textSecondary: '#d4d4d4', textMuted: '#a3a3a3', accent: '#ffcc00',
+    },
+    pattern: { type: 'none', opacity: 0.5, scale: 22 }, accentSync: false,
+  },
 ]
