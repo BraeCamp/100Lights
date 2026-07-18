@@ -35,7 +35,7 @@ async function purgeExpiredTrash(userId: string) {
     SELECT id, data FROM projects
     WHERE user_id = ${userId}
       AND deleted_at IS NOT NULL
-      AND deleted_at < NOW() - INTERVAL '7 days'
+      AND deleted_at < NOW() - INTERVAL '30 days'
   `
   if (expired.length === 0) return
   const keys = expired.flatMap(r =>

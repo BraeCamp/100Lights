@@ -17,7 +17,7 @@ export async function GET() {
     id:        r.id,
     name:      r.name,
     deletedAt: r.deleted_at,
-    expiresAt: new Date(new Date(r.deleted_at as string).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(new Date(r.deleted_at as string).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     mediaCount: Array.isArray(r.media) ? r.media.length : 0,
   })))
 }

@@ -515,12 +515,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           { label: 'Open Piano Roll', fn: onDoubleClick },
           { label: 'Sound Settings…', fn: () => { if (ctxPos) setSoundPanelAnchor({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
-    { label: isMulti ? 'Delete Selected' : 'Delete', color: '#ef4444', fn: () => isMulti ? onDeleteAll!() : onDelete() },
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     { label: 'Edit ▸', fn: () => setCtxSub('edit'), keepOpen: true },
     { label: isAudioClip(clip) ? 'Tools ▸' : 'Sound ▸', fn: () => setCtxSub('more'), keepOpen: true },
-    // Library & Community actions live together at the bottom
+    // Library & Community actions live together
     {
       label: justSaved ? 'Saved ✓' : isMidiClip(clip) ? 'Save Recipe to Library' : 'Save Sample to Library',
       color: justSaved ? '#22c55e' : undefined,
@@ -536,6 +535,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       },
     },
     { label: 'Share to Community…', fn: () => setShareOpen(true) },
+    // Delete lives at the very bottom, away from the other actions
+    { label: isMulti ? 'Delete Selected' : 'Delete', color: '#ef4444', fn: () => isMulti ? onDeleteAll!() : onDelete() },
   ]
 
   return (

@@ -209,6 +209,7 @@ function CloudProjectsView() {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(false)
+  const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number } | null>(null)
 
   function loadProjects() {
     setLoading(true)
@@ -222,11 +223,32 @@ function CloudProjectsView() {
 
   useEffect(() => { loadProjects() }, [])
 
-  async function handleDelete(e: React.MouseEvent, id: string) {
-    e.preventDefault()
-    if (!confirm('Move this project to trash? It will be permanently deleted after 7 days.')) return
-    await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+  // Close the right-click menu on any click, scroll, or Escape
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null) }
+    window.addEventListener('click', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [ctxMenu])
+
+  async function deleteProject(id: string) {
+    if (!confirm('Move this project to trash? It will be permanently deleted after 1 month.')) return
     setProjects(prev => prev.filter(p => p.id !== id))
+    await fetch(`/api/projects/${id}`, { method: 'DELETE' }).catch(() => loadProjects())
+  }
+
+  function toggleStar(id: string) {
+    setProjects(prev => prev.map(p => p.id === id ? { ...p, starred: !p.starred } : p))
+    fetch(`/api/projects/${id}`, { method: 'PATCH' }).catch(() => {
+      setProjects(prev => prev.map(p => p.id === id ? { ...p, starred: !p.starred } : p))
+    })
   }
 
   if (loading) {
@@ -271,6 +293,10 @@ function CloudProjectsView() {
           key={project.id}
           className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
           style={{ background: 'var(--bg-card)', borderColor: project.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setCtxMenu({ id: project.id, starred: project.starred, x: e.clientX, y: e.clientY })
+          }}
         >
           <Link href={`/projects/${project.id}`} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
             {project.thumbnail
@@ -286,12 +312,7 @@ function CloudProjectsView() {
           </Link>
           <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(project.savedAt)}</span>
           <button
-            onClick={() => {
-              setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
-              fetch(`/api/projects/${project.id}`, { method: 'PATCH' }).catch(() => {
-                setProjects(prev => prev.map(p => p.id === project.id ? { ...p, starred: !p.starred } : p))
-              })
-            }}
+            onClick={() => toggleStar(project.id)}
             title={project.starred ? 'Unstar' : 'Star'}
             className="p-1.5 rounded-lg"
             style={{ color: project.starred ? '#f59e0b' : 'var(--text-muted)' }}
@@ -299,7 +320,7 @@ function CloudProjectsView() {
             <Star size={14} fill={project.starred ? '#f59e0b' : 'none'} />
           </button>
           <button
-            onClick={(e) => handleDelete(e, project.id)}
+            onClick={(e) => { e.preventDefault(); deleteProject(project.id) }}
             className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg"
             style={{ color: 'var(--text-muted)' }}
             title="Delete project"
@@ -308,6 +329,39 @@ function CloudProjectsView() {
           </button>
         </div>
       ))}
+
+      {ctxMenu && (
+        <div
+          className="fixed z-50 min-w-[168px] rounded-lg border py-1 shadow-xl"
+          style={{ left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <Link
+            href={`/projects/${ctxMenu.id}`}
+            className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            <FolderOpen size={14} /> Open
+          </Link>
+          <button
+            onClick={() => { toggleStar(ctxMenu.id); setCtxMenu(null) }}
+            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            <Star size={14} fill={ctxMenu.starred ? '#f59e0b' : 'none'} color={ctxMenu.starred ? '#f59e0b' : 'currentColor'} />
+            {ctxMenu.starred ? 'Unstar' : 'Star'}
+          </button>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+          <button
+            onClick={() => { const id = ctxMenu.id; setCtxMenu(null); deleteProject(id) }}
+            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left"
+            style={{ color: '#ef4444' }}
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      )}
     </div>
   )
 }

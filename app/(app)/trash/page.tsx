@@ -56,7 +56,7 @@ export default function TrashPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Trash</h1>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Projects are permanently deleted after 7 days.
+            Projects are permanently deleted after 1 month.
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export default function TrashPage() {
           <div className="flex flex-col items-center justify-center py-16 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
             <Trash2 size={28} color="var(--text-muted)" className="mb-3" />
             <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Trash is empty</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Deleted projects will appear here for 7 days</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Deleted projects will appear here for 1 month</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
