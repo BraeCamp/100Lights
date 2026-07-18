@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, LogIn, FileX } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
-import { openProjectFromFile } from '@/lib/project-serializer'
+import { openProjectsFromFile } from '@/lib/project-serializer'
 import { saveFolder, loadFolder, clearFolder, verifyPermission } from '@/lib/local-folder'
 import type { CfProjFile } from '@/lib/project-serializer'
 
@@ -205,7 +205,7 @@ function LocalProjectsView() {
 
 // ── Cloud view (signed-in users) ────────────────────────────────────────────
 
-function CloudProjectsView() {
+function CloudProjectsView({ reloadKey = 0 }: { reloadKey?: number }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(false)
@@ -221,7 +221,7 @@ function CloudProjectsView() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { loadProjects() }, [])
+  useEffect(() => { loadProjects() }, [reloadKey])
 
   // Close the right-click menu on any click, scroll, or Escape
   useEffect(() => {
@@ -370,12 +370,42 @@ function CloudProjectsView() {
 
 export default function ProjectsPage() {
   const { isSignedIn, isLoaded } = useUser()
+  const [reloadKey, setReloadKey] = useState(0)
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState<string | null>(null)
 
   async function handleOpenFromFile() {
-    const cfproj = await openProjectFromFile()
-    if (!cfproj) return
-    localStorage.setItem(`cf_pending_cfproj_${cfproj.id}`, JSON.stringify(cfproj))
-    window.location.href = `/projects/${cfproj.id}`
+    const files = await openProjectsFromFile()
+    if (files.length === 0) return
+
+    // A single file opens straight into the editor (edit-and-save flow).
+    if (files.length === 1 && !isSignedIn) {
+      const cfproj = files[0]
+      localStorage.setItem(`cf_pending_cfproj_${cfproj.id}`, JSON.stringify(cfproj))
+      window.location.href = `/projects/${cfproj.id}`
+      return
+    }
+    if (!isSignedIn) { setImportMsg('Sign in to import project files to your account.'); return }
+
+    // Signed in: import all selected files straight into the projects list.
+    setImporting(true)
+    let ok = 0, fail = 0, limit = false
+    for (const cf of files) {
+      try {
+        const r = await fetch('/api/projects', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cf),
+        })
+        if (r.ok) ok++
+        else { fail++; if (r.status === 403) limit = true }
+      } catch { fail++ }
+    }
+    setImporting(false)
+    setImportMsg(
+      `Imported ${ok} project${ok !== 1 ? 's' : ''}` +
+      (fail ? ` — ${fail} failed${limit ? ' (project limit reached)' : ''}` : '') + '.'
+    )
+    setReloadKey(k => k + 1)
+    setTimeout(() => setImportMsg(null), 6000)
   }
 
   return (
@@ -391,11 +421,13 @@ export default function ProjectsPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleOpenFromFile}
+              disabled={importing}
+              title={isSignedIn ? 'Open one file to edit, or select several to import them all' : 'Open a project file'}
               className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium"
-              style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+              style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', opacity: importing ? 0.6 : 1 }}
             >
               <FolderOpen size={15} />
-              Open from File
+              {importing ? 'Importing…' : isSignedIn ? 'Open / Import Files' : 'Open from File'}
             </button>
             <Link
               href="/new"
@@ -408,12 +440,18 @@ export default function ProjectsPage() {
           </div>
         </div>
 
+        {importMsg && (
+          <div className="mb-4 px-4 py-2.5 rounded-lg text-sm" style={{ background: 'var(--accent-subtle)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+            {importMsg}
+          </div>
+        )}
+
         {!isLoaded ? (
           <div className="flex items-center justify-center py-16">
             <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</div>
           </div>
         ) : isSignedIn ? (
-          <CloudProjectsView />
+          <CloudProjectsView reloadKey={reloadKey} />
         ) : (
           <LocalProjectsView />
         )}

@@ -339,6 +339,35 @@ export async function openProjectFromFile(): Promise<CfProjFile | null> {
   })
 }
 
+/**
+ * Open one or more .cfproj files from the user's computer.
+ * Returns the parsed projects (empty array if the user cancels).
+ */
+export async function openProjectsFromFile(): Promise<CfProjFile[]> {
+  const parseFile = async (file: File): Promise<CfProjFile | null> => {
+    try { return JSON.parse(await file.text()) as CfProjFile } catch { return null }
+  }
+  if (window.showOpenFilePicker) {
+    try {
+      const handles = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: true })
+      const files = await Promise.all(handles.map(h => h.getFile().then(parseFile)))
+      return files.filter((f): f is CfProjFile => f != null)
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return []
+      throw err
+    }
+  }
+  // Fallback: hidden multi-file input
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement('input'), { type: 'file', accept: CF_EXT, multiple: true })
+    input.onchange = async () => {
+      const files = await Promise.all([...(input.files ?? [])].map(parseFile))
+      resolve(files.filter((f): f is CfProjFile => f != null))
+    }
+    input.click()
+  })
+}
+
 function triggerDownload(content: string, filename: string) {
   const a = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(new Blob([content], { type: CF_MIME })),
