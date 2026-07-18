@@ -497,6 +497,19 @@ export default function AudioEditor(props: AudioEditorProps) {
     setRestorePrompt(null)
   }
 
+  // Auto-dismiss the restore prompt after 15s so a stray click can't roll the
+  // current session back to older, unwanted edits. Timing out keeps the current
+  // project (does NOT restore) and releases the autosave hold, which then
+  // overwrites the stale snapshot.
+  useEffect(() => {
+    if (!restorePrompt) return
+    const t = window.setTimeout(() => {
+      restoreResolvedRef.current = true
+      setRestorePrompt(null)
+    }, 15000)
+    return () => window.clearTimeout(t)
+  }, [restorePrompt])
+
   // ── Per-track external input recording ──────────────────────────────────────
   type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
@@ -1526,6 +1539,9 @@ export default function AudioEditor(props: AudioEditorProps) {
             <strong>Unsaved session recovered</strong>
             <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>
               Local backup from {new Date(restorePrompt.savedAt).toLocaleString()} — restore it?
+            </span>
+            <span style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginTop: 2, opacity: 0.8 }}>
+              Auto-dismisses in 15s — your current work is kept.
             </span>
           </div>
           <button onClick={handleRestore} style={{
