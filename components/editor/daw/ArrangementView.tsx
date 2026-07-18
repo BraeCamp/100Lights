@@ -782,32 +782,24 @@ export default function ArrangementView() {
         setSelectedClipIds(prev => new Set([...prev, ...newIds]))
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
       } else if (newIds.size === 0 && newEffIds.size === 0 && regionEnd - regionStart > 0.001 && preSelected.size === 1) {
-        // Dragging across empty background with a clip already selected LOOPS
-        // that sample into the dragged span: repeats of the clip are tiled on
-        // its own track, filling from the drag start to the drag end (both
-        // grid-snapped), the last one cropped to the region. Nothing else
-        // was under the band, so it's empty space getting filled with sound.
+        // Dragging across empty background with a clip selected LOOPS that
+        // sample out to the drag end: the clip itself is extended into a
+        // single looped clip spanning to regionEnd (grid-snapped), so the
+        // repeated bars are visible on the track and its edge can be dragged
+        // to lengthen or shorten the loop — same as dragging the clip's edge.
         const src = project.arrangementClips.find(c => c.id === [...preSelected][0])
-        if (src) {
-          const dur = src.durationBeats
-          const from = Math.max(regionStart, src.startBeat + (regionStart >= src.startBeat && regionStart < src.startBeat + dur ? dur : 0))
-          const addedIds = new Set<string>()
-          let placed = 0
-          for (let start = from; start < regionEnd - 0.001 && placed < 128; start += dur) {
-            // don't stack a copy exactly on an existing clip at this spot
-            if (project.arrangementClips.some(c => c.trackId === src.trackId && Math.abs(c.startBeat - start) < 0.001)) continue
-            const copy = JSON.parse(JSON.stringify(src)) as DawClip
-            copy.id = crypto.randomUUID()
-            copy.startBeat = start
-            if (start + dur > regionEnd) copy.durationBeats = regionEnd - start
-            if (isMidiClip(copy)) copy.notes = copy.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
-            if (isAudioClip(src)) { const buf = engine.bufferCache.get(src.id); if (buf) engine.bufferCache.set(copy.id, buf) }
-            dispatch({ type: 'ADD_CLIP', clip: copy })
-            addedIds.add(copy.id)
-            placed++
+        if (src && regionEnd > src.startBeat + 0.001) {
+          const newDur = regionEnd - src.startBeat
+          if (isMidiClip(src)) {
+            const barBeats = project.timeSignatureNum || 4
+            const contentEnd = src.notes.length ? Math.max(...src.notes.map(n => n.startBeat + n.durationBeats)) : src.durationBeats
+            const patternBeats = src.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+            dispatch({ type: 'UPDATE_CLIP', clipId: src.id, patch: { durationBeats: newDur, loopEnabled: true, loopLengthBeats: patternBeats, stretchNotes: false } })
+          } else {
+            dispatch({ type: 'UPDATE_CLIP', clipId: src.id, patch: { durationBeats: newDur, loopEnabled: true, warpEnabled: false } })
           }
-          setSelectedClipIds(addedIds)
-          setSelectedClipId(null)
+          setSelectedClipIds(new Set([src.id]))
+          setSelectedClipId(src.id)
           setSelectedEffectIds(new Set())
         }
       } else {
