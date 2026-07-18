@@ -628,6 +628,10 @@ export interface DawContextValue {
   // Save
   onSave?: () => void | Promise<void>
   isSaving: boolean
+  isGuest?: boolean
+  requireAccount?: (action: 'save' | 'export') => void
+  resumeExport?: boolean
+  clearResumeExport?: () => void
   // Podcast / audio mode
   audioMode?: 'music' | 'podcast'
   podcastMeta?: PodcastMeta

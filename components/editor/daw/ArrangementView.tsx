@@ -351,7 +351,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -1219,8 +1219,8 @@ export default function ArrangementView() {
         {/* Export split button */}
         <div ref={exportDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
           <button
-            onClick={() => setShowExport(true)}
-            title="Export project audio"
+            onClick={() => { if (isGuest && requireAccount) { requireAccount('export'); return } setShowExport(true) }}
+            title={isGuest ? 'Sign up to export your mix' : 'Export project audio'}
             data-help-id="export"
             style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
@@ -1529,7 +1529,7 @@ export default function ArrangementView() {
         </div>,
         document.body
       )}
-      {showExport && <AudioExportModal onClose={() => { setShowExport(false); setExportDefaultFormat('webm') }} audioMode={audioMode} podcastMeta={podcastMeta} defaultFormat={exportDefaultFormat} />}
+      {(showExport || resumeExport) && <AudioExportModal onClose={() => { setShowExport(false); setExportDefaultFormat('webm'); clearResumeExport?.() }} audioMode={audioMode} podcastMeta={podcastMeta} defaultFormat={exportDefaultFormat} />}
       {/* Split at Transients dialog (toolbar-triggered) */}
       {arrangeTransientDialog && typeof document !== 'undefined' && createPortal(
         <div

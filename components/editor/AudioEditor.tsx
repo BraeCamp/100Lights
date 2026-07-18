@@ -46,6 +46,8 @@ export interface AudioEditorProps {
   /** Shared-project viewers (free plan): the UI is a faithful read-only mirror —
    *  local edit actions are dropped, remote/broadcast state still applies. */
   readOnly?: boolean
+  /** Signed-out visitor — can build freely, but save/export require an account. */
+  isGuest?: boolean
   captions?: Caption[]
   currentTime?: number
   onTimeChange?: (t: number) => void
@@ -397,18 +399,46 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Offline persistence — IndexedDB autosave + crash/offline recovery ───────
   const snapshotKey = props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`
   const [restorePrompt, setRestorePrompt] = useState<{ savedAt: number; project: DawProject } | null>(null)
+  const [resumeExport, setResumeExport] = useState(false)
   const [isOffline, setIsOffline] = useState(false)
   const restoreResolvedRef = useRef(false)
   const autosaveTimerRef = useRef<number | null>(null)
 
-  // Offer to restore a local snapshot that never made it to the server
+  // Guests build freely; saving or exporting needs an account. Flush the work
+  // to the local snapshot first (so nothing is lost across the sign-up round
+  // trip), stash which action to resume, then send them to sign-up and back.
+  function requireAccount(action: 'save' | 'export') {
+    try { void saveSnapshot(snapshotKey, projectRef.current) } catch { /* best effort */ }
+    try { sessionStorage.setItem('100lights-resume', JSON.stringify({ key: snapshotKey, action })) } catch { /* ok */ }
+    const back = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/new?modules=audio'
+    if (typeof window !== 'undefined') window.location.assign(`/sign-up?redirect_url=${encodeURIComponent(back)}`)
+  }
+  const requireAccountRef = useRef(requireAccount)
+  useEffect(() => { requireAccountRef.current = requireAccount })
+
+  // Offer to restore a local snapshot that never made it to the server.
+  // Special case: if we just came back from the guest sign-up gate for THIS
+  // project, restore silently (no prompt) and resume the action they wanted.
   useEffect(() => {
     let cancelled = false
+    let resume: { key: string; action: 'save' | 'export' } | null = null
+    try {
+      const raw = sessionStorage.getItem('100lights-resume')
+      if (raw) resume = JSON.parse(raw)
+    } catch { /* ignore */ }
     loadSnapshot(snapshotKey)
       .then(rec => {
         if (cancelled) return
         const differs = rec && JSON.stringify(rec.project) !== JSON.stringify(projectRef.current)
-        if (rec && !rec.synced && differs) {
+        const resumingHere = resume && resume.key === snapshotKey && !props.isGuest
+        if (rec && resumingHere) {
+          // Seamless: bring the work straight back, no Restore/Discard prompt
+          sessionStorage.removeItem('100lights-resume')
+          rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject(rec.project) })
+          restoreResolvedRef.current = true
+          if (resume!.action === 'save') setTimeout(() => { void handleSaveRef.current() }, 400)
+          if (resume!.action === 'export') setTimeout(() => setResumeExport(true), 400)
+        } else if (rec && !rec.synced && differs) {
           setRestorePrompt({ savedAt: rec.savedAt, project: rec.project })
         } else {
           restoreResolvedRef.current = true
@@ -1167,8 +1197,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     setExpandedPianoRollClipId,
     loopToolArmed,
     setLoopToolArmed,
-    onSave: onSave ? () => handleSaveRef.current() : undefined,
+    onSave: onSave ? () => { if (props.isGuest) requireAccountRef.current('save'); else void handleSaveRef.current() } : undefined,
     isSaving,
+    isGuest: !!props.isGuest,
+    requireAccount: (action: 'save' | 'export') => requireAccountRef.current(action),
+    resumeExport,
+    clearResumeExport: () => setResumeExport(false),
     audioMode: props.audioMode,
     podcastMeta,
     blinkIds,
@@ -1180,7 +1214,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
     expandedPianoRollClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
-    collabPeers,
+    collabPeers, props.isGuest, resumeExport,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────

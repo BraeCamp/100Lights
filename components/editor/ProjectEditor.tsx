@@ -647,6 +647,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
   const audioProps = {
     projectId: liveProjectId,
+    isGuest: authLoaded && !isSignedIn,
     projectName: localName,
     captions,
     currentTime,
