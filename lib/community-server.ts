@@ -2,7 +2,7 @@ import { sql } from './db'
 
 // Server-side shared helpers for the community API routes.
 
-export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project'] as const
+export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme'] as const
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 
 let tablesReady = false

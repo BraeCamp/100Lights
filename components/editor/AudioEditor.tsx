@@ -11,7 +11,8 @@ import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
-import { Library, Settings, FileText, Users } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette } from 'lucide-react'
+import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
 import { uploadRecordingBlob } from '@/lib/record-upload'
@@ -73,6 +74,7 @@ const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: 
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
+const AppearancePanel = dynamic(() => import('./daw/AppearancePanel'), { ssr: false })
 const SessionRecap = dynamic(() => import('./daw/SessionRecap'), { ssr: false })
 
 // ── Podcast Setup Panel ───────────────────────────────────────────────────────
@@ -928,6 +930,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [showAppearance, setShowAppearance] = useState(false)
 
   // B toggles the sound library panel (Ableton-style browser shortcut)
   useEffect(() => {
@@ -1226,10 +1229,13 @@ export default function AudioEditor(props: AudioEditorProps) {
           display: 'flex',
           flexDirection: 'column',
           height: '100%',
-          background: 'var(--bg-base)',
+          backgroundColor: 'var(--bg-base)',
+          backgroundImage: 'var(--workshop-pattern, none)',
+          backgroundSize: 'var(--workshop-pattern-size, auto)',
           overflow: 'hidden',
         }}
       >
+        {showAppearance && <AppearancePanel onClose={() => setShowAppearance(false)} />}
         {props.projectId && <SessionRecap projectId={props.projectId} />}
         {/* Pre-save Share: saves the project, then CollabInvite opens */}
         {!props.projectId && props.onSave && !props.readOnly && (
@@ -1310,6 +1316,20 @@ export default function AudioEditor(props: AudioEditorProps) {
                   )
                 })
               )}
+              {/* Appearance / theme customization — always available */}
+              <button
+                onClick={() => setShowAppearance(true)}
+                title="Customize appearance"
+                data-help-id="appearance"
+                style={{
+                  width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                  marginTop: 'auto', marginBottom: 8, background: 'transparent',
+                  color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+              >
+                <Palette size={14} />
+              </button>
             </div>
 
             {/* Collapsible panel */}
@@ -1541,5 +1561,5 @@ export default function AudioEditor(props: AudioEditorProps) {
     </DawContext.Provider>
   )
 
-  return editorContent
+  return <WorkshopThemeProvider>{editorContent}</WorkshopThemeProvider>
 }

@@ -12,7 +12,7 @@ import { useUser } from '@clerk/nextjs'
 import { FeedCard, KIND_META, stopFeedPlayback } from './FeedCard'
 
 type Kind = 'all' | CommunityItem['kind']
-const KINDS: Kind[] = ['all', 'song', 'sample', 'preset', 'recipe', 'pack', 'project']
+const KINDS: Kind[] = ['all', 'song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme']
 
 export default function CommunityPage() {
   const { user, isLoaded, isSignedIn } = useUser()

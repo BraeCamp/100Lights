@@ -9,7 +9,7 @@ import { getPresets, addPreset, type MidiPreset } from './midi-presets'
 import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import type { MidiClip } from './daw-types'
 
-export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project'
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme'
 
 export interface CommunityItem {
   id: string
@@ -217,9 +217,25 @@ export async function shareRecipe(clip: MidiClip, name: string, description: str
   if (!res.ok) throw new Error('share failed')
 }
 
+export async function shareTheme(theme: unknown, name: string, description: string, tags: string[] = []): Promise<void> {
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'theme', name, description, payload: { theme, ...(tags.length ? { tags } : {}) } }),
+  })
+  if (!res.ok) throw new Error('share failed')
+}
+
 // ── Importing ────────────────────────────────────────────────────────────────
 
 export async function importItem(item: CommunityItem): Promise<string> {
+  if (item.kind === 'theme') {
+    const p = (item.payload ?? {}) as { theme?: unknown }
+    const { applyImportedTheme } = await import('./workshop-theme')
+    applyImportedTheme(p.theme)
+    void countDownload(item.id)
+    return 'Theme applied to your workshop — open the editor to see it.'
+  }
+
   if (item.kind === 'recipe') {
     const p = item.payload as { spec: StoredRecipeSpec['spec'] }
     importRecipe({

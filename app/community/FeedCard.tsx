@@ -6,7 +6,7 @@
 // sign-in prompts instead of failing.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag } from 'lucide-react'
+import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag, Palette } from 'lucide-react'
 import { toggleReaction, type CommunityItem } from '@/lib/community'
 import { renderSpecToBuffer } from '@/lib/default-samples'
 import type { RenderSpec } from '@/lib/sound-library'
@@ -19,6 +19,7 @@ export const KIND_META: Record<CommunityItem['kind'], { label: string; plural: s
   recipe:  { label: 'Recipe',  plural: 'Recipes',  color: '#f59e0b', icon: BookOpen,       action: 'Save recipe' },
   pack:    { label: 'Pack',    plural: 'Packs',    color: '#34d399', icon: Package,        action: 'Install pack' },
   project: { label: 'Starter', plural: 'Starters', color: '#fb7185', icon: LayoutTemplate, action: 'Open in Studio' },
+  theme:   { label: 'Theme',   plural: 'Themes',   color: '#e879f9', icon: Palette,        action: 'Apply theme' },
 }
 
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']

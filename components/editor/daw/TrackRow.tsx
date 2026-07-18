@@ -9,6 +9,7 @@ import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
+import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
 import { clampToViewport } from './menu-clamp'
 import TrackInputCard from './TrackInputCard'
 // AudioInputSource and AUDIO_INPUT_LABELS removed — TrackInputCard handles device labels directly
@@ -297,6 +298,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
+  const workshopTheme = useWorkshopThemeOptional()
+  const trackColors = workshopTheme?.theme.trackPalette ?? TRACK_COLORS
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
   const takeLanes = project.takeLanes.filter(l => l.trackId === track.id)
   const dragHRef  = useRef<{ startY: number; startH: number } | null>(null)
@@ -925,7 +928,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <div style={{ borderTop: '1px solid #222', margin: '3px 0', padding: '6px 12px' }}>
               <div style={{ fontSize: 9, color: '#555', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Color</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {TRACK_COLORS.map(c => (
+                {trackColors.map(c => (
                   <button key={c} title={c}
                     onClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { color: c } }); setTrackCtxMenu(null) }}
                     style={{ width: 16, height: 16, borderRadius: '50%', background: c, border: track.color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', padding: 0, boxSizing: 'border-box' }}

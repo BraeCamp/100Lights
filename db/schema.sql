@@ -14,6 +14,13 @@ CREATE INDEX IF NOT EXISTS projects_user_id_idx ON projects (user_id);
 -- Migration: add deleted_at to existing installs
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
+-- Per-user app settings (workshop theme, and future preferences) as JSONB
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id    TEXT        PRIMARY KEY,
+  data       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Tracks per-user daily usage for rate limiting
 CREATE TABLE IF NOT EXISTS usage (
   user_id   TEXT        NOT NULL,
