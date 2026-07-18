@@ -274,7 +274,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -292,6 +292,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   getSelectionRegion?: () => { start: number; end: number } | null
   selectionRegion?: { start: number; end: number } | null
   isSelectionTrack?: boolean
+  onSelectionResize?: (end: number) => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
@@ -482,6 +483,45 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const viewStartBeat = scrollLeft / beatW
   const viewEndBeat   = (scrollLeft + viewWidth) / beatW
   const visibleClips  = clips.filter(c => c.startBeat + c.durationBeats >= viewStartBeat && c.startBeat <= viewEndBeat)
+
+  // Drag the right edge of the selection band to sample-loop the clip inside it
+  // to fill the selection: from the selection's start out to where you drag.
+  // This is the clip loop (repeats the sample) — not the transport loop.
+  function onSelectionEdgeDown(e: React.MouseEvent) {
+    e.stopPropagation()
+    e.preventDefault()
+    const region = selectionRegion
+    if (!region) return
+    const layer = (e.currentTarget as HTMLElement).closest('[data-content-layer]') as HTMLElement | null
+    if (!layer) return
+    const layerLeft = layer.getBoundingClientRect().left
+    const barBeats = project.timeSignatureNum || 4
+    const sample = clips.find(c => c.startBeat < region.end - 0.01 && c.startBeat + c.durationBeats > region.start + 0.01) ?? null
+    const onMove = (ev: MouseEvent) => {
+      const raw = Math.max(0, (ev.clientX - layerLeft) / beatW)
+      const newEnd = Math.max(region.start + 0.25, snapBeat(raw, snap, project.timeSignatureNum))
+      onSelectionResize?.(newEnd)
+      if (!sample) return
+      const dur = newEnd - sample.startBeat
+      if (dur <= 0.01) return
+      const patch: Record<string, unknown> = { durationBeats: dur }
+      if (isAudioClip(sample) && sample.bufferDuration) {
+        const nativeSec = sample.bufferDuration - sample.trimStart - sample.trimEnd
+        if (engine.beatsToSeconds(dur) > nativeSec + 0.001) { patch.loopEnabled = true; patch.warpEnabled = false }
+      } else if (isMidiClip(sample) && sample.notes.length > 0) {
+        const contentEnd = Math.max(...sample.notes.map(n => n.startBeat + n.durationBeats))
+        const patternBeats = sample.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+        if (dur > patternBeats + 0.001) { patch.loopEnabled = true; patch.loopLengthBeats = patternBeats }
+      }
+      dispatch({ type: 'UPDATE_CLIP', clipId: sample.id, patch })
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -942,7 +982,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <div key={i} style={{ position: 'absolute', left: x, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
             ) : null
           })}
-          <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
+          <div data-content-layer style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
             {isSelectionTrack && selectionRegion && selectionRegion.end > selectionRegion.start && (
               <div style={{
                 position: 'absolute', top: 0, bottom: 0,
@@ -951,7 +991,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 background: 'rgba(167,139,250,0.16)',
                 border: '1px solid #a78bfa', borderRadius: 3,
                 pointerEvents: 'none', zIndex: 1, boxSizing: 'border-box',
-              }} />
+              }}>
+                <div
+                  onMouseDown={onSelectionEdgeDown}
+                  title="Drag to loop the sample across the selection"
+                  style={{
+                    position: 'absolute', top: 0, bottom: 0, right: -5, width: 11,
+                    cursor: 'ew-resize', pointerEvents: 'auto', zIndex: 3,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <div style={{ width: 3, height: '46%', minHeight: 10, borderRadius: 2, background: '#a78bfa' }} />
+                </div>
+              </div>
             )}
             {recording && track.armed && !!track.inputSource && (
               <RecordingGhost beatW={beatW} height={track.height} />

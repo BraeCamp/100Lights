@@ -1424,6 +1424,7 @@ export default function ArrangementView() {
             getSelectionRegion={() => selectionRegionRef.current}
             selectionRegion={selectionRegion}
             isSelectionTrack={selectionTracks.has(track.id)}
+            onSelectionResize={(end) => setSelectionRegion(r => (r ? { start: r.start, end } : r))}
             onPasteClips={handlePasteClips}
             onCopyEffects={handleCopyEffects}
             onPasteEffects={handlePasteEffects}
