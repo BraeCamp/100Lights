@@ -443,9 +443,6 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
 
   const editItems: MenuItem[] = [
     back('← Back'),
-    isMulti
-      ? { label: 'Delete Selected', fn: () => onDeleteAll!() }
-      : { label: 'Delete', fn: onDelete },
     { label: 'Splice at Playhead', fn: () => onSplice?.() },
     // Dragging type — what the right edge does when you pull it: Loop repeats
     // the content; Expand stretches it (MIDI scales the pattern, audio warps).
@@ -518,6 +515,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           { label: 'Open Piano Roll', fn: onDoubleClick },
           { label: 'Sound Settings…', fn: () => { if (ctxPos) setSoundPanelAnchor({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
+    { label: isMulti ? 'Delete Selected' : 'Delete', color: '#ef4444', fn: () => isMulti ? onDeleteAll!() : onDelete() },
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     { label: 'Edit ▸', fn: () => setCtxSub('edit'), keepOpen: true },

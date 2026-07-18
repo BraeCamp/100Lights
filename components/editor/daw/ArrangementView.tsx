@@ -736,7 +736,14 @@ export default function ArrangementView() {
 
       const dx = Math.abs(ev.clientX - sx)
       const dy = Math.abs(ev.clientY - sy)
-      if (dx < 5 && dy < 5) { setSelectionRegion(null); return } // plain click — TrackRow already cleared selection
+      if (dx < 5 && dy < 5) {
+        // A plain click on empty background deselects everything
+        setSelectionRegion(null)
+        setSelectedClipIds(new Set())
+        setSelectedClipId(null)
+        setSelectedEffectIds(new Set())
+        return
+      }
 
       const regionStart = Math.min(snapBeat(toBeat(sx), snap, project.timeSignatureNum), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum))
       const regionEnd   = Math.max(snapBeat(toBeat(sx), snap, project.timeSignatureNum), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum))
@@ -773,6 +780,15 @@ export default function ArrangementView() {
       if (ev.altKey) {
         setSelectedClipIds(prev => new Set([...prev, ...newIds]))
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
+      } else if (newIds.size === 0 && newEffIds.size === 0 && regionEnd - regionStart > 0.001) {
+        // Dragging across empty background — no clips or FX under the band —
+        // sets the loop to that span (grid-snapped), so you can frame a loop
+        // over silence just like over sound. Selection is cleared.
+        dispatch({ type: 'SET_LOOP', start: regionStart, end: regionEnd })
+        dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
+        setSelectedClipIds(new Set())
+        setSelectedClipId(null)
+        setSelectedEffectIds(new Set())
       } else {
         setSelectedClipIds(newIds)
         setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
