@@ -276,7 +276,7 @@ export function CollabAvatars() {
       {all.length > 5 && (
         <div style={{
           width: 22, height: 22, borderRadius: '50%', fontSize: 9, fontWeight: 700,
-          background: '#333', color: '#999', border: '1.5px solid #444',
+          background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1.5px solid var(--border-light)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           +{all.length - 5}

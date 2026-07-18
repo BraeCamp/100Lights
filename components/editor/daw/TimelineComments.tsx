@@ -77,7 +77,7 @@ export function CommentComposer({ beat, anchor, onClose }: {
       />
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onClose} style={{ fontSize: 10.5, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
-        <button onClick={post} disabled={!text.trim()} style={{ fontSize: 10.5, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: '#f59e0b', color: '#1a1206', cursor: 'pointer', opacity: text.trim() ? 1 : 0.5 }}>Post</button>
+        <button onClick={post} disabled={!text.trim()} style={{ fontSize: 10.5, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: '#f59e0b', color: 'var(--text-muted)', cursor: 'pointer', opacity: text.trim() ? 1 : 0.5 }}>Post</button>
       </div>
     </div>,
     document.body,
@@ -153,7 +153,7 @@ export function CommentThread({ commentId, anchor, onClose }: {
           placeholder="Reply…"
           style={{ ...inputStyle, flex: 1 }}
         />
-        <button onClick={postReply} disabled={!reply.trim()} style={{ fontSize: 10.5, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: 'none', background: '#f59e0b', color: '#1a1206', cursor: 'pointer', opacity: reply.trim() ? 1 : 0.5 }}>Send</button>
+        <button onClick={postReply} disabled={!reply.trim()} style={{ fontSize: 10.5, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: 'none', background: '#f59e0b', color: 'var(--text-muted)', cursor: 'pointer', opacity: reply.trim() ? 1 : 0.5 }}>Send</button>
       </div>
     </div>,
     document.body,

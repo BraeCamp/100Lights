@@ -312,7 +312,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
       const layer: TextLayer = {
         id, kind: 'text', name,
         x, y,
-        text: 'Text', fontSize: 32, color: '#1a1a1a', fontWeight: '600',
+        text: 'Text', fontSize: 32, color: 'var(--text-muted)', fontWeight: '600',
         fontFamily: 'system-ui, sans-serif', textAlign: 'left', letterSpacing: 0,
         opacity: 100,
       }
@@ -1451,7 +1451,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
           style={{
             flex: 1, overflow: 'hidden', position: 'relative',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: '#1a1a1f',
+            background: 'var(--bg-card)',
             cursor: (tool === 'rect' || tool === 'ellipse') ? 'crosshair' : tool === 'text' ? 'text' : 'default',
           }}
           onClick={closeAllDropdowns}

@@ -173,7 +173,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
                   if (name && name !== s.name) dispatch({ type: 'ADD_SECTION', section: { ...s, name } })
                   setRenamingSection(null)
                 }}
-                style={{ position: 'absolute', top: -2, left: 3, width: 90, fontSize: 9, fontWeight: 700, color: s.color, background: '#111', border: `1px solid ${s.color}`, borderRadius: 2, padding: '0 3px', outline: 'none', pointerEvents: 'auto', zIndex: 5 }}
+                style={{ position: 'absolute', top: -2, left: 3, width: 90, fontSize: 9, fontWeight: 700, color: s.color, background: 'var(--bg-base)', border: `1px solid ${s.color}`, borderRadius: 2, padding: '0 3px', outline: 'none', pointerEvents: 'auto', zIndex: 5 }}
               />
             ) : (
               <span
@@ -234,11 +234,11 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
             style={{
               position: 'absolute', top: SEC_H - 1, left: cx - 7, zIndex: 3,
               width: 14, height: 14, borderRadius: '50% 50% 50% 0', transform: 'rotate(-45deg)',
-              background: c.resolved ? '#3a3f4a' : '#f59e0b', border: '1px solid rgba(0,0,0,0.5)',
+              background: c.resolved ? 'var(--bg-card-hover)' : '#f59e0b', border: '1px solid rgba(0,0,0,0.5)',
               cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >
-            <span style={{ transform: 'rotate(45deg)', fontSize: 7, lineHeight: 1, color: c.resolved ? '#888' : '#1a1206', fontWeight: 800 }}>{(c.replies?.length ?? 0) + 1}</span>
+            <span style={{ transform: 'rotate(45deg)', fontSize: 7, lineHeight: 1, color: c.resolved ? 'var(--text-muted)' : '#1a1206', fontWeight: 800 }}>{(c.replies?.length ?? 0) + 1}</span>
           </button>
         )
       })}
@@ -1255,7 +1255,7 @@ export default function ArrangementView() {
                 onChange={e => setMorphDuration(Math.max(0.5, parseFloat(e.target.value) || 3))}
                 title="Morph duration in seconds"
                 style={{
-                  width: 40, background: '#111', border: '1px solid var(--border)',
+                  width: 40, background: 'var(--bg-base)', border: '1px solid var(--border)',
                   borderRadius: 3, color: 'var(--text-primary)', fontSize: 10,
                   fontFamily: 'monospace', padding: '1px 4px', textAlign: 'center',
                 }}
@@ -1280,7 +1280,7 @@ export default function ArrangementView() {
               <div style={{
                 position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 300,
                 whiteSpace: 'nowrap', fontSize: 10, padding: '4px 9px', borderRadius: 5,
-                background: '#1e1e1e', border: '1px solid rgba(250,204,21,0.45)', color: '#facc15',
+                background: 'var(--bg-card)', border: '1px solid rgba(250,204,21,0.45)', color: '#facc15',
                 boxShadow: '0 6px 18px rgba(0,0,0,0.5)', pointerEvents: 'none',
               }}>{prHint}</div>
             )}
@@ -1312,7 +1312,7 @@ export default function ArrangementView() {
           {showExportDropdown && (
             <div style={{
               position: 'absolute', top: '100%', right: 0, marginTop: 2,
-              background: '#1e1e1e', border: '1px solid var(--border)',
+              background: 'var(--bg-card)', border: '1px solid var(--border)',
               borderRadius: 4, zIndex: 1000, minWidth: 130, overflow: 'hidden',
               boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
             }}>
@@ -1534,7 +1534,7 @@ export default function ArrangementView() {
       {tsPopover && createPortal(
         <div ref={tsPopoverRef} style={{
           position: 'fixed', top: tsPopover.y - 110, left: tsPopover.x,
-          background: '#1e1e1e', border: '1px solid var(--border)',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '10px 12px', zIndex: 1000,
           boxShadow: '0 4px 16px rgba(0,0,0,0.7)', display: 'flex',
           flexDirection: 'column', gap: 8, minWidth: 140,
@@ -1544,11 +1544,11 @@ export default function ArrangementView() {
             <input type="number" min={1} max={16} value={tsDraftNum}
               onChange={e => setTsDraftNum(Math.max(1, parseInt(e.target.value) || 4))}
               onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); setTsPopover(null) } }}
-              style={{ width: 40, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
+              style={{ width: 40, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
             />
             <span style={{ color: 'var(--text-muted)', fontSize: 16 }}>/</span>
             <select value={tsDraftDen} onChange={e => setTsDraftDen(parseInt(e.target.value))}
-              style={{ width: 48, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 4px', outline: 'none', cursor: 'pointer' }}>
+              style={{ width: 48, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 4px', outline: 'none', cursor: 'pointer' }}>
               {[2, 4, 8, 16].map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
@@ -1557,7 +1557,7 @@ export default function ArrangementView() {
             <input type="number" min={20} max={300} value={tsDraftBpm}
               onChange={e => setTsDraftBpm(Math.max(20, Math.min(300, parseFloat(e.target.value) || 120)))}
               onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) } }}
-              style={{ width: 62, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
+              style={{ width: 62, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
             />
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>BPM</span>
           </div>
@@ -1612,7 +1612,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
           onClick={e => { if (e.target === e.currentTarget) setArrangeTransientDialog(null) }}
         >
           <div style={{
-            background: '#1e1e1e', border: '1px solid var(--border)', borderRadius: 8,
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
             padding: '20px 22px', width: 340, maxWidth: '90vw',
             boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
           }}>
@@ -1647,8 +1647,8 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
                 onClick={applyArrangeTransientSplit}
                 style={{
                   flex: 1, padding: '7px 0', borderRadius: 4, border: 'none',
-                  background: arrangeTransientDialog.transients.length === 0 ? '#333' : 'var(--accent)',
-                  color: arrangeTransientDialog.transients.length === 0 ? '#555' : '#fff',
+                  background: arrangeTransientDialog.transients.length === 0 ? 'var(--bg-card-hover)' : 'var(--accent)',
+                  color: arrangeTransientDialog.transients.length === 0 ? 'var(--text-muted)' : '#fff',
                   fontSize: 12, fontWeight: 600,
                   cursor: arrangeTransientDialog.transients.length === 0 ? 'not-allowed' : 'pointer',
                 }}

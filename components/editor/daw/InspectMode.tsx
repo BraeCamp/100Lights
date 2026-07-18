@@ -180,17 +180,17 @@ export function InspectButton() {
           {card && (
             <div style={{
               position: 'fixed', left, top, width: cardW, zIndex: 10002, pointerEvents: 'none',
-              background: '#161620', border: `1px solid ${card.color}55`, borderRadius: 10,
+              background: 'var(--bg-surface)', border: `1px solid ${card.color}55`, borderRadius: 10,
               padding: '10px 12px', boxShadow: '0 10px 28px rgba(0,0,0,0.7)',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
                 <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: card.color, background: `${card.color}1c`, border: `1px solid ${card.color}44`, borderRadius: 4, padding: '1px 6px' }}>
                   {card.kind}
                 </span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#f1f0ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.title}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.title}</span>
               </div>
               {card.lines.map((l, i) => (
-                <p key={i} style={{ fontSize: 10.5, color: '#b9b8c9', margin: i ? '3px 0 0' : 0, lineHeight: 1.5 }}>{l}</p>
+                <p key={i} style={{ fontSize: 10.5, color: 'var(--text-secondary)', margin: i ? '3px 0 0' : 0, lineHeight: 1.5 }}>{l}</p>
               ))}
             </div>
           )}

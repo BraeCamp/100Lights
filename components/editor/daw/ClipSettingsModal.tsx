@@ -151,7 +151,7 @@ className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div style={{ background: '#181828', border: '1px solid var(--border)', borderRadius: 10, padding: '18px 22px', width: 420, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '18px 22px', width: 420, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -167,7 +167,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
 
         {/* Waveform preview */}
         {clip.waveformPeaks && clip.waveformPeaks.length > 0 && (
-          <div style={{ marginBottom: 6, borderRadius: 5, overflow: 'hidden', background: '#0a0a0f' }}>
+          <div style={{ marginBottom: 6, borderRadius: 5, overflow: 'hidden', background: 'var(--bg-base)' }}>
             <Waveform peaks={clip.waveformPeaks} color="var(--accent)" width={376} height={48} />
           </div>
         )}
@@ -230,11 +230,11 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
                   </span>
                 )}
                 {(clip.warpMode ?? 'repitch') === 'stretch' && (
-                  <span style={{ marginLeft: 10, color: '#888' }}>pitch-corrected</span>
+                  <span style={{ marginLeft: 10, color: 'var(--text-muted)' }}>pitch-corrected</span>
                 )}
               </div>
             </Row>
-            <div style={{ fontSize: 9, color: '#555', marginLeft: 100, marginBottom: 8, marginTop: -4 }}>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 100, marginBottom: 8, marginTop: -4 }}>
               Resize the clip in the arrangement to change the stretch amount.
               {(clip.warpMode ?? 'repitch') === 'stretch' && ' Stretch uses WSOLA — quality degrades at extreme ratios.'}
             </div>
@@ -293,7 +293,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
           <Toggle on={clip.loopEnabled} label="Loop" onChange={v => patch({ loopEnabled: v })} />
         </Row>
         {clip.bufferDuration && (
-          <div style={{ fontSize: 9, color: '#555', marginLeft: 100, marginBottom: 4 }}>
+          <div style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 100, marginBottom: 4 }}>
             Native length: {(clip.bufferDuration - (clip.trimStart ?? 0) - (clip.trimEnd ?? 0)).toFixed(3)} s
             &nbsp;·&nbsp;{engine.secondsToBeats(clip.bufferDuration - (clip.trimStart ?? 0) - (clip.trimEnd ?? 0)).toFixed(3)} b
           </div>

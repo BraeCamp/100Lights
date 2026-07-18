@@ -465,7 +465,7 @@ style={{
                           onChange={e => setShareName(e.target.value)}
                           placeholder={project.name ?? 'Song title'}
                           style={{
-                            flex: 1, minWidth: 0, background: '#101010', border: '1px solid var(--border)', borderRadius: 7,
+                            flex: 1, minWidth: 0, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 7,
                             color: 'var(--text-primary)', fontSize: 12, padding: '8px 10px', outline: 'none',
                           }}
                         />

@@ -506,14 +506,14 @@ export default function Timeline({
       <div
         ref={trackAreaRef}
         className="flex-1 overflow-x-auto overflow-y-auto"
-        style={{ background: '#111' }}
+        style={{ background: 'var(--bg-base)' }}
       >
         <div style={{ width: totalWidth + LABEL_WIDTH, minWidth: '100%' }}>
 
           {/* Ruler */}
           <div
             className="flex"
-            style={{ height: RULER_HEIGHT, background: '#0d0d0d', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 10 }}
+            style={{ height: RULER_HEIGHT, background: 'var(--bg-base)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 10 }}
           >
             <div style={{ width: LABEL_WIDTH, flexShrink: 0, borderRight: '1px solid var(--border)', display: 'flex', alignItems: 'flex-end', paddingBottom: 2, paddingLeft: 8, color: 'var(--text-muted)', fontSize: 9, fontWeight: 600 }}>
               TC
@@ -576,7 +576,7 @@ export default function Timeline({
             onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, getAreaMenu()) }}
           >
             {/* Sticky track labels — caption tracks are legacy and hidden */}
-            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: LABEL_WIDTH, background: '#111', borderRight: '1px solid var(--border)', zIndex: 5 }}>
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: LABEL_WIDTH, background: 'var(--bg-base)', borderRight: '1px solid var(--border)', zIndex: 5 }}>
               {tracks.filter(t => t.type !== 'caption').map((track) => (
                 <div
                   key={track.id}

@@ -176,9 +176,9 @@ export default function ColorScopes({ videoRef, isPlaying, scope, onScopeChange 
   }, [draw])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#0a0a0a' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: 'var(--bg-base)' }}>
       {/* Tab bar */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #1f1f1f', flexShrink: 0 }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         {TABS.map(tab => (
           <button
             key={tab.id}
@@ -192,7 +192,7 @@ export default function ColorScopes({ videoRef, isPlaying, scope, onScopeChange 
               background: 'none',
               border: 'none',
               borderBottom: scope === tab.id ? '2px solid #a855f7' : '2px solid transparent',
-              color: scope === tab.id ? '#e4e4e7' : '#71717a',
+              color: scope === tab.id ? 'var(--text-primary)' : '#71717a',
               cursor: 'pointer',
               transition: 'color 0.15s',
             }}

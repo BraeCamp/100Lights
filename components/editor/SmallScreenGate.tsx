@@ -26,13 +26,13 @@ export function SmallScreenGate() {
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 4000, background: '#0f0f11',
+      position: 'fixed', inset: 0, zIndex: 4000, background: 'var(--bg-base)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: 28, textAlign: 'center', gap: 14,
     }}>
       <MonitorSmartphone size={34} color="#a78bfa" />
-      <h1 style={{ fontSize: 19, fontWeight: 800, color: '#f1f0ff', margin: 0 }}>The studio wants a bigger screen</h1>
-      <p style={{ fontSize: 13, color: '#a3a2b5', margin: 0, lineHeight: 1.6, maxWidth: 340 }}>
+      <h1 style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>The studio wants a bigger screen</h1>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 340 }}>
         Editing works best on a laptop or desktop browser. On your phone you can still
         browse and listen to everything the community has shared.
       </p>
@@ -42,7 +42,7 @@ export function SmallScreenGate() {
       }}>Browse the Community</Link>
       <button
         onClick={() => { sessionStorage.setItem(DISMISS_KEY, '1'); setDismissed(true) }}
-        style={{ background: 'none', border: 'none', color: '#666', fontSize: 11.5, cursor: 'pointer', textDecoration: 'underline' }}
+        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 11.5, cursor: 'pointer', textDecoration: 'underline' }}
       >Continue to the studio anyway</button>
     </div>
   )

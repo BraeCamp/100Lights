@@ -659,7 +659,7 @@ export default function VideoPlayer({
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: '#0a0a0a' }}>
+    <div className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
 
       {/* ── Monitor ──────────────────────────────────────────────── */}
       <div
@@ -818,7 +818,7 @@ export default function VideoPlayer({
             {activeCaption && (
               <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgb(var(--accent-rgb) / 0.06)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
                 {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}:</span>}
-                <span className="text-sm" style={{ color: '#ccc' }}>{activeCaption.text}</span>
+                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{activeCaption.text}</span>
               </div>
             )}
           </div>
@@ -1025,16 +1025,16 @@ export default function VideoPlayer({
             <button
               tabIndex={-1}
               onClick={() => onViewerZoomChange(Math.min(2, Math.round((viewerZoom + 0.25) * 100) / 100))}
-              style={{ color: '#888', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
+              style={{ color: 'var(--text-muted)', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
               title="Zoom in"
             >
               <ZoomIn size={13} />
             </button>
-            <span style={{ fontSize: 9, color: '#555', fontFamily: 'monospace', lineHeight: 1 }}>{viewerZoom}×</span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', lineHeight: 1 }}>{viewerZoom}×</span>
             <button
               tabIndex={-1}
               onClick={() => onViewerZoomChange(Math.max(0.25, Math.round((viewerZoom - 0.25) * 100) / 100))}
-              style={{ color: '#888', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
+              style={{ color: 'var(--text-muted)', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
               title="Zoom out"
             >
               <ZoomOut size={13} />
@@ -1053,7 +1053,7 @@ export default function VideoPlayer({
           <button
             tabIndex={-1}
             onClick={() => { if (activeEl) activeEl.currentTime = 0; onTimeUpdate(timeOffset) }}
-            style={{ color: '#666', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
+            style={{ color: 'var(--text-muted)', padding: 4, borderRadius: 6, display: 'flex', cursor: 'pointer', background: 'none', border: 'none' }}
             title="Return to start (Home)"
           >
             <SkipBack size={13} />
@@ -1091,7 +1091,7 @@ export default function VideoPlayer({
       {/* ── Timecode strip ───────────────────────────────────────── */}
       <div
         className="flex items-center justify-between px-4 shrink-0"
-        style={{ height: 28, background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}
+        style={{ height: 28, background: 'var(--bg-base)', borderTop: '1px solid var(--border)' }}
       >
         {editingTC ? (
           <input
@@ -1104,19 +1104,19 @@ export default function VideoPlayer({
               if (e.key === 'Escape') setEditingTC(false)
             }}
             className="font-mono tracking-widest bg-transparent outline-none border-b border-accent"
-            style={{ fontSize: 13, color: '#d0d0d0', letterSpacing: '0.12em', width: 120 }}
+            style={{ fontSize: 13, color: 'var(--text-primary)', letterSpacing: '0.12em', width: 120 }}
           />
         ) : (
           <span
             className="font-mono tracking-widest select-none cursor-text"
-            style={{ fontSize: 13, color: '#d0d0d0', letterSpacing: '0.12em' }}
+            style={{ fontSize: 13, color: 'var(--text-primary)', letterSpacing: '0.12em' }}
             title="Click to jump to timecode"
             onClick={handleTimecodeClick}
           >
             {formatTimecode(currentTime)}
           </span>
         )}
-        <span className="font-mono" style={{ fontSize: 10, color: '#3a3a3a', letterSpacing: '0.08em' }}>
+        <span className="font-mono" style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
           {activeEl?.duration ? `/ ${formatTimecode(activeEl.duration + timeOffset)}` : ''}
         </span>
       </div>

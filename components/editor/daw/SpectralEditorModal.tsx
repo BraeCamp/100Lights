@@ -493,15 +493,15 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
       onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div style={{
-        width: 'min(1200px, calc(100vw - 40px))', background: '#141418', borderRadius: 12,
-        border: '1px solid #2a2a30', boxShadow: '0 20px 60px rgba(0,0,0,0.7)',
+        width: 'min(1200px, calc(100vw - 40px))', background: 'var(--bg-surface)', borderRadius: 12,
+        border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.7)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
         {/* Header: title + tools/layers/view */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderBottom: '1px solid #232328', background: '#18181d', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Spectral Editor</span>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.name}</span>
-          <div style={{ width: 1, height: 18, background: '#2a2a30', margin: '0 4px' }} />
+          <div style={{ width: 1, height: 18, background: 'var(--bg-card-hover)', margin: '0 4px' }} />
           {(['select', 'wand', 'brush'] as const).map(t => (
             <button key={t} style={tool === t ? segActive : toolBtn} onClick={() => setTool(t)}>
               {t === 'select' ? 'Select' : t === 'wand' ? 'Wand' : 'Brush'}
@@ -513,14 +513,14 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
                 title={`Brush size: ${brushSize}`} className="cf-slider" style={{ width: 70, accentColor: 'var(--accent)' }} />
               <select value={brushGain} onChange={e => setBrushGain(parseFloat(e.target.value))}
                 title="Brush strength"
-                style={{ background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 4, padding: '3px 4px', cursor: 'pointer' }}>
+                style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 4, padding: '3px 4px', cursor: 'pointer' }}>
                 <option value={0}>Erase</option>
                 <option value={0.251}>−12 dB</option>
                 <option value={0.501}>−6 dB</option>
               </select>
             </>
           )}
-          <div style={{ width: 1, height: 18, background: '#2a2a30', margin: '0 4px' }} />
+          <div style={{ width: 1, height: 18, background: 'var(--bg-card-hover)', margin: '0 4px' }} />
           <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>LAYER</span>
           {(['all', 'h', 'p'] as const).map(l => (
             <button key={l} style={layer === l ? segActive : toolBtn} onClick={() => void switchLayer(l)}>
@@ -532,11 +532,11 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
           <button style={toolBtn} title="Zoom out" onClick={() => setZoom(z => Math.max(1, z / 1.5))}><ZoomOut size={11} /></button>
           <button style={toolBtn} title="Zoom in" onClick={() => setZoom(z => Math.min(8, z * 1.5))}><ZoomIn size={11} /></button>
           {edited && <span style={{ fontSize: 10, color: '#f59e0b', marginLeft: 4 }}>edited</span>}
-          <button onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#777', display: 'flex', padding: 2 }}><X size={15} /></button>
+          <button onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}><X size={15} /></button>
         </div>
 
         {/* Canvas area */}
-        <div style={{ position: 'relative', background: '#08060f', overflowX: 'auto', overflowY: 'hidden' }}>
+        <div style={{ position: 'relative', background: 'var(--bg-base)', overflowX: 'auto', overflowY: 'hidden' }}>
           {phase === 'loading' && (
             <div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
               <Loader2 size={14} className="animate-spin" /> Analyzing audio…
@@ -582,7 +582,7 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
         </div>
 
         {/* Action bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', borderTop: '1px solid #232328', background: '#18181d', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 10, color: 'var(--text-muted)', marginRight: 4 }}>{selInfoText}</span>
           <div style={{ flex: 1 }} />
           <button style={hasSel ? toolBtn : disabledTool} disabled={!hasSel} onClick={() => void applyToSelection('mult', 0.501)}>−6 dB</button>
@@ -595,10 +595,10 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
             title={layer !== 'all' ? 'Restore works on the All layer' : 'Reset the selection to unedited'}
             onClick={() => void applyToSelection('set', 1)}
           >Restore</button>
-          <div style={{ width: 1, height: 18, background: '#2a2a30', margin: '0 3px' }} />
+          <div style={{ width: 1, height: 18, background: 'var(--bg-card-hover)', margin: '0 3px' }} />
           <select value={denoiseAmount} onChange={e => setDenoiseAmount(parseFloat(e.target.value))}
             title="Noise reduction amount"
-            style={{ background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 4, padding: '3px 4px', cursor: 'pointer' }}>
+            style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 4, padding: '3px 4px', cursor: 'pointer' }}>
             <option value={0.5}>50%</option>
             <option value={0.8}>80%</option>
             <option value={1}>100%</option>
@@ -609,10 +609,10 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
             title="Use the selection as a noise profile and subtract it across the whole clip"
             onClick={() => void handleDenoise()}
           >Reduce Noise</button>
-          <div style={{ width: 1, height: 18, background: '#2a2a30', margin: '0 3px' }} />
+          <div style={{ width: 1, height: 18, background: 'var(--bg-card-hover)', margin: '0 3px' }} />
           <button style={canUndo && phase === 'ready' ? toolBtn : disabledTool} disabled={!canUndo || phase !== 'ready'} title="Undo (⌘Z)" onClick={() => void undo()}><Undo2 size={11} /></button>
           <button style={canRedo && phase === 'ready' ? toolBtn : disabledTool} disabled={!canRedo || phase !== 'ready'} title="Redo (⇧⌘Z)" onClick={() => void redo()}><Redo2 size={11} /></button>
-          <div style={{ width: 1, height: 18, background: '#2a2a30', margin: '0 3px' }} />
+          <div style={{ width: 1, height: 18, background: 'var(--bg-card-hover)', margin: '0 3px' }} />
           <button style={phase === 'ready' ? toolBtn : disabledTool} disabled={phase !== 'ready'} onClick={() => void handlePreview()}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
               {playing ? <Square size={10} /> : <Play size={10} />}

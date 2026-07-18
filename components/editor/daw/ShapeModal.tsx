@@ -247,7 +247,7 @@ export default function ShapeModal({
 className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={{ background: '#181828', border: `1px solid ${color}44`, borderRadius: 10, padding: 20, width: 500, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
+      <div style={{ background: 'var(--bg-card)', border: `1px solid ${color}44`, borderRadius: 10, padding: 20, width: 500, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
@@ -277,7 +277,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
           }
 
           {recording && (
-            <div style={{ flex: 1, height: 7, background: '#1a1a2e', borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{ flex: 1, height: 7, background: 'var(--bg-card)', borderRadius: 4, overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${level * 100}%`, background: level > 0.8 ? '#ef4444' : color, borderRadius: 4, transition: 'width 60ms' }} />
             </div>
           )}
@@ -291,7 +291,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
           <div style={{ marginBottom: 8 }}>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Source waveform</div>
             <canvas ref={waveRef} width={460} height={44}
-              style={{ width: '100%', height: 44, borderRadius: 4, background: '#0a0a0f', display: 'block' }} />
+              style={{ width: '100%', height: 44, borderRadius: 4, background: 'var(--bg-base)', display: 'block' }} />
           </div>
         )}
 
@@ -301,7 +301,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
               {mode === 'volume' ? 'Volume envelope' : 'Pitch contour (semitones from root)'}
             </div>
             <canvas ref={envRef} width={460} height={80}
-              style={{ width: '100%', height: 80, borderRadius: 4, background: '#0a0a0f', display: 'block', marginBottom: 6 }} />
+              style={{ width: '100%', height: 80, borderRadius: 4, background: 'var(--bg-base)', display: 'block', marginBottom: 6 }} />
             <div style={{ fontSize: 9, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
               <span>{envelope.length} frames · {(envelope.length / ENV_SR).toFixed(1)}s source</span>
               {mode === 'pitch' && (

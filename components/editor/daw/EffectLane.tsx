@@ -95,7 +95,7 @@ function EffectParamEditor({ effect: effectAtOpen, onClose }: { effect: ClipEffe
   )
 
   return (
-    <div style={{ background: '#1e1e2e', border: `1px solid ${EFFECT_COLORS[effect.type]}`, borderRadius: 6, padding: '10px 12px', minWidth: 220, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
+    <div style={{ background: 'var(--bg-card-hover)', border: `1px solid ${EFFECT_COLORS[effect.type]}`, borderRadius: 6, padding: '10px 12px', minWidth: 220, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: EFFECT_COLORS[effect.type], textTransform: 'capitalize' }}>{effect.type}</span>
         <button onClick={onClose} style={{ fontSize: 9, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
@@ -563,7 +563,7 @@ export default function EffectLaneView({
           data-fx-menu
           onClick={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}
-          style={{ position: 'fixed', zIndex: 1500, left: addMenu.x, top: addMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
+          style={{ position: 'fixed', zIndex: 1500, left: addMenu.x, top: addMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
           onMouseLeave={() => setAddMenu(null)}
         >
           <button
@@ -610,7 +610,7 @@ export default function EffectLaneView({
           data-fx-menu
           onClick={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}
-          style={{ position: 'fixed', zIndex: 1500, left: ctxMenu.x, top: ctxMenu.y, background: '#1e1e2e', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
+          style={{ position: 'fixed', zIndex: 1500, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}
           onMouseLeave={() => setCtxMenu(null)}
         >
           {/* Copy / Paste */}

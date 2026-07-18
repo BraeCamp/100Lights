@@ -223,7 +223,7 @@ className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onClick={e => { if (e.target === e.currentTarget) { try { sourceRef.current?.stop() } catch {} fadeRef.current?.disconnect(); onClose() } }}
     >
-      <div style={{ background: '#181828', border: '1px solid var(--border)', borderRadius: 10, padding: 20, width: 460, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, width: 460, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
@@ -241,7 +241,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
         {/* Waveform */}
         <div style={{ position: 'relative', marginBottom: 10 }}>
           <canvas ref={canvasRef} width={420} height={72}
-            style={{ width: '100%', height: 72, display: 'block', borderRadius: 6, background: '#0a0a0f' }} />
+            style={{ width: '100%', height: 72, display: 'block', borderRadius: 6, background: 'var(--bg-base)' }} />
           {status === 'loading' && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)' }}>
               Rendering…

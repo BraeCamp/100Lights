@@ -106,7 +106,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
         style={{
           display: 'flex', alignItems: 'center', gap: 5,
           fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,
-          border: '1px solid #2e2e2e',
+          border: '1px solid var(--border)',
           background: open ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.08)',
           color: '#7ab4f5',
           cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
@@ -128,10 +128,10 @@ export function CollabInvite({ projectId }: { projectId: string }) {
       {open && pos && typeof document !== 'undefined' && createPortal(
         <div ref={popRef} style={{
           position: 'fixed', top: pos.top, right: pos.right, width: 300, zIndex: 9999,
-          background: '#161616', border: '1px solid #2e2e2e', borderRadius: 10,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
           padding: '12px 14px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
         }}>
-          <p style={{ fontSize: 12, fontWeight: 800, color: '#eee', margin: '0 0 10px' }}>Share project</p>
+          <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px' }}>Share project</p>
 
           <button onClick={copyLink} style={{
             display: 'flex', alignItems: 'center', gap: 7, width: '100%', justifyContent: 'center',
@@ -144,7 +144,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
           </button>
 
           {notOwner ? (
-            <p style={{ fontSize: 10.5, color: '#888', margin: '10px 0 0', lineHeight: 1.5 }}>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
               You&apos;re a collaborator here — only the owner changes who can open this project.
             </p>
           ) : sharing ? (
@@ -166,7 +166,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: active ? '#a78bfa' : '#bbb' }}>
                         <Icon size={11} /> {opt.label}
                       </div>
-                      <div style={{ fontSize: 9, color: '#777', marginTop: 2 }}>{opt.desc}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>{opt.desc}</div>
                     </button>
                   )
                 })}
@@ -175,15 +175,15 @@ export function CollabInvite({ projectId }: { projectId: string }) {
               {/* Members (private mode) */}
               {sharing.visibility === 'private' && (
                 <div style={{ marginTop: 12 }}>
-                  <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.07em', color: '#777', margin: '0 0 6px' }}>PEOPLE WITH ACCESS</p>
+                  <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--text-muted)', margin: '0 0 6px' }}>PEOPLE WITH ACCESS</p>
                   {sharing.members.length === 0 && (
-                    <p style={{ fontSize: 10, color: '#666', margin: '0 0 6px' }}>Just you so far.</p>
+                    <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '0 0 6px' }}>Just you so far.</p>
                   )}
                   {sharing.members.map(m => (
                     <div key={m.email} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
-                      <span style={{ flex: 1, fontSize: 11, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</span>
+                      <span style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</span>
                       <button onClick={() => void patch({ removeEmail: m.email })} aria-label={`Remove ${m.email}`}
-                        style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', padding: 2 }}>
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
                         <X size={11} />
                       </button>
                     </div>
@@ -193,24 +193,24 @@ export function CollabInvite({ projectId }: { projectId: string }) {
                       value={emailDraft} onChange={e => setEmailDraft(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && emailDraft.trim()) { void patch({ addEmail: emailDraft }); setEmailDraft('') } }}
                       placeholder="email@example.com"
-                      style={{ flex: 1, minWidth: 0, fontSize: 11, padding: '6px 9px', borderRadius: 6, background: '#101010', border: '1px solid #2e2e2e', color: '#ddd', outline: 'none' }}
+                      style={{ flex: 1, minWidth: 0, fontSize: 11, padding: '6px 9px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
                     />
                     <button
                       onClick={() => { if (emailDraft.trim()) { void patch({ addEmail: emailDraft }); setEmailDraft('') } }}
                       aria-label="Add person"
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, borderRadius: 6, border: '1px solid #2e2e2e', background: 'rgba(124,58,237,0.15)', color: '#a78bfa', cursor: 'pointer' }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'rgba(124,58,237,0.15)', color: '#a78bfa', cursor: 'pointer' }}
                     ><Plus size={13} /></button>
                   </div>
                 </div>
               )}
 
               {err && <p style={{ fontSize: 10, color: '#ef4444', margin: '8px 0 0' }}>{err}</p>}
-              <p style={{ fontSize: 9.5, color: '#666', margin: '10px 0 0', lineHeight: 1.5 }}>
+              <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
                 People you share with can listen and follow along. Editing with you live needs a Pro plan; you always edit your own projects.
               </p>
             </>
           ) : (
-            <p style={{ fontSize: 10.5, color: '#888', margin: '10px 0 0' }}>Loading…</p>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '10px 0 0' }}>Loading…</p>
           )}
         </div>,
         document.body,

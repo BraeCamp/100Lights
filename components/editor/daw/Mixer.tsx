@@ -47,7 +47,7 @@ function VerticalFader({ value, onChange, onCommit }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
       <div
-        style={{ width: 8, height: trackH, background: '#1a1a1a', borderRadius: 4, position: 'relative', cursor: 'ns-resize', userSelect: 'none' }}
+        style={{ width: 8, height: trackH, background: 'var(--bg-surface)', borderRadius: 4, position: 'relative', cursor: 'ns-resize', userSelect: 'none' }}
         onMouseDown={onMouseDown}
       >
         <div style={{
@@ -59,7 +59,7 @@ function VerticalFader({ value, onChange, onCommit }: {
           position: 'absolute', left: -5, top: Math.round(pos),
           width: 18, height: thumbH,
           background: 'linear-gradient(180deg,#555 0%,#3a3a3a 100%)',
-          borderRadius: 3, border: '1px solid #666', cursor: 'ns-resize',
+          borderRadius: 3, border: '1px solid var(--border-light)', cursor: 'ns-resize',
         }} />
       </div>
       <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '0.04em' }}>
@@ -193,7 +193,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         gap: 4, padding: '8px 4px 6px',
         background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : isMaster ? '#202020' : '#2a2a2a',
-        borderRight: '1px solid #383838',
+        borderRight: '1px solid var(--border-light)',
         outline: isSelected ? '1px solid rgb(var(--accent-rgb) / 0.5)' : 'none',
         outlineOffset: '-1px',
         opacity: dimmed ? 0.4 : 1, transition: 'background 0.1s, opacity 0.15s',
@@ -211,7 +211,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
             if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: nameDraft } }); setEditing(false) }
             e.stopPropagation()
           }}
-          style={{ width: '100%', fontSize: 10, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, textAlign: 'center', padding: '1px 2px', outline: 'none' }}
+          style={{ width: '100%', fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, textAlign: 'center', padding: '1px 2px', outline: 'none' }}
         />
       ) : (
         <div
@@ -303,7 +303,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
           <span style={{ fontSize: 11, fontFamily: 'monospace', color: lufsColor, fontWeight: 700, letterSpacing: '-0.02em' }}>
             {lufsDisplay}
           </span>
-          <span style={{ fontSize: 7, color: '#666', letterSpacing: '0.08em', textTransform: 'uppercase' }}>LUFS</span>
+          <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>LUFS</span>
         </div>
       )}
 
@@ -321,14 +321,14 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
       {/* Send levels — one knob per return track */}
       {!isMaster && track && project.returnTracks.length > 0 && (
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
-          <div style={{ fontSize: 7, color: '#444', letterSpacing: '0.06em', textTransform: 'uppercase', textAlign: 'center' }}>Sends</div>
+          <div style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', textAlign: 'center' }}>Sends</div>
           {project.returnTracks.map((rt, idx) => {
             const sendVal  = track.sendAmounts?.[rt.id] ?? 0
             const sendMode = (track.sendModes?.[rt.id] ?? 'post') as 'pre' | 'post'
             const rtLabel  = String.fromCharCode(65 + idx)
             return (
               <div key={rt.id} style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
-                <span style={{ fontSize: 7, color: '#666', width: 8, textAlign: 'right', flexShrink: 0 }}>{rtLabel}</span>
+                <span style={{ fontSize: 7, color: 'var(--text-muted)', width: 8, textAlign: 'right', flexShrink: 0 }}>{rtLabel}</span>
                 <Knob
                   value={sendVal} min={0} max={1} defaultValue={0} size={18} color={rt.color}
                   label={rtLabel}
@@ -388,7 +388,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       gap: 4, padding: '8px 4px 6px',
       background: 'rgba(80,40,120,0.25)',
-      borderRight: '1px solid #383838',
+      borderRight: '1px solid var(--border-light)',
       position: 'relative',
     }}>
       {/* Color bar */}
@@ -407,7 +407,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
             if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { name: nameDraft } }); setEditing(false) }
             e.stopPropagation()
           }}
-          style={{ width: '100%', fontSize: 9, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, textAlign: 'center', padding: '1px 2px', outline: 'none' }}
+          style={{ width: '100%', fontSize: 9, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, textAlign: 'center', padding: '1px 2px', outline: 'none' }}
         />
       ) : (
         <div
@@ -468,7 +468,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       {/* Remove button */}
       <button
         onClick={() => dispatch({ type: 'REMOVE_RETURN_TRACK', trackId: rt.id })}
-        style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: '#666', cursor: 'pointer', padding: 0 }}
+        style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}
         title="Remove return track"
       >×</button>
 
@@ -535,7 +535,7 @@ export default function Mixer() {
         {/* Returns section */}
         {project.returnTracks.length > 0 && (
           <>
-            <div style={{ width: 1, background: '#555', alignSelf: 'stretch', flexShrink: 0 }} />
+            <div style={{ width: 1, background: 'var(--bg-card-hover)', alignSelf: 'stretch', flexShrink: 0 }} />
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '6px 4px 0', gap: 2, minWidth: 0 }}>
               <span style={{ fontSize: 7, color: '#7c5fa8', letterSpacing: '0.07em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>RETURNS</span>
             </div>
@@ -555,7 +555,7 @@ export default function Mixer() {
           </button>
         </div>
       </div>
-      <div style={{ flexShrink: 0, borderLeft: '2px solid #444' }}>
+      <div style={{ flexShrink: 0, borderLeft: '2px solid var(--border-light)' }}>
         <ChannelStrip isMaster />
       </div>
     </div>

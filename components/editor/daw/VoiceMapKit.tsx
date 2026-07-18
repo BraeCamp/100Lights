@@ -333,8 +333,8 @@ function buildPath(pts: [number, number][], beatW: number, rowH: number, offsetB
 export function VoiceMapControls({ vm }: { vm: VoiceMap }) {
   const btn: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600,
-    padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid #333',
-    background: '#222', color: '#aaa', whiteSpace: 'nowrap',
+    padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)',
+    background: 'var(--bg-card)', color: 'var(--text-secondary)', whiteSpace: 'nowrap',
   }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -359,7 +359,7 @@ export function VoiceMapControls({ vm }: { vm: VoiceMap }) {
             title={vm.hasAudio ? 'Voice playback volume' : 'Voice playback volume (this take has no audio — re-record to hear it)'}
             style={{ width: 52, accentColor: TRACE_COLOR }}
           />
-          <span style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, color: '#888' }} title="Input-delay compensation — shifts the trace and playback earlier/later">
+          <span style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, color: 'var(--text-muted)' }} title="Input-delay compensation — shifts the trace and playback earlier/later">
             <button onClick={() => vm.nudgeOffset(-10)} style={{ ...btn, padding: '1px 5px' }}>−</button>
             <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{vm.offsetMs}ms</span>
             <button onClick={() => vm.nudgeOffset(10)} style={{ ...btn, padding: '1px 5px' }}>+</button>

@@ -197,7 +197,7 @@ function DrumLaneKeys({
   trackColor: string
 }) {
   return (
-    <div style={{ width: PIANO_W + 18, flexShrink: 0, position: 'relative', overflow: 'hidden', background: '#1a1a1a' }}>
+    <div style={{ width: PIANO_W + 18, flexShrink: 0, position: 'relative', overflow: 'hidden', background: 'var(--bg-surface)' }}>
       <div style={{ position: 'absolute', top: -scrollTop, left: 0, right: 0 }}>
         {DRUM_LANES.map(lane => {
           const hover = hoverPitch === lane.pitch
@@ -207,7 +207,7 @@ function DrumLaneKeys({
               onMouseDown={() => onPlayNote(lane.pitch)}
               style={{
                 height: DRUM_LANE_H, background: hover ? trackColor : '#242424',
-                borderBottom: '1px solid #111', borderRight: '1px solid #333',
+                borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border-light)',
                 display: 'flex', alignItems: 'center', paddingLeft: 6,
                 cursor: 'pointer', userSelect: 'none', boxSizing: 'border-box',
               }}
@@ -235,7 +235,7 @@ function PianoKeys({
   noteH?: number
 }) {
   return (
-    <div style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: '#1a1a1a' }}>
+    <div style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: 'var(--bg-surface)' }}>
       <div style={{ position: 'absolute', top: -scrollTop, left: 0, right: 0 }}>
         {Array.from({ length: NUM_NOTES }, (_, i) => {
           const pitch = NUM_NOTES - 1 - i
@@ -255,7 +255,7 @@ function PianoKeys({
               style={{
                 height: noteH, width: black ? '65%' : '100%',
                 background: bg,
-                borderBottom: '1px solid #111',
+                borderBottom: '1px solid var(--border)',
                 borderRight: black ? 'none' : '1px solid #333',
                 display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
                 paddingRight: 2, cursor: 'pointer', userSelect: 'none',
@@ -366,7 +366,7 @@ function VelocityLane({
     <div
       onMouseDown={onMouseDown}
       style={{
-        height: VELOCITY_H, background: '#111',
+        height: VELOCITY_H, background: 'var(--bg-base)',
         borderTop: '1px solid var(--border)',
         position: 'relative', overflow: 'hidden', cursor: 'crosshair',
       }}
@@ -1169,7 +1169,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   return (
                     <div id="pr-root-menu" style={{
                       position: 'fixed', top: rootMenuPos.top, right: rootMenuPos.right, width: 132, zIndex: 9999,
-                      background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+                      background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
                       padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
                       display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
                     }}>
@@ -1264,20 +1264,20 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   <div id="pr-preset-menu" style={{
                     position: 'fixed', top, right: window.innerWidth - btn.right,
                     width: 248, zIndex: 9999,
-                    background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+                    background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
                     padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
                     maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
                   }}>
-                    <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>CLIP SOUND — notes are kept</div>
+                    <div style={{ padding: '4px 10px 6px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid var(--border)' }}>CLIP SOUND — notes are kept</div>
                     {clip.presetId && track && track.instrument.type !== 'none' && (
                       <button onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: undefined } }); setShowPresetPicker(false) }}
-                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#666', cursor: 'pointer' }}>
+                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                         Track instrument — {INSTRUMENT_LABELS[track.instrument.type]}
                       </button>
                     )}
                     {getGroupedPresets(presets).map(({ group, presets: gp }) => (
                       <div key={group}>
-                        <div style={{ padding: '5px 10px 2px', fontSize: 8, color: '#555', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
+                        <div style={{ padding: '5px 10px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
                         {gp.map(p => (
                           <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
                             <button
@@ -1285,7 +1285,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                               title={`Listen — plays ${midiNoteLabel(clampToPreset(p, 60))}`}
                               style={{
                                 flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer',
-                                color: previewing ? '#444' : '#a78bfa', fontSize: 10, padding: '4px 0 4px 8px', textAlign: 'left',
+                                color: previewing ? 'var(--text-muted)' : '#a78bfa', fontSize: 10, padding: '4px 0 4px 8px', textAlign: 'left',
                               }}>
                               ▶
                             </button>
@@ -1298,41 +1298,41 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                                 color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
                               }}>
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                              <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: '#555', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>
+                              <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>
                             </button>
                           </div>
                         ))}
                       </div>
                     ))}
-                    <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
+                    <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
                     {!showNewPreset ? (<>
                       <button onClick={() => setShowNewPreset(true)}
                         style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
                         + New Preset
                       </button>
                       <a href="/community?kind=preset" target="_blank" rel="noreferrer"
-                        style={{ display: 'block', padding: '5px 10px', fontSize: 10, color: '#666', textDecoration: 'none' }}>
+                        style={{ display: 'block', padding: '5px 10px', fontSize: 10, color: 'var(--text-muted)', textDecoration: 'none' }}>
                         Find presets in Community ↗
                       </a>
                     </>) : (
                       <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
-                          style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
-                        <div style={{ fontSize: 9, color: '#666' }}>Upload soundfont (.js):</div>
+                          style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Upload soundfont (.js):</div>
                         <input type="file" accept=".js" onChange={handleSoundfontFile}
-                          style={{ fontSize: 9, color: '#aaa', width: '100%' }} />
+                          style={{ fontSize: 9, color: 'var(--text-secondary)', width: '100%' }} />
                         {npSfText && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Soundfont loaded — note range auto-detected</div>}
                         {!npSfText && (<>
-                          <div style={{ fontSize: 9, color: '#666' }}>Or: library folder name</div>
+                          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Or: library folder name</div>
                           <input placeholder="Folder" value={npFolder} onChange={e => setNpFolder(e.target.value)}
-                            style={{ width: '100%', background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
+                            style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
                           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                            <span style={{ fontSize: 9, color: '#666' }}>Lo</span>
+                            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Lo</span>
                             <input type="number" min={0} max={127} value={npLo} onChange={e => setNpLo(Number(e.target.value))}
-                              style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
-                            <span style={{ fontSize: 9, color: '#666' }}>Hi</span>
+                              style={{ width: 44, background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 4px' }} />
+                            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Hi</span>
                             <input type="number" min={0} max={127} value={npHi} onChange={e => setNpHi(Number(e.target.value))}
-                              style={{ width: 44, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 4px' }} />
+                              style={{ width: 44, background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 4px' }} />
                           </div>
                         </>)}
                         <div style={{ display: 'flex', gap: 4 }}>
@@ -1341,7 +1341,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                             {npLoading ? '…' : 'Create'}
                           </button>
                           <button onClick={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null) }}
-                            style={{ padding: '4px 6px', fontSize: 10, background: 'transparent', border: '1px solid #333', borderRadius: 3, color: '#666', cursor: 'pointer' }}>
+                            style={{ padding: '4px 6px', fontSize: 10, background: 'transparent', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-muted)', cursor: 'pointer' }}>
                             Cancel
                           </button>
                         </div>
@@ -1400,7 +1400,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 <div style={{ flex: 1 }} />
                 <button
                   onClick={() => setChordType(null)}
-                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', color: '#555', flexShrink: 0 }}
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', color: 'var(--text-muted)', flexShrink: 0 }}
                 >
                   Clear
                 </button>
@@ -1459,7 +1459,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 return (
                   <div key={pitch} style={{
                     height: rowH, background: hover ? `${color}20` : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e',
-                    borderBottom: !isDrum && pitch % 12 === 0 ? '1px solid #333' : '1px solid #202020',
+                    borderBottom: !isDrum && pitch % 12 === 0 ? '1px solid var(--border-light)' : '1px solid #202020',
                     boxSizing: 'border-box',
                   }} />
                 )
@@ -1550,29 +1550,29 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           id="pr-ctx-menu"
           style={{
             position: 'fixed', top: ctxMenu.y, left: ctxMenu.x, zIndex: 9999,
-            background: '#161616', border: '1px solid #2e2e2e', borderRadius: 7,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 7,
             padding: '4px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.75)', minWidth: 160,
           }}
         >
-          <div style={{ padding: '4px 12px 6px', fontSize: 9, fontWeight: 700, color: '#555', letterSpacing: '0.08em' }}>
+          <div style={{ padding: '4px 12px 6px', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
             {NOTE_NAMES[ctxMenu.note.pitch % 12]}{octave(ctxMenu.note.pitch)}
             {ctxMenu.note.presetId && <span style={{ color: '#7c3aed', marginLeft: 5 }}>● preset</span>}
           </div>
-          <div style={{ borderTop: '1px solid #222', paddingTop: 3 }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 3 }}>
             {CHORD_PRESETS.map(({ label, intervals }) => (
               <button
                 key={label}
                 onClick={() => expandToChord(ctxMenu.note, intervals)}
                 style={{
                   display: 'block', width: '100%', textAlign: 'left',
-                  padding: '5px 14px', fontSize: 11, color: '#ccc',
+                  padding: '5px 14px', fontSize: 11, color: 'var(--text-primary)',
                   background: 'transparent', border: 'none', cursor: 'pointer',
                 }}
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.12)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
                 {label}
-                <span style={{ float: 'right', fontSize: 9, color: '#555' }}>
+                <span style={{ float: 'right', fontSize: 9, color: 'var(--text-muted)' }}>
                   {intervals.map(i => (i > 0 ? `+${i}` : `${i}`)).join(' ')}
                 </span>
               </button>

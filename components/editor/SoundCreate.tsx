@@ -128,43 +128,43 @@ export function SaveRecipeButton({ clip }: { clip: MidiClip }) {
       {pos && typeof document !== 'undefined' && createPortal(
         <div ref={panelRef} style={{
           position: 'fixed', top: pos.top, right: pos.right, width: 260, zIndex: 9999,
-          background: '#161616', border: '1px solid #2e2e2e', borderRadius: 10,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
           padding: '12px 14px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
           display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-          <p style={{ fontSize: 12, fontWeight: 800, color: '#eee', margin: 0 }}>Save as recipe</p>
+          <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Save as recipe</p>
           {clip.notes.length === 0 ? (
-            <p style={{ fontSize: 10.5, color: '#888', margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
               Add some notes first — a recipe is the pattern you&apos;ve written here.
             </p>
           ) : (
             <>
               <input
                 value={title} onChange={e => setTitle(e.target.value)} placeholder="Recipe name"
-                style={{ fontSize: 11, padding: '6px 9px', borderRadius: 6, background: '#101010', border: '1px solid #2e2e2e', color: '#ddd', outline: 'none' }}
+                style={{ fontSize: 11, padding: '6px 9px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
               />
               <input
                 value={desc} onChange={e => setDesc(e.target.value)} placeholder="What makes it work? (optional)"
-                style={{ fontSize: 11, padding: '6px 9px', borderRadius: 6, background: '#101010', border: '1px solid #2e2e2e', color: '#ddd', outline: 'none' }}
+                style={{ fontSize: 11, padding: '6px 9px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
               />
               <select
                 value={genre} onChange={e => setGenre(e.target.value)}
-                style={{ fontSize: 11, padding: '6px 7px', borderRadius: 6, background: '#101010', border: '1px solid #2e2e2e', color: genre ? '#ddd' : '#777', outline: 'none' }}
+                style={{ fontSize: 11, padding: '6px 7px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: genre ? 'var(--text-primary)' : '#777', outline: 'none' }}
               >
                 <option value="">Genre (optional)</option>
                 {RECIPE_GENRE_ORDER.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: '#aaa', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} style={{ accentColor: '#34d399' }} />
                 Also share to the Community
               </label>
               <button
                 onClick={() => void save()} disabled={busy}
-                style={{ padding: '7px 0', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700, background: busy ? 'rgba(52,211,153,0.3)' : '#34d399', color: '#0c221a' }}
+                style={{ padding: '7px 0', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700, background: busy ? 'rgba(52,211,153,0.3)' : '#34d399', color: 'var(--text-muted)' }}
               >
                 {busy ? 'Saving…' : 'Save recipe'}
               </button>
-              <p style={{ fontSize: 9.5, color: '#666', margin: 0, lineHeight: 1.4 }}>
+              <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
                 It appears under Your Recipes in the sound library — drag it onto any track.
               </p>
             </>

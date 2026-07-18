@@ -217,14 +217,14 @@ function ToneCurveEditor({ adj, onChange }: { adj: VideoAdjustments; onChange: (
 
   return (
     <div>
-      <svg width={W} height={H} style={{ display: 'block', margin: '0 auto', background: '#0d0d0d', borderRadius: 6, border: '1px solid var(--border)' }}>
+      <svg width={W} height={H} style={{ display: 'block', margin: '0 auto', background: 'var(--bg-base)', borderRadius: 6, border: '1px solid var(--border)' }}>
         {[0.25, 0.5, 0.75].map(t => (
           <g key={t}>
-            <line x1={pad + plotW * t} y1={pad} x2={pad + plotW * t} y2={pad + plotH} stroke="#1c1c1c" strokeWidth={0.5} />
-            <line x1={pad} y1={pad + plotH * (1 - t)} x2={pad + plotW} y2={pad + plotH * (1 - t)} stroke="#1c1c1c" strokeWidth={0.5} />
+            <line x1={pad + plotW * t} y1={pad} x2={pad + plotW * t} y2={pad + plotH} stroke="var(--text-muted)" strokeWidth={0.5} />
+            <line x1={pad} y1={pad + plotH * (1 - t)} x2={pad + plotW} y2={pad + plotH * (1 - t)} stroke="var(--text-muted)" strokeWidth={0.5} />
           </g>
         ))}
-        <line x1={pad} y1={pad + plotH} x2={pad + plotW} y2={pad} stroke="#252525" strokeWidth={0.5} strokeDasharray="3 3" />
+        <line x1={pad} y1={pad + plotH} x2={pad + plotW} y2={pad} stroke="var(--text-muted)" strokeWidth={0.5} strokeDasharray="3 3" />
         <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
         {handles.map(h => (
           <circle key={h.key} cx={h.x} cy={valToY(h.val, h.range)} r={4.5} fill="var(--accent)" stroke="#fff" strokeWidth={1}

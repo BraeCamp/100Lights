@@ -130,7 +130,7 @@ export default function AudioWaveform({ src, contentType, currentTime, duration,
   const isVideo = contentType === 'video'
 
   return (
-    <div ref={containerRef} className="relative w-full h-full flex flex-col" style={{ background: '#09090f', overflow: 'hidden' }}>
+    <div ref={containerRef} className="relative w-full h-full flex flex-col" style={{ background: 'var(--bg-base)', overflow: 'hidden' }}>
       <div className="flex items-center justify-between px-3 shrink-0" style={{ height: 24, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
         <span className="text-xs font-semibold tracking-widest" style={{ color: 'var(--text-muted)', fontSize: 9 }}>AUDIO</span>
         {duration > 0 && (
@@ -147,25 +147,25 @@ export default function AudioWaveform({ src, contentType, currentTime, duration,
           onClick={handleClick}
         />
         {decoding && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none" style={{ background: '#09090f' }}>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none" style={{ background: 'var(--bg-base)' }}>
             <div style={{ width: 18, height: 18, borderRadius: '50%', border: '2px solid rgba(139,92,246,0.3)', borderTopColor: '#8b5cf6', animation: 'spin 0.8s linear infinite' }} />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Decoding audio…</span>
           </div>
         )}
         {decodeError && !decoding && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 pointer-events-none" style={{ background: '#09090f' }}>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 pointer-events-none" style={{ background: 'var(--bg-base)' }}>
             <Mic size={18} style={{ color: 'var(--text-muted)' }} />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Could not decode audio</span>
           </div>
         )}
         {isEmpty && !decodeError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none" style={{ background: '#09090f' }}>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none" style={{ background: 'var(--bg-base)' }}>
             <Mic size={22} style={{ color: 'rgba(255,255,255,0.08)' }} />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Import an audio file to see the waveform</span>
           </div>
         )}
         {isVideo && !decoding && !isEmpty && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 pointer-events-none" style={{ background: '#09090f' }}>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 pointer-events-none" style={{ background: 'var(--bg-base)' }}>
             <Mic size={18} style={{ color: 'var(--text-muted)' }} />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Audio waveform for video coming soon</span>
           </div>

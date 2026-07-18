@@ -805,10 +805,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                 onClick={e => { e.stopPropagation(); a.fn() }}
                 style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: '#ddd', fontSize: 10, lineHeight: 1, padding: '2px 3px',
+                  color: 'var(--text-primary)', fontSize: 10, lineHeight: 1, padding: '2px 3px',
                 }}
                 onMouseEnter={e => { e.currentTarget.style.color = '#fff' }}
-                onMouseLeave={e => { e.currentTarget.style.color = '#ddd' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-primary)' }}
               >{a.glyph}</button>
             ))}
           </div>
@@ -842,7 +842,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         // Clicks inside the menu must not bubble through the React tree to the
         // lane's mousedown — that starts a zero-distance rubber band which
         // clears the selection region before the menu action runs
-        <div ref={menuRef} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
+        <div ref={menuRef} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
           {ctxSub !== 'presets' && menuItems.map(it => (
             <button key={it.label} onClick={() => { it.fn(); if (!(it as { keepOpen?: boolean }).keepOpen) setCtxPos(null) }}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: (it as { color?: string }).color ?? 'var(--text-primary)', fontWeight: (it as { color?: string }).color ? 700 : 400 }}
@@ -871,7 +871,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                 )}
                 {getGroupedPresets(presets).map(({ group, presets: gp }) => (
                   <div key={group}>
-                    <div style={{ padding: '4px 12px 2px', fontSize: 8, color: '#666', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
+                    <div style={{ padding: '4px 12px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
                     {gp.map(p => (
                       <button key={p.id} onClick={() => pick(p.id)}
                         style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', padding: '4px 12px 4px 18px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: clip.presetId === p.id ? 'var(--accent-light)' : 'var(--text-primary)' }}
@@ -879,7 +879,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                       >
                         <span>{p.name}</span>
-                        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: '#666' }}>{noteRangeLabel(p)}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: 'var(--text-muted)' }}>{noteRangeLabel(p)}</span>
                       </button>
                     ))}
                   </div>
@@ -898,7 +898,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
           onClick={e => { if (e.target === e.currentTarget) setTransientDialog(null) }}
         >
           <div style={{
-            background: '#1e1e1e', border: '1px solid var(--border)', borderRadius: 8,
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
             padding: '20px 22px', width: 340, maxWidth: '90vw',
             boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
           }}>
@@ -933,8 +933,8 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
                 onClick={applyTransientSplit}
                 style={{
                   flex: 1, padding: '7px 0', borderRadius: 4, border: 'none',
-                  background: transientDialog.transients.length === 0 ? '#333' : 'var(--accent)',
-                  color: transientDialog.transients.length === 0 ? '#555' : '#fff',
+                  background: transientDialog.transients.length === 0 ? 'var(--bg-card-hover)' : 'var(--accent)',
+                  color: transientDialog.transients.length === 0 ? 'var(--text-muted)' : '#fff',
                   fontSize: 12, fontWeight: 600,
                   cursor: transientDialog.transients.length === 0 ? 'not-allowed' : 'pointer',
                 }}

@@ -54,7 +54,7 @@ export default function Tooltip({ content, children, delay = 700, placement = 't
         <div style={{
           position: 'fixed', left: pos.x, top: pos.y, transform: xform,
           zIndex: 9999, pointerEvents: 'none',
-          background: 'rgba(15,20,32,0.95)', color: '#e2e8f0',
+          background: 'rgba(15,20,32,0.95)', color: 'var(--text-primary)',
           fontSize: 11, fontWeight: 500, lineHeight: 1.3,
           padding: '4px 8px', borderRadius: 5,
           border: '1px solid rgba(255,255,255,0.1)',

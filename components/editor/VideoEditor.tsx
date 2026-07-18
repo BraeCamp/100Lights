@@ -300,7 +300,7 @@ function FairlightPage({
                 </span>
 
                 {/* dB readout */}
-                <span style={{ fontSize: 9, color: track.muted ? '#666' : 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', height: 12 }}>
+                <span style={{ fontSize: 9, color: track.muted ? 'var(--text-muted)' : 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', height: 12 }}>
                   {dbLabel} <span style={{ fontSize: 7 }}>dB</span>
                 </span>
 
@@ -2981,7 +2981,7 @@ export default function VideoEditor({
       {/* ── Page tabs (centered, DaVinci-style) ─────────────── */}
       <div
         className="flex items-center justify-center shrink-0"
-        style={{ height: 38, borderTop: '1px solid var(--border)', background: '#0a0a0f' }}
+        style={{ height: 38, borderTop: '1px solid var(--border)', background: 'var(--bg-base)' }}
       >
         <div className="flex items-stretch gap-0.5 px-1">
           {PAGES.map(({ id, label, icon: Icon }) => {
@@ -3030,7 +3030,7 @@ export default function VideoEditor({
             position: 'fixed', bottom: 24, right: 24, zIndex: 100,
             display: 'flex', alignItems: 'center', gap: 8,
             padding: '10px 16px', borderRadius: 10,
-            background: saveStatus === 'saved' ? '#18251a' : '#250f0f',
+            background: saveStatus === 'saved' ? 'var(--bg-card)' : '#250f0f',
             border: `1px solid ${saveStatus === 'saved' ? '#166534' : '#7f1d1d'}`,
             color: saveStatus === 'saved' ? '#4ade80' : '#f87171',
             fontSize: 13, fontWeight: 500,

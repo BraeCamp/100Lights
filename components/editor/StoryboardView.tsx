@@ -86,7 +86,7 @@ export default function StoryboardView({ items, mediaItems, selectedId, onSelect
                 }}
               >
                 {/* Thumbnail */}
-                <div style={{ width: '100%', height: 86, background: '#111', position: 'relative', overflow: 'hidden' }}>
+                <div style={{ width: '100%', height: 86, background: 'var(--bg-base)', position: 'relative', overflow: 'hidden' }}>
                   {media?.thumbnail ? (
                     <img
                       src={media.thumbnail} alt=""

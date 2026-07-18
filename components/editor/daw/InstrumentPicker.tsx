@@ -18,7 +18,7 @@ const C = {
   bgBase:      '#141414',
   bgSurface:   '#1c1c1c',
   bgCard:      '#222222',
-  border:      '#2c2c2c',
+  border:      'var(--border)',
   accent:      'var(--accent)',
   textPrimary: '#e8e8e8',
   textMuted:   '#7c7c7c',
@@ -149,10 +149,10 @@ const DrumPanel = memo(function DrumPanel({ instrument, onSet }: {
               <button
                 onClick={e => { e.stopPropagation(); setSelectedPad(isSelected ? null : hit.pitch); previewNote(engine.ctx, engine.masterGain, instrument, hit.pitch) }}
                 onMouseDown={e => e.stopPropagation()}
-                style={{ padding: '10px 4px', borderRadius: 4, border: `2px solid ${isSelected ? color : pad.mute ? '#555' : C.border}`, background: isSelected ? `${color}22` : pad.mute ? 'rgba(80,80,80,0.2)' : C.bgCard, color: pad.mute ? '#666' : C.textPrimary, fontSize: 10, cursor: 'pointer', textAlign: 'center', transition: 'all 80ms', fontWeight: 700 }}
+                style={{ padding: '10px 4px', borderRadius: 4, border: `2px solid ${isSelected ? color : pad.mute ? 'var(--text-muted)' : C.border}`, background: isSelected ? `${color}22` : pad.mute ? 'rgba(80,80,80,0.2)' : C.bgCard, color: pad.mute ? 'var(--text-muted)' : C.textPrimary, fontSize: 10, cursor: 'pointer', textAlign: 'center', transition: 'all 80ms', fontWeight: 700 }}
               >
                 <div>{hit.label}</div>
-                <div style={{ fontSize: 8, color: '#666', marginTop: 2 }}>{Math.round(pad.volume * 100)}%{pad.pitch !== 0 ? ` ${pad.pitch > 0 ? '+' : ''}${pad.pitch}` : ''}</div>
+                <div style={{ fontSize: 8, color: 'var(--text-muted)', marginTop: 2 }}>{Math.round(pad.volume * 100)}%{pad.pitch !== 0 ? ` ${pad.pitch > 0 ? '+' : ''}${pad.pitch}` : ''}</div>
               </button>
             </div>
           )
@@ -343,7 +343,7 @@ function AlgorithmDiagram({ algo }: { algo: number }) {
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', flexShrink: 0 }}>
       <defs>
         <marker id={markerId} markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-          <polygon points="0,0 5,2.5 0,5" fill="#555" />
+          <polygon points="0,0 5,2.5 0,5" fill="var(--text-muted)" />
         </marker>
       </defs>
       {/* Arrows */}
@@ -356,7 +356,7 @@ function AlgorithmDiagram({ algo }: { algo: number }) {
           return (
             <path key={i}
               d={`M${sx},${sy - BH / 2} Q${midX},${sy - 22} ${ex},${ey - BH / 2 - 2}`}
-              stroke="#555" strokeWidth={1} fill="none"
+              stroke="var(--text-muted)" strokeWidth={1} fill="none"
               markerEnd={`url(#${markerId})`}
             />
           )
@@ -365,7 +365,7 @@ function AlgorithmDiagram({ algo }: { algo: number }) {
         const [ex, ey] = boxEdgePoint(from, to, false)
         return (
           <line key={i} x1={sx} y1={sy} x2={ex} y2={ey}
-            stroke="#555" strokeWidth={1}
+            stroke="var(--text-muted)" strokeWidth={1}
             markerEnd={`url(#${markerId})`}
           />
         )

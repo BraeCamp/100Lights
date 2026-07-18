@@ -137,7 +137,7 @@ export default function PadTuner() {
 
         {/* Level ring */}
         <path d={`M ${lmx.toFixed(1)} ${lmy.toFixed(1)} A ${R+14} ${R+14} 0 0 1 ${pt(340, R+14)[0].toFixed(1)} ${pt(340, R+14)[1].toFixed(1)}`}
-          fill="none" stroke="#222" strokeWidth="3" strokeLinecap="round" />
+          fill="none" stroke="var(--text-muted)" strokeWidth="3" strokeLinecap="round" />
         {result && result.rms > 0.02 && rmsArcEnd > 201 && (
           <path d={`M ${lmx.toFixed(1)} ${lmy.toFixed(1)} A ${R+14} ${R+14} 0 0 1 ${mx.toFixed(1)} ${my.toFixed(1)}`}
             fill="none" stroke={col} strokeWidth="3" strokeLinecap="round" opacity={0.5}
@@ -146,7 +146,7 @@ export default function PadTuner() {
 
         {/* Main track arc */}
         <path d={`M ${lx.toFixed(1)} ${ly.toFixed(1)} A ${R} ${R} 0 0 1 ${rx.toFixed(1)} ${ry.toFixed(1)}`}
-          fill="none" stroke="#282828" strokeWidth="16" strokeLinecap="round" />
+          fill="none" stroke="var(--text-muted)" strokeWidth="16" strokeLinecap="round" />
 
         {/* Highlight arc */}
         {highlightArc() && (
@@ -197,7 +197,7 @@ export default function PadTuner() {
         </text>
 
         {result && conf > 0.5 && (
-          <text x={CX} y={CY - 4} textAnchor="middle" fontSize="9" fill="#444">
+          <text x={CX} y={CY - 4} textAnchor="middle" fontSize="9" fill="var(--text-muted)">
             {result.hz.toFixed(1)} Hz
           </text>
         )}

@@ -133,14 +133,14 @@ export default function PracticeButton() {
             style={{
               width: 460, maxWidth: 'calc(100vw - 40px)', maxHeight: 'calc(100vh - 80px)',
               display: 'flex', flexDirection: 'column',
-              background: '#141414', border: '1px solid #2a2a2a', borderRadius: 10,
+              background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10,
               boxShadow: '0 16px 50px rgba(0,0,0,0.7)', overflow: 'hidden',
             }}
           >
             {/* Header */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
-              padding: '10px 14px', borderBottom: '1px solid #232323', background: '#171717',
+              padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
               flexShrink: 0,
             }}>
               {activePath && (
@@ -171,7 +171,7 @@ export default function PracticeButton() {
               <button
                 onClick={() => setOpen(false)}
                 title="Close"
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', padding: 2 }}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
               >
                 <X size={15} />
               </button>

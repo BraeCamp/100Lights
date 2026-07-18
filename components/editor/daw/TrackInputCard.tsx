@@ -120,16 +120,16 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
       id="track-input-card"
       style={{
         position: 'fixed', top, left, width: cardW, zIndex: 9999,
-        background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+        background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
         padding: '10px 12px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
       }}
     >
-      <div style={{ fontSize: 9, fontWeight: 700, color: '#666', letterSpacing: '0.08em', marginBottom: 8 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: 8 }}>
         INPUT — {track.name.toUpperCase()}
       </div>
 
       {loadingDevs ? (
-        <div style={{ padding: '10px 0', fontSize: 11, color: '#555', textAlign: 'center' }}>Loading devices…</div>
+        <div style={{ padding: '10px 0', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>Loading devices…</div>
       ) : (
         allOptions.map(({ id, label, desc }) => {
           const active = cur === id
@@ -153,7 +153,7 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
                 <div style={{ fontSize: 11, color: active ? '#a8d4ff' : '#aaa', fontWeight: active ? 600 : 400 }}>
                   {label}
                 </div>
-                {desc && <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>{desc}</div>}
+                {desc && <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>{desc}</div>}
               </div>
             </button>
           )
@@ -162,7 +162,7 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
 
       {/* Test panel */}
       {cur && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #222' }}>
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
               onClick={() => testState === 'testing' ? stopTest() : startTest(cur)}
@@ -177,7 +177,7 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
             </button>
 
             {testState === 'testing' && (
-              <div style={{ flex: 1, height: 8, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden', border: '1px solid #2a2a2a' }}>
+              <div style={{ flex: 1, height: 8, background: 'var(--bg-surface)', borderRadius: 3, overflow: 'hidden', border: '1px solid var(--border)' }}>
                 <div style={{
                   height: '100%', width: `${level * 100}%`,
                   background: level > 0.8 ? '#ef4444' : level > 0.5 ? '#eab308' : '#22c55e',
@@ -187,7 +187,7 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
             )}
 
             {testState === 'idle' && cur && (
-              <span style={{ fontSize: 9, color: '#444' }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
                 {allOptions.find(o => o.id === cur)?.label ?? cur}
               </span>
             )}

@@ -242,12 +242,12 @@ export default function Transport() {
       onMouseDown={e => { if (e.target === e.currentTarget) closeRecordSetup() }}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
     >
-      <div style={{ background: '#161616', border: '1px solid #2e2e2e', borderRadius: 12, padding: '16px 18px', width: 'min(400px,92vw)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', width: 'min(400px,92vw)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 13, fontWeight: 800, color: '#eee' }}>● Record — set your sound</span>
-          <button onClick={closeRecordSetup} aria-label="Close" style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 13 }}>✕</button>
+          <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>● Record — set your sound</span>
+          <button onClick={closeRecordSetup} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>✕</button>
         </div>
-        <p style={{ fontSize: 10.5, color: '#888', margin: 0, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
           Recording to: {armedReady.map(t => t.name).join(', ') || '—'}. Toggle the monitor to hear yourself with the effects before the take.
         </p>
 
@@ -263,13 +263,13 @@ export default function Transport() {
         >
           🎧 Monitor {monitorOn ? 'ON — you should hear yourself' : 'off'}
         </button>
-        <p style={{ fontSize: 9, color: '#666', margin: '-4px 0 0', lineHeight: 1.4 }}>
+        <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '-4px 0 0', lineHeight: 1.4 }}>
           Use wired headphones for the tightest monitoring — Bluetooth adds delay no software can remove.
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid #242424', borderRadius: 9, padding: '9px 11px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 9, padding: '9px 11px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: '#777' }}>EFFECTS ON THE TAKE</span>
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)' }}>EFFECTS ON THE TAKE</span>
             <select
               value=""
               onChange={e => {
@@ -277,14 +277,14 @@ export default function Transport() {
                 if (!type) return
                 patchRecFx([...recFx, { type, value: REC_FX_DEFS[type].def }])
               }}
-              style={{ fontSize: 10, padding: '2px 5px', borderRadius: 5, border: '1px solid #2e2e2e', background: '#1e1e1e', color: '#aaa', cursor: 'pointer' }}
+              style={{ fontSize: 10, padding: '2px 5px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' }}
             >
               <option value="">+ Add effect</option>
               {(Object.keys(REC_FX_DEFS) as MonitorFx['type'][]).map(t => <option key={t} value={t}>{REC_FX_DEFS[t].label}</option>)}
             </select>
           </div>
           {recFx.length === 0 && (
-            <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
               None yet — the take records clean. Anything you add here is heard in the monitor and lands as FX bars under the recording.
             </p>
           )}
@@ -292,31 +292,31 @@ export default function Transport() {
             const def = REC_FX_DEFS[fx.type]
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 10, color: '#bbb', width: 62, flexShrink: 0 }}>{def.label}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>{def.label}</span>
                 <input type="range" min={def.min} max={def.max} step={def.step} value={fx.value}
                   onChange={e => patchRecFx(recFx.map((f, j) => j === i ? { ...f, value: Number(e.target.value) } : f))}
                   style={{ flex: 1, accentColor: '#dc2626' }} />
-                <span style={{ fontSize: 9.5, color: '#ccc', width: 38, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.value)}</span>
+                <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 38, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.value)}</span>
                 <button onClick={() => patchRecFx(recFx.filter((_, j) => j !== i))} aria-label="Remove effect"
-                  style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
               </div>
             )
           })}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 10, color: '#999', width: 62, flexShrink: 0 }}>Timing</span>
+          <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>Timing</span>
           <input type="range" min={-1} max={250} step={1} value={latencyMs}
             onChange={e => commitLatency(Number(e.target.value))}
             title="Recorded takes are placed this much earlier to cancel the audio pipeline's delay. Auto uses the browser's estimate."
             style={{ flex: 1, accentColor: '#dc2626' }} />
-          <span style={{ fontSize: 9.5, color: '#ccc', width: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
             {latencyMs < 0 ? `auto ${Math.round(engine.recordLatencySec() * 1000)}ms` : `${latencyMs}ms`}
           </span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 10, color: '#999' }}>Count-in</span>
+          <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Count-in</span>
           {[0, 1, 2].map(b => (
             <button key={b} onClick={() => setCountInBars(b)}
               style={{
@@ -331,7 +331,7 @@ export default function Transport() {
 
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={closeRecordSetup}
-            style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid #2e2e2e', background: '#1e1e1e', color: '#888', cursor: 'pointer', fontSize: 12 }}>
+            style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
             Cancel
           </button>
           <button onClick={() => void startRecordingNow()}
@@ -460,7 +460,7 @@ export default function Transport() {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: '#1e1e1e',
+    background: 'var(--bg-card)',
     border: '1px solid var(--border)',
     borderRadius: 4,
     color: 'var(--text-secondary)',
@@ -487,7 +487,7 @@ export default function Transport() {
   }
 
   const monoDisplay: React.CSSProperties = {
-    background: '#111',
+    background: 'var(--bg-base)',
     border: '1px solid var(--border)',
     borderRadius: 4,
     color: 'var(--text-primary)',
@@ -499,7 +499,7 @@ export default function Transport() {
   }
 
   const inputStyle: React.CSSProperties = {
-    background: '#111',
+    background: 'var(--bg-base)',
     border: '1px solid var(--accent)',
     borderRadius: 3,
     color: 'var(--text-primary)',
@@ -512,7 +512,7 @@ export default function Transport() {
 
   const wrapStyle: React.CSSProperties = {
     height: 48,
-    background: '#1a1a1a',
+    background: 'var(--bg-surface)',
     borderBottom: '1px solid var(--border)',
     display: 'flex',
     alignItems: 'center',
@@ -885,7 +885,7 @@ export default function Transport() {
         <select
           value={project.key ?? 0}
           onChange={e => dispatch({ type: 'SET_KEY_SCALE', key: parseInt(e.target.value), scale: project.scale ?? 'major' })}
-          style={{ background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 3, padding: '2px 3px', cursor: 'pointer' }}
+          style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 3, padding: '2px 3px', cursor: 'pointer' }}
           title="Root note"
         >
           {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].map((n, i) => (
@@ -895,7 +895,7 @@ export default function Transport() {
         <select
           value={project.scale ?? 'major'}
           onChange={e => dispatch({ type: 'SET_KEY_SCALE', key: project.key ?? 0, scale: e.target.value })}
-          style={{ background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 3, padding: '2px 3px', cursor: 'pointer' }}
+          style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 3, padding: '2px 3px', cursor: 'pointer' }}
           title="Scale"
         >
           {['major','minor','penta-maj','penta-min','dorian','chromatic'].map(s => (
@@ -965,16 +965,16 @@ export default function Transport() {
       {showTuner && typeof document !== 'undefined' && createPortal(
         <div style={{
           position: 'fixed', top: 56, right: 12, zIndex: 9998,
-          width: 290, background: '#111', border: '1px solid #2a2a2a',
+          width: 290, background: 'var(--bg-base)', border: '1px solid var(--border)',
           borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
           overflow: 'hidden',
         }}>
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '7px 12px', borderBottom: '1px solid #1e1e1e', background: '#171717',
+            padding: '7px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
           }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>♩ Tuner</span>
-            <button onClick={() => setShowTuner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+            <button onClick={() => setShowTuner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>
           <PadTuner />
         </div>,
@@ -985,16 +985,16 @@ export default function Transport() {
       {showMask && typeof document !== 'undefined' && createPortal(
         <div style={{
           position: 'fixed', top: 56, right: showTuner ? 314 : 12, zIndex: 9997,
-          width: 290, background: '#111', border: '1px solid #2a2a2a',
+          width: 290, background: 'var(--bg-base)', border: '1px solid var(--border)',
           borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
           overflow: 'hidden',
         }}>
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '7px 12px', borderBottom: '1px solid #1e1e1e', background: '#171717',
+            padding: '7px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
           }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Masking Detector</span>
-            <button onClick={() => setShowMask(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+            <button onClick={() => setShowMask(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>
           <MaskingPanel />
         </div>,

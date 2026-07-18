@@ -246,7 +246,7 @@ function EntryRow({
         // Ghost image: a small chip
         const ghost = document.createElement('div')
         ghost.textContent = `♪ ${entry.name}`
-        ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:#1e1e2e;color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+        ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
         document.body.appendChild(ghost)
         e.dataTransfer.setDragImage(ghost, 0, 0)
         setTimeout(() => document.body.removeChild(ghost), 0)
@@ -279,7 +279,7 @@ function EntryRow({
       {/* Waveform canvas — fills remaining space, click to seek, drag to scrub */}
       {!entry.audioBlob ? (
         <div style={{ flex: 1, minWidth: 60, height: 28, borderRadius: 4, background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontSize: 9, color: '#444' }}>{fulfilling ? 'Rendering…' : '↓ click ▶ to render'}</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{fulfilling ? 'Rendering…' : '↓ click ▶ to render'}</span>
         </div>
       ) : (
         <canvas
@@ -425,7 +425,7 @@ function FolderHeader({
           e.dataTransfer.setData('application/x-library-folder-name', name)
           const ghost = document.createElement('div')
           ghost.textContent = `📁 ${name}`
-          ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:#1e1e2e;color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+          ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
           document.body.appendChild(ghost)
           e.dataTransfer.setDragImage(ghost, 0, 0)
           setTimeout(() => document.body.removeChild(ghost), 0)
@@ -556,7 +556,7 @@ function WaveformTrimmer({
       ref={canvasRef}
       width={480}
       height={64}
-      style={{ width: '100%', height: 64, display: 'block', borderRadius: 6, cursor: 'ew-resize', background: '#0d0d10' }}
+      style={{ width: '100%', height: 64, display: 'block', borderRadius: 6, cursor: 'ew-resize', background: 'var(--bg-base)' }}
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}

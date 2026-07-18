@@ -112,7 +112,7 @@ function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,
-        border: '1px solid #2e2e2e',
+        border: '1px solid var(--border)',
         background: 'rgb(var(--accent-rgb) / 0.08)', color: '#7ab4f5',
         cursor: busy ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
       }}
@@ -217,7 +217,7 @@ function PodcastSetupPanel() {
                   dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { inputSource: deviceId } })
                   setOpenTrackId(null)
                 }}
-                style={{ width: '100%', fontSize: 11, padding: '3px 5px', marginTop: 4, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, outline: 'none', cursor: 'pointer' }}
+                style={{ width: '100%', fontSize: 11, padding: '3px 5px', marginTop: 4, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, outline: 'none', cursor: 'pointer' }}
               >
                 <option value="">— None —</option>
                 <option value="mic">Microphone (default)</option>
@@ -1519,7 +1519,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 120,
           display: 'flex', alignItems: 'center', gap: 12,
           padding: '12px 18px', borderRadius: 10,
-          background: '#1c1c26', border: '1px solid var(--accent)',
+          background: 'var(--bg-card)', border: '1px solid var(--accent)',
           boxShadow: '0 8px 32px rgba(0,0,0,0.6)', maxWidth: 520,
         }}>
           <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
@@ -1545,7 +1545,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           position: 'fixed', bottom: 24, right: 24, zIndex: 100,
           display: 'flex', flexDirection: 'column', gap: 2,
           padding: '10px 16px', borderRadius: 10,
-          background: saveStatus === 'saved' ? '#18251a' : '#250f0f',
+          background: saveStatus === 'saved' ? 'var(--bg-card)' : '#250f0f',
           border: `1px solid ${saveStatus === 'saved' ? '#166534' : '#7f1d1d'}`,
           color: saveStatus === 'saved' ? '#4ade80' : '#f87171',
           fontSize: 13, fontWeight: 500,

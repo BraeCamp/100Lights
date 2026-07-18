@@ -398,14 +398,14 @@ export default function HelpButton() {
             style={{
               width: 520, maxWidth: 'calc(100vw - 40px)', maxHeight: 'calc(100vh - 80px)',
               display: 'flex', flexDirection: 'column',
-              background: '#141414', border: '1px solid #2a2a2a', borderRadius: 10,
+              background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10,
               boxShadow: '0 16px 50px rgba(0,0,0,0.7)', overflow: 'hidden',
             }}
           >
             {/* Header */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6,
-              padding: '10px 14px', borderBottom: '1px solid #232323', background: '#171717',
+              padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
               flexShrink: 0,
             }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginRight: 8 }}>Help</span>
@@ -414,7 +414,7 @@ export default function HelpButton() {
               <button
                 onClick={() => setOpen(false)}
                 title="Close"
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', padding: 2 }}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
               >
                 <X size={15} />
               </button>
@@ -423,7 +423,7 @@ export default function HelpButton() {
             {/* Search */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 7,
-              padding: '8px 14px', borderBottom: '1px solid #232323', background: '#161616',
+              padding: '8px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
               flexShrink: 0,
             }}>
               <Search size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
@@ -441,7 +441,7 @@ export default function HelpButton() {
                 <button
                   onClick={() => setQuery('')}
                   title="Clear search"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', padding: 2 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
                 >
                   <X size={12} />
                 </button>
@@ -485,8 +485,8 @@ export default function HelpButton() {
                       }}>
                         <kbd style={{
                           fontFamily: 'monospace', fontSize: 11, fontWeight: 700,
-                          color: 'var(--text-primary)', background: '#1f1f1f',
-                          border: '1px solid #2e2e2e', borderRadius: 4,
+                          color: 'var(--text-primary)', background: 'var(--bg-card)',
+                          border: '1px solid var(--border)', borderRadius: 4,
                           padding: '1px 7px', minWidth: 64, textAlign: 'center', flexShrink: 0,
                           whiteSpace: 'nowrap',
                         }}>{renderKeys(sc.keys)}</kbd>

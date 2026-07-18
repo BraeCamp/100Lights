@@ -93,12 +93,12 @@ export default function ClipCropModal({ clip, onClose }: { clip: AudioClip; onCl
 className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={{ background: '#181828', border: '1px solid var(--border)', borderRadius: 8, padding: 16, width: 440, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, width: 440, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
         <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>Crop: {clip.name}</div>
         {!ready
-          ? <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)', background: '#0a0a0f', borderRadius: 4, marginBottom: 10 }}>Loading…</div>
+          ? <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-base)', borderRadius: 4, marginBottom: 10 }}>Loading…</div>
           : <canvas ref={canvasRef} width={408} height={60}
-              style={{ width: '100%', height: 60, display: 'block', borderRadius: 4, cursor: 'ew-resize', background: '#0a0a0f', marginBottom: 6 }}
+              style={{ width: '100%', height: 60, display: 'block', borderRadius: 4, cursor: 'ew-resize', background: 'var(--bg-base)', marginBottom: 6 }}
               onMouseDown={e => { const r = getRatio(e); dragging.current = Math.abs(r - startFrac) <= Math.abs(r - endFrac) ? 'start' : 'end' }}
               onMouseMove={e => { if (!dragging.current) return; const r = getRatio(e); dragging.current === 'start' ? setStartFrac(Math.min(r, endFrac - 0.02)) : setEndFrac(Math.max(r, startFrac + 0.02)) }}
               onMouseUp={() => { dragging.current = null }} onMouseLeave={() => { dragging.current = null }}

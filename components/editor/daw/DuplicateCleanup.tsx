@@ -62,7 +62,7 @@ export function DuplicateCleanup() {
     <div role="alert" style={{
       position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 900,
       display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
-      background: '#1d1a10', border: '1px solid rgba(245,158,11,0.45)', borderRadius: 10,
+      background: 'var(--bg-surface)', border: '1px solid rgba(245,158,11,0.45)', borderRadius: 10,
       boxShadow: '0 8px 30px rgba(0,0,0,0.5)', maxWidth: 'calc(100vw - 40px)',
     }}>
       <AlertTriangle size={15} color="#f59e0b" style={{ flexShrink: 0 }} />
@@ -76,7 +76,7 @@ export function DuplicateCleanup() {
         }}
         style={{
           flexShrink: 0, fontSize: 11.5, fontWeight: 700, padding: '6px 14px', borderRadius: 999,
-          border: 'none', cursor: 'pointer', background: '#f59e0b', color: '#1a1a1a',
+          border: 'none', cursor: 'pointer', background: '#f59e0b', color: 'var(--text-muted)',
         }}
       >Remove them</button>
       <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}>

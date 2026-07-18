@@ -112,7 +112,7 @@ function TrackHeader({ track }: { track: DawTrack }) {
             onChange={e => setDraft(e.target.value)}
             onBlur={commit}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commit(); e.stopPropagation() }}
-            style={{ flex: 1, fontSize: 11, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none' }}
+            style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none' }}
           />
         ) : (
           <span
@@ -477,7 +477,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
 
     return (
       <div
-        style={{ position: 'fixed', zIndex: 1000, left: ctxMenu.x, top: ctxMenu.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 188, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: '82vh', overflowY: 'auto' }}
+        style={{ position: 'fixed', zIndex: 1000, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 188, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: '82vh', overflowY: 'auto' }}
         onMouseLeave={() => setCtxMenu(null)}
       >
         <CtxItem label="Rename" onClick={() => { setRenameDraft(clip.name); setRenaming(true); setCtxMenu(null) }} />
@@ -550,7 +550,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
                 type="number" min={1} max={64} step={1} value={currentFAT}
                 onChange={e => dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, followActionTime: parseInt(e.target.value) || 1 } })}
                 onClick={e => e.stopPropagation()}
-                style={{ width: 44, fontSize: 10, background: '#111', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none' }}
+                style={{ width: 44, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none' }}
               />
             </div>
           )}
@@ -655,7 +655,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
                   e.stopPropagation()
                 }}
                 onClick={e => e.stopPropagation()}
-                style={{ position: 'absolute', top: 4, left: 28, right: 4, fontSize: 10, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', zIndex: 2 }}
+                style={{ position: 'absolute', top: 4, left: 28, right: 4, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', zIndex: 2 }}
               />
             ) : (
               <div style={{ position: 'absolute', top: 4, left: 28, right: clip.launchQuantization ? 40 : 4, fontSize: 10, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', zIndex: 1 }}>
@@ -753,7 +753,7 @@ function SceneLaunchButton({ scene, sceneIndex, onLaunch }: { scene: Scene; scen
               onBlur={commitTempo}
               onKeyDown={e => { if (e.key === 'Enter') commitTempo(); if (e.key === 'Escape') setEditingTempo(false); e.stopPropagation() }}
               onClick={e => e.stopPropagation()}
-              style={{ width: 52, fontSize: 10, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', textAlign: 'center' }}
+              style={{ width: 52, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', textAlign: 'center' }}
             />
           ) : scene.tempo ? (
             <span style={{ fontSize: 9, color: '#eab308', fontFamily: 'monospace' }}>{scene.tempo} BPM</span>
@@ -766,7 +766,7 @@ function SceneLaunchButton({ scene, sceneIndex, onLaunch }: { scene: Scene; scen
 
       {ctxMenu && (
         <div
-          style={{ position: 'fixed', zIndex: 1000, left: ctxMenu.x, top: ctxMenu.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 172, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
+          style={{ position: 'fixed', zIndex: 1000, left: ctxMenu.x, top: ctxMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 172, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
           onMouseLeave={() => setCtxMenu(null)}
         >
           <CtxItem label="Set Scene Tempo" onClick={() => { setTempoDraft(scene.tempo?.toString() ?? project.tempo.toString()); setEditingTempo(true); setCtxMenu(null) }} />

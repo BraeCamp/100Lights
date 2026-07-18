@@ -241,7 +241,7 @@ function AddAutoButton({ track }: { track: DawTrack }) {
       {open && createPortal(
         <div ref={dropRef} style={{
           position: 'fixed', top: dropPos.top, left: dropPos.left,
-          zIndex: 1000, background: '#2a2a2a', border: '1px solid var(--border)',
+          zIndex: 1000, background: 'var(--bg-card-hover)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '4px 0', minWidth: 130,
           boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
         }}>
@@ -265,7 +265,7 @@ function AddAutoButton({ track }: { track: DawTrack }) {
 function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack }) {
   const { dispatch } = useDaw()
   return (
-    <div style={{ width: HDR_W, height: AUTO_H, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: '#181818', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}55`, boxSizing: 'border-box' }}>
+    <div style={{ width: HDR_W, height: AUTO_H, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}55`, boxSizing: 'border-box' }}>
       <div style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {lane.label}
       </div>
@@ -686,7 +686,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
                 onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
                 onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
-                style={{ flex: 1, fontSize: 11, background: '#111', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
+                style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
               />
             ) : (
               <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
@@ -825,15 +825,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               top:  Math.min(trackCtxMenu.y, window.innerHeight - 380),
               left: Math.min(trackCtxMenu.x, window.innerWidth  - 200),
               zIndex: 9999, minWidth: 188,
-              background: '#161616', border: '1px solid #2e2e2e',
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
               borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
               padding: '4px 0', userSelect: 'none',
             }}
           >
             {/* Track name header */}
-            <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid #222' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</div>
-              <div style={{ fontSize: 9, color: '#555', marginTop: 1, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{track.instrument.type === 'drum' ? 'drum' : track.instrument.type === 'none' ? 'audio' : 'midi'} track</div>
+            <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{track.instrument.type === 'drum' ? 'drum' : track.instrument.type === 'none' ? 'audio' : 'midi'} track</div>
             </div>
 
             {/* Actions */}
@@ -850,7 +850,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             ))}
 
             {/* Freeze / Bounce */}
-            <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+            <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
             <button onClick={() => { dispatch({ type: 'SET_TRACK_FROZEN', trackId: track.id, frozen: !frozen }); setTrackCtxMenu(null) }}
               style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
@@ -863,7 +863,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {/* Group selected tracks — show only when multiple tracks selected and this track is one of them */}
             {selectedTrackIds && selectedTrackIds.size > 1 && selectedTrackIds.has(track.id) && onGroupTracks && (
               <>
-                <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+                <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
                 <button onClick={() => { onGroupTracks(); setTrackCtxMenu(null) }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#60a5fa', background: 'transparent', border: 'none', cursor: 'pointer' }}
                   onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(96,165,250,0.10)' }}
@@ -877,7 +877,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
             {/* MIDI section */}
             {track.instrument.type !== 'drum' && (<>
-              <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+              <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
               <button onClick={() => { newMidiClip(); setTrackCtxMenu(null) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
@@ -912,7 +912,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </>)}
 
             {/* Mute / Solo */}
-            <div style={{ borderTop: '1px solid #222', margin: '3px 0' }} />
+            <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
             {[
               { label: track.mute ? 'Unmute'   : 'Mute',  action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }), active: track.mute },
               { label: track.solo ? 'Unsolo'   : 'Solo',  action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }), active: track.solo },
@@ -925,8 +925,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             ))}
 
             {/* Color picker */}
-            <div style={{ borderTop: '1px solid #222', margin: '3px 0', padding: '6px 12px' }}>
-              <div style={{ fontSize: 9, color: '#555', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Color</div>
+            <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0', padding: '6px 12px' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Color</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {trackColors.map(c => (
                   <button key={c} title={c}
@@ -938,8 +938,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </div>
 
             {/* Height presets */}
-            <div style={{ borderTop: '1px solid #222', margin: '0', padding: '6px 12px 8px' }}>
-              <div style={{ fontSize: 9, color: '#555', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Height</div>
+            <div style={{ borderTop: '1px solid var(--border)', margin: '0', padding: '6px 12px 8px' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Height</div>
               <div style={{ display: 'flex', gap: 4 }}>
                 {[['Compact', 40], ['Normal', 64], ['Tall', 120]] .map(([label, h]) => (
                   <button key={label}
@@ -1404,7 +1404,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           {/* Take lane header */}
           <div style={{
             width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
-            background: '#181818',
+            background: 'var(--bg-surface)',
             borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
             borderLeft: `3px solid ${track.color}55`,
             boxSizing: 'border-box',
@@ -1461,15 +1461,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             top: Math.min(takeLaneCtx.y, window.innerHeight - 120),
             left: Math.min(takeLaneCtx.x, window.innerWidth - 180),
             zIndex: 9999, minWidth: 160,
-            background: '#161616', border: '1px solid #2e2e2e',
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
             borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
             padding: '4px 0',
           }}
           onMouseDown={e => e.stopPropagation()}
         >
-          <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid #222' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#ccc' }}>{takeLaneCtx.lane.name}</div>
-            <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>{takeLaneCtx.clip.name}</div>
+          <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>{takeLaneCtx.lane.name}</div>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>{takeLaneCtx.clip.name}</div>
           </div>
           <button
             onClick={() => { promoteTakeClip(takeLaneCtx.lane, takeLaneCtx.clip); setTakeLaneCtx(null) }}
@@ -1491,7 +1491,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       {autoLanes.map(lane => (
         <div key={lane.id} style={{ display: 'flex', height: AUTO_H, flexShrink: 0 }}>
           <AutoLaneHeader lane={lane} track={track} />
-          <div style={{ flex: 1, height: AUTO_H, overflow: 'hidden', borderBottom: '1px solid var(--border)', background: '#1a1a1a' }}>
+          <div style={{ flex: 1, height: AUTO_H, overflow: 'hidden', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
             <AutomationLaneView
               lane={lane}
               beatWidth={beatW}
@@ -1526,7 +1526,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
       {/* Lane context menu (empty-lane right-click) */}
       {laneCtxMenu && (
-        <div id={`lcm-${track.id}`} ref={laneMenuRef} style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: '#2a2a2a', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+        <div id={`lcm-${track.id}`} ref={laneMenuRef} style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
           <button
             onClick={() => {
               const clip = makeMidiClip(track.id, 'MIDI Clip', laneCtxMenu.beat, 4, { isDrumClip: track.instrument.type === 'drum' })
@@ -1595,7 +1595,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onMouseDown={e => { if (e.target === e.currentTarget) { setShowLibraryPicker(false); setPickerInsertBeat(null) } }}>
-          <div style={{ width: 480, height: 620, background: '#1e1e1e', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
+          <div style={{ width: 480, height: 620, background: 'var(--bg-card)', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{pickerInsertBeat !== null ? 'Add a Sound' : 'Replace Sample'}</span>
               <button onClick={() => setShowLibraryPicker(false)}

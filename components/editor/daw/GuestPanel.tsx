@@ -130,7 +130,7 @@ export default function GuestPanel({ projectId, onPullTrack }: Props) {
               {/* Header row */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[s.status] ?? '#71717a', flexShrink: 0 }} />
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[s.status] ?? 'var(--bg-card-hover)', flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                     {s.guestName ?? 'Waiting for guest…'}
                   </span>

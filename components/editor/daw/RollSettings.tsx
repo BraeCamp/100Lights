@@ -144,8 +144,8 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
   }
 
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px' }
-  const label: React.CSSProperties = { fontSize: 10, color: '#999', width: 62, flexShrink: 0 }
-  const value: React.CSSProperties = { fontSize: 9.5, color: '#ccc', width: 46, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
+  const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }
+  const value: React.CSSProperties = { fontSize: 9.5, color: 'var(--text-primary)', width: 46, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
   const slider: React.CSSProperties = { flex: 1, accentColor: CYAN, minWidth: 0 }
 
   const hz = vToHz(filterV)
@@ -154,29 +154,29 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
   return createPortal(
     <div ref={panelRef} tabIndex={-1} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }} style={{
       position: 'fixed', top: anchor.y, left: anchor.x, width: 292, zIndex: 9999, outline: 'none',
-      background: '#161616', border: '1px solid #2e2e2e', borderRadius: 8,
+      background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
       padding: '6px 0 10px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
     }}>
-      <div style={{ padding: '4px 12px 6px', fontSize: 9, color: '#666', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid #1e1e1e' }}>
+      <div style={{ padding: '4px 12px 6px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid var(--border)' }}>
         CLIP SOUND SETTINGS — this clip only
       </div>
 
       {/* Sound / preset */}
       <div style={{ ...row, paddingTop: 9 }}>
         <span style={label}>Sound</span>
-        <span style={{ flex: 1, fontSize: 10, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{presetLabel}</span>
+        <span style={{ flex: 1, fontSize: 10, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{presetLabel}</span>
         {canPreview && onPreviewSound && (
           <button onClick={onPreviewSound} title="Listen — plays middle C"
             style={{ border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 10, padding: '2px 4px', flexShrink: 0 }}>▶</button>
         )}
         {onChangeSound && (
           <button onClick={onChangeSound}
-            style={{ fontSize: 9.5, fontWeight: 600, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid #333', background: '#222', color: '#aaa', flexShrink: 0 }}>
+            style={{ fontSize: 9.5, fontWeight: 600, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)', flexShrink: 0 }}>
             Change…
           </button>
         )}
       </div>
-      <div style={{ padding: '0 12px 6px', fontSize: 8.5, color: '#555', lineHeight: 1.4 }}>
+      <div style={{ padding: '0 12px 6px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         The sound menu previews every preset with ▶ and shows note ranges.
       </div>
 
@@ -188,7 +188,7 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
           onPointerUp={commit} onKeyUp={commit} />
         <span style={value}>{sustain > 0 ? `${sustain.toFixed(2)}s` : 'Off'}</span>
       </div>
-      <div style={{ padding: '0 12px 6px', fontSize: 8.5, color: '#555', lineHeight: 1.4 }}>
+      <div style={{ padding: '0 12px 6px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         Lets each note ring out past its end instead of cutting — like a pedal.
       </div>
 
@@ -218,7 +218,7 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
           onPointerUp={commit} onKeyUp={commit} />
         <span style={value}>{hz === undefined ? 'Off' : hz >= 1000 ? `${(hz / 1000).toFixed(1)}k` : `${hz}Hz`}</span>
       </div>
-      <div style={{ padding: '0 12px 0', fontSize: 8.5, color: '#555', lineHeight: 1.4 }}>
+      <div style={{ padding: '0 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         Effects apply to this clip’s notes only — playing live and on export.
       </div>
     </div>,

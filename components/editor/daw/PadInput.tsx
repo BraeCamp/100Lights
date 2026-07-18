@@ -97,7 +97,7 @@ const C = {
   bg:     '#1c1c1c',
   bgCard: '#252525',
   bgDark: '#151515',
-  border: '#333333',
+  border: 'var(--border-light)',
   accent: 'var(--accent)',
   red:    '#ef4444',
   green:  '#22c55e',
@@ -280,11 +280,11 @@ function PadWaveformCrop({ blob, trimStart, trimEnd, onTrimChange }: {
   return (
     <div style={{ marginBottom: 10 }}>
       {!ready ? (
-        <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#444', background: '#0a0a0f', borderRadius: 4 }}>Loading…</div>
+        <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-base)', borderRadius: 4 }}>Loading…</div>
       ) : (
         <canvas
           ref={canvasRef} width={220} height={44}
-          style={{ width: '100%', height: 44, display: 'block', borderRadius: 4, cursor: 'ew-resize', background: '#0a0a0f' }}
+          style={{ width: '100%', height: 44, display: 'block', borderRadius: 4, cursor: 'ew-resize', background: 'var(--bg-base)' }}
           onMouseDown={e => {
             e.stopPropagation()
             const r = ratio(e)
@@ -300,10 +300,10 @@ function PadWaveformCrop({ blob, trimStart, trimEnd, onTrimChange }: {
           onMouseLeave={() => { dragging.current = null }}
         />
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: '#555', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
         <span>{(trimStart * dur).toFixed(2)}s</span>
-        <span style={{ color: '#3d3d3d' }}>drag handles · reset: </span>
-        <button onClick={() => onTrimChange(0, 1)} style={{ fontSize: 9, background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: 0, fontFamily: 'monospace' }}>
+        <span style={{ color: 'var(--text-muted)' }}>drag handles · reset: </span>
+        <button onClick={() => onTrimChange(0, 1)} style={{ fontSize: 9, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, fontFamily: 'monospace' }}>
           {(trimEnd * dur).toFixed(2)}s ↺
         </button>
       </div>
@@ -373,7 +373,7 @@ function FxToggleConfig({ pad, onPadChange }: {
     <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
       {/* Current assignment */}
       {assignedEffect ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 4, background: '#0e0e0e', border: `1px solid ${C.accent}55` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 4, background: 'var(--bg-base)', border: `1px solid ${C.accent}55` }}>
           <span style={{ flex: 1, fontSize: 10, color: C.accent }}>
             {assignedEffect.type.charAt(0).toUpperCase() + assignedEffect.type.slice(1)} on {assignedTrack?.name}
           </span>
@@ -750,7 +750,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                       onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
                       style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
                     />
-                    <div style={{ fontSize: 9, color: '#444', marginTop: 2 }}>Pitch shifts playback speed</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>Pitch shifts playback speed</div>
                   </div>
                   {/* Volume per sound */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, alignItems: 'center' }}>
@@ -867,7 +867,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                 onTrimChange={(s, e) => onPadChange({ sampleTrimStart: s, sampleTrimEnd: e })}
               />
               {sounds.length > 1 && (
-                <div style={{ fontSize: 9, color: '#444', marginTop: 2 }}>Crop applies to all {sounds.length} sounds</div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>Crop applies to all {sounds.length} sounds</div>
               )}
             </div>
           )}
@@ -1838,7 +1838,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                         </span>
                       )}
                       {isFxMode && fxEffect && !isRemapping && (
-                        <span style={{ fontSize: 9, color: '#888', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1 }}>
                           {fxTrack?.name} · {fxEffect.type}
                         </span>
                       )}
@@ -1849,8 +1849,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       )}
                       <span style={{
                         fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                        background: C.bgDark, border: `1px solid #3a3a3a`,
-                        color: pad.key ? '#9c9c9c' : '#444', fontFamily: 'monospace',
+                        background: C.bgDark, border: `1px solid var(--border-light)`,
+                        color: pad.key ? 'var(--text-secondary)' : '#444', fontFamily: 'monospace',
                       }}>{pad.key ? pad.key.toUpperCase() : '–'}</span>
                     </button>
                   )
@@ -1871,7 +1871,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                     − Remove Last
                   </button>
                 )}
-                <span style={{ fontSize: 10, color: '#444', marginLeft: 'auto' }}>Right-click a pad to edit</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>Right-click a pad to edit</span>
                 <div style={{ position: 'relative' }}>
                   <button
                     onClick={() => { setSavedPresets(getPadPresets()); setSaveName(''); setShowSaveMenu(v => !v) }}
@@ -1882,25 +1882,25 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                   {showSaveMenu && (
                     <div ref={saveMenuRef} style={{
                       position: 'absolute', bottom: 'calc(100% + 4px)', right: 0, width: 200, zIndex: 200,
-                      background: '#141414', border: `1px solid ${C.border}`, borderRadius: 6,
+                      background: 'var(--bg-base)', border: `1px solid ${C.border}`, borderRadius: 6,
                       boxShadow: '0 8px 24px rgba(0,0,0,0.7)', padding: '6px 0',
                     }}>
-                      <div style={{ padding: '4px 10px 6px', fontSize: 9, color: '#555', fontWeight: 700, letterSpacing: '0.07em', borderBottom: '1px solid #1e1e1e' }}>PAD LAYOUTS</div>
-                      {savedPresets.length === 0 && <div style={{ padding: '6px 10px', fontSize: 10, color: '#444' }}>No saved layouts</div>}
+                      <div style={{ padding: '4px 10px 6px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.07em', borderBottom: '1px solid var(--border)' }}>PAD LAYOUTS</div>
+                      {savedPresets.length === 0 && <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--text-muted)' }}>No saved layouts</div>}
                       {savedPresets.map(p => (
                         <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
                           <button onClick={() => { setPads(p.pads as Pad[]); setShowSaveMenu(false) }}
-                            style={{ flex: 1, textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#bbb', cursor: 'pointer' }}>
+                            style={{ flex: 1, textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                             {p.name}
                           </button>
                           <button onClick={() => { deletePadPreset(p.id); setSavedPresets(getPadPresets()) }}
-                            style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                            style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>✕</button>
                         </div>
                       ))}
-                      <div style={{ borderTop: '1px solid #1e1e1e', margin: '4px 0' }} />
+                      <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
                       <div style={{ padding: '4px 10px', display: 'flex', gap: 4 }}>
                         <input placeholder="Layout name" value={saveName} onChange={e => setSaveName(e.target.value)}
-                          style={{ flex: 1, background: '#111', border: '1px solid #333', borderRadius: 3, color: '#ccc', fontSize: 10, padding: '3px 5px' }} />
+                          style={{ flex: 1, background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 5px' }} />
                         <button
                           onClick={() => {
                             const name = saveName.trim() || `Layout ${savedPresets.length + 1}`
@@ -2030,7 +2030,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                 <span style={{ fontSize: 12, color: C.muted, minWidth: 60, textAlign: 'center' }}>Oct {octave}</span>
                 <button onClick={() => setOctave(o => Math.min(8, o + 1))}
                   style={{ padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer', fontSize: 13 }}>▶</button>
-                <span style={{ fontSize: 10, color: '#444', marginLeft: 8 }}>Z–M lower · Q–U upper</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>Z–M lower · Q–U upper</span>
               </div>
 
               {[octave, octave + 1].map(oct => {
@@ -2050,8 +2050,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                           }}
                           onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
                           onMouseLeave={() => endNote(pitch)}
-                          style={{ position: 'absolute', left: i * WW, top: 0, width: WW - 1, height: WH, background: act ? C.accent : '#d8d8d8', borderRadius: '0 0 4px 4px', border: '1px solid #555', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4 }}>
-                          {st === 0 && <span style={{ fontSize: 9, color: '#666', fontWeight: 700 }}>C{oct}</span>}
+                          style={{ position: 'absolute', left: i * WW, top: 0, width: WW - 1, height: WH, background: act ? C.accent : '#d8d8d8', borderRadius: '0 0 4px 4px', border: '1px solid var(--border-light)', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4 }}>
+                          {st === 0 && <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>C{oct}</span>}
                         </div>
                       )
                     })}
@@ -2067,7 +2067,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                           }}
                           onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
                           onMouseLeave={() => endNote(pitch)}
-                          style={{ position: 'absolute', left: bpos * WW + (WW - BW) / 2, top: 0, width: BW, height: BH, zIndex: 1, background: act ? C.accent : '#222', borderRadius: '0 0 3px 3px', border: '1px solid #111', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box' }} />
+                          style={{ position: 'absolute', left: bpos * WW + (WW - BW) / 2, top: 0, width: BW, height: BH, zIndex: 1, background: act ? C.accent : '#222', borderRadius: '0 0 3px 3px', border: '1px solid var(--border)', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box' }} />
                       )
                     })}
                   </div>
@@ -2090,7 +2090,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         <div style={{ padding: '6px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           {active
             ? <span style={{ fontSize: 10, color: C.muted }}>Esc or click outside to release · Arm track + record to capture</span>
-            : <span style={{ fontSize: 10, color: '#444' }}>Click a pad or the header to activate keyboard input</span>
+            : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Click a pad or the header to activate keyboard input</span>
           }
           {isRecActive && <span style={{ fontSize: 10, color: C.red, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Recording…</span>}
         </div>
