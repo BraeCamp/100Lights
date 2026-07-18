@@ -274,7 +274,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -290,6 +290,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onPasteEffects?: () => void
   /** Beat-span of the rubber-band selection — group loop/expand treat it as the unit, blank space included. Getter so it's read at event time, not render time. */
   getSelectionRegion?: () => { start: number; end: number } | null
+  selectionRegion?: { start: number; end: number } | null
+  isSelectionTrack?: boolean
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
@@ -941,6 +943,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             ) : null
           })}
           <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
+            {isSelectionTrack && selectionRegion && selectionRegion.end > selectionRegion.start && (
+              <div style={{
+                position: 'absolute', top: 0, bottom: 0,
+                left: selectionRegion.start * beatW,
+                width: (selectionRegion.end - selectionRegion.start) * beatW,
+                background: 'rgba(167,139,250,0.16)',
+                border: '1px solid #a78bfa', borderRadius: 3,
+                pointerEvents: 'none', zIndex: 1, boxSizing: 'border-box',
+              }} />
+            )}
             {recording && track.armed && !!track.inputSource && (
               <RecordingGhost beatW={beatW} height={track.height} />
             )}

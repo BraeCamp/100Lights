@@ -391,6 +391,7 @@ export default function ArrangementView() {
   // Beat-span of the last rubber-band selection (grid-snapped). Copy and
   // group-loop use it so "the whole bar" — blank space included — is the unit.
   const [selectionRegion, setSelectionRegion] = useState<{ start: number; end: number } | null>(null)
+  const [selectionTracks, setSelectionTracks] = useState<Set<string>>(new Set())
   // Event handlers (ctx-menu copy, resize-start) fire from children whose
   // closures can be a render behind — they read the region through this ref
   const selectionRegionRef = useRef(selectionRegion)
@@ -717,7 +718,7 @@ export default function ArrangementView() {
 
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
-    const preSelected = new Set(selectedClipIds)   // sample to loop, if any
+    const preSelected = new Set(selectedClipIds)   // for Alt-additive selection
     const laneEl = laneRef.current
     if (!laneEl) return
     const laneRect = laneEl.getBoundingClientRect()
@@ -747,6 +748,7 @@ export default function ArrangementView() {
       if (dx < 5 && dy < 5) {
         // A plain click on empty background deselects everything
         setSelectionRegion(null)
+        setSelectionTracks(new Set())
         setSelectedClipIds(new Set())
         setSelectedClipId(null)
         setSelectedEffectIds(new Set())
@@ -783,55 +785,41 @@ export default function ArrangementView() {
         newEffIds.add((el as HTMLElement).dataset.effectId!)
       }
 
-      // The region for the resulting selection (spans the selected clips'
-      // full extent, so group ops never shrink a sample to a partial band).
-      let region: { start: number; end: number } | null = null
+      // The drag is a time-range selection on the track(s) it covers — it
+      // works over empty space, and expands to the full extent of any sample
+      // it overlaps (both ends), so a partial band still selects whole clips.
+      let region: { start: number; end: number } | null
 
       if (ev.altKey) {
         const finalIds = new Set([...preSelected, ...newIds])
         setSelectedClipIds(finalIds)
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
-        region = spanOfClips(finalIds)
-      } else if (newIds.size === 0 && newEffIds.size === 0 && preSelected.size === 1) {
-        // A drag across empty background with a clip selected can LOOP that
-        // sample — but ONLY on its own track and ONLY reaching PAST the clip's
-        // current end. Otherwise it's a normal deselect: never shrink the clip
-        // and never touch a clip on an adjacent track.
-        const srcClip = project.arrangementClips.find(c => c.id === [...preSelected][0])
-        const trackEl = srcClip ? (laneEl.querySelector(`[data-track-id="${srcClip.trackId}"]`) as HTMLElement | null) : null
-        const onOwnTrack = !!trackEl && (() => { const r = trackEl.getBoundingClientRect(); return selB >= r.top && selT <= r.bottom })()
-        const clipEnd = srcClip ? srcClip.startBeat + srcClip.durationBeats : 0
-        if (srcClip && onOwnTrack && regionEnd > clipEnd + 0.001) {
-          // Extend the clip into a single looped clip out to the drag end
-          // (grid-snapped): repeated bars show and its edge stays draggable.
-          if (isMidiClip(srcClip)) {
-            const barBeats = project.timeSignatureNum || 4
-            const contentEnd = srcClip.notes.length ? Math.max(...srcClip.notes.map(n => n.startBeat + n.durationBeats)) : srcClip.durationBeats
-            const patternBeats = srcClip.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
-            dispatch({ type: 'UPDATE_CLIP', clipId: srcClip.id, patch: { durationBeats: regionEnd - srcClip.startBeat, loopEnabled: true, loopLengthBeats: patternBeats, stretchNotes: false } })
-          } else {
-            dispatch({ type: 'UPDATE_CLIP', clipId: srcClip.id, patch: { durationBeats: regionEnd - srcClip.startBeat, loopEnabled: true, warpEnabled: false } })
-          }
-          setSelectedClipIds(new Set([srcClip.id]))
-          setSelectedClipId(srcClip.id)
-          setSelectedEffectIds(new Set())
-          region = { start: srcClip.startBeat, end: regionEnd }
-        } else {
-          // Not a valid loop-extend → deselect (replaces any prior selection)
-          setSelectedClipIds(new Set())
-          setSelectedClipId(null)
-          setSelectedEffectIds(new Set())
-        }
+        const span = spanOfClips(finalIds)
+        region = span
+          ? { start: Math.min(regionStart, span.start), end: Math.max(regionEnd, span.end) }
+          : { start: regionStart, end: regionEnd }
       } else {
-        // Normal marquee: the selection REPLACES whatever was selected before
+        // Replace the selection with whatever the band caught (may be nothing —
+        // a pure empty-track time range is a valid selection)
         setSelectedClipIds(newIds)
         setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
         setSelectedEffectIds(newEffIds)
-        region = spanOfClips(newIds)
+        const span = spanOfClips(newIds)
+        region = span
+          ? { start: Math.min(regionStart, span.start), end: Math.max(regionEnd, span.end) }
+          : { start: regionStart, end: regionEnd }
       }
 
-      // Region exists only while clips are selected; it always spans them
-      // fully (first selected start → last selected end).
+      // Remember which track rows the band covered, so the highlight only paints
+      // the selected tracks (not adjacent ones)
+      const coveredTracks = new Set<string>()
+      for (const el of Array.from(trackEls)) {
+        const r = el.getBoundingClientRect()
+        if (r.bottom >= selT && r.top <= selB) coveredTracks.add((el as HTMLElement).dataset.trackId!)
+      }
+      // Selected clips always count as covered (region expanded to them)
+      for (const c of project.arrangementClips) if (newIds.has(c.id)) coveredTracks.add(c.trackId)
+      setSelectionTracks(coveredTracks)
       setSelectionRegion(region)
     }
 
@@ -1434,6 +1422,8 @@ export default function ArrangementView() {
             rippleEdit={rippleEdit}
             onCopyClips={handleCopyClips}
             getSelectionRegion={() => selectionRegionRef.current}
+            selectionRegion={selectionRegion}
+            isSelectionTrack={selectionTracks.has(track.id)}
             onPasteClips={handlePasteClips}
             onCopyEffects={handleCopyEffects}
             onPasteEffects={handlePasteEffects}
