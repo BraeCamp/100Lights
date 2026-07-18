@@ -1082,16 +1082,20 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         // A rubber-band region defines the loop unit — the
                         // selected bar(s) tile as drawn, blank space included,
                         // instead of snapping to the clips' content bounds
+                        // The group span is the selected clips' full extent
+                        // (first start → last end). A rubber-band region may
+                        // widen it (blank space included) but must NEVER make
+                        // it smaller than the clips, or the resize would shrink
+                        // them. So clamp to the members' bounds.
+                        const membersStart = Math.min(...members.map(c => c.startBeat))
+                        const membersEnd   = Math.max(...members.map(c => c.startBeat + c.durationBeats))
                         const sel = getSelectionRegion?.() ?? null
-                        const region = sel && members.every(c =>
-                          c.startBeat >= sel.start - 0.001 && c.startBeat < sel.end + 0.001)
-                          ? sel : null
                         groupResizeRef.current = {
                           clipId: clip.id,
                           grabbedDur: clip.durationBeats,
                           mode: dragForceRef.current ?? ((isMidiClip(clip) ? !!clip.stretchNotes : !!clip.warpEnabled) ? 'expand' : 'loop'),
-                          groupStart: region ? region.start : Math.min(...members.map(c => c.startBeat)),
-                          groupEnd: region ? region.end : Math.max(...members.map(c => c.startBeat + c.durationBeats)),
+                          groupStart: sel ? Math.min(sel.start, membersStart) : membersStart,
+                          groupEnd:   sel ? Math.max(sel.end, membersEnd) : membersEnd,
                           members,
                         }
                       }

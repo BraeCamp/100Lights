@@ -766,8 +766,6 @@ export default function ArrangementView() {
           newIds.add(clip.id)
         }
       }
-      setSelectionRegion(regionEnd - regionStart > 0.001 ? { start: regionStart, end: regionEnd } : null)
-
       // FX-lane effects live in per-track sub-lanes — intersect their DOM rects.
       // Skip rects hidden under the header column (lanes clip overflow, rects don't).
       const newEffIds = new Set<string>()
@@ -806,6 +804,25 @@ export default function ArrangementView() {
         setSelectedClipIds(newIds)
         setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
         setSelectedEffectIds(newEffIds)
+      }
+
+      // The selection region must be at LEAST the full span of the selected
+      // clips — first selected start → last selected end — never just the
+      // dragged band. Otherwise a band that only clips a sample's edge sets a
+      // region smaller than the sample, and a later group resize would shrink
+      // it to fit. Non-alt drags replace the selection, so clips not caught by
+      // this drag drop out of the region too.
+      const finalIds = ev.altKey ? new Set([...preSelected, ...newIds]) : newIds
+      const selClips = project.arrangementClips.filter(c => finalIds.has(c.id))
+      if (selClips.length > 0) {
+        setSelectionRegion({
+          start: Math.min(regionStart, ...selClips.map(c => c.startBeat)),
+          end:   Math.max(regionEnd, ...selClips.map(c => c.startBeat + c.durationBeats)),
+        })
+      } else if (regionEnd - regionStart > 0.001) {
+        setSelectionRegion({ start: regionStart, end: regionEnd })
+      } else {
+        setSelectionRegion(null)
       }
     }
 
