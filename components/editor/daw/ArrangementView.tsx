@@ -708,6 +708,13 @@ export default function ArrangementView() {
     dispatch({ type: 'ADD_RETURN_TRACK', track: returnTrack })
   }
 
+  // Bounding beat-span of a set of clips — the selection region's extent.
+  function spanOfClips(ids: Set<string>): { start: number; end: number } | null {
+    const cs = project.arrangementClips.filter(c => ids.has(c.id))
+    if (cs.length === 0) return null
+    return { start: Math.min(...cs.map(c => c.startBeat)), end: Math.max(...cs.map(c => c.startBeat + c.durationBeats)) }
+  }
+
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
     const preSelected = new Set(selectedClipIds)   // sample to loop, if any
@@ -776,54 +783,56 @@ export default function ArrangementView() {
         newEffIds.add((el as HTMLElement).dataset.effectId!)
       }
 
+      // The region for the resulting selection (spans the selected clips'
+      // full extent, so group ops never shrink a sample to a partial band).
+      let region: { start: number; end: number } | null = null
+
       if (ev.altKey) {
-        setSelectedClipIds(prev => new Set([...prev, ...newIds]))
+        const finalIds = new Set([...preSelected, ...newIds])
+        setSelectedClipIds(finalIds)
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
-      } else if (newIds.size === 0 && newEffIds.size === 0 && regionEnd - regionStart > 0.001 && preSelected.size === 1) {
-        // Dragging across empty background with a clip selected LOOPS that
-        // sample out to the drag end: the clip itself is extended into a
-        // single looped clip spanning to regionEnd (grid-snapped), so the
-        // repeated bars are visible on the track and its edge can be dragged
-        // to lengthen or shorten the loop — same as dragging the clip's edge.
-        const src = project.arrangementClips.find(c => c.id === [...preSelected][0])
-        if (src && regionEnd > src.startBeat + 0.001) {
-          const newDur = regionEnd - src.startBeat
-          if (isMidiClip(src)) {
+        region = spanOfClips(finalIds)
+      } else if (newIds.size === 0 && newEffIds.size === 0 && preSelected.size === 1) {
+        // A drag across empty background with a clip selected can LOOP that
+        // sample — but ONLY on its own track and ONLY reaching PAST the clip's
+        // current end. Otherwise it's a normal deselect: never shrink the clip
+        // and never touch a clip on an adjacent track.
+        const srcClip = project.arrangementClips.find(c => c.id === [...preSelected][0])
+        const trackEl = srcClip ? (laneEl.querySelector(`[data-track-id="${srcClip.trackId}"]`) as HTMLElement | null) : null
+        const onOwnTrack = !!trackEl && (() => { const r = trackEl.getBoundingClientRect(); return selB >= r.top && selT <= r.bottom })()
+        const clipEnd = srcClip ? srcClip.startBeat + srcClip.durationBeats : 0
+        if (srcClip && onOwnTrack && regionEnd > clipEnd + 0.001) {
+          // Extend the clip into a single looped clip out to the drag end
+          // (grid-snapped): repeated bars show and its edge stays draggable.
+          if (isMidiClip(srcClip)) {
             const barBeats = project.timeSignatureNum || 4
-            const contentEnd = src.notes.length ? Math.max(...src.notes.map(n => n.startBeat + n.durationBeats)) : src.durationBeats
-            const patternBeats = src.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
-            dispatch({ type: 'UPDATE_CLIP', clipId: src.id, patch: { durationBeats: newDur, loopEnabled: true, loopLengthBeats: patternBeats, stretchNotes: false } })
+            const contentEnd = srcClip.notes.length ? Math.max(...srcClip.notes.map(n => n.startBeat + n.durationBeats)) : srcClip.durationBeats
+            const patternBeats = srcClip.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+            dispatch({ type: 'UPDATE_CLIP', clipId: srcClip.id, patch: { durationBeats: regionEnd - srcClip.startBeat, loopEnabled: true, loopLengthBeats: patternBeats, stretchNotes: false } })
           } else {
-            dispatch({ type: 'UPDATE_CLIP', clipId: src.id, patch: { durationBeats: newDur, loopEnabled: true, warpEnabled: false } })
+            dispatch({ type: 'UPDATE_CLIP', clipId: srcClip.id, patch: { durationBeats: regionEnd - srcClip.startBeat, loopEnabled: true, warpEnabled: false } })
           }
-          setSelectedClipIds(new Set([src.id]))
-          setSelectedClipId(src.id)
+          setSelectedClipIds(new Set([srcClip.id]))
+          setSelectedClipId(srcClip.id)
+          setSelectedEffectIds(new Set())
+          region = { start: srcClip.startBeat, end: regionEnd }
+        } else {
+          // Not a valid loop-extend → deselect (replaces any prior selection)
+          setSelectedClipIds(new Set())
+          setSelectedClipId(null)
           setSelectedEffectIds(new Set())
         }
       } else {
+        // Normal marquee: the selection REPLACES whatever was selected before
         setSelectedClipIds(newIds)
         setSelectedClipId(newIds.size === 1 ? [...newIds][0] : null)
         setSelectedEffectIds(newEffIds)
+        region = spanOfClips(newIds)
       }
 
-      // The selection region must be at LEAST the full span of the selected
-      // clips — first selected start → last selected end — never just the
-      // dragged band. Otherwise a band that only clips a sample's edge sets a
-      // region smaller than the sample, and a later group resize would shrink
-      // it to fit. Non-alt drags replace the selection, so clips not caught by
-      // this drag drop out of the region too.
-      const finalIds = ev.altKey ? new Set([...preSelected, ...newIds]) : newIds
-      const selClips = project.arrangementClips.filter(c => finalIds.has(c.id))
-      if (selClips.length > 0) {
-        setSelectionRegion({
-          start: Math.min(regionStart, ...selClips.map(c => c.startBeat)),
-          end:   Math.max(regionEnd, ...selClips.map(c => c.startBeat + c.durationBeats)),
-        })
-      } else if (regionEnd - regionStart > 0.001) {
-        setSelectionRegion({ start: regionStart, end: regionEnd })
-      } else {
-        setSelectionRegion(null)
-      }
+      // Region exists only while clips are selected; it always spans them
+      // fully (first selected start → last selected end).
+      setSelectionRegion(region)
     }
 
     document.addEventListener('mousemove', onMove)
