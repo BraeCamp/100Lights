@@ -11,7 +11,7 @@ import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
-import { Library, Settings, FileText, Users, Palette } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Home } from 'lucide-react'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
@@ -1285,6 +1285,22 @@ export default function AudioEditor(props: AudioEditorProps) {
               background: 'var(--bg-surface)',
               borderRight: sidebarOpen ? '1px solid var(--border)' : 'none',
             }}>
+              {/* Home — back to the projects page */}
+              <a
+                href="/projects"
+                title="Back to projects"
+                data-help-id="home"
+                style={{
+                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--text-muted)', textDecoration: 'none',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+              >
+                <Home size={15} />
+              </a>
               {!isPodcast ? (
                 <button
                   onClick={() => setSidebarOpen(v => !v)}
