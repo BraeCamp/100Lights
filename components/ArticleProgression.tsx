@@ -28,6 +28,8 @@ const ctx = () => (_ctx ??= new AudioContext())
 const isBlack = (m: number) => [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)
 // Octave number in the common "middle C = C4" convention (MIDI 60 → C4).
 const octaveOf = (m: number) => Math.floor(m / 12) - 1
+const PC_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const noteName = (m: number) => `${PC_NAMES[((m % 12) + 12) % 12]}${octaveOf(m)}`
 
 export default function ArticleProgression({ data }: { data: ProgressionData }) {
   const [open, setOpen] = useState(false)
@@ -35,12 +37,26 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
   const [active, setActive] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
   const [octave, setOctave] = useState(0)
+  const [pressed, setPressed] = useState<Set<number>>(new Set())
   const stopRef = useRef<() => void>(() => {})
 
   const semis = (keyPc - (data.originalKey ?? 0)) + octave * 12
   const chords = useMemo(() => transposeChords(data.chords, semis), [data.chords, semis])
 
   useEffect(() => () => stopRef.current(), [])
+
+  // Tap-to-play: click any key to hear that exact note
+  function pressKey(midi: number) {
+    const c = ctx()
+    void c.resume()
+    const g = c.createGain()
+    g.gain.value = 0.85
+    g.connect(c.destination)
+    playMelodicNote(c, 'piano-grand', midi, c.currentTime + 0.01, 0.9, g)
+    setTimeout(() => g.disconnect(), 1600)
+    setPressed(prev => new Set(prev).add(midi))
+    setTimeout(() => setPressed(prev => { const n = new Set(prev); n.delete(midi); return n }), 220)
+  }
 
   // Range spans EVERY note so the piano doesn't resize between chords; only the
   // active chord's EXACT notes light (the specific C that plays, not all C's).
@@ -152,7 +168,7 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
                 style={{ fontSize: 13, fontWeight: 800, width: 26, padding: '2px 0', borderRadius: 6, cursor: canUp ? 'pointer' : 'default', border: '1px solid var(--border)', background: 'transparent', color: canUp ? 'var(--text-secondary)' : 'var(--text-muted)', opacity: canUp ? 1 : 0.4 }}>+</button>
             </div>
 
-            <Piano notes={allNotes} lit={litNotes} />
+            <Piano notes={allNotes} lit={litNotes} pressed={pressed} onPress={pressKey} />
 
             {/* Chord chips + play */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
@@ -188,7 +204,7 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
               <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Open it in any DAW or notation app — it carries the exact notes, in the key you picked.</span>
             </div>
             <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8 }}>
-              Lit keys are the notes to press for the highlighted chord. Change the KEY to transpose the whole progression.
+              Purple keys are the highlighted chord. <strong style={{ color: 'var(--text-secondary)' }}>Tap any key to play it.</strong> Change the KEY to transpose, or the octave with –/+.
             </p>
           </div>
         )}
@@ -197,7 +213,9 @@ export default function ArticleProgression({ data }: { data: ProgressionData }) 
   )
 }
 
-function Piano({ notes, lit }: { notes: number[]; lit: Set<number> }) {
+function Piano({ notes, lit, pressed, onPress }: {
+  notes: number[]; lit: Set<number>; pressed: Set<number>; onPress: (midi: number) => void
+}) {
   // Whole-octave window that comfortably contains the progression's notes
   const lo = Math.floor(Math.min(...notes) / 12) * 12
   const hi = (Math.floor(Math.max(...notes) / 12) + 1) * 12   // exclusive
@@ -205,25 +223,27 @@ function Piano({ notes, lit }: { notes: number[]; lit: Set<number> }) {
   const whites = keys.filter(m => !isBlack(m))
   const W = 30, H = 108, BW = 18, BH = 66
   const width = whites.length * W
+  const whiteFill = (m: number) => pressed.has(m) ? '#34d399' : lit.has(m) ? '#a78bfa' : '#f4f4f8'
+  const blackFill = (m: number) => pressed.has(m) ? '#10b981' : lit.has(m) ? '#7c3aed' : '#1a1a22'
   return (
     <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-base)', padding: 8 }}>
-      <svg viewBox={`0 0 ${width} ${H}`} width={width} height={H} style={{ display: 'block', maxWidth: '100%', minWidth: Math.min(width, 320) }} role="img" aria-label="Piano keys for the chord">
-        {whites.map((m, i) => {
-          const on = lit.has(m)
-          return (
-            <g key={m}>
-              <rect x={i * W} y={0} width={W - 1} height={H} rx={3} fill={on ? '#a78bfa' : '#f4f4f8'} stroke="#3a3a44" strokeWidth={0.5} />
-              {m % 12 === 0 && (
-                <text x={i * W + (W - 1) / 2} y={H - 6} textAnchor="middle" fontSize={8} fill={on ? '#2a1a4a' : '#8a8a9a'} fontWeight={700}>C{octaveOf(m)}</text>
-              )}
-            </g>
-          )
-        })}
+      <svg viewBox={`0 0 ${width} ${H}`} width={width} height={H} style={{ display: 'block', maxWidth: '100%', minWidth: Math.min(width, 320), touchAction: 'manipulation' }} role="group" aria-label="Interactive piano — tap keys to play">
+        {whites.map((m, i) => (
+          <g key={m}>
+            <rect x={i * W} y={0} width={W - 1} height={H} rx={3} fill={whiteFill(m)} stroke="#3a3a44" strokeWidth={0.5}
+              style={{ cursor: 'pointer' }} onPointerDown={e => { e.preventDefault(); onPress(m) }}>
+              <title>{noteName(m)}</title>
+            </rect>
+            {m % 12 === 0 && (
+              <text x={i * W + (W - 1) / 2} y={H - 6} textAnchor="middle" fontSize={8} fill={lit.has(m) || pressed.has(m) ? '#2a1a4a' : '#8a8a9a'} fontWeight={700} style={{ pointerEvents: 'none' }}>C{octaveOf(m)}</text>
+            )}
+          </g>
+        ))}
         {keys.filter(isBlack).map(m => {
           const whiteIndex = whites.filter(w => w < m).length
-          const on = lit.has(m)
           return <rect key={m} x={whiteIndex * W - BW / 2} y={0} width={BW} height={BH} rx={2}
-            fill={on ? '#7c3aed' : '#1a1a22'} stroke="#000" strokeWidth={0.5} />
+            fill={blackFill(m)} stroke="#000" strokeWidth={0.5}
+            style={{ cursor: 'pointer' }} onPointerDown={e => { e.preventDefault(); onPress(m) }} />
         })}
       </svg>
     </div>
