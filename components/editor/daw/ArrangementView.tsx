@@ -398,6 +398,33 @@ export default function ArrangementView() {
   useEffect(() => {
     selectionRegionRef.current = selectionRegion
   }, [selectionRegion])
+  const selectionTracksRef = useRef(selectionTracks)
+  useEffect(() => {
+    selectionTracksRef.current = selectionTracks
+  }, [selectionTracks])
+
+  // Dragging the selection band's edge repeats the whole selected block —
+  // every clip on every selected track, from the selection's start to its
+  // end — tiled after the selection end. Sample-level repeat, not transport.
+  // The original region + copy count come from the child: the live band
+  // resize has already mutated selectionRegion by the time this fires.
+  const commitSelectionLoop = (region: { start: number; end: number }, blocks: number) => {
+    const blockLen = region.end - region.start
+    if (blockLen <= 0.01 || blocks <= 0) return
+    const tracks = selectionTracksRef.current
+    const src = project.arrangementClips.filter(c =>
+      tracks.has(c.trackId) && c.startBeat >= region.start - 0.01 && c.startBeat < region.end - 0.01)
+    for (let k = 1; k <= blocks; k++) {
+      for (const c of src) {
+        const copy = JSON.parse(JSON.stringify(c)) as DawClip
+        copy.id = crypto.randomUUID()
+        copy.startBeat = c.startBeat + k * blockLen
+        if (isMidiClip(copy)) copy.notes = copy.notes.map(nt => ({ ...nt, id: crypto.randomUUID() }))
+        dispatch({ type: 'ADD_CLIP', clip: copy })
+      }
+    }
+    setSelectionRegion({ start: region.start, end: region.end + blocks * blockLen })
+  }
   const [prHint, setPrHint] = useState<string | null>(null)  // transient note under the PIANO ROLL button
 
   useEffect(() => {
@@ -1425,6 +1452,7 @@ export default function ArrangementView() {
             selectionRegion={selectionRegion}
             isSelectionTrack={selectionTracks.has(track.id)}
             onSelectionResize={(end) => setSelectionRegion(r => (r ? { start: r.start, end } : r))}
+            onSelectionLoopCommit={commitSelectionLoop}
             onPasteClips={handlePasteClips}
             onCopyEffects={handleCopyEffects}
             onPasteEffects={handlePasteEffects}

@@ -274,7 +274,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -293,6 +293,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   selectionRegion?: { start: number; end: number } | null
   isSelectionTrack?: boolean
   onSelectionResize?: (end: number) => void
+  onSelectionLoopCommit?: (region: { start: number; end: number }, blocks: number) => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
@@ -484,40 +485,31 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const viewEndBeat   = (scrollLeft + viewWidth) / beatW
   const visibleClips  = clips.filter(c => c.startBeat + c.durationBeats >= viewStartBeat && c.startBeat <= viewEndBeat)
 
-  // Drag the right edge of the selection band to sample-loop the clip inside it
-  // to fill the selection: from the selection's start out to where you drag.
-  // This is the clip loop (repeats the sample) — not the transport loop.
+  // Drag the right edge of the selection band to repeat the whole selected
+  // block — every clip on every selected track, from the selection's start to
+  // its end — tiled after the end. Snaps to whole copies of the block. The
+  // actual tiling is committed by the parent across all selected tracks.
   function onSelectionEdgeDown(e: React.MouseEvent) {
     e.stopPropagation()
     e.preventDefault()
-    const region = selectionRegion
-    if (!region) return
+    if (!selectionRegion) return
+    const region = { start: selectionRegion.start, end: selectionRegion.end }
+    const blockLen = region.end - region.start
+    if (blockLen <= 0.01) return
     const layer = (e.currentTarget as HTMLElement).closest('[data-content-layer]') as HTMLElement | null
     if (!layer) return
     const layerLeft = layer.getBoundingClientRect().left
-    const barBeats = project.timeSignatureNum || 4
-    const sample = clips.find(c => c.startBeat < region.end - 0.01 && c.startBeat + c.durationBeats > region.start + 0.01) ?? null
+    let blocks = 0
     const onMove = (ev: MouseEvent) => {
-      const raw = Math.max(0, (ev.clientX - layerLeft) / beatW)
-      const newEnd = Math.max(region.start + 0.25, snapBeat(raw, snap, project.timeSignatureNum))
-      onSelectionResize?.(newEnd)
-      if (!sample) return
-      const dur = newEnd - sample.startBeat
-      if (dur <= 0.01) return
-      const patch: Record<string, unknown> = { durationBeats: dur }
-      if (isAudioClip(sample) && sample.bufferDuration) {
-        const nativeSec = sample.bufferDuration - sample.trimStart - sample.trimEnd
-        if (engine.beatsToSeconds(dur) > nativeSec + 0.001) { patch.loopEnabled = true; patch.warpEnabled = false }
-      } else if (isMidiClip(sample) && sample.notes.length > 0) {
-        const contentEnd = Math.max(...sample.notes.map(n => n.startBeat + n.durationBeats))
-        const patternBeats = sample.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
-        if (dur > patternBeats + 0.001) { patch.loopEnabled = true; patch.loopLengthBeats = patternBeats }
-      }
-      dispatch({ type: 'UPDATE_CLIP', clipId: sample.id, patch })
+      const raw = Math.max(region.end, (ev.clientX - layerLeft) / beatW)
+      blocks = Math.max(0, Math.round((raw - region.end) / blockLen))
+      onSelectionResize?.(region.end + blocks * blockLen)
     }
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
+      if (blocks > 0) onSelectionLoopCommit?.(region, blocks)
+      else onSelectionResize?.(region.end)
     }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
@@ -988,20 +980,20 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 position: 'absolute', top: 0, bottom: 0,
                 left: selectionRegion.start * beatW,
                 width: (selectionRegion.end - selectionRegion.start) * beatW,
-                background: 'rgba(167,139,250,0.16)',
-                border: '1px solid #a78bfa', borderRadius: 3,
+                background: 'rgba(255,255,255,0.14)',
+                border: '1px solid rgba(255,255,255,0.92)', borderRadius: 3,
                 pointerEvents: 'none', zIndex: 1, boxSizing: 'border-box',
               }}>
                 <div
                   onMouseDown={onSelectionEdgeDown}
-                  title="Drag to loop the sample across the selection"
+                  title="Drag to repeat the selection across all selected tracks"
                   style={{
                     position: 'absolute', top: 0, bottom: 0, right: -5, width: 11,
                     cursor: 'ew-resize', pointerEvents: 'auto', zIndex: 3,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >
-                  <div style={{ width: 3, height: '46%', minHeight: 10, borderRadius: 2, background: '#a78bfa' }} />
+                  <div style={{ width: 3, height: '46%', minHeight: 10, borderRadius: 2, background: '#fff' }} />
                 </div>
               </div>
             )}
