@@ -539,6 +539,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     { label: isMulti ? 'Delete Selected' : 'Delete', color: '#ef4444', fn: () => isMulti ? onDeleteAll!() : onDelete() },
   ]
 
+  // The clip box is inset 4px top+bottom inside the lane, so its rendered
+  // content area is track.height - 8. Waveform and MIDI preview scale off
+  // this so they grow/shrink and stay centered as the track resizes.
+  const contentH = Math.max(8, track.height - 8)
+
   return (
     <>
       <div
@@ -579,7 +584,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                     {i > 0 && (
                       <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.3)', zIndex: 1 }} />
                     )}
-                    <Waveform peaks={clip.waveformPeaks!} color={color} width={loopPx} height={56} verticalZoom={waveformZoom} />
+                    <Waveform peaks={clip.waveformPeaks!} color={color} width={loopPx} height={contentH} verticalZoom={waveformZoom} />
                   </div>
                 ))
               ) : bufDur && bufDur > 0 ? (() => {
@@ -589,11 +594,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                 const offsetPx = (trimS / secPerBeat) * beatW
                 return (
                   <div style={{ position: 'absolute', top: 0, left: -offsetPx, width: naturalWidth, bottom: 0 }}>
-                    <Waveform peaks={clip.waveformPeaks!} color={color} width={naturalWidth} height={56} verticalZoom={waveformZoom} />
+                    <Waveform peaks={clip.waveformPeaks!} color={color} width={naturalWidth} height={contentH} verticalZoom={waveformZoom} />
                   </div>
                 )
               })() : (
-                <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={56} verticalZoom={waveformZoom} />
+                <Waveform peaks={clip.waveformPeaks} color={color} width={width} height={contentH} verticalZoom={waveformZoom} />
               )}
             </div>
           )
@@ -605,6 +610,14 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           const tileW = loopPx ?? width
           const patternBeats = loopNativeBeats ?? clip.durationBeats
           const tiles = loopPx ? Math.ceil(width / loopPx) : 1
+          // Map to the clip's own pitch range (not the full 0–127) so notes fill
+          // the height, and derive sizes from contentH so the preview scales and
+          // stays vertically centered as the track grows/shrinks.
+          const minPitch = Math.min(...clip.notes.map(n => n.pitch))
+          const maxPitch = Math.max(...clip.notes.map(n => n.pitch))
+          const range = Math.max(1, maxPitch - minPitch)
+          const noteH = Math.max(2, Math.min((contentH / (range + 2)) * 0.8, 8))
+          const usableH = Math.max(1, contentH - noteH - 4)
           return (
             <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
               {Array.from({ length: tiles }, (_, i) => (
@@ -615,8 +628,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                   {clip.notes.map(n => {
                     const nx = (n.startBeat / patternBeats) * tileW
                     const nw = Math.max(2, (n.durationBeats / patternBeats) * tileW)
-                    const ny = ((127 - n.pitch) / 127) * 52
-                    return <div key={n.id} style={{ position: 'absolute', left: nx, top: ny + 2, width: nw, height: 2, background: color, borderRadius: 1 }} />
+                    const ny = maxPitch === minPitch
+                      ? (contentH - noteH) / 2
+                      : 2 + ((maxPitch - n.pitch) / range) * usableH
+                    return <div key={n.id} style={{ position: 'absolute', left: nx, top: ny, width: nw, height: noteH, background: color, borderRadius: 1 }} />
                   })}
                 </div>
               ))}
