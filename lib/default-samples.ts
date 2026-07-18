@@ -27,6 +27,7 @@ const PERCUSSION_SEEDED_KEY = '100lights-percussion-seeded-v3'
 const FX_SEEDED_KEY       = '100lights-fx-seeded-v3'
 const ARP_SEEDED_KEY      = '100lights-arp-seeded-v3'
 const BASS_SEEDED_KEY     = '100lights-bass-seeded-v1'
+const DARKKIT_SEEDED_KEY  = '100lights-darkkit-seeded-v1'  // 808/ride/shaker + sustained bass
 const BRASS_SEEDED_KEY    = '100lights-brass-seeded-v1'
 const WIND_SEEDED_KEY     = '100lights-wind-seeded-v1'
 const DEDUP_KEY           = '100lights-dedup-v5'  // v5: prefer deterministic seed ids over legacy random-id built-ins
@@ -288,6 +289,23 @@ const PERCUSSION: Array<{ name: string; type: BeatType; dur: number }> = [
   { name: 'Cabasa',     type: 'hihat',       dur: 0.18 },
   { name: 'Agogo Hi',   type: 'rim',         dur: 0.22 },
   { name: 'Agogo Lo',   type: 'rim',         dur: 0.28 },
+]
+
+// New darkwave/dark-pop drum voices + sustained bass presets (added 2026-07)
+const DARK_DRUMS: Array<{ name: string; type: BeatType; dur: number }> = [
+  { name: '808 Sub',   type: '808',    dur: 0.90 },
+  { name: '808 Long',  type: '808',    dur: 1.35 },
+  { name: 'Ride',      type: 'ride',   dur: 1.00 },
+  { name: 'Ride Bell', type: 'ride',   dur: 0.60 },
+  { name: 'Shaker',    type: 'shaker', dur: 0.14 },
+]
+
+const SUSTAINED_BASS: Array<{ name: string; type: BeatType; note: number; dur: number }> = [
+  { name: 'Sub Sine',     type: 'synth-bass',  note: 31, dur: 2.0 },
+  { name: 'Deep Sub',     type: 'synth-bass',  note: 28, dur: 2.4 },
+  { name: 'Dark Sustain', type: 'synth-dark',  note: 36, dur: 3.0 },
+  { name: 'Reese Drone',  type: 'synth-drone', note: 33, dur: 3.5 },
+  { name: 'Void Bass',    type: 'synth-drone', note: 28, dur: 4.0 },
 ]
 
 // Single-note accessible items per instrument family
@@ -593,6 +611,7 @@ export async function seedDefaultSamples(): Promise<void> {
     seedDarkwave().catch(() => {})
     seedStrings().catch(() => {})
     seedPercussion().catch(() => {})
+    seedDarkKit().catch(() => {})
     seedFx().catch(() => {})
     seedArp().catch(() => {})
     seedBass().catch(() => {})
@@ -630,6 +649,23 @@ export async function seedDefaultSamples(): Promise<void> {
 }
 
 // ── Individual seed functions ─────────────────────────────────────────────────
+
+export async function seedDarkKit(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(sk(DARKKIT_SEEDED_KEY))) return
+  const now = new Date().toISOString()
+  for (const d of DARK_DRUMS) {
+    await libraryAdd(makeStub(d.name, d.type as LibraryCategory, {
+      kind: 'drum', beatType: d.type, duration: d.dur, channels: 1,
+    }, 'Drums', now, ['Drums'], 'Drums'))
+  }
+  for (const b of SUSTAINED_BASS) {
+    await libraryAdd(makeStub(b.name, b.type as LibraryCategory, {
+      kind: 'melodic', beatType: b.type, midiNote: b.note, duration: b.dur, channels: 2,
+    }, 'Sustained Bass', now, ['Bass', 'Dark'], 'Bass'))
+  }
+  localStorage.setItem(sk(DARKKIT_SEEDED_KEY), '1')
+}
 
 export async function seedPercussion(): Promise<void> {
   if (typeof window === 'undefined') return

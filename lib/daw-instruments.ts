@@ -8,7 +8,7 @@ import { playWavetableNote } from './wavetable-synth'
 
 // General MIDI drum map (pitch → drum type)
 const GM_DRUM: Record<number, BeatType> = {
-  35: 'kick', 36: 'kick',
+  35: '808', 36: 'kick',
   38: 'snare', 40: 'snare',
   42: 'hihat', 44: 'hihat',
   46: 'open-hihat',
@@ -16,6 +16,8 @@ const GM_DRUM: Record<number, BeatType> = {
   51: 'rim', 37: 'rim',
   41: 'tom', 43: 'tom', 45: 'tom', 47: 'tom', 48: 'tom', 50: 'tom',
   39: 'clap',
+  53: 'ride', 59: 'ride',        // ride cymbal (GM ride bell / ride 2)
+  70: 'shaker', 82: 'shaker',    // shaker / maracas
 }
 
 function pitchToDrumType(pitch: number): BeatType {

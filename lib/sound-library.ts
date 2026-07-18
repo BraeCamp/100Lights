@@ -147,6 +147,9 @@ export const CATEGORY_LABELS: Record<LibraryCategory, string> = {
   tom:               'Tom',
   crash:             'Crash',
   rim:               'Rim',
+  '808':             '808',
+  ride:              'Ride',
+  shaker:            'Shaker',
   'guitar-acoustic': 'Acoustic Guitar',
   'guitar-electric': 'Electric Guitar',
   'guitar-nylon':    'Nylon Guitar',
@@ -171,7 +174,7 @@ export const CATEGORY_LABELS: Record<LibraryCategory, string> = {
 }
 
 export const CATEGORY_GROUPS: Array<{ label: string; categories: LibraryCategory[] }> = [
-  { label: 'Drums',    categories: ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim'] },
+  { label: 'Drums',    categories: ['kick', '808', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'ride', 'rim', 'shaker'] },
   { label: 'Guitar',   categories: ['guitar-acoustic', 'guitar-electric', 'guitar-nylon'] },
   { label: 'Piano',    categories: ['piano-grand', 'piano-electric', 'piano-rhodes'] },
   { label: 'Strings',  categories: ['violin', 'viola'] },
@@ -202,6 +205,9 @@ export const CATEGORY_TO_TYPE_TAG: Record<LibraryCategory, TypeTag | null> = {
   tom:               'Drums',
   crash:             'Drums',
   rim:               'Drums',
+  '808':             'Drums',
+  ride:              'Drums',
+  shaker:            'Percussion',
   'guitar-acoustic': 'Guitar',
   'guitar-electric': 'Guitar',
   'guitar-nylon':    'Guitar',
@@ -228,6 +234,9 @@ export const CATEGORY_TO_TYPE_TAG: Record<LibraryCategory, TypeTag | null> = {
 /** Maps each LibraryCategory to implicit character tags */
 export const CATEGORY_CHAR_TAGS: Partial<Record<LibraryCategory, string[]>> = {
   kick:         ['Hard'],
+  '808':        ['Dark', 'Hard'],
+  ride:         ['Bright'],
+  shaker:       ['Bright'],
   snare:        ['Hard'],
   hihat:        ['Bright'],
   'open-hihat': ['Bright'],

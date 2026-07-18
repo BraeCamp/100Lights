@@ -108,6 +108,7 @@
 export type BeatType =
   // Drums
   'kick' | 'snare' | 'hihat' | 'open-hihat' | 'clap' | 'tom' | 'crash' | 'rim' |
+  '808' | 'ride' | 'shaker' |
   // Guitar
   'guitar-acoustic' | 'guitar-electric' | 'guitar-nylon' |
   // Piano
@@ -125,6 +126,7 @@ export type BeatType =
 
 export const DRUM_BEAT_TYPES: BeatType[] = [
   'kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'crash', 'rim',
+  '808', 'ride', 'shaker',
 ]
 
 export const DEFAULT_NOTES: Record<BeatType, number> = {
@@ -136,6 +138,9 @@ export const DEFAULT_NOTES: Record<BeatType, number> = {
   tom:               50,
   crash:             65,
   rim:               62,
+  '808':             28,
+  ride:              70,
+  shaker:            75,
   'guitar-acoustic': 64,
   'guitar-electric': 64,
   'guitar-nylon':    64,
@@ -243,6 +248,9 @@ const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
   'hihat':           ['open-hihat', 'rim', 'clap', 'crash', 'snare', 'tom', 'kick', 'other'],
   'open-hihat':      ['crash', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
   'crash':           ['open-hihat', 'hihat', 'rim', 'clap', 'snare', 'tom', 'kick', 'other'],
+  '808':             ['kick', 'tom', 'snare', 'other'],
+  'ride':            ['crash', 'open-hihat', 'hihat', 'rim', 'other'],
+  'shaker':          ['hihat', 'open-hihat', 'rim', 'clap', 'other'],
   'guitar-acoustic': ['guitar-electric', 'guitar-nylon', 'piano-grand', 'synth-lead', 'other'],
   'guitar-electric': ['guitar-acoustic', 'guitar-nylon', 'piano-grand', 'synth-lead', 'other'],
   'guitar-nylon':    ['guitar-acoustic', 'guitar-electric', 'piano-grand', 'synth-lead', 'other'],
@@ -1004,6 +1012,9 @@ export async function analyzeBeats(
   const subdivSec = bpmEstimate ? (60 / bpmEstimate / 4) : 0.10
   const dedupGaps: Record<BeatType, number> = {
     kick:              Math.max(0.15, subdivSec),
+    '808':             Math.max(0.15, subdivSec),
+    ride:              Math.max(0.06, subdivSec / 2),
+    shaker:            Math.max(0.04, subdivSec / 2),
     snare:             Math.max(0.09, subdivSec),
     hihat:             Math.max(0.04, subdivSec / 2),
     'open-hihat':      Math.max(0.09, subdivSec),

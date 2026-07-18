@@ -242,6 +242,77 @@ function synthOther(ctx: AudioContext, when: number, v: number, dest: AudioNode)
   synthClap(ctx, when, v, dest)
 }
 
+// ── 808 sub kick ──────────────────────────────────────────────────────────────
+// Long booming 808 — a sine that drops to a low sustained tone with a soft click.
+function synth808(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
+  const dur = 0.75
+  const body = ctx.createOscillator()
+  const g = ctx.createGain()
+  body.type = 'sine'
+  body.frequency.setValueAtTime(120, when)
+  body.frequency.exponentialRampToValueAtTime(46, when + 0.09)
+  g.gain.setValueAtTime(0.0001, when)
+  g.gain.exponentialRampToValueAtTime(v * 1.05, when + 0.006)
+  g.gain.exponentialRampToValueAtTime(0.0008, when + dur)
+  // gentle drive for the 808 "growl"
+  const shaper = ctx.createWaveShaper()
+  const curve = new Float32Array(256)
+  for (let i = 0; i < 256; i++) { const x = (i / 128) - 1; curve[i] = Math.tanh(x * 1.8) }
+  shaper.curve = curve
+  body.connect(g); g.connect(shaper); shaper.connect(dest)
+  body.start(when); body.stop(when + dur + 0.05)
+  // click transient
+  const click = ctx.createOscillator(); const cg = ctx.createGain()
+  click.type = 'triangle'
+  click.frequency.setValueAtTime(420, when)
+  click.frequency.exponentialRampToValueAtTime(90, when + 0.02)
+  cg.gain.setValueAtTime(v * 0.5, when)
+  cg.gain.exponentialRampToValueAtTime(0.001, when + 0.03)
+  click.connect(cg); cg.connect(dest); click.start(when); click.stop(when + 0.04)
+}
+
+// ── Ride cymbal ───────────────────────────────────────────────────────────────
+// A sustained metallic ping — inharmonic partials with a long shimmering tail.
+const RIDE_FREQS = [312, 419, 527, 663, 841, 1021, 1279]
+function synthRide(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
+  const dur = 0.85
+  const mix = ctx.createGain(); mix.gain.value = v * 0.055; mix.connect(dest)
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 5200; bp.Q.value = 0.4; bp.connect(mix)
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3000; hp.connect(bp)
+  const env = ctx.createGain(); env.connect(hp)
+  env.gain.setValueAtTime(1, when)
+  env.gain.exponentialRampToValueAtTime(0.28, when + 0.05)
+  env.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  for (const f of RIDE_FREQS) {
+    const osc = ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f
+    osc.connect(env); osc.start(when); osc.stop(when + dur + 0.02)
+  }
+  // bell "ping" fundamental
+  const ping = ctx.createOscillator(); const pg = ctx.createGain()
+  ping.type = 'sine'; ping.frequency.value = 1180
+  pg.gain.setValueAtTime(v * 0.12, when); pg.gain.exponentialRampToValueAtTime(0.001, when + 0.4)
+  ping.connect(pg); pg.connect(dest); ping.start(when); ping.stop(when + 0.45)
+}
+
+// ── Shaker ────────────────────────────────────────────────────────────────────
+// Tight high-passed noise with a fast swell — the classic shaker "tss".
+function synthShaker(ctx: AudioContext, when: number, v: number, dest: AudioNode) {
+  const dur = 0.09
+  const len = Math.floor(ctx.sampleRate * (dur + 0.02))
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
+  const src = ctx.createBufferSource(); src.buffer = buf
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6500
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 9000; bp.Q.value = 0.7
+  const g = ctx.createGain()
+  g.gain.setValueAtTime(0.0001, when)
+  g.gain.linearRampToValueAtTime(v * 0.5, when + 0.02)
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur)
+  src.connect(hp); hp.connect(bp); bp.connect(g); g.connect(dest)
+  src.start(when)
+}
+
 // ── Unified API ───────────────────────────────────────────────────────────────
 
 const DEFAULT_NOTE: Record<BeatType, number> = {
@@ -253,6 +324,9 @@ const DEFAULT_NOTE: Record<BeatType, number> = {
   tom:               50,
   crash:             65,
   rim:               62,
+  '808':             28,
+  ride:              70,
+  shaker:            75,
   'guitar-acoustic': 64,
   'guitar-electric': 64,
   'guitar-nylon':    64,
@@ -294,6 +368,9 @@ export function playDrumHit(
     case 'tom':        return synthTom(ctx, when, velocity, n, dest)
     case 'crash':      return synthCrash(ctx, when, velocity, dest)
     case 'rim':        return synthRim(ctx, when, velocity, dest)
+    case '808':        return synth808(ctx, when, velocity, dest)
+    case 'ride':       return synthRide(ctx, when, velocity, dest)
+    case 'shaker':     return synthShaker(ctx, when, velocity, dest)
     default:           return synthOther(ctx, when, velocity, dest)
   }
 }
