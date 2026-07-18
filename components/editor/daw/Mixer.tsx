@@ -192,9 +192,9 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         width: isMaster ? 80 : 72, flexShrink: 0,
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         gap: 4, padding: '8px 4px 6px',
-        background: isSelected ? 'rgba(61,143,239,0.12)' : isMaster ? '#202020' : '#2a2a2a',
+        background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : isMaster ? '#202020' : '#2a2a2a',
         borderRight: '1px solid #383838',
-        outline: isSelected ? '1px solid rgba(61,143,239,0.5)' : 'none',
+        outline: isSelected ? '1px solid rgb(var(--accent-rgb) / 0.5)' : 'none',
         outlineOffset: '-1px',
         opacity: dimmed ? 0.4 : 1, transition: 'background 0.1s, opacity 0.15s',
         position: 'relative', cursor: isMaster ? 'default' : 'pointer',
@@ -345,7 +345,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
                     dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendModes: { ...(track.sendModes ?? {}), [rt.id]: next } } })
                     engine.setSendAmount(track.id, rt.id, sendVal)
                   }}
-                  style={{ fontSize: 6, padding: '1px 2px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${sendMode === 'pre' ? 'var(--accent)' : 'var(--border)'}`, background: sendMode === 'pre' ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)', color: sendMode === 'pre' ? 'var(--accent)' : 'var(--text-muted)', lineHeight: 1, flexShrink: 0 }}
+                  style={{ fontSize: 6, padding: '1px 2px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${sendMode === 'pre' ? 'var(--accent)' : 'var(--border)'}`, background: sendMode === 'pre' ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: sendMode === 'pre' ? 'var(--accent)' : 'var(--text-muted)', lineHeight: 1, flexShrink: 0 }}
                 >{sendMode === 'pre' ? 'PRE' : 'PST'}</button>
               </div>
             )

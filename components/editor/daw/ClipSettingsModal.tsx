@@ -168,7 +168,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
         {/* Waveform preview */}
         {clip.waveformPeaks && clip.waveformPeaks.length > 0 && (
           <div style={{ marginBottom: 6, borderRadius: 5, overflow: 'hidden', background: '#0a0a0f' }}>
-            <Waveform peaks={clip.waveformPeaks} color="#3d8fef" width={376} height={48} />
+            <Waveform peaks={clip.waveformPeaks} color="var(--accent)" width={376} height={48} />
           </div>
         )}
 

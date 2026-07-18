@@ -115,7 +115,7 @@ export default function VersionHistory() {
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 22,
           borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer',
-          background: open ? 'rgba(61,143,239,0.15)' : 'transparent', color: open ? '#7ab4f5' : 'var(--text-muted)',
+          background: open ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: open ? '#7ab4f5' : 'var(--text-muted)',
         }}
       >
         <History size={12} />
@@ -143,7 +143,7 @@ export default function VersionHistory() {
             <button
               onClick={() => void saveVersion()}
               disabled={!draft.trim() || busy === 'save' || isSaving || !projectIdFromUrl()}
-              style={{ fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: 'none', background: '#3d8fef', color: '#fff', cursor: 'pointer', opacity: draft.trim() && projectIdFromUrl() ? 1 : 0.5, whiteSpace: 'nowrap' }}
+              style={{ fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: draft.trim() && projectIdFromUrl() ? 1 : 0.5, whiteSpace: 'nowrap' }}
             >{busy === 'save' ? '…' : 'Save'}</button>
           </div>
           {!projectIdFromUrl() && <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0 }}>Save the project first to start keeping versions.</p>}

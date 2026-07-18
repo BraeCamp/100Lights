@@ -14,7 +14,7 @@ const C = {
   border: 'var(--border)',
   text:   'var(--text)',
   muted:  'var(--text-muted)',
-  accent: '#3d8fef',
+  accent: 'var(--accent)',
   red:    '#ef4444',
   green:  '#22c55e',
   yellow: '#eab308',
@@ -226,14 +226,14 @@ export default function PadTuner() {
                 <button key={src.id} onClick={() => setInputSource(src.id)} style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '5px 10px', borderRadius: 5, cursor: 'pointer', textAlign: 'left',
-                  border: `1px solid ${inputSource === src.id ? 'rgba(61,143,239,0.5)' : 'var(--border)'}`,
-                  background: inputSource === src.id ? 'rgba(61,143,239,0.10)' : 'transparent',
+                  border: `1px solid ${inputSource === src.id ? 'rgb(var(--accent-rgb) / 0.5)' : 'var(--border)'}`,
+                  background: inputSource === src.id ? 'rgb(var(--accent-rgb) / 0.10)' : 'transparent',
                   color: inputSource === src.id ? '#a8d4ff' : C.muted,
                 }}>
                   <div style={{
                     width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                    border: `1.5px solid ${inputSource === src.id ? '#3d8fef' : '#555'}`,
-                    background: inputSource === src.id ? '#3d8fef' : 'transparent',
+                    border: `1.5px solid ${inputSource === src.id ? 'var(--accent)' : '#555'}`,
+                    background: inputSource === src.id ? 'var(--accent)' : 'transparent',
                   }} />
                   <span style={{ fontSize: 11, fontWeight: inputSource === src.id ? 600 : 400 }}>{src.label}</span>
                 </button>

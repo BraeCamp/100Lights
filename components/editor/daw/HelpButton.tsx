@@ -374,7 +374,7 @@ export default function HelpButton() {
         data-help-id="help"
         style={{
           width: 24, height: 24, borderRadius: 6, border: 'none', cursor: 'pointer',
-          background: open ? 'rgba(99,102,241,0.12)' : 'transparent',
+          background: open ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
           color: open ? 'var(--accent)' : 'var(--text-muted)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,

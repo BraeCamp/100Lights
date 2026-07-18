@@ -98,7 +98,7 @@ const C = {
   bgCard: '#252525',
   bgDark: '#151515',
   border: '#333333',
-  accent: '#3d8fef',
+  accent: 'var(--accent)',
   red:    '#ef4444',
   green:  '#22c55e',
   yellow: '#eab308',
@@ -645,7 +645,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
       }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', padding: '8px 10px', background: 'rgba(61,143,239,0.12)', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '8px 10px', background: 'rgb(var(--accent-rgb) / 0.12)', borderBottom: `1px solid ${C.border}` }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: C.text, flex: 1 }}>{pad.drumLabel}</span>
         <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
       </div>
@@ -704,7 +704,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
           const isExp = expandedId === sound.id
           const pitchVal = sound.pitch ?? 0
           return (
-            <div key={sound.id} style={{ marginBottom: 4, borderRadius: 5, border: `1px solid ${isExp ? C.accent : C.border}`, background: isExp ? 'rgba(61,143,239,0.06)' : 'transparent', overflow: 'hidden' }}>
+            <div key={sound.id} style={{ marginBottom: 4, borderRadius: 5, border: `1px solid ${isExp ? C.accent : C.border}`, background: isExp ? 'rgb(var(--accent-rgb) / 0.06)' : 'transparent', overflow: 'hidden' }}>
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 7px', cursor: 'pointer' }}
                 onClick={() => setExpandedId(isExp ? null : sound.id)}
@@ -798,9 +798,9 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                   const total = [...subFolders.values()].reduce((n, a) => n + a.length, 0)
                   return (
                     <div key={pKey}>
-                      <div onClick={() => togglePickerFolder(pKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', cursor: 'pointer', background: 'rgba(61,143,239,0.07)', borderRadius: 3, marginBottom: 1 }}>
-                        <span style={{ fontSize: 9, color: 'rgba(61,143,239,0.8)' }}>{pOpen ? '▾' : '▸'}</span>
-                        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgba(61,143,239,0.9)' }}>{parentName}</span>
+                      <div onClick={() => togglePickerFolder(pKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', cursor: 'pointer', background: 'rgb(var(--accent-rgb) / 0.07)', borderRadius: 3, marginBottom: 1 }}>
+                        <span style={{ fontSize: 9, color: 'rgb(var(--accent-rgb) / 0.8)' }}>{pOpen ? '▾' : '▸'}</span>
+                        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgb(var(--accent-rgb) / 0.9)' }}>{parentName}</span>
                         <span style={{ fontSize: 9, color: C.muted }}>{total}</span>
                       </div>
                       {pOpen && [...subFolders.entries()].map(([subName, subEntries]) => {
@@ -1597,7 +1597,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     background: C.bg,
     border: active ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
     borderRadius: 10,
-    boxShadow: active ? `0 12px 40px rgba(0,0,0,0.75), 0 0 0 2px rgba(61,143,239,0.35)` : '0 12px 40px rgba(0,0,0,0.75)',
+    boxShadow: active ? `0 12px 40px rgba(0,0,0,0.75), 0 0 0 2px rgb(var(--accent-rgb) / 0.35)` : '0 12px 40px rgba(0,0,0,0.75)',
     zIndex: 2000, userSelect: 'none',
     display: 'flex', flexDirection: 'column',
     transition: 'border-color 0.15s, box-shadow 0.15s',
@@ -1613,15 +1613,15 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         {/* Header */}
         <div onMouseDown={onHeaderMouseDown} style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexShrink: 0,
-          background: active ? 'rgba(61,143,239,0.18)' : C.bgCard,
+          background: active ? 'rgb(var(--accent-rgb) / 0.18)' : C.bgCard,
           borderRadius: isFullscreen ? 0 : '10px 10px 0 0',
-          borderBottom: `1px solid ${active ? 'rgba(61,143,239,0.4)' : C.border}`,
+          borderBottom: `1px solid ${active ? 'rgb(var(--accent-rgb) / 0.4)' : C.border}`,
           cursor: isFullscreen ? 'default' : 'grab', transition: 'background 0.15s',
         }}>
           <span style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>⌨ Pad Input</span>
           {track && <span style={{ fontSize: 11, color: C.muted, borderLeft: `2px solid ${track.color ?? C.accent}`, paddingLeft: 6 }}>{track.name}</span>}
           {active
-            ? <span style={{ fontSize: 10, fontWeight: 800, color: C.accent, background: 'rgba(61,143,239,0.15)', border: `1px solid rgba(61,143,239,0.4)`, borderRadius: 3, padding: '1px 6px', letterSpacing: '0.06em' }}>ACTIVE</span>
+            ? <span style={{ fontSize: 10, fontWeight: 800, color: C.accent, background: 'rgb(var(--accent-rgb) / 0.15)', border: `1px solid rgb(var(--accent-rgb) / 0.4)`, borderRadius: 3, padding: '1px 6px', letterSpacing: '0.06em' }}>ACTIVE</span>
             : <span style={{ fontSize: 10, color: C.muted }}>click to activate</span>
           }
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -1795,8 +1795,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       style={{
                         height: 76, display: 'flex', flexDirection: 'column', alignItems: 'center',
                         justifyContent: 'center', gap: 4, borderRadius: 6, position: 'relative',
-                        border: `1px solid ${isRemapping ? C.accent : isAct ? '#666' : isFxMode ? (fxEnabled ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.3)') : hasCustom ? 'rgba(61,143,239,0.4)' : C.border}`,
-                        background: isRemapping ? `${C.accent}30` : isAct ? 'rgba(255,255,255,0.12)' : isFxMode ? (fxEnabled ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.06)') : hasCustom ? 'rgba(61,143,239,0.07)' : C.bgCard,
+                        border: `1px solid ${isRemapping ? C.accent : isAct ? '#666' : isFxMode ? (fxEnabled ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.3)') : hasCustom ? 'rgb(var(--accent-rgb) / 0.4)' : C.border}`,
+                        background: isRemapping ? `${C.accent}30` : isAct ? 'rgba(255,255,255,0.12)' : isFxMode ? (fxEnabled ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.06)') : hasCustom ? 'rgb(var(--accent-rgb) / 0.07)' : C.bgCard,
                         color: isAct ? '#fff' : C.text, cursor: 'pointer',
                         transition: 'background 50ms, border-color 50ms',
                       }}

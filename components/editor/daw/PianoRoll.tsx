@@ -246,7 +246,7 @@ function PianoKeys({
           const bg = hover
             ? trackColor
             : inScale
-              ? (black ? 'rgba(61,143,239,0.4)' : 'rgba(61,143,239,0.22)')
+              ? (black ? 'rgb(var(--accent-rgb) / 0.4)' : 'rgb(var(--accent-rgb) / 0.22)')
               : (black ? '#1a1a1a' : '#2e2e2e')
           return (
             <div
@@ -1387,9 +1387,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 onClick={() => setChordType(chordType === chord ? null : chord)}
                 style={{
                   ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
-                  background: chordType === chord ? 'rgba(61,143,239,0.18)' : 'transparent',
-                  color: chordType === chord ? '#3d8fef' : 'var(--text-muted)',
-                  border: chordType === chord ? '1px solid rgba(61,143,239,0.45)' : '1px solid transparent',
+                  background: chordType === chord ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent',
+                  color: chordType === chord ? 'var(--accent)' : 'var(--text-muted)',
+                  border: chordType === chord ? '1px solid rgb(var(--accent-rgb) / 0.45)' : '1px solid transparent',
                 }}
               >
                 {chord}
@@ -1525,7 +1525,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 position: 'absolute',
                 left: selRect.x, top: selRect.y, width: selRect.w, height: selRect.h,
                 border: tool === 'erase' ? '1px solid #ef4444' : '1px solid var(--accent)',
-                background: tool === 'erase' ? 'rgba(239,68,68,0.12)' : 'rgba(61,143,239,0.1)',
+                background: tool === 'erase' ? 'rgba(239,68,68,0.12)' : 'rgb(var(--accent-rgb) / 0.1)',
                 pointerEvents: 'none',
               }} />
             )}
@@ -1568,7 +1568,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   padding: '5px 14px', fontSize: 11, color: '#ccc',
                   background: 'transparent', border: 'none', cursor: 'pointer',
                 }}
-                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(61,143,239,0.12)' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.12)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
                 {label}

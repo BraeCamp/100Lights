@@ -535,20 +535,20 @@ export default function Timeline({
                 <div style={{
                   position: 'absolute', top: 0, bottom: 0,
                   left: timeToX(inPoint), width: timeToX(outPoint - inPoint),
-                  background: 'rgba(61,143,239,0.18)',
-                  borderLeft: '2px solid rgba(61,143,239,0.7)',
-                  borderRight: '2px solid rgba(61,143,239,0.7)',
+                  background: 'rgb(var(--accent-rgb) / 0.18)',
+                  borderLeft: '2px solid rgb(var(--accent-rgb) / 0.7)',
+                  borderRight: '2px solid rgb(var(--accent-rgb) / 0.7)',
                   pointerEvents: 'none',
                 }} />
               )}
               {inPoint !== null && (
-                <div style={{ position: 'absolute', top: 0, bottom: 0, left: timeToX(inPoint), width: 2, background: 'rgba(61,143,239,0.9)', pointerEvents: 'none' }}>
-                  <span style={{ position: 'absolute', top: 2, left: 3, fontSize: 8, color: 'rgba(61,143,239,0.9)', fontWeight: 700, whiteSpace: 'nowrap' }}>IN</span>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: timeToX(inPoint), width: 2, background: 'rgb(var(--accent-rgb) / 0.9)', pointerEvents: 'none' }}>
+                  <span style={{ position: 'absolute', top: 2, left: 3, fontSize: 8, color: 'rgb(var(--accent-rgb) / 0.9)', fontWeight: 700, whiteSpace: 'nowrap' }}>IN</span>
                 </div>
               )}
               {outPoint !== null && (
-                <div style={{ position: 'absolute', top: 0, bottom: 0, left: timeToX(outPoint), width: 2, background: 'rgba(61,143,239,0.9)', pointerEvents: 'none' }}>
-                  <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 8, color: 'rgba(61,143,239,0.9)', fontWeight: 700, whiteSpace: 'nowrap' }}>OUT</span>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: timeToX(outPoint), width: 2, background: 'rgb(var(--accent-rgb) / 0.9)', pointerEvents: 'none' }}>
+                  <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 8, color: 'rgb(var(--accent-rgb) / 0.9)', fontWeight: 700, whiteSpace: 'nowrap' }}>OUT</span>
                 </div>
               )}
 
@@ -650,7 +650,7 @@ export default function Timeline({
                       height: track.height,
                       borderBottom: '1px solid var(--border)',
                       background: dropIndicator?.trackId === track.id
-                        ? 'rgba(61,143,239,0.07)'
+                        ? 'rgb(var(--accent-rgb) / 0.07)'
                         : track.type === 'drawfocus'
                         ? 'rgba(167,139,250,0.04)'
                         : 'rgba(255,255,255,0.018)',

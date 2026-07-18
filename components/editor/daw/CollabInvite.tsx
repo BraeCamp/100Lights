@@ -107,7 +107,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
           display: 'flex', alignItems: 'center', gap: 5,
           fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,
           border: '1px solid #2e2e2e',
-          background: open ? 'rgba(61,143,239,0.2)' : 'rgba(61,143,239,0.08)',
+          background: open ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.08)',
           color: '#7ab4f5',
           cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
           transition: 'all 0.15s',
@@ -117,7 +117,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
         Share
         {count > 0 && (
           <span style={{
-            marginLeft: 2, background: '#3d8fef', color: '#fff',
+            marginLeft: 2, background: 'var(--accent)', color: '#fff',
             borderRadius: 8, padding: '0 5px', fontSize: 9, fontWeight: 700,
           }}>
             {count}
@@ -137,7 +137,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
             display: 'flex', alignItems: 'center', gap: 7, width: '100%', justifyContent: 'center',
             fontSize: 11, fontWeight: 700, padding: '7px 0', borderRadius: 7, cursor: 'pointer',
             border: copied ? '1px solid #22c55e' : '1px solid #2e2e2e',
-            background: copied ? 'rgba(34,197,94,0.12)' : 'rgba(61,143,239,0.1)',
+            background: copied ? 'rgba(34,197,94,0.12)' : 'rgb(var(--accent-rgb) / 0.1)',
             color: copied ? '#22c55e' : '#7ab4f5',
           }}>
             <Link2 size={12} /> {copied ? 'Link copied' : 'Copy link'}

@@ -299,14 +299,14 @@ function Avatar({ presence, isSelf }: { presence: CollabPresence; isSelf: boolea
           src={imageUrl} alt={name}
           style={{
             width: 22, height: 22, borderRadius: '50%', objectFit: 'cover',
-            border: `2px solid ${isSelf ? '#3d8fef' : color}`,
+            border: `2px solid ${isSelf ? 'var(--accent)' : color}`,
             opacity: isSelf ? 0.7 : 1,
           }}
         />
       ) : (
         <div style={{
           width: 22, height: 22, borderRadius: '50%', fontSize: 9, fontWeight: 700,
-          background: color, color: '#fff', border: `2px solid ${isSelf ? '#3d8fef' : color}`,
+          background: color, color: '#fff', border: `2px solid ${isSelf ? 'var(--accent)' : color}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           opacity: isSelf ? 0.7 : 1,
         }}>

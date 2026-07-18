@@ -803,8 +803,8 @@ export default function VideoPlayer({
         {/* Audio mode overlay */}
         {src && contentType === 'audio' && (
           <div className="relative z-10 flex flex-col items-center gap-6 select-none px-8 w-full max-w-sm">
-            <div className="w-24 h-24 rounded-3xl flex items-center justify-center" style={{ background: 'rgba(61,143,239,0.08)', border: '1px solid rgba(61,143,239,0.15)' }}>
-              <Mic size={40} color="rgba(61,143,239,0.6)" />
+            <div className="w-24 h-24 rounded-3xl flex items-center justify-center" style={{ background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
+              <Mic size={40} color="rgb(var(--accent-rgb) / 0.6)" />
             </div>
             <div className="flex items-end gap-0.5 h-14 w-full">
               {WAVEFORM.map((h, i) => {
@@ -816,7 +816,7 @@ export default function VideoPlayer({
               })}
             </div>
             {activeCaption && (
-              <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgba(61,143,239,0.06)', border: '1px solid rgba(61,143,239,0.15)' }}>
+              <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgb(var(--accent-rgb) / 0.06)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
                 {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}:</span>}
                 <span className="text-sm" style={{ color: '#ccc' }}>{activeCaption.text}</span>
               </div>

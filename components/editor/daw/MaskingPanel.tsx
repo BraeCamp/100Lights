@@ -103,7 +103,7 @@ export default function MaskingPanel() {
               const pct = Math.max(0, Math.min(100, (t.db + 80) * 1.4))
               return (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
-                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#3d8fef', flexShrink: 0 }} />
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
                   <span style={{ fontSize: 9, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {t.name}
                   </span>
@@ -111,7 +111,7 @@ export default function MaskingPanel() {
                     {Math.round(t.db)} dBFS
                   </span>
                   <div style={{ width: 36, height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: masked ? '#ef4444' : '#3d8fef', borderRadius: 2 }} />
+                    <div style={{ width: `${pct}%`, height: '100%', background: masked ? '#ef4444' : 'var(--accent)', borderRadius: 2 }} />
                   </div>
                 </div>
               )

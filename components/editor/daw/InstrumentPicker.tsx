@@ -19,7 +19,7 @@ const C = {
   bgSurface:   '#1c1c1c',
   bgCard:      '#222222',
   border:      '#2c2c2c',
-  accent:      '#3d8fef',
+  accent:      'var(--accent)',
   textPrimary: '#e8e8e8',
   textMuted:   '#7c7c7c',
 } as const

@@ -187,7 +187,7 @@ function FxButton({ trackId }: { trackId: string }) {
       style={{
         marginLeft: 2, fontSize: 8, padding: '1px 4px', borderRadius: 2, cursor: 'pointer', fontWeight: 700,
         border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-        background: active ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)',
+        background: active ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)',
         color: active ? 'var(--accent)' : count > 0 ? 'var(--accent)' : 'var(--text-muted)',
       }}
     >{count > 0 ? `FX(${count})` : 'FX'}</button>
@@ -1003,7 +1003,7 @@ export default function SessionView() {
   const crossfaderValue = project.crossfaderValue ?? 0.5
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', background: 'var(--bg-base)', userSelect: 'none' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)', userSelect: 'none' }}>
 
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0 }}>

@@ -550,8 +550,8 @@ export default function EffectLaneView({
           top:  Math.min(rubberBand.y1, rubberBand.y2),
           width:  Math.abs(rubberBand.x2 - rubberBand.x1),
           height: Math.abs(rubberBand.y2 - rubberBand.y1),
-          border: '1px solid rgba(61,143,239,0.7)',
-          background: 'rgba(61,143,239,0.08)',
+          border: '1px solid rgb(var(--accent-rgb) / 0.7)',
+          background: 'rgb(var(--accent-rgb) / 0.08)',
           pointerEvents: 'none',
           zIndex: 200,
         }} />

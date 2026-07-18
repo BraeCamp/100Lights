@@ -61,7 +61,7 @@ export default function CollabLayer({
   return (
     <RoomProvider
       id={`project-${projectId}`}
-      initialPresence={{ name: '', color: '#3d8fef', imageUrl: null, selectedTrackId: null, selectedClipId: null, editingClipId: null, view: 'arrangement' }}
+      initialPresence={{ name: '', color: 'var(--accent)', imageUrl: null, selectedTrackId: null, selectedClipId: null, editingClipId: null, view: 'arrangement' }}
     >
       <CollabBridge broadcastRef={broadcastRef} rawDispatch={rawDispatch} isRemoteRef={isRemoteRef} projectRef={projectRef as React.MutableRefObject<DawProject>} />
       <CollabOthersBridge onOthers={onOthers} />

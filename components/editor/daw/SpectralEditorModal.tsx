@@ -450,7 +450,7 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
     whiteSpace: 'nowrap',
   }
   const disabledTool: React.CSSProperties = { ...toolBtn, opacity: 0.4, cursor: 'not-allowed' }
-  const segActive: React.CSSProperties = { ...toolBtn, background: 'rgba(61,143,239,0.18)', border: '1px solid #3d8fef', color: '#7ab5f7' }
+  const segActive: React.CSSProperties = { ...toolBtn, background: 'rgb(var(--accent-rgb) / 0.18)', border: '1px solid var(--accent)', color: '#7ab5f7' }
   const hasSel = !!sel && phase === 'ready'
   const nyquist = info ? info.sampleRate / 2 : 24000
 
@@ -621,7 +621,7 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
           </button>
           <button
             style={edited && phase === 'ready'
-              ? { ...toolBtn, border: '1px solid #3d8fef', background: 'rgba(61,143,239,0.18)', color: '#7ab5f7' }
+              ? { ...toolBtn, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.18)', color: '#7ab5f7' }
               : disabledTool}
             disabled={!edited || phase !== 'ready'}
             onClick={() => void handleApply()}

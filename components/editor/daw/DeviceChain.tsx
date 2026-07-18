@@ -437,7 +437,7 @@ function UtilityControls({ effect, trackId, returnId }: { effect: TrackEffect; t
       <CtrlRow label="">
         <div style={{ display: 'flex', gap: 4 }}>
           {(['mono', 'muteL', 'muteR'] as const).map(k => (
-            <button key={k} onClick={() => up({ [k]: !p[k] })} style={{ fontSize: 9, padding: '2px 5px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${p[k] ? 'var(--accent)' : 'var(--border)'}`, background: p[k] ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)', color: p[k] ? 'var(--accent)' : 'var(--text-muted)' }}>
+            <button key={k} onClick={() => up({ [k]: !p[k] })} style={{ fontSize: 9, padding: '2px 5px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${p[k] ? 'var(--accent)' : 'var(--border)'}`, background: p[k] ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: p[k] ? 'var(--accent)' : 'var(--text-muted)' }}>
               {k === 'mono' ? 'Mono' : k === 'muteL' ? 'M-L' : 'M-R'}
             </button>
           ))}
@@ -536,7 +536,7 @@ function ChorusControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
             <button
               key={t}
               onClick={e => { e.stopPropagation(); up({ type: t }) }}
-              style={{ fontSize: 8, padding: '2px 5px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${p.type === t ? 'var(--accent)' : 'var(--border)'}`, background: p.type === t ? 'rgba(61,143,239,0.18)' : 'var(--bg-surface)', color: p.type === t ? 'var(--accent)' : 'var(--text-muted)' }}
+              style={{ fontSize: 8, padding: '2px 5px', borderRadius: 2, cursor: 'pointer', border: `1px solid ${p.type === t ? 'var(--accent)' : 'var(--border)'}`, background: p.type === t ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: p.type === t ? 'var(--accent)' : 'var(--text-muted)' }}
             >
               {t === 'chorus' ? 'Chr' : t === 'flanger' ? 'Flg' : 'Phs'}
             </button>
@@ -897,7 +897,7 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
                 border: 'none', color: 'var(--text-primary)', fontSize: 12,
                 cursor: 'pointer',
               }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(61,143,239,0.18)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgb(var(--accent-rgb) / 0.18)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
             >
               {opt.label}

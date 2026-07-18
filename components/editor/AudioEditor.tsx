@@ -113,7 +113,7 @@ function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
         display: 'flex', alignItems: 'center', gap: 5,
         fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,
         border: '1px solid #2e2e2e',
-        background: 'rgba(61,143,239,0.08)', color: '#7ab4f5',
+        background: 'rgb(var(--accent-rgb) / 0.08)', color: '#7ab4f5',
         cursor: busy ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
       }}
     >
@@ -199,7 +199,7 @@ function PodcastSetupPanel() {
                 style={{
                   fontSize: 9, padding: '2px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700,
                   border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
-                  background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
+                  background: track.inputSource ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-surface)',
                   color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
                 }}
               >MIC</button>
@@ -250,7 +250,7 @@ function PodcastSetupPanel() {
             </div>
             <button
               onClick={requestMicAccess}
-              style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent)', background: 'rgba(61,143,239,0.15)', color: 'var(--accent-light)', cursor: 'pointer', width: '100%' }}
+              style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.15)', color: 'var(--accent-light)', cursor: 'pointer', width: '100%' }}
             >
               Grant Microphone Access
             </button>
@@ -1279,7 +1279,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   data-help-id="sound-library"
                   style={{
                     width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
-                    background: sidebarOpen ? 'rgba(99,102,241,0.12)' : 'transparent',
+                    background: sidebarOpen ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
                     color: sidebarOpen ? 'var(--accent)' : 'var(--text-muted)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     transition: 'background 0.12s, color 0.12s',
@@ -1305,7 +1305,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                       data-help-id={`rail-${tab}`}
                       style={{
                         width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
-                        background: isActive ? 'rgba(99,102,241,0.12)' : 'transparent',
+                        background: isActive ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
                         color: isActive ? 'var(--accent)' : 'var(--text-muted)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'background 0.12s, color 0.12s',
@@ -1519,7 +1519,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 120,
           display: 'flex', alignItems: 'center', gap: 12,
           padding: '12px 18px', borderRadius: 10,
-          background: '#1c1c26', border: '1px solid #3d8fef',
+          background: '#1c1c26', border: '1px solid var(--accent)',
           boxShadow: '0 8px 32px rgba(0,0,0,0.6)', maxWidth: 520,
         }}>
           <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
@@ -1530,7 +1530,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           </div>
           <button onClick={handleRestore} style={{
             fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
-            border: '1px solid #3d8fef', background: 'rgba(61,143,239,0.18)', color: '#7ab5f7', whiteSpace: 'nowrap',
+            border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.18)', color: '#7ab5f7', whiteSpace: 'nowrap',
           }}>Restore</button>
           <button onClick={handleDiscardRestore} style={{
             fontSize: 12, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',

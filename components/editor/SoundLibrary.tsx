@@ -347,7 +347,7 @@ function EntryRow({
 
       {onPick && (
         <button onClick={() => onPick(entry)}
-          style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 3, border: '1px solid var(--accent)', background: 'rgba(61,143,239,0.12)', color: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}>
+          style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 3, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.12)', color: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}>
           Use
         </button>
       )}
@@ -1435,13 +1435,13 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           onClick={() => toggleFolderCollapse(parentKey)}
           style={{
             display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px',
-            background: 'rgba(61,143,239,0.06)', cursor: 'pointer',
-            borderLeft: '2px solid rgba(61,143,239,0.5)',
+            background: 'rgb(var(--accent-rgb) / 0.06)', cursor: 'pointer',
+            borderLeft: '2px solid rgb(var(--accent-rgb) / 0.5)',
           }}
         >
           {parentCollapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
-          <FolderOpen size={10} style={{ color: 'rgba(61,143,239,0.7)', flexShrink: 0 }} />
-          <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgba(61,143,239,0.9)', letterSpacing: '0.04em' }}>{parentName}</span>
+          <FolderOpen size={10} style={{ color: 'rgb(var(--accent-rgb) / 0.7)', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgb(var(--accent-rgb) / 0.9)', letterSpacing: '0.04em' }}>{parentName}</span>
           <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{totalCount}</span>
         </div>
 
@@ -1706,7 +1706,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                 flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3,
                 fontSize: 9, padding: '3px 7px', borderRadius: 4, cursor: 'pointer',
                 border: `1px solid ${showFilters || filtersActive ? 'var(--accent)' : 'var(--border)'}`,
-                background: showFilters ? `var(--accent)` : filtersActive ? 'rgba(99,102,241,0.15)' : 'var(--bg-card)',
+                background: showFilters ? `var(--accent)` : filtersActive ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)',
                 color: showFilters ? '#fff' : filtersActive ? 'var(--accent)' : 'var(--text-muted)',
                 position: 'relative',
               }}

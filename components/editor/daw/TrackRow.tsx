@@ -657,7 +657,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           style={{
             width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: `4px ${isIndented ? 8 : 8}px`,
             paddingLeft: leftPad,
-            background: isSelected ? 'rgba(61,143,239,0.10)' : isMultiSelected ? 'rgba(61,143,239,0.06)' : 'var(--bg-card)',
+            background: isSelected ? 'rgb(var(--accent-rgb) / 0.10)' : isMultiSelected ? 'rgb(var(--accent-rgb) / 0.06)' : 'var(--bg-card)',
             borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
             borderLeft: isIndented ? `3px solid ${track.color}88` : `3px solid ${track.color}`,
             boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s',
@@ -735,7 +735,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 style={{
                   fontSize: 7, height: 14, borderRadius: 2, padding: '0 3px',
                   border: `1px solid ${track.inputSource ? 'var(--accent)' : 'var(--border)'}`,
-                  background: track.inputSource ? 'rgba(61,143,239,0.15)' : 'var(--bg-surface)',
+                  background: track.inputSource ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-surface)',
                   color: track.inputSource ? 'var(--accent-light)' : 'var(--text-muted)',
                   cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
                   animation: blinkIds.has(`input:${track.id}`) ? 'dawBlink 0.45s ease-in-out 3' : undefined,
@@ -944,7 +944,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 {[['Compact', 40], ['Normal', 64], ['Tall', 120]] .map(([label, h]) => (
                   <button key={label}
                     onClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { height: h as number } }); setTrackCtxMenu(null) }}
-                    style={{ flex: 1, fontSize: 9, padding: '3px 0', borderRadius: 4, cursor: 'pointer', border: `1px solid ${track.height === h ? 'var(--accent)' : '#2a2a2a'}`, background: track.height === h ? 'rgba(61,143,239,0.12)' : 'transparent', color: track.height === h ? 'var(--accent)' : '#666' }}
+                    style={{ flex: 1, fontSize: 9, padding: '3px 0', borderRadius: 4, cursor: 'pointer', border: `1px solid ${track.height === h ? 'var(--accent)' : '#2a2a2a'}`, background: track.height === h ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', color: track.height === h ? 'var(--accent)' : '#666' }}
                   >{label}</button>
                 ))}
               </div>
@@ -958,7 +958,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           data-testid="track-lane"
           data-track-id={track.id}
           data-track-type={track.type}
-          style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgba(61,143,239,0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
+          style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgb(var(--accent-rgb) / 0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
           onMouseDown={e => { if (!e.altKey) { setSelectedClipIds(new Set()); setSelectedClipId(null) }; setCroppingClipId(null) }}
           onContextMenu={e => {
             // Clips stop propagation for their own menu — this fires on empty lane
@@ -1348,7 +1348,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   title="Repeat selection"
                   style={{
                     position: 'absolute', left: handleX, top: '50%', transform: 'translateY(-50%)',
-                    width: 18, height: 18, borderRadius: 9, background: '#3d8fef',
+                    width: 18, height: 18, borderRadius: 9, background: 'var(--accent)',
                     color: '#fff', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     cursor: 'pointer', zIndex: 10, userSelect: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
                   }}

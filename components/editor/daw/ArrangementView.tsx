@@ -246,8 +246,8 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
         <div
           style={{
             position: 'absolute', top: 0, left: loopL, width: Math.max(4, loopR - loopL), height: SEC_H,
-            background: 'rgba(61,143,239,0.18)', boxSizing: 'border-box',
-            borderLeft: '2px solid rgba(61,143,239,0.7)', borderRight: '2px solid rgba(61,143,239,0.7)',
+            background: 'rgb(var(--accent-rgb) / 0.18)', boxSizing: 'border-box',
+            borderLeft: '2px solid rgb(var(--accent-rgb) / 0.7)', borderRight: '2px solid rgb(var(--accent-rgb) / 0.7)',
             cursor: loopCursor,
           }}
           onMouseMove={e => {
@@ -1142,13 +1142,13 @@ export default function ArrangementView() {
     <div
       ref={outerRef}
       onMouseDownCapture={loopToolArmed ? onLoopToolMouseDown : undefined}
-      style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'hidden', position: 'relative', cursor: loopToolArmed ? 'crosshair' : undefined }}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)', overflow: 'hidden', position: 'relative', cursor: loopToolArmed ? 'crosshair' : undefined }}
     >
       {loopToolArmed && (
         <div style={{
           position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 30, pointerEvents: 'none',
           display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 999,
-          background: 'rgba(16,20,30,0.95)', border: '1px solid rgba(61,143,239,0.5)',
+          background: 'rgba(16,20,30,0.95)', border: '1px solid rgb(var(--accent-rgb) / 0.5)',
         }}>
           <span style={{ fontSize: 10.5, color: '#9cc4f0', fontWeight: 600 }}>Drag along the track or timeline to set the loop duration, or double-click Loop to loop the whole project · Esc to cancel</span>
         </div>
@@ -1500,8 +1500,8 @@ export default function ArrangementView() {
           top:  Math.min(rubberBand.y1, rubberBand.y2),
           width:  Math.abs(rubberBand.x2 - rubberBand.x1),
           height: Math.abs(rubberBand.y2 - rubberBand.y1),
-          border: '1px solid rgba(61,143,239,0.7)',
-          background: 'rgba(61,143,239,0.08)',
+          border: '1px solid rgb(var(--accent-rgb) / 0.7)',
+          background: 'rgb(var(--accent-rgb) / 0.08)',
           pointerEvents: 'none',
           zIndex: 200,
         }} />

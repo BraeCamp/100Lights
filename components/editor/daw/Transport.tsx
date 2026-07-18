@@ -567,7 +567,7 @@ export default function Transport() {
         )}
 
         <button
-          style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgba(61,143,239,0.7)', color: '#7ab4f5' } : base}
+          style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgb(var(--accent-rgb) / 0.7)', color: '#7ab4f5' } : base}
           onClick={handleLoopToggle}
           onDoubleClick={handleLoopFullSpan}
           title="Loop — click, then drag across the timeline to set the region. Double-click to loop the whole project."
@@ -695,7 +695,7 @@ export default function Transport() {
       )}
 
       <button
-        style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgba(61,143,239,0.7)', color: '#7ab4f5' } : base}
+        style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgb(var(--accent-rgb) / 0.7)', color: '#7ab4f5' } : base}
         onClick={handleLoopToggle}
         onDoubleClick={handleLoopFullSpan}
         title="Loop — click, then drag across the timeline to set the region. Double-click to loop the whole project."

@@ -109,7 +109,7 @@ export default function PracticeButton() {
         data-help-id="practice"
         style={{
           width: 24, height: 24, borderRadius: 6, border: 'none', cursor: 'pointer',
-          background: open ? 'rgba(99,102,241,0.12)' : 'transparent',
+          background: open ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
           color: open ? 'var(--accent)' : 'var(--text-muted)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,
@@ -274,8 +274,8 @@ export default function PracticeButton() {
                       key={step.id}
                       style={{
                         display: 'flex', gap: 10, padding: '9px 11px', borderRadius: 8,
-                        background: isCurrent ? 'rgba(99,102,241,0.08)' : 'transparent',
-                        border: `1px solid ${isCurrent ? 'rgba(99,102,241,0.35)' : isDone ? 'transparent' : 'var(--border)'}`,
+                        background: isCurrent ? 'rgb(var(--accent-rgb) / 0.08)' : 'transparent',
+                        border: `1px solid ${isCurrent ? 'rgb(var(--accent-rgb) / 0.35)' : isDone ? 'transparent' : 'var(--border)'}`,
                         opacity: !isDone && !isCurrent ? 0.45 : 1,
                       }}
                     >
@@ -302,8 +302,8 @@ export default function PracticeButton() {
                             onClick={() => { highlightHelpTargets([step.helpId!]); setOpen(false) }}
                             style={{
                               marginTop: 6, fontSize: 10.5, fontWeight: 600, cursor: 'pointer',
-                              color: 'var(--accent-light)', background: 'rgba(99,102,241,0.1)',
-                              border: '1px solid rgba(99,102,241,0.3)', borderRadius: 5, padding: '3px 9px',
+                              color: 'var(--accent-light)', background: 'rgb(var(--accent-rgb) / 0.1)',
+                              border: '1px solid rgb(var(--accent-rgb) / 0.3)', borderRadius: 5, padding: '3px 9px',
                             }}
                           >
                             Show me where

@@ -208,6 +208,11 @@ export function themeCssVars(theme: WorkshopTheme): Record<string, string> {
     const v = theme.colors?.[key]
     if (isHex(v)) vars[THEME_COLOR_TOKENS[key]] = v!
   }
+  // Expose the accent as an "R G B" triple so rgb(var(--accent-rgb) / a) works
+  // for the many places that need a translucent accent.
+  if (isHex(theme.colors?.accent)) {
+    vars['--accent-rgb'] = hexToRgb(theme.colors!.accent!).join(' ')
+  }
   if (theme.accentSync && isHex(theme.colors?.accent)) {
     Object.assign(vars, deriveAccentVars(theme.colors!.accent!))
   }

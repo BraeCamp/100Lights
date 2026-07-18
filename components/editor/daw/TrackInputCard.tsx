@@ -140,14 +140,14 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
                 padding: '6px 8px', marginBottom: 3, borderRadius: 5, cursor: 'pointer',
-                border: `1px solid ${active ? 'rgba(61,143,239,0.5)' : '#222'}`,
-                background: active ? 'rgba(61,143,239,0.10)' : 'transparent',
+                border: `1px solid ${active ? 'rgb(var(--accent-rgb) / 0.5)' : '#222'}`,
+                background: active ? 'rgb(var(--accent-rgb) / 0.10)' : 'transparent',
               }}
             >
               <div style={{
                 width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
-                border: `1.5px solid ${active ? '#3d8fef' : '#444'}`,
-                background: active ? '#3d8fef' : 'transparent',
+                border: `1.5px solid ${active ? 'var(--accent)' : '#444'}`,
+                background: active ? 'var(--accent)' : 'transparent',
               }} />
               <div>
                 <div style={{ fontSize: 11, color: active ? '#a8d4ff' : '#aaa', fontWeight: active ? 600 : 400 }}>
@@ -168,9 +168,9 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
               onClick={() => testState === 'testing' ? stopTest() : startTest(cur)}
               style={{
                 fontSize: 10, padding: '3px 10px', borderRadius: 4, cursor: 'pointer', flexShrink: 0,
-                border: `1px solid ${testState === 'testing' ? '#ef4444' : '#3d8fef'}`,
-                background: testState === 'testing' ? 'rgba(239,68,68,0.10)' : 'rgba(61,143,239,0.10)',
-                color: testState === 'testing' ? '#ef4444' : '#3d8fef',
+                border: `1px solid ${testState === 'testing' ? '#ef4444' : 'var(--accent)'}`,
+                background: testState === 'testing' ? 'rgba(239,68,68,0.10)' : 'rgb(var(--accent-rgb) / 0.10)',
+                color: testState === 'testing' ? '#ef4444' : 'var(--accent)',
               }}
             >
               {testState === 'testing' ? 'Stop' : 'Test'}
