@@ -340,6 +340,41 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       return res
     }
 
+    async function applyLoaded(data: CfProjFile) {
+      if (!alive) return
+      if ((data as CfProjFile & { _isOwner?: boolean })._isOwner === false) setIsOwner(false)
+      if ((data as CfProjFile & { _access?: string })._access === 'view') setViewOnly(true)
+      setSavedData(data)
+      setLocalName(data.name)
+      setCaptions(data.captions ?? [])
+      setOutputs(deserializeOutputs(data.outputs))
+      setAudioMedia(data.audioMedia ?? [])
+      setModuleSavedAt(data.moduleSavedAt ?? {})
+      if (data.audioMode) setAudioMode(data.audioMode)
+      if (data.podcastMeta) setPodcastMeta(data.podcastMeta)
+      // Resolve audio media to playable URLs before AudioEditor mounts
+      if (data.audioMedia?.length) {
+        const tracks = await resolveAudioMediaToTracks(data.audioMedia)
+        if (!alive) return
+        setInitAudioTracks(tracks)
+      }
+      setLoadError(null)
+      setActiveModules(data.modules ?? ['video'])
+    }
+
+    // A .cfproj opened from disk is stashed here by the projects page. Consume it
+    // so local projects — audio DAW included — open without a cloud round-trip
+    // (mirrors the video editor path). Hitting Save then persists it to the account.
+    try {
+      const stashKey = `cf_pending_cfproj_${projectId}`
+      const stashed = localStorage.getItem(stashKey)
+      if (stashed) {
+        localStorage.removeItem(stashKey)
+        void applyLoaded(JSON.parse(stashed) as CfProjFile)
+        return () => { alive = false }
+      }
+    } catch { /* fall through to cloud fetch */ }
+
     fetchProject()
       .then(async r => {
         if (!alive) return
@@ -349,26 +384,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
           else setLoadError('error')
           return
         }
-        const data: CfProjFile = await r.json()
-        if (!alive) return
-        if ((data as CfProjFile & { _isOwner?: boolean })._isOwner === false) setIsOwner(false)
-        if ((data as CfProjFile & { _access?: string })._access === 'view') setViewOnly(true)
-        setSavedData(data)
-        setLocalName(data.name)
-        setCaptions(data.captions ?? [])
-        setOutputs(deserializeOutputs(data.outputs))
-        setAudioMedia(data.audioMedia ?? [])
-        setModuleSavedAt(data.moduleSavedAt ?? {})
-        if (data.audioMode) setAudioMode(data.audioMode)
-        if (data.podcastMeta) setPodcastMeta(data.podcastMeta)
-        // Resolve audio media to playable URLs before AudioEditor mounts
-        if (data.audioMedia?.length) {
-          const tracks = await resolveAudioMediaToTracks(data.audioMedia)
-          if (!alive) return
-          setInitAudioTracks(tracks)
-        }
-        setLoadError(null)
-        setActiveModules(data.modules ?? ['video'])
+        await applyLoaded(await r.json())
       })
       .catch(() => { if (alive) setLoadError('error') })
     return () => { alive = false }
