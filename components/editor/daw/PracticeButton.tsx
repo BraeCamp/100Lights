@@ -213,7 +213,7 @@ export default function PracticeButton() {
                       </div>
                       <button onClick={() => loadRecipe(r)} style={{
                         flexShrink: 0, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
-                        color: '#fff', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px',
+                        color: 'var(--accent-contrast)', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px',
                       }}>Load</button>
                     </div>
                   ))}

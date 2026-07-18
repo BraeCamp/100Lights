@@ -105,7 +105,7 @@ export default function GuestPanel({ projectId, onPullTrack }: Props) {
           style={{
             display: 'flex', alignItems: 'center', gap: 5,
             padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
-            background: 'var(--accent)', color: '#fff', fontSize: 11, fontWeight: 600,
+            background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 11, fontWeight: 600,
             opacity: creating ? 0.6 : 1,
           }}
         >

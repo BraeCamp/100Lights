@@ -143,7 +143,7 @@ export default function VersionHistory() {
             <button
               onClick={() => void saveVersion()}
               disabled={!draft.trim() || busy === 'save' || isSaving || !projectIdFromUrl()}
-              style={{ fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: draft.trim() && projectIdFromUrl() ? 1 : 0.5, whiteSpace: 'nowrap' }}
+              style={{ fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', opacity: draft.trim() && projectIdFromUrl() ? 1 : 0.5, whiteSpace: 'nowrap' }}
             >{busy === 'save' ? '…' : 'Save'}</button>
           </div>
           {!projectIdFromUrl() && <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0 }}>Save the project first to start keeping versions.</p>}

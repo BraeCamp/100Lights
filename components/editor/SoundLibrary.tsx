@@ -1682,7 +1682,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           <FolderPlus size={10} />
         </button>
         <button onClick={() => setShowAdd(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
           + Add
         </button>
       </div>
@@ -1783,7 +1783,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             placeholder="Folder name…"
             style={{ flex: 1, fontSize: 10, background: 'var(--bg-surface)', border: '1px solid var(--accent)', borderRadius: 4, padding: '3px 6px', color: 'var(--text-primary)' }}
           />
-          <button onClick={createFolder} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Create</button>
+          <button onClick={createFolder} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Create</button>
           <button onClick={() => { setAddingFolder(false); setNewFolderDraft('') }} style={{ fontSize: 10, padding: '3px 6px', borderRadius: 4, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}>✕</button>
         </div>
       )}

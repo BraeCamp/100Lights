@@ -117,7 +117,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
         Share
         {count > 0 && (
           <span style={{
-            marginLeft: 2, background: 'var(--accent)', color: '#fff',
+            marginLeft: 2, background: 'var(--accent)', color: 'var(--accent-contrast)',
             borderRadius: 8, padding: '0 5px', fontSize: 9, fontWeight: 700,
           }}>
             {count}

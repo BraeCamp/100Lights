@@ -72,7 +72,8 @@ export interface WorkshopTheme {
   colors: Partial<Record<ThemeColorKey, string>>
   pattern: ThemePattern
   trackPalette?: string[]
-  accentSync: boolean // derive accent hover/light/subtle from the base accent
+  accentSync: boolean    // derive accent hover/light/subtle from the base accent
+  autoContrast?: boolean // text/symbols follow a grayscale ramp off the bg (default true)
   // Open for future fields; unknown keys are preserved on round-trip.
   [k: string]: unknown
 }
@@ -104,6 +105,7 @@ export function defaultTheme(): WorkshopTheme {
     colors: {},
     pattern: { type: 'none', opacity: 0.5, scale: 22 },
     accentSync: true,
+    autoContrast: true,
   }
 }
 
@@ -164,6 +166,21 @@ export function deriveAccentVars(accent: string): Record<string, string> {
   }
 }
 
+// Pick black or white — whichever reads better on the given color. Used for
+// text/icons sitting ON a colored fill (e.g. accent buttons).
+export function bestForeground(bg: string): string {
+  return contrastRatio('#ffffff', bg) >= contrastRatio('#0a0a0a', bg) ? '#ffffff' : '#0a0a0a'
+}
+
+// Grayscale text ramp chosen from the background's lightness — light text on a
+// dark workshop, dark text on a light one. Keeps the three text roles distinct
+// while guaranteeing each stays legible against the background.
+export function autoTextTokens(bg: string): { primary: string; secondary: string; muted: string } {
+  return contrastRatio('#ffffff', bg) >= contrastRatio('#0a0a0a', bg)
+    ? { primary: '#f4f4f4', secondary: '#bfbfbf', muted: '#909090' }
+    : { primary: '#161616', secondary: '#464646', muted: '#6b6b6b' }
+}
+
 // ── Pattern generation (self-contained SVG data-URIs, theme-color aware) ──────
 
 export function patternCss(
@@ -208,13 +225,21 @@ export function themeCssVars(theme: WorkshopTheme): Record<string, string> {
     const v = theme.colors?.[key]
     if (isHex(v)) vars[THEME_COLOR_TOKENS[key]] = v!
   }
-  // Expose the accent as an "R G B" triple so rgb(var(--accent-rgb) / a) works
-  // for the many places that need a translucent accent.
-  if (isHex(theme.colors?.accent)) {
-    vars['--accent-rgb'] = hexToRgb(theme.colors!.accent!).join(' ')
-  }
-  if (theme.accentSync && isHex(theme.colors?.accent)) {
-    Object.assign(vars, deriveAccentVars(theme.colors!.accent!))
+  const accent = resolveColor(theme, 'accent')
+  // Expose the accent as an "R G B" triple so rgb(var(--accent-rgb) / a) works,
+  // and the best on-accent foreground so button text/icons stay legible on any
+  // accent (e.g. black text on a pale-yellow accent).
+  vars['--accent-rgb'] = hexToRgb(accent).join(' ')
+  vars['--accent-contrast'] = bestForeground(accent)
+  if (theme.accentSync) Object.assign(vars, deriveAccentVars(accent))
+  // Auto-contrast (default on): text & symbols follow a grayscale ramp chosen
+  // from the SURFACE color (panels/menus are where most text sits), so they
+  // never wash out on lighter presets.
+  if (theme.autoContrast !== false) {
+    const t = autoTextTokens(resolveColor(theme, 'bgSurface'))
+    vars['--text-primary'] = t.primary
+    vars['--text-secondary'] = t.secondary
+    vars['--text-muted'] = t.muted
   }
   return vars
 }
@@ -227,17 +252,21 @@ export function resolveColor(theme: WorkshopTheme, key: ThemeColorKey): string {
 
 export interface ContrastWarning { pair: string; ratio: number }
 
-// Flag low text/background contrast (WCAG AA body text = 4.5:1).
+// Flag low contrast against the surface (where text/icons sit). With
+// auto-contrast on, text is derived to be legible, so only manual text and the
+// accent are worth flagging.
 export function contrastWarnings(theme: WorkshopTheme): ContrastWarning[] {
-  const bg = resolveColor(theme, 'bgBase')
+  const surface = resolveColor(theme, 'bgSurface')
   const warns: ContrastWarning[] = []
-  const check = (key: ThemeColorKey, label: string, min: number) => {
-    const ratio = contrastRatio(resolveColor(theme, key), bg)
+  const flag = (color: string, label: string, min: number) => {
+    const ratio = contrastRatio(color, surface)
     if (ratio < min) warns.push({ pair: label, ratio: Math.round(ratio * 100) / 100 })
   }
-  check('textPrimary', 'Text on background', 4.5)
-  check('textSecondary', 'Secondary text on background', 3)
-  check('accent', 'Accent on background', 2)
+  if (theme.autoContrast === false) {
+    flag(resolveColor(theme, 'textPrimary'), 'Text on panels', 4.5)
+    flag(resolveColor(theme, 'textSecondary'), 'Secondary text on panels', 3)
+  }
+  flag(resolveColor(theme, 'accent'), 'Accent on panels', 2)
   return warns
 }
 
@@ -269,6 +298,7 @@ export function sanitizeTheme(input: unknown): WorkshopTheme {
     pattern,
     ...(trackPalette && trackPalette.length ? { trackPalette } : {}),
     accentSync: t.accentSync !== false,
+    autoContrast: t.autoContrast !== false,
   }
 }
 

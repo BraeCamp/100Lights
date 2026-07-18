@@ -340,7 +340,7 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
               <button
                 onClick={handleDownload}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-                style={{ background: 'var(--accent)', color: '#fff' }}
+                style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
               >
                 <Download size={14} /> Download MP4
               </button>

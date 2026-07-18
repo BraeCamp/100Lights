@@ -111,7 +111,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ fontSize: 11, padding: '5px 14px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={handleApply} style={{ fontSize: 11, padding: '5px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Apply Crop</button>
+          <button onClick={handleApply} style={{ fontSize: 11, padding: '5px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer' }}>Apply Crop</button>
         </div>
       </div>
     </div>,

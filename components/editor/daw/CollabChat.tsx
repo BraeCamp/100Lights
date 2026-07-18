@@ -107,7 +107,7 @@ export default function CollabChat() {
               placeholder="Message…"
               style={{ flex: 1, fontSize: 11, padding: '6px 9px', borderRadius: 7, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
             />
-            <button onClick={send} disabled={!draft.trim()} style={{ fontSize: 10.5, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: draft.trim() ? 1 : 0.5 }}>Send</button>
+            <button onClick={send} disabled={!draft.trim()} style={{ fontSize: 10.5, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', opacity: draft.trim() ? 1 : 0.5 }}>Send</button>
           </div>
         </div>
       )}

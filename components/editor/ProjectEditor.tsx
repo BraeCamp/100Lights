@@ -601,7 +601,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
           </p>
           <div style={{ display: 'flex', gap: 10 }}>
             {loadError === 'error' && (
-              <button onClick={() => window.location.reload()} style={{ padding: '9px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, background: 'var(--accent)', color: '#fff' }}>
+              <button onClick={() => window.location.reload()} style={{ padding: '9px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
                 Try again
               </button>
             )}

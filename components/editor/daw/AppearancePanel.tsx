@@ -7,10 +7,12 @@ import { useWorkshopTheme } from '../WorkshopThemeProvider'
 import { shareTheme } from '@/lib/community'
 import {
   THEME_COLOR_KEYS, THEME_COLOR_LABELS, PATTERN_TYPES, BUILTIN_PRESETS,
-  DEFAULT_TRACK_PALETTE, resolveColor, contrastWarnings,
+  DEFAULT_TRACK_PALETTE, resolveColor, contrastWarnings, autoTextTokens,
   getUserPresets, saveUserPreset, deleteUserPreset,
   type WorkshopTheme, type ThemeColorKey, type PatternType, type SavedPreset,
 } from '@/lib/workshop-theme'
+
+const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
 export default function AppearancePanel({ onClose }: { onClose: () => void }) {
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
@@ -120,17 +122,25 @@ export default function AppearancePanel({ onClose }: { onClose: () => void }) {
           <p style={label}>Palette</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {THEME_COLOR_KEYS.map(key => {
-              const val = resolveColor(theme, key)
-              const overridden = !!theme.colors?.[key]
+              const autoText = theme.autoContrast !== false && TEXT_KEYS.includes(key)
+              const auto = autoText ? autoTextTokens(resolveColor(theme, 'bgSurface')) : null
+              const val = auto
+                ? (key === 'textPrimary' ? auto.primary : key === 'textSecondary' ? auto.secondary : auto.muted)
+                : resolveColor(theme, key)
+              const overridden = !autoText && !!theme.colors?.[key]
               return (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <label style={{ position: 'relative', width: 26, height: 26, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-light)', cursor: 'pointer', flexShrink: 0, background: val }}>
-                    <input type="color" value={val} onChange={e => setColor(key, e.target.value)}
-                      style={{ position: 'absolute', inset: -4, width: 40, height: 40, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', opacity: 0 }} />
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, opacity: autoText ? 0.55 : 1 }}>
+                  <label style={{ position: 'relative', width: 26, height: 26, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-light)', cursor: autoText ? 'default' : 'pointer', flexShrink: 0, background: val }}>
+                    {!autoText && <input type="color" value={val} onChange={e => setColor(key, e.target.value)}
+                      style={{ position: 'absolute', inset: -4, width: 40, height: 40, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', opacity: 0 }} />}
                   </label>
                   <span style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)' }}>{THEME_COLOR_LABELS[key]}</span>
-                  <input value={val} onChange={e => { const v = e.target.value; if (/^#?[0-9a-fA-F]{0,6}$/.test(v)) setColor(key, v.startsWith('#') ? v : '#' + v) }}
-                    style={{ width: 74, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
+                  {autoText ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-muted)', padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)' }}>AUTO</span>
+                  ) : (
+                    <input value={val} onChange={e => { const v = e.target.value; if (/^#?[0-9a-fA-F]{0,6}$/.test(v)) setColor(key, v.startsWith('#') ? v : '#' + v) }}
+                      style={{ width: 74, fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
+                  )}
                   {overridden && (
                     <button onClick={() => clearColor(key)} title="Reset to default" style={{ padding: 2, color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
                       <RotateCcw size={12} />
@@ -141,6 +151,10 @@ export default function AppearancePanel({ onClose }: { onClose: () => void }) {
             })}
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={theme.autoContrast !== false} onChange={e => update({ autoContrast: e.target.checked })} />
+            Auto-contrast text &amp; symbols
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <input type="checkbox" checked={theme.accentSync} onChange={e => update({ accentSync: e.target.checked })} />
             Auto-derive accent shades
           </label>
@@ -211,7 +225,7 @@ export default function AppearancePanel({ onClose }: { onClose: () => void }) {
               <Save size={13} /> Save theme
             </button>
             <button onClick={share} disabled={busy === 'share'}
-              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '8px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: busy === 'share' ? 0.7 : 1 }}>
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '8px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', opacity: busy === 'share' ? 0.7 : 1 }}>
               {busy === 'share' ? <Check size={13} /> : <Upload size={13} />} Share
             </button>
           </div>

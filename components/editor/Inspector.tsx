@@ -430,7 +430,7 @@ export default function Inspector({
                   )}
                   <button onClick={onTranscribe}
                     className="flex items-center justify-center gap-2 w-full py-2 rounded-lg text-xs font-medium"
-                    style={{ background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                    style={{ background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer' }}>
                     <Mic size={12} /> Transcribe Media
                   </button>
                 </div>

@@ -15,6 +15,7 @@
   --accent-light: #8b5cf6;
   --accent-subtle: rgba(124, 58, 237, 0.12);
   --accent-rgb: 124 58 237;   /* space-separated for rgb(var(--accent-rgb) / a) */
+  --accent-contrast: #ffffff; /* legible text/icon color on an accent fill */
   --success: #10b981;
   --warning: #f59e0b;
   --error: #ef4444;
@@ -78,6 +79,7 @@ body {
   --accent-light: #6aabf5;
   --accent-subtle: rgba(61, 143, 239, 0.12);
   --accent-rgb: 61 143 239;
+  --accent-contrast: #ffffff;
 }
 
 /* Slider reset for Inspector controls */

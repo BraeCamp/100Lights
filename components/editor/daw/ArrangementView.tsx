@@ -1592,7 +1592,7 @@ export default function ArrangementView() {
           </button>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) }}
-              style={{ flex: 1, background: 'var(--accent)', border: 'none', color: '#fff', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 600 }}>
+              style={{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-contrast)', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 600 }}>
               Apply
             </button>
             <button onClick={() => setTsPopover(null)}
@@ -1699,7 +1699,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
                         setPublishLoading(false)
                       }
                     }}
-                    style={{ flex: 1, padding: '7px 0', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: publishLoading ? 'not-allowed' : 'pointer', opacity: publishLoading ? 0.6 : 1 }}
+                    style={{ flex: 1, padding: '7px 0', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 12, fontWeight: 600, cursor: publishLoading ? 'not-allowed' : 'pointer', opacity: publishLoading ? 0.6 : 1 }}
                   >{publishLoading ? 'Generating…' : 'Generate RSS Feed'}</button>
                   <button
                     onClick={() => setShowPublish(false)}

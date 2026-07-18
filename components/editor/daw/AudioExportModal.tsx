@@ -363,7 +363,7 @@ style={{
                 onClick={() => void startExport()}
                 style={{
                   width: '100%', padding: '10px 0', borderRadius: 8, border: 'none',
-                  background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 13, fontWeight: 600, cursor: 'pointer',
                 }}
               >
                 Start Export
@@ -503,7 +503,7 @@ style={{
                           style={{
                             display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, fontSize: 12, fontWeight: 700,
                             padding: '8px 13px', borderRadius: 7, border: 'none', cursor: 'pointer',
-                            background: 'var(--accent)', color: '#fff', opacity: shareState === 'busy' ? 0.6 : 1,
+                            background: 'var(--accent)', color: 'var(--accent-contrast)', opacity: shareState === 'busy' ? 0.6 : 1,
                           }}
                         >
                           <Globe2 size={13} /> {shareState === 'busy' ? 'Sharing…' : 'Share to Community'}
