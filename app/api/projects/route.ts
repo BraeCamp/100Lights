@@ -148,7 +148,10 @@ export async function POST(req: Request) {
           saved_at       = EXCLUDED.saved_at,
           data           = EXCLUDED.data,
           slug           = COALESCE(projects.slug, EXCLUDED.slug),
-          owner_username = COALESCE(projects.owner_username, EXCLUDED.owner_username)
+          owner_username = COALESCE(projects.owner_username, EXCLUDED.owner_username),
+          -- Re-importing/saving a project restores it: a matching id that was
+          -- soft-deleted (same name deleted earlier) must reappear, not stay hidden.
+          deleted_at     = NULL
   `
 
   // Return the actual stored slug (may differ from generated if project already had one)
