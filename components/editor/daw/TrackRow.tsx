@@ -973,6 +973,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         {/* Lane */}
         <div
           data-testid="track-lane"
+          data-help-id="track-lane"
           data-track-id={track.id}
           data-track-type={track.type}
           style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgb(var(--accent-rgb) / 0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}

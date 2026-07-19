@@ -11,7 +11,7 @@ import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
-import { Library, Settings, FileText, Users, Palette, Home } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Home, Code2 } from 'lucide-react'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
@@ -28,6 +28,7 @@ import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
+import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
 import { saveSnapshot, loadSnapshot, deleteSnapshot } from '@/lib/offline-store'
 import { getPresets } from '@/lib/midi-presets'
@@ -941,7 +942,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   })
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
-  const [leftTab,     setLeftTab]     = useState<'library' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
+  const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showAppearance, setShowAppearance] = useState(false)
 
@@ -1302,20 +1303,29 @@ export default function AudioEditor(props: AudioEditorProps) {
                 <Home size={15} />
               </a>
               {!isPodcast ? (
-                <button
-                  onClick={() => setSidebarOpen(v => !v)}
-                  title="Sound Library"
-                  data-help-id="sound-library"
-                  style={{
-                    width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
-                    background: sidebarOpen ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
-                    color: sidebarOpen ? 'var(--accent)' : 'var(--text-muted)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'background 0.12s, color 0.12s',
-                  }}
-                >
-                  <Library size={14} />
-                </button>
+                ([
+                  { tab: 'library', Icon: Library, label: 'Sound Library',                     help: 'sound-library' },
+                  { tab: 'code',    Icon: Code2,   label: 'Code — generate or edit sounds with math', help: 'sound-code' },
+                ] as const).map(({ tab, Icon, label, help }) => {
+                  const isActive = sidebarOpen && leftTab === tab
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => { if (isActive) setSidebarOpen(false); else { setLeftTab(tab); setSidebarOpen(true) } }}
+                      title={label}
+                      data-help-id={help}
+                      style={{
+                        width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: isActive ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
+                        color: isActive ? 'var(--accent)' : 'var(--text-muted)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'background 0.12s, color 0.12s',
+                      }}
+                    >
+                      <Icon size={14} />
+                    </button>
+                  )
+                })
               ) : (
                 ([
                   { tab: 'setup',   Icon: Settings, label: 'Setup'   },
@@ -1386,7 +1396,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 </div>
               )}
               {!isPodcast ? (
-                <SoundLibraryPanel embedded={true} />
+                leftTab === 'code' ? <PolyCodePanel /> : <SoundLibraryPanel embedded={true} />
               ) : leftTab === 'setup' ? (
                 <PodcastSetupPanel />
               ) : leftTab === 'guests' ? (

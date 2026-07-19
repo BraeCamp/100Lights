@@ -144,6 +144,8 @@ const FEATURES: Feature[] = [
     description: 'Channel strips for every track with volume faders, pan, mute/solo, and live spectrum meters — the place to balance your entire mix in one view.' },
   { group: 'Views & Layout', name: 'Sound Library', helpIds: ['sound-library'], modes: ['music'],
     description: 'Browse thousands of built-in and imported sounds organized into folders. Drag any sound straight onto a track, and save your own captures back into it.' },
+  { group: 'Views & Layout', name: 'Code', helpIds: ['sound-code'], modes: ['music'],
+    description: 'Generate a synth (poly) track from a few lines of math — scales, chords, euclidean rhythms, seeded randomness. Or select a clip to load its patch, notes, and clip-only effects (rollFx) as editable code. It runs in a sandbox; the track’s shared effects show read-only underneath with a Mute FX toggle to audition just the code.' },
   { group: 'Views & Layout', name: 'Practice Room', helpIds: ['practice'], modes: ['music'],
     description: 'Guided skill paths completed by doing, not reading — pick a path and the editor checks steps off as your project takes shape, glowing the next control when you ask.' },
 
@@ -172,6 +174,8 @@ const FEATURES: Feature[] = [
   // ── Tracks & Mixing ──
   { group: 'Tracks & Mixing', name: 'Add Track', helpIds: ['add-track'], hint: ARR_HINT,
     description: 'Create a new track at the bottom of the arrangement. Tracks hold audio clips, MIDI instruments, or drums, and each gets its own color and controls.' },
+  { group: 'Tracks & Mixing', name: 'Create on a Track', helpIds: ['track-lane'], hint: ARR_HINT,
+    description: 'Double-click an empty track lane to open a create menu — Upload an audio file, Record from the mic, Browse the library, or Synthesize a sound with code — the quickest way to fill a fresh track at the point you clicked.' },
   { group: 'Tracks & Mixing', name: 'Return Tracks', helpIds: ['add-return'], hint: ARR_HINT,
     description: 'Add a return track to host shared effects like reverb or delay — any track can send signal to it instead of duplicating the same effect everywhere.' },
   { group: 'Tracks & Mixing', name: 'Arm for Recording', helpIds: ['arm'], hint: TRACK_HINT,
