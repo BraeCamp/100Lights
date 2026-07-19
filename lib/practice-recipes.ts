@@ -347,6 +347,70 @@ export function importRecipe(stored: StoredRecipeSpec): void {
   localStorage.setItem(IMPORTED_KEY, JSON.stringify(next))
 }
 
+// ── Signature synth sounds (from the darkwave/dark-pop starter songs) ─────────
+// These recipes carry the full instrument patch (not a preset), so dropping one
+// onto a track gives you that exact SOUND plus a short demo phrase. Clear the
+// notes and play your own — the sound stays.
+const soundRecipe = (
+  id: string, title: string, tagline: string, annotation: string[],
+  params: Record<string, unknown>, durationBeats: number, notes: Omit<MidiNote, 'id'>[],
+): PracticeRecipe => ({
+  id, title, tagline, annotation, genre: 'Electronic',
+  build: () => ({
+    trackName: title,
+    instrument: { type: 'poly', params } as TrackInstrument,
+    isDrumClip: false, durationBeats, usePreset: false, notes,
+  }),
+})
+
+export const SOUND_RECIPES: PracticeRecipe[] = [
+  soundRecipe('snd-darkwave-lead', 'Darkwave Lead',
+    'The moody square-wave lead from “Hollow Cathedral” — with a slow pitch vibrato.',
+    ['A hollow square wave through a low-pass filter (1.5 kHz), with a gentle 5 Hz vibrato on the pitch.',
+     'Clear the demo melody and play your own — the sound is what travels.'],
+    { waveform: 'square', attack: 0.01, decay: 0.2, sustain: 0.55, release: 0.4, detune: 7, filterType: 'lowpass', filterCutoff: 1500, filterResonance: 3, lfoEnabled: true, lfoRate: 5, lfoDepth: 0.12, lfoTarget: 'pitch', lfoWaveform: 'sine' },
+    16, [
+      N(78, 0, 1.5), N(81, 1.5, 0.5), N(73, 2, 2), N(83, 6, 1), N(81, 7, 1),
+      N(78, 8, 2), N(73, 12, 1), N(76, 13, 1), N(73, 14, 2),
+    ]),
+  soundRecipe('snd-cold-pad', 'Cold Pad',
+    'The wide, slow-swelling darkwave pad — detuned saw with a drifting filter.',
+    ['Two saw layers an octave apart, opened by a slow LFO on the filter for that cold “breathing” motion.',
+     'Long attack and release make it a bed — hold whole-note chords under everything.'],
+    { waveform: 'sawtooth', attack: 1.1, decay: 0.6, sustain: 0.7, release: 0.9, detune: -12, filterType: 'lowpass', filterCutoff: 1000, filterResonance: 2.2, lfoEnabled: true, lfoRate: 0.22, lfoDepth: 0.25, lfoTarget: 'filter', lfoWaveform: 'sine' },
+    16, [
+      N(54, 0, 4), N(57, 0, 4), N(61, 0, 4),   N(50, 4, 4), N(54, 4, 4), N(57, 4, 4),
+      N(57, 8, 4), N(61, 8, 4), N(64, 8, 4),   N(52, 12, 4), N(56, 12, 4), N(59, 12, 4),
+    ]),
+  soundRecipe('snd-sequencer-arp', 'Sequencer Arp',
+    'The tight, plucky EBM-style arp — a short square stab that dies fast.',
+    ['Zero sustain and a fast release give it that staccato “tick” — perfect for 8th- or 16th-note sequences.',
+     'Play it as steady 8ths and let the filter/reverb do the rest.'],
+    { waveform: 'square', attack: 0.002, decay: 0.18, sustain: 0.0, release: 0.16, detune: 12, filterType: 'lowpass', filterCutoff: 2200, filterResonance: 3.2, lfoEnabled: false, lfoRate: 4, lfoDepth: 0, lfoTarget: 'filter', lfoWaveform: 'sine' },
+    8, [
+      N(66, 0, 0.4), N(69, 0.5, 0.4), N(73, 1, 0.4), N(78, 1.5, 0.4), N(73, 2, 0.4), N(69, 2.5, 0.4), N(66, 3, 0.4), N(69, 3.5, 0.4),
+      N(66, 4, 0.4), N(69, 4.5, 0.4), N(73, 5, 0.4), N(78, 5.5, 0.4), N(73, 6, 0.4), N(69, 6.5, 0.4), N(66, 7, 0.4), N(73, 7.5, 0.4),
+    ]),
+  soundRecipe('snd-reese-bass', 'Reese Bass',
+    'The growling detuned-saw bass — resonant and dark, for driving 8th-note lines.',
+    ['A detuned sawtooth through a resonant low-pass (620 Hz, Q 6) — that’s the “Reese” growl.',
+     'Keep it low and busy; it locks with the kick.'],
+    { waveform: 'sawtooth', attack: 0.006, decay: 0.12, sustain: 0.75, release: 0.2, detune: 9, filterType: 'lowpass', filterCutoff: 620, filterResonance: 6, lfoEnabled: false, lfoRate: 4, lfoDepth: 0.3, lfoTarget: 'filter', lfoWaveform: 'sine' },
+    8, [
+      N(42, 0, 0.42), N(42, 0.5, 0.42), N(49, 1, 0.42), N(42, 1.5, 0.42), N(42, 2, 0.42), N(54, 2.5, 0.42), N(49, 3, 0.42), N(42, 3.5, 0.42),
+      N(42, 4, 0.42), N(42, 4.5, 0.42), N(49, 5, 0.42), N(42, 5.5, 0.42), N(42, 6, 0.42), N(54, 6.5, 0.42), N(49, 7, 0.42), N(42, 7.5, 0.42),
+    ]),
+  soundRecipe('snd-808-sub', '808 Sub Bass',
+    'The deep sine sub from the heavier tracks — long, round, and felt more than heard.',
+    ['A pure sine with a long tail — the tonal 808. Pair it with the 808 drum kick for weight.',
+     'Slide between roots by leaving no gap between notes.'],
+    { waveform: 'sine', attack: 0.006, decay: 0.2, sustain: 0.92, release: 0.4, detune: 0, filterType: 'lowpass', filterCutoff: 3000, filterResonance: 1, lfoEnabled: false, lfoRate: 4, lfoDepth: 0.3, lfoTarget: 'filter', lfoWaveform: 'sine' },
+    8, [
+      N(30, 0, 2.4), N(30, 2.5, 1), N(42, 3.5, 0.5),
+      N(30, 4, 2.4), N(30, 6.5, 1), N(42, 7.5, 0.5),
+    ]),
+]
+
 /** Genre folders shown in the library, in display order. */
 export const RECIPE_GENRE_ORDER = ['Pop', 'Rock', 'Jazz', 'Blues', 'Soul', 'Electronic', 'Classical', 'Cinematic', 'World', 'Other'] as const
 
@@ -377,7 +441,7 @@ const RECIPE_GENRES: Record<string, string> = {
 
 /** Built-in chord recipes plus anything imported from the community. */
 export function getAllChordRecipes(): PracticeRecipe[] {
-  return [...CHORD_RECIPES, ...getImportedRecipes()].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
+  return [...CHORD_RECIPES, ...SOUND_RECIPES, ...getImportedRecipes()].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
 }
 
 /** Materializes a recipe into a clip for a given track, with fresh ids. */
