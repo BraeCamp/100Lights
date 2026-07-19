@@ -12,11 +12,25 @@ export interface GeneratedNote {
   velocity: number
 }
 
+/** Per-clip roll effects — the only effects the code edits (they affect just
+ *  this clip/sample, unlike the track's shared effect chain). */
+export interface RollFx {
+  sustain?: number
+  reverbWet?: number
+  distortion?: number
+  filterHz?: number
+  sub?: number
+  bass?: number
+  mid?: number
+  treble?: number
+}
+
 export interface GeneratedTrack {
   name: string
   params: PolyInstrumentParams
   notes: GeneratedNote[]
   durationBeats: number
+  rollFx?: RollFx
 }
 
 export type PolyCodeResult =
@@ -152,7 +166,7 @@ self.onmessage = function(e){
     const fn = new Function('scale','note','chord','euclid','pitch','seq','rhythm','rand','tempo','bars','Math', data.code);
     const out = fn(scale, note, chord, euclid, pitch, seq, rhythm, rand, data.tempo, data.bars, Math) || {};
     const notes = flatten(Array.isArray(out.notes) ? out.notes : [], []);
-    self.postMessage({ ok: true, name: out.name, patch: out.patch || {}, notes: notes, length: out.length });
+    self.postMessage({ ok: true, name: out.name, patch: out.patch || {}, notes: notes, length: out.length, rollFx: out.rollFx || null });
   } catch (err) {
     self.postMessage({ ok: false, error: String((err && err.message) || err) });
   }
@@ -168,8 +182,27 @@ function clamp(v: unknown, def: number, lo: number, hi: number): number {
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def
 }
 
+function rollFxFrom(raw: unknown): RollFx | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  const out: RollFx = {}
+  const add = (k: keyof RollFx, lo: number, hi: number) => {
+    const v = Number(r[k])
+    if (Number.isFinite(v)) out[k] = Math.min(hi, Math.max(lo, v))
+  }
+  add('sustain', 0, 8)
+  add('reverbWet', 0, 1)
+  add('distortion', 0, 1)
+  add('filterHz', 20, 20000)
+  add('sub', -12, 12)
+  add('bass', -12, 12)
+  add('mid', -12, 12)
+  add('treble', -12, 12)
+  return Object.keys(out).length ? out : undefined
+}
+
 function finalize(
-  raw: { name?: unknown; patch?: Record<string, unknown>; notes?: unknown[]; length?: unknown },
+  raw: { name?: unknown; patch?: Record<string, unknown>; notes?: unknown[]; length?: unknown; rollFx?: unknown },
   bars: number,
 ): GeneratedTrack {
   const base = defaultPolyInstrument().params as PolyInstrumentParams
@@ -218,7 +251,7 @@ function finalize(
     typeof raw.name === 'string' && raw.name.trim()
       ? raw.name.trim().slice(0, 40)
       : 'Coded Poly'
-  return { name, params, notes, durationBeats }
+  return { name, params, notes, durationBeats, rollFx: rollFxFrom(raw.rollFx) }
 }
 
 /** Run creator [code] and return a poly track (or an error). Times out at 2 s. */

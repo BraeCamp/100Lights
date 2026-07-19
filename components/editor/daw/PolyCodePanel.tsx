@@ -32,12 +32,17 @@ function patchToCode(track: DawTrack, clip: MidiClip | undefined, fallbackLen: n
         .map((n) => `  note(${n.pitch}, ${r3(n.startBeat)}, ${r3(n.durationBeats)}, ${n.velocity})`)
         .join(',\n')
     : ''
-  return `// Editing "${track.name}"${clip ? ` · clip "${clip.name}"` : ''} — tweak the patch (the sound) and/or notes, then Save.
+  const rf = clip?.rollFx
+  const rfEntries = rf ? Object.entries(rf).filter(([, v]) => v !== undefined) : []
+  const rollLine = rfEntries.length
+    ? `  rollFx: { ${rfEntries.map(([k, v]) => `${k}: ${v}`).join(', ')} },   // clip-only effects\n`
+    : `  // rollFx: { reverbWet: 0.3, distortion: 0.2, filterHz: 1200, sustain: 0, sub: 0, bass: 0, mid: 0, treble: 0 },  // clip-only effects — uncomment to add\n`
+  return `// Editing "${track.name}"${clip ? ` · clip "${clip.name}"` : ''} — tweak the patch, notes, and this clip's effects (rollFx), then Save.
 return {
   name: ${JSON.stringify(track.name)},
   patch: ${patch},
   length: ${clip?.durationBeats ?? fallbackLen},
-  notes: [
+${rollLine}  notes: [
 ${notesCode}
   ],
 };`
@@ -73,7 +78,6 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
   const targetTrack = project.tracks.find((t) => t.id === targetTrackId)
   const canEdit = targetTrack?.instrument.type === 'poly'
   const effects = targetTrack?.effects ?? []
-  const rollFx = activeMidiClip?.rollFx
 
   // Restore any live FX mute when the panel unmounts.
   const muteRef = useRef<{ on: boolean; trackId?: string; effects?: TrackEffect[] }>({ on: false })
@@ -107,6 +111,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
       kind: 'midi', id: crypto.randomUUID(), trackId, name: t.name, startBeat: 0,
       durationBeats: t.durationBeats,
       notes: t.notes.map((n) => ({ id: crypto.randomUUID(), ...n })), isDrumClip: false,
+      ...(t.rollFx ? { rollFx: t.rollFx } : {}),
     }
   }
 
@@ -133,7 +138,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
       : project.arrangementClips.find((c) => c.trackId === editingTrackId && c.kind === 'midi')) as MidiClip | undefined
     const notes = t.notes.map((n) => ({ id: crypto.randomUUID(), ...n }))
     if (clip) {
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, durationBeats: t.durationBeats } })
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, durationBeats: t.durationBeats, rollFx: t.rollFx } })
     } else if (notes.length) {
       dispatch({ type: 'ADD_CLIP', clip: makeClip(editingTrackId, t) })
     }
@@ -189,12 +194,13 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
         }}
       />
 
-      {/* Read-only effect chain of the track being edited (separate box per effect) */}
-      {(effects.length > 0 || rollFx) && (
+      {/* Track effect chain — view only (these affect the whole track; the
+          clip's own effects are edited in the code above as `rollFx`). */}
+      {effects.length > 0 && (
         <div style={{ borderTop: '1px solid var(--border)', maxHeight: 150, overflowY: 'auto', background: 'var(--bg-surface)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px' }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
-              Effects on “{targetTrack?.name}” ({effects.length})
+              Track FX · {targetTrack?.name} ({effects.length}) · view only
             </span>
             <button
               onClick={() => { const n = !muteFx; setMuteFx(n); applyMute(n) }}
@@ -221,14 +227,6 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
                 </div>
               )
             })}
-            {rollFx && Object.values(rollFx).some((v) => v !== undefined) && (
-              <div style={{ border: '1px dashed var(--border)', borderRadius: 6, padding: '6px 8px', background: 'var(--bg-card)' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 3 }}>Clip roll FX</div>
-                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
-                  {Object.entries(rollFx).filter(([, v]) => v !== undefined).map(([k, v]) => <span key={k}>{k}: {fmt(v)}</span>)}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
