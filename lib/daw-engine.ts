@@ -99,7 +99,7 @@ export class DawEngine extends EventTarget {
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private _chainSigs = new Map<string, string>()
   private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
-  private mixerEqNodes = new Map<string, { low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
+  private mixerEqNodes = new Map<string, { sub: BiquadFilterNode; low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
   private maskingAnalysers = new Map<string, AnalyserNode>()
   private maskingBridges   = new Map<string, GainNode>()
   varispeedRate = 1.0
@@ -230,7 +230,9 @@ export class DawEngine extends EventTarget {
       const analyser      = this.ctx.createAnalyser()
       analyser.fftSize = 256
 
-      // Mixer EQ: 3-band (lowshelf/peaking/highshelf) inserted between effects output and volume fader
+      // Mixer / tone EQ: 4-band (sub + bass/mid/treble) inserted between effects output and volume fader
+      const eqSub = this.ctx.createBiquadFilter()
+      eqSub.type = 'lowshelf'; eqSub.frequency.value = 70; eqSub.gain.value = 0
       const eqLow = this.ctx.createBiquadFilter()
       eqLow.type = 'lowshelf'; eqLow.frequency.value = 200; eqLow.gain.value = 0
       const eqMid = this.ctx.createBiquadFilter()
@@ -238,7 +240,8 @@ export class DawEngine extends EventTarget {
       const eqHi = this.ctx.createBiquadFilter()
       eqHi.type = 'highshelf'; eqHi.frequency.value = 8000; eqHi.gain.value = 0
 
-      effectsOutput.connect(eqLow)
+      effectsOutput.connect(eqSub)
+      eqSub.connect(eqLow)
       eqLow.connect(eqMid)
       eqMid.connect(eqHi)
       eqHi.connect(gain)
@@ -246,7 +249,7 @@ export class DawEngine extends EventTarget {
       panner.connect(analyser)
       analyser.connect(this.masterGain)
 
-      this.mixerEqNodes.set(id, { low: eqLow, mid: eqMid, hi: eqHi })
+      this.mixerEqNodes.set(id, { sub: eqSub, low: eqLow, mid: eqMid, hi: eqHi })
 
       // Create a send gain for every existing return bus (start at 0)
       const sendGains    = new Map<string, GainNode>()
@@ -345,6 +348,7 @@ export class DawEngine extends EventTarget {
     if (chain) { chain.dispose(); this.effectsChains.delete(id) }
     const eq = this.mixerEqNodes.get(id)
     if (eq) {
+      try { eq.sub.disconnect() } catch { /* ok */ }
       try { eq.low.disconnect() } catch { /* ok */ }
       try { eq.mid.disconnect() } catch { /* ok */ }
       try { eq.hi.disconnect() } catch { /* ok */ }
@@ -518,6 +522,17 @@ export class DawEngine extends EventTarget {
     const eq = this.mixerEqNodes.get(trackId)
     if (!eq) return { low: 0, mid: 0, hi: 0 }
     return { low: eq.low.gain.value, mid: eq.mid.gain.value, hi: eq.hi.gain.value }
+  }
+
+  // Per-track 4-band tone EQ (persisted on the track). All values in dB.
+  setTrackTone(trackId: string, tone?: { sub?: number; bass?: number; mid?: number; treble?: number }) {
+    const eq = this.mixerEqNodes.get(trackId)
+    if (!eq) return
+    const t = this.ctx.currentTime
+    eq.sub.gain.setTargetAtTime(tone?.sub ?? 0, t, 0.01)
+    eq.low.gain.setTargetAtTime(tone?.bass ?? 0, t, 0.01)
+    eq.mid.gain.setTargetAtTime(tone?.mid ?? 0, t, 0.01)
+    eq.hi.gain.setTargetAtTime(tone?.treble ?? 0, t, 0.01)
   }
 
   getTrackAnalyser(trackId: string): AnalyserNode | null {
@@ -751,6 +766,7 @@ export class DawEngine extends EventTarget {
       const silenced = t.mute || (anySoloed && !t.solo)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
+      this.setTrackTone(t.id, t.tone)
       for (const rt of returnTracks) {
         const amount = t.sendAmounts?.[rt.id] ?? 0
         const mode   = t.sendModes?.[rt.id] ?? 'post'
@@ -1875,7 +1891,8 @@ export class DawEngine extends EventTarget {
   }
 
   static rollFxActive(rfx: MidiClip['rollFx']): boolean {
-    return !!rfx && ((rfx.distortion ?? 0) > 0 || (rfx.reverbWet ?? 0) > 0 || (rfx.filterHz !== undefined && rfx.filterHz < 17500))
+    return !!rfx && ((rfx.distortion ?? 0) > 0 || (rfx.reverbWet ?? 0) > 0 || (rfx.filterHz !== undefined && rfx.filterHz < 17500)
+      || (rfx.sub ?? 0) !== 0 || (rfx.bass ?? 0) !== 0 || (rfx.mid ?? 0) !== 0 || (rfx.treble ?? 0) !== 0)
   }
 
   /** Chain: note → distortion → lowpass → reverb mix → dest. Returns the entry node. */
@@ -1899,6 +1916,15 @@ export class DawEngine extends EventTarget {
       f.type = 'lowpass'; f.frequency.value = rfx.filterHz; f.Q.value = 0.8
       last.connect(f); last = f
       nodes.push(f)
+    }
+    // 4-band tone EQ
+    if ((rfx.sub ?? 0) !== 0 || (rfx.bass ?? 0) !== 0 || (rfx.mid ?? 0) !== 0 || (rfx.treble ?? 0) !== 0) {
+      const sub = this.ctx.createBiquadFilter(); sub.type = 'lowshelf';  sub.frequency.value = 70;   sub.gain.value = rfx.sub ?? 0
+      const bs  = this.ctx.createBiquadFilter(); bs.type = 'lowshelf';   bs.frequency.value = 200;   bs.gain.value = rfx.bass ?? 0
+      const md  = this.ctx.createBiquadFilter(); md.type = 'peaking';    md.frequency.value = 1000; md.Q.value = 1; md.gain.value = rfx.mid ?? 0
+      const tr  = this.ctx.createBiquadFilter(); tr.type = 'highshelf';  tr.frequency.value = 8000;  tr.gain.value = rfx.treble ?? 0
+      last.connect(sub); sub.connect(bs); bs.connect(md); md.connect(tr); last = tr
+      nodes.push(sub, bs, md, tr)
     }
     if ((rfx.reverbWet ?? 0) > 0) {
       const wetAmt = rfx.reverbWet!

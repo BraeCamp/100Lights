@@ -81,7 +81,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   useEffect(() => { phaseRef.current = phase }, [phase])
   const [progress, setProgress]           = useState(0)
   const [downloadUrl, setDownloadUrl]     = useState<string | null>(null)
-  const [sampleRate, setSampleRate]       = useState<44100 | 48000>(48000)
+  const [sampleRate, setSampleRate]       = useState<44100 | 48000 | 88200 | 96000>(48000)
   const [format, setFormat]               = useState<ExportFormat>(defaultFormat ?? 'webm')
   const [normalize, setNormalize]         = useState(false)
   const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
@@ -321,17 +321,17 @@ style={{
                 {(format === 'wav' || format === 'stems') && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
                     <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>Sample rate</span>
-                    {([44100, 48000] as const).map(r => (
+                    {([44100, 48000, 88200, 96000] as const).map(r => (
                       <button key={r}
                         onClick={() => setSampleRate(r)}
-                        title={r === 44100 ? 'CD / streaming standard' : 'Video / broadcast standard (recording rate — no resample)'}
+                        title={{ 44100: 'CD / streaming standard', 48000: 'Video / broadcast standard (recording rate — no resample)', 88200: 'Hi-res (2× CD) — larger files', 96000: 'Hi-res (2× video) — larger files' }[r]}
                         style={{
                           padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
                           border: sampleRate === r ? '1px solid var(--accent)' : '1px solid var(--border)',
                           background: sampleRate === r ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'transparent',
                           color: sampleRate === r ? 'var(--accent)' : 'var(--text-secondary)',
                         }}
-                      >{r === 44100 ? '44.1 kHz' : '48 kHz'}</button>
+                      >{{ 44100: '44.1 kHz', 48000: '48 kHz', 88200: '88.2 kHz', 96000: '96 kHz' }[r]}</button>
                     ))}
                   </div>
                 )}

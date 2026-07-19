@@ -73,9 +73,6 @@ function VerticalFader({ value, onChange, onCommit }: {
 
 function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolean }) {
   const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
-  const [eqLo, setEqLo]   = useState(0)
-  const [eqMid, setEqMid] = useState(0)
-  const [eqHi, setEqHi]   = useState(0)
   const [editing, setEditing]   = useState(false)
   const [nameDraft, setNameDraft] = useState(track?.name ?? 'MASTER')
 
@@ -102,14 +99,6 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
     : ''
   const panLabel = pan === 0 ? 'C' : pan < 0 ? `L${Math.round(-pan * 100)}` : `R${Math.round(pan * 100)}`
 
-  // Sync mixer EQ UI state from engine when switching to a different track
-  useEffect(() => {
-    if (!track) return
-    const eq = engine.getMixerEq(track.id)
-    setEqLo(eq.low)
-    setEqMid(eq.mid)
-    setEqHi(eq.hi)
-  }, [track?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // LUFS metering loop for master strip
   useEffect(() => {
@@ -233,33 +222,26 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         />
       )}
 
-      {/* EQ knobs */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-        <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Mix EQ</span>
-        <div style={{ display: 'flex', gap: 2 }}>
-          <Knob
-            value={eqLo} min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="LO"
-            onChange={v => {
-              setEqLo(v)
-              if (track) engine.setMixerEq(track.id, v, eqMid, eqHi)
-            }}
-          />
-          <Knob
-            value={eqMid} min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID"
-            onChange={v => {
-              setEqMid(v)
-              if (track) engine.setMixerEq(track.id, eqLo, v, eqHi)
-            }}
-          />
-          <Knob
-            value={eqHi} min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="HI"
-            onChange={v => {
-              setEqHi(v)
-              if (track) engine.setMixerEq(track.id, eqLo, eqMid, v)
-            }}
-          />
-        </div>
-      </div>
+      {/* Tone EQ knobs (persisted on the track) */}
+      {!isMaster && track && (() => {
+        const tone = track.tone ?? {}
+        const setBand = (band: 'sub' | 'bass' | 'mid' | 'treble', v: number) => {
+          const next = { ...tone, [band]: v || undefined }
+          dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } })
+          engine.setTrackTone(track.id, next)
+        }
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Tone EQ</span>
+            <div style={{ display: 'flex', gap: 2 }}>
+              <Knob value={tone.sub ?? 0}    min={-12} max={12} defaultValue={0} size={20} color="#8b5cf6" label="SUB" onChange={v => setBand('sub', v)} />
+              <Knob value={tone.bass ?? 0}   min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="BASS" onChange={v => setBand('bass', v)} />
+              <Knob value={tone.mid ?? 0}    min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID" onChange={v => setBand('mid', v)} />
+              <Knob value={tone.treble ?? 0} min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="TREB" onChange={v => setBand('treble', v)} />
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Pan */}
       {!isMaster && (

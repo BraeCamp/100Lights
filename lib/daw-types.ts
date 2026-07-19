@@ -426,6 +426,16 @@ export interface AutomationLane {
   expanded: boolean
 }
 
+// ── Tone EQ ───────────────────────────────────────────────────────────────────
+// A simple 4-band tone control (all values in dB, -12..+12, 0 = flat).
+// Applied per-track (DawTrack.tone) and per-MIDI-clip (MidiClip.rollFx).
+export interface ToneParams {
+  sub?: number      // low shelf ~70 Hz
+  bass?: number     // low shelf ~200 Hz
+  mid?: number      // peaking ~1 kHz
+  treble?: number   // high shelf ~8 kHz
+}
+
 // ── Track ─────────────────────────────────────────────────────────────────────
 
 export interface DawTrack {
@@ -443,6 +453,7 @@ export interface DawTrack {
   height: number      // arrangement lane height in px
   effects: TrackEffect[]
   midiEffects?: MidiEffect[]
+  tone?: ToneParams   // per-track 4-band tone EQ (sub/bass/mid/treble)
   instrument: TrackInstrument
   groupId?: string    // parent group track id
   sendAmounts?: Record<string, number>  // returnTrackId → send level 0–1
@@ -549,7 +560,7 @@ export interface MidiClip {
    *  (seconds) lets notes ring past their end with a release ramp; the rest
    *  wrap each note in a distortion → lowpass → reverb chain. Only this
    *  clip's notes are affected. */
-  rollFx?: { sustain?: number; reverbWet?: number; distortion?: number; filterHz?: number }
+  rollFx?: { sustain?: number; reverbWet?: number; distortion?: number; filterHz?: number; sub?: number; bass?: number; mid?: number; treble?: number }
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

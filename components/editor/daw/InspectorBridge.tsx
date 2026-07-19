@@ -64,7 +64,7 @@ export function InspectorBridge() {
     if (selectedTrackId) {
       const t = project.tracks.find(x => x.id === selectedTrackId)
       if (t) {
-        return { kind: 'track', track: { id: t.id, name: t.name, color: t.color, volume: t.volume, pan: t.pan, mute: t.mute, solo: t.solo, instrumentType: t.instrument.type } }
+        return { kind: 'track', track: { id: t.id, name: t.name, color: t.color, volume: t.volume, pan: t.pan, mute: t.mute, solo: t.solo, instrumentType: t.instrument.type, tone: t.tone ?? null } }
       }
     }
     return { kind: 'none' }

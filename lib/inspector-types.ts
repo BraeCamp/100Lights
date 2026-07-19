@@ -9,9 +9,9 @@ export const INSPECTOR_CHANNEL = '100lights-inspector'
 
 export type InspectorSelection =
   | { kind: 'none' }
-  | { kind: 'track'; track: { id: string; name: string; color: string; volume: number; pan: number; mute: boolean; solo: boolean; instrumentType: string } }
+  | { kind: 'track'; track: { id: string; name: string; color: string; volume: number; pan: number; mute: boolean; solo: boolean; instrumentType: string; tone: { sub?: number; bass?: number; mid?: number; treble?: number } | null } }
   | { kind: 'audio-clip'; trackName: string; clip: { id: string; name: string; gain: number; fadeIn: number; fadeOut: number; pitchSemitones: number; pitchCents: number; reverse: boolean; startBeat: number; durationBeats: number } }
-  | { kind: 'midi-clip'; trackName: string; clip: { id: string; name: string; startBeat: number; durationBeats: number; noteCount: number; presetName: string; rollFx: { sustain?: number; reverbWet?: number; distortion?: number; filterHz?: number } | null; isDrumClip: boolean } }
+  | { kind: 'midi-clip'; trackName: string; clip: { id: string; name: string; startBeat: number; durationBeats: number; noteCount: number; presetName: string; rollFx: { sustain?: number; reverbWet?: number; distortion?: number; filterHz?: number; sub?: number; bass?: number; mid?: number; treble?: number } | null; isDrumClip: boolean } }
   | { kind: 'effect'; trackName: string; effect: { id: string; type: string; startBeat: number; durationBeats: number; params: Record<string, unknown> } }
 
 export interface InspectorStateMsg {

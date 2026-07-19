@@ -68,6 +68,29 @@ function ToggleRow({ name, on, onChange }: { name: string; on: boolean; onChange
   )
 }
 
+type Tone = { sub?: number; bass?: number; mid?: number; treble?: number } | null
+function ToneRows({ tone, onBand, draggingRef }: {
+  tone: Tone
+  onBand: (band: 'sub' | 'bass' | 'mid' | 'treble', v: number) => void
+  draggingRef: React.RefObject<boolean>
+}) {
+  const t = tone ?? {}
+  const band = (name: string, key: 'sub' | 'bass' | 'mid' | 'treble') => (
+    <Slider name={name} val={t[key] ?? 0} min={-12} max={12} step={0.5}
+      fmt={v => v === 0 ? '0 dB' : `${v > 0 ? '+' : ''}${v} dB`} draggingRef={draggingRef}
+      onCommit={v => onBand(key, v)} />
+  )
+  return (
+    <>
+      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.1em', color: '#666', margin: '14px 0 4px' }}>EQ / TONE</div>
+      {band('Sub', 'sub')}
+      {band('Bass', 'bass')}
+      {band('Mid', 'mid')}
+      {band('Treble', 'treble')}
+    </>
+  )
+}
+
 function EffectSection({ effect, draggingRef, send }: {
   effect: Extract<InspectorSelection, { kind: 'effect' }>['effect']
   draggingRef: React.RefObject<boolean>
@@ -167,6 +190,8 @@ export default function InspectorPage() {
               draggingRef={draggingRef} onCommit={v => send({ type: 'UPDATE_TRACK', trackId: sel.track.id, patch: { pan: v } })} />
             <ToggleRow name="Mute" on={sel.track.mute} onChange={v => send({ type: 'UPDATE_TRACK', trackId: sel.track.id, patch: { mute: v } })} />
             <ToggleRow name="Solo" on={sel.track.solo} onChange={v => send({ type: 'UPDATE_TRACK', trackId: sel.track.id, patch: { solo: v } })} />
+            <ToneRows tone={sel.track.tone} draggingRef={draggingRef}
+              onBand={(k, v) => send({ type: 'UPDATE_TRACK', trackId: sel.track.id, patch: { tone: { ...sel.track.tone, [k]: v || undefined } } })} />
             <p style={{ fontSize: 10.5, color: '#666', marginTop: 12 }}>Instrument: {sel.track.instrumentType}</p>
           </>
         )}
@@ -208,6 +233,8 @@ export default function InspectorPage() {
                 <Slider name="Filter" val={hzToV(sel.clip.rollFx?.filterHz)} min={0} max={1} step={0.005}
                   fmt={v => { const hz = vToHz(v); return hz === undefined ? 'Off' : hz >= 1000 ? `${(hz / 1000).toFixed(1)}k` : `${hz}Hz` }}
                   draggingRef={draggingRef} onCommit={v => send({ type: 'UPDATE_CLIP', clipId: sel.clip.id, patch: { rollFx: { ...sel.clip.rollFx, filterHz: vToHz(v) } } })} />
+                <ToneRows tone={sel.clip.rollFx ?? null} draggingRef={draggingRef}
+                  onBand={(k, v) => send({ type: 'UPDATE_CLIP', clipId: sel.clip.id, patch: { rollFx: { ...sel.clip.rollFx, [k]: v || undefined } } })} />
               </>
             )}
             <p style={{ fontSize: 10.5, color: '#666', marginTop: 12 }}>
