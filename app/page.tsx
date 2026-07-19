@@ -7,14 +7,14 @@ import {
   Zap, Check, ArrowRight,
   Layers, Music2, Sliders, CircleDot,
   Library, Globe2, Users, AudioLines,
-  Music,
+  Music, GraduationCap, ListMusic, Code2,
 } from 'lucide-react'
 import PricingSection from '@/components/PricingSection'
 
 export const metadata: Metadata = {
   title: { absolute: '100Lights — The Music Studio in Your Browser' },
-  description: 'A full digital audio workstation that runs in the browser: Session and Arrangement views, piano roll, drum rack, mixer, and a community of shared sounds and chord recipes. Free to start — no downloads.',
-  keywords: ['browser DAW', 'online music studio', 'digital audio workstation', 'online audio editor', 'make music in browser', 'free DAW', 'piano roll online', 'chord progressions', 'sample library', 'music collaboration'],
+  description: 'A full digital audio workstation that runs in the browser: Session and Arrangement views, piano roll, drum rack, mixer, a Practice Room that teaches by doing, and a community of shared sounds and chord recipes. Free to start — no downloads.',
+  keywords: ['browser DAW', 'online music studio', 'digital audio workstation', 'online audio editor', 'make music in browser', 'free DAW', 'learn to make music', 'how to make a song', 'piano roll online', 'chord progressions', 'sample library', 'music collaboration'],
   openGraph: {
     title: '100Lights — The Music Studio in Your Browser',
     description: 'A full DAW in the browser: Session View, piano roll, drum rack, mixer, and a community of shared sounds and recipes. No downloads, no plugins.',
@@ -84,6 +84,27 @@ const beyondFeatures = [
   },
 ]
 
+const learnFeatures = [
+  {
+    icon: GraduationCap,
+    title: 'Guided skill paths',
+    description: 'Step-by-step paths that check themselves off as you work — record your first take, write a melody in the piano roll, mix with sends and returns. No quizzes: doing the thing is the lesson.',
+    color: '#a78bfa',
+  },
+  {
+    icon: ListMusic,
+    title: 'Build a song by genre',
+    description: 'Pick pop, rock, or metal and build a full multitrack section part by part — drums, bass, chords, and lead, each dropped onto its own track so they play together. Then make it yours.',
+    color: '#f59e0b',
+  },
+  {
+    icon: Code2,
+    title: 'Design sounds with code',
+    description: 'Generate a synth patch and a melody from a few lines of math, audition it, and drag it onto a track — or open the code behind any sound and bend it to taste.',
+    color: '#22d3ee',
+  },
+]
+
 const steps = [
   {
     title: 'Open the studio',
@@ -103,6 +124,10 @@ const faqs = [
   {
     q: 'Is 100Lights really free?',
     a: 'Yes — the studio is free to use: tracks, piano roll, mixer, effects, recording, and WAV export all work on the free plan. Pro removes project limits and unlocks live co-editing for collaborators.',
+  },
+  {
+    q: 'I’m a beginner — can 100Lights teach me?',
+    a: 'Yes. The Practice Room has guided skill paths that check off as you actually record, mix, and compose, plus build-a-song walkthroughs for pop, rock, and metal that you assemble part by part. You learn by making real music, not by watching tutorials.',
   },
   {
     q: 'Do I need to install anything to make music?',
@@ -138,7 +163,7 @@ const jsonLd = {
   name: '100Lights',
   applicationCategory: 'MultimediaApplication',
   operatingSystem: 'Web, macOS, Windows',
-  description: 'A full digital audio workstation for the browser: Session and Arrangement views, piano roll, drum rack, mixer, real-time collaboration, and a community of shared sounds and chord recipes.',
+  description: 'A full digital audio workstation for the browser: Session and Arrangement views, piano roll, drum rack, mixer, real-time collaboration, a Practice Room with guided skill paths and build-a-song walkthroughs, and a community of shared sounds and chord recipes.',
   url: 'https://100lights.com',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
 }
@@ -354,6 +379,50 @@ export default async function LandingPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {beyondFeatures.map(({ icon: Icon, title, description, color }) => (
+                <article
+                  key={title}
+                  className="p-6 rounded-xl border"
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+                >
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
+                    style={{ background: `${color}18` }}
+                  >
+                    <Icon size={18} color={color} aria-hidden="true" />
+                  </div>
+                  <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{title}</h3>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          {/* ── Learn by doing (Practice Room) ── */}
+          <section
+            id="learn"
+            aria-labelledby="learn-heading"
+            className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24"
+          >
+            <div className="text-center mb-10 sm:mb-14">
+              <div
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
+                style={{ background: 'rgba(167, 139, 250, 0.12)', color: '#a78bfa', border: '1px solid rgba(167, 139, 250, 0.28)' }}
+              >
+                <GraduationCap size={11} aria-hidden="true" />
+                Practice Room
+              </div>
+              <h2 id="learn-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
+                Get better every session
+              </h2>
+              <p className="text-base max-w-2xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
+                Most tools do the work for you. 100Lights turns making music into practice — guided paths that
+                watch your project and check off as you go, full songs you build hands-on, and sounds you can
+                shape in code.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {learnFeatures.map(({ icon: Icon, title, description, color }) => (
                 <article
                   key={title}
                   className="p-6 rounded-xl border"
