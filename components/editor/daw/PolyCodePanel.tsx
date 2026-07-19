@@ -1,22 +1,52 @@
 'use client'
 
 // "Code" tab of the sound library: write a small script that generates MIDI
-// notes + a poly synth patch with math, run it safely (Web Worker), and add it
-// to the project as a poly track. See lib/poly-code.ts for the runtime + the
-// /learn/code-a-poly-track-with-math explainer.
+// notes + a poly synth patch with math, run it safely (Web Worker), and either
+// ADD it as a new poly track or EDIT the selected poly track's sound + notes.
+// See lib/poly-code.ts for the runtime + /learn/code-a-poly-track-with-math.
 import { useState } from 'react'
 import { useDaw } from '@/lib/daw-state'
-import type { MidiClip } from '@/lib/daw-types'
+import type { MidiClip, DawTrack, PolyInstrumentParams } from '@/lib/daw-types'
 import { runPolyCode, POLY_CODE_EXAMPLES, type GeneratedTrack } from '@/lib/poly-code'
 
+const r3 = (x: number) => Math.round(x * 1000) / 1000
+
+/** Generate editable code from an existing poly track's patch + first clip. */
+function patchToCode(track: DawTrack, clip: MidiClip | undefined, fallbackLen: number): string {
+  const p = track.instrument.params as PolyInstrumentParams
+  const patch =
+    `{ waveform: '${p.waveform}', attack: ${p.attack}, decay: ${p.decay}, ` +
+    `sustain: ${p.sustain}, release: ${p.release}, detune: ${p.detune}, ` +
+    `filterType: '${p.filterType}', cutoff: ${p.filterCutoff}, resonance: ${p.filterResonance}, ` +
+    `lfoEnabled: ${p.lfoEnabled}, lfoRate: ${p.lfoRate}, lfoDepth: ${p.lfoDepth}, ` +
+    `lfoTarget: '${p.lfoTarget}', lfoWaveform: '${p.lfoWaveform}' }`
+  const notesCode = clip && clip.notes.length
+    ? clip.notes
+        .map((n) => `  note(${n.pitch}, ${r3(n.startBeat)}, ${r3(n.durationBeats)}, ${n.velocity})`)
+        .join(',\n')
+    : ''
+  return `// Editing "${track.name}" — tweak the patch (the sound) and/or notes, then Save to track.
+return {
+  name: ${JSON.stringify(track.name)},
+  patch: ${patch},
+  length: ${clip?.durationBeats ?? fallbackLen},
+  notes: [
+${notesCode}
+  ],
+};`
+}
+
 export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) {
-  const { project, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
+  const { project, dispatch, selectedTrackId, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
   const [code, setCode] = useState(POLY_CODE_EXAMPLES[0].code)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<GeneratedTrack | null>(null)
+  const [editingTrackId, setEditingTrackId] = useState<string | null>(null)
 
   const bars = Math.max(1, Math.round(project.loopEnd / project.timeSignatureNum) || 4)
+  const selTrack = project.tracks.find((t) => t.id === selectedTrackId)
+  const canEdit = selTrack?.instrument.type === 'poly'
 
   async function run(): Promise<GeneratedTrack | null> {
     setRunning(true)
@@ -28,11 +58,6 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
       setPreview(null)
       return null
     }
-    if (res.track.notes.length === 0) {
-      setError('Script ran, but produced no notes. Return { notes: [...] }.')
-      setPreview(null)
-      return null
-    }
     setPreview(res.track)
     return res.track
   }
@@ -40,28 +65,52 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
   async function addToProject() {
     const track = preview ?? (await run())
     if (!track) return
+    if (track.notes.length === 0) { setError('No notes — return { notes: [...] }.'); return }
     const trackId = crypto.randomUUID()
-    dispatch({
-      type: 'ADD_TRACK',
-      id: trackId,
-      name: track.name,
-      instrument: { type: 'poly', params: track.params },
-    })
+    dispatch({ type: 'ADD_TRACK', id: trackId, name: track.name, instrument: { type: 'poly', params: track.params } })
     const clip: MidiClip = {
-      kind: 'midi',
-      id: crypto.randomUUID(),
-      trackId,
-      name: track.name,
-      startBeat: 0,
-      durationBeats: track.durationBeats,
-      notes: track.notes.map((n) => ({ id: crypto.randomUUID(), ...n })),
-      isDrumClip: false,
+      kind: 'midi', id: crypto.randomUUID(), trackId, name: track.name,
+      startBeat: 0, durationBeats: track.durationBeats,
+      notes: track.notes.map((n) => ({ id: crypto.randomUUID(), ...n })), isDrumClip: false,
     }
     dispatch({ type: 'ADD_CLIP', clip })
     setSelectedTrackId(trackId)
     setExpandedPianoRollClipId(clip.id)
     setView('arrangement')
     onDone?.()
+  }
+
+  async function saveToTrack() {
+    const track = preview ?? (await run())
+    if (!track || !editingTrackId) return
+    // Update the sound (all poly params).
+    dispatch({ type: 'SET_INSTRUMENT', trackId: editingTrackId, instrument: { type: 'poly', params: track.params } })
+    // Replace the track's MIDI notes (or add a clip if it had none).
+    const clip = project.arrangementClips.find(
+      (c) => c.trackId === editingTrackId && c.kind === 'midi',
+    ) as MidiClip | undefined
+    const notes = track.notes.map((n) => ({ id: crypto.randomUUID(), ...n }))
+    if (clip) {
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, durationBeats: track.durationBeats } })
+    } else if (notes.length) {
+      dispatch({
+        type: 'ADD_CLIP',
+        clip: { kind: 'midi', id: crypto.randomUUID(), trackId: editingTrackId, name: track.name, startBeat: 0, durationBeats: track.durationBeats, notes, isDrumClip: false },
+      })
+    }
+    setSelectedTrackId(editingTrackId)
+    onDone?.()
+  }
+
+  function startEdit() {
+    if (!selTrack || selTrack.instrument.type !== 'poly') return
+    const clip = project.arrangementClips.find(
+      (c) => c.trackId === selTrack.id && c.kind === 'midi',
+    ) as MidiClip | undefined
+    setCode(patchToCode(selTrack, clip, bars * project.timeSignatureNum))
+    setEditingTrackId(selTrack.id)
+    setPreview(null)
+    setError(null)
   }
 
   const btn: React.CSSProperties = {
@@ -75,7 +124,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
       {/* Examples */}
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', width: '100%', marginBottom: 2 }}>
-          Generate a poly track with math ·{' '}
+          {editingTrackId ? 'Editing a track — Save to track applies your changes · ' : 'Generate a poly track with math · '}
           <a href="/learn/code-a-poly-track-with-math" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
             how it works ↗
           </a>
@@ -83,7 +132,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
         {POLY_CODE_EXAMPLES.map((ex) => (
           <button
             key={ex.label}
-            onClick={() => { setCode(ex.code); setPreview(null); setError(null) }}
+            onClick={() => { setCode(ex.code); setPreview(null); setError(null); setEditingTrackId(null) }}
             style={{ ...btn, fontSize: 9.5, fontWeight: 600, padding: '3px 8px' }}
           >
             {ex.label}
@@ -117,16 +166,26 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
             {preview.durationBeats} beats · {preview.params.waveform}
           </div>
         )}
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button onClick={run} disabled={running} style={{ ...btn, opacity: running ? 0.6 : 1 }}>
             {running ? 'Running…' : 'Run'}
           </button>
+          {canEdit && !editingTrackId && (
+            <button onClick={startEdit} style={btn} title="Load this track's sound into the editor">
+              Edit “{selTrack!.name}”
+            </button>
+          )}
+          {editingTrackId && (
+            <button onClick={() => { setEditingTrackId(null); setCode(POLY_CODE_EXAMPLES[0].code); setPreview(null); setError(null) }} style={btn}>
+              New
+            </button>
+          )}
           <button
-            onClick={addToProject}
+            onClick={editingTrackId ? saveToTrack : addToProject}
             disabled={running}
             style={{ ...btn, background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)', marginLeft: 'auto' }}
           >
-            Add track
+            {editingTrackId ? 'Save to track' : 'Add track'}
           </button>
         </div>
       </div>

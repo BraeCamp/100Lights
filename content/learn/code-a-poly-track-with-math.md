@@ -168,5 +168,12 @@ map onto the poly synth:
 - Once you **Add track**, it opens in the piano roll — tweak notes by hand from
   there, or change the patch on the track.
 
+## Editing an existing sound
+
+Select a poly track and press **Edit “…”** in the Code panel — it fills the
+editor with that track's current `patch` (and notes) as code. Tweak the sound or
+the pattern and press **Save to track** to apply the changes in place (instead of
+adding a new track). Press **New** to go back to creating.
+
 Because a poly track is pure synthesis, what you code is exactly what plays —
 no samples to load. Have fun turning math into music.
