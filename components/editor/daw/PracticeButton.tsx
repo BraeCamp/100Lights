@@ -6,7 +6,10 @@ import { GraduationCap, Check, ChevronLeft, Sparkles, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { PRACTICE_PATHS, type PracticeSnapshot } from '@/lib/practice-paths'
 import { PRACTICE_RECIPES, buildRecipeClip, type PracticeRecipe } from '@/lib/practice-recipes'
+import { PRACTICE_SONGS, buildSongClip, songTrackName, type PracticeSong, type SongPart } from '@/lib/practice-songs'
 import { highlightHelpTargets } from './HelpButton'
+
+const GENRE_COLOR: Record<PracticeSong['genre'], string> = { Pop: '#ec4899', Rock: '#f59e0b', Metal: '#ef4444' }
 
 // ── Progress persistence ────────────────────────────────────────────────────
 // { [pathId]: string[] } — completed step ids. Steps are sticky: once done,
@@ -27,8 +30,9 @@ function loadProgress(): Progress {
 export default function PracticeButton() {
   const { project, view, playing, metronome, expandedPianoRollClipId, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
   const [open, setOpen] = useState(false)
-  const [tab, setTab] = useState<'paths' | 'recipes'>('paths')
+  const [tab, setTab] = useState<'paths' | 'songs' | 'recipes'>('paths')
   const [activePathId, setActivePathId] = useState<string | null>(null)
+  const [activeSongId, setActiveSongId] = useState<string | null>(null)
   const [loadedRecipe, setLoadedRecipe] = useState<PracticeRecipe | null>(null)
 
   // Load a recipe: fresh track + annotated clip appended to the real project,
@@ -43,6 +47,23 @@ export default function PracticeButton() {
     setSelectedTrackId(trackId)
     setExpandedPianoRollClipId(clip.id)
     setLoadedRecipe(recipe)
+  }
+
+  // Load one song part onto its own track at beat 0, so parts stack and play
+  // together. The first part sets the song's tempo.
+  function loadSongPart(song: PracticeSong, part: SongPart) {
+    if (project.tempo !== song.tempo) dispatch({ type: 'SET_TEMPO', tempo: song.tempo })
+    const trackId = crypto.randomUUID()
+    dispatch({ type: 'ADD_TRACK', id: trackId, name: songTrackName(song, part), instrument: part.build().instrument })
+    dispatch({ type: 'ADD_CLIP', clip: buildSongClip(part, trackId) })
+    setView('arrangement')
+    setSelectedTrackId(trackId)
+  }
+
+  function loadWholeSong(song: PracticeSong) {
+    for (const part of song.parts) {
+      if (!project.tracks.some(t => t.name === songTrackName(song, part))) loadSongPart(song, part)
+    }
   }
   const [progress, setProgress] = useState<Progress>(() =>
     typeof window === 'undefined' ? {} : loadProgress()
@@ -98,14 +119,16 @@ export default function PracticeButton() {
       if (e.key === 'Escape') {
         e.stopPropagation()
         if (activePathId) setActivePathId(null)
+        else if (activeSongId) setActiveSongId(null)
         else setOpen(false)
       }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [open, activePathId])
+  }, [open, activePathId, activeSongId])
 
   const activePath = PRACTICE_PATHS.find(p => p.id === activePathId) ?? null
+  const activeSong = PRACTICE_SONGS.find(s => s.id === activeSongId) ?? null
   const doneIds = (pathId: string) => new Set(progress[pathId] ?? [])
 
   return (
@@ -150,21 +173,21 @@ export default function PracticeButton() {
               padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
               flexShrink: 0,
             }}>
-              {activePath && (
+              {(activePath || activeSong) && (
                 <button
-                  onClick={() => setActivePathId(null)}
-                  title="All paths"
+                  onClick={() => { setActivePathId(null); setActiveSongId(null) }}
+                  title={activeSong ? 'All songs' : 'All paths'}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
                 >
                   <ChevronLeft size={15} />
                 </button>
               )}
               <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {activePath ? activePath.title : loadedRecipe && tab === 'recipes' ? loadedRecipe.title : 'Practice Room'}
+                {activePath ? activePath.title : activeSong ? activeSong.title : loadedRecipe && tab === 'recipes' ? loadedRecipe.title : 'Practice Room'}
               </span>
-              {!activePath && !loadedRecipe && (
+              {!activePath && !activeSong && !loadedRecipe && (
                 <span style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
-                  {(['paths', 'recipes'] as const).map(t => (
+                  {(['paths', 'songs', 'recipes'] as const).map(t => (
                     <button key={t} onClick={() => setTab(t)} style={{
                       fontSize: 10, fontWeight: 600, padding: '2px 9px', borderRadius: 4, cursor: 'pointer',
                       background: tab === t ? 'var(--bg-card)' : 'transparent',
@@ -232,6 +255,107 @@ export default function PracticeButton() {
                   </a>
                 </>
               )}
+
+              {/* Songs — pick a genre, then build a full section part by part */}
+              {!activePath && !activeSong && tab === 'songs' && (
+                <>
+                  <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>
+                    Build a full song section, part by part, in your own project. Pick the kind of music you want to make.
+                  </p>
+                  {PRACTICE_SONGS.map(song => {
+                    const loaded = song.parts.filter(p => project.tracks.some(t => t.name === songTrackName(song, p))).length
+                    return (
+                      <button key={song.id} onClick={() => setActiveSongId(song.id)} style={{
+                        textAlign: 'left', cursor: 'pointer',
+                        background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+                        padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
+                      }}>
+                        <span style={{
+                          fontSize: 9, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase',
+                          color: '#fff', background: GENRE_COLOR[song.genre], borderRadius: 4, padding: '3px 6px', flexShrink: 0,
+                        }}>{song.genre}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{song.title}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{song.tagline}</div>
+                        </div>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: loaded === song.parts.length ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {loaded}/{song.parts.length}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </>
+              )}
+
+              {activeSong && (() => {
+                const doneCount = activeSong.parts.filter(p => project.tracks.some(t => t.name === songTrackName(activeSong, p))).length
+                const allIn = doneCount === activeSong.parts.length
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 2px' }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: '#fff', background: GENRE_COLOR[activeSong.genre], borderRadius: 4, padding: '3px 6px' }}>{activeSong.genre}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{activeSong.tempo} BPM · {activeSong.parts.length} parts</span>
+                      <button onClick={() => loadWholeSong(activeSong)} disabled={allIn} style={{
+                        marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, cursor: allIn ? 'default' : 'pointer',
+                        color: allIn ? 'var(--text-muted)' : 'var(--accent-contrast)', background: allIn ? 'transparent' : 'var(--accent)',
+                        border: allIn ? '1px solid var(--border)' : 'none', borderRadius: 5, padding: '5px 12px', opacity: allIn ? 0.6 : 1,
+                      }}>{allIn ? 'All parts in' : 'Build whole song'}</button>
+                    </div>
+                    <p style={{ fontSize: 11.5, color: 'var(--text-secondary)', margin: '0 0 4px', lineHeight: 1.5 }}>{activeSong.tagline}</p>
+                    {activeSong.parts.map((part, i) => {
+                      const isDone = project.tracks.some(t => t.name === songTrackName(activeSong, part))
+                      return (
+                        <div key={part.id} style={{
+                          display: 'flex', gap: 10, padding: '9px 11px', borderRadius: 8,
+                          background: isDone ? 'transparent' : 'var(--bg-card)',
+                          border: `1px solid ${isDone ? 'transparent' : 'var(--border)'}`,
+                        }}>
+                          <div style={{
+                            width: 18, height: 18, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            background: isDone ? 'var(--success)' : 'transparent',
+                            border: isDone ? 'none' : '1.5px solid var(--border-light)',
+                            color: '#fff', fontSize: 10, fontWeight: 700,
+                          }}>
+                            {isDone ? <Check size={11} /> : i + 1}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? 'var(--text-muted)' : 'var(--text-primary)' }}>{part.title}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.5 }}>{part.instruction}</div>
+                            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                              {!isDone && (
+                                <button onClick={() => loadSongPart(activeSong, part)} style={{
+                                  fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                                  color: 'var(--accent-contrast)', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '4px 11px',
+                                }}>Add this part</button>
+                              )}
+                              {part.helpId && (
+                                <button onClick={() => { highlightHelpTargets([part.helpId!]); setOpen(false) }} style={{
+                                  fontSize: 10.5, fontWeight: 600, cursor: 'pointer',
+                                  color: 'var(--accent-light)', background: 'rgb(var(--accent-rgb) / 0.1)',
+                                  border: '1px solid rgb(var(--accent-rgb) / 0.3)', borderRadius: 5, padding: '4px 9px',
+                                }}>Show me where</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {allIn && (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, padding: '9px 11px', borderRadius: 8, background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.3)' }}>
+                        <Sparkles size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.4, flex: 1 }}>
+                          Your {activeSong.genre.toLowerCase()} track is built. Press Play to hear it, then make it yours — mute parts, tweak sounds, add effects.
+                        </span>
+                        <button onClick={() => { highlightHelpTargets(['play']); setOpen(false) }} style={{
+                          flexShrink: 0, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                          color: 'var(--accent-contrast)', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px',
+                        }}>▶ Play it</button>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
 
               {!activePath && tab === 'paths' && (
                 <>
