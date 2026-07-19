@@ -1447,7 +1447,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             onWheel={e => {
               if (e.ctrlKey || e.metaKey) { setBeatW(w => Math.max(20, Math.min(200, w * (e.deltaY < 0 ? 1.15 : 0.87)))); e.preventDefault() }
               else if (e.altKey) { zoomVertical(e.deltaY < 0 ? 1.25 : 0.8); e.preventDefault() }
-              else { setScrollTop(s => Math.max(0, s + e.deltaY * 0.5)); setScrollLeft(sl => Math.max(0, sl + e.deltaX)) }
+              else {
+                if (Math.abs(e.deltaX) > 0) setScrollLeft(sl => Math.max(0, sl + e.deltaX))
+                // Scroll the piano roll until it hits its top/bottom; only then
+                // let the wheel fall through to the page — never both at once.
+                const maxScroll = Math.max(0, NUM_NOTES * rowH - e.currentTarget.clientHeight)
+                const canScrollY = (e.deltaY < 0 && scrollTop > 0) || (e.deltaY > 0 && scrollTop < maxScroll)
+                if (canScrollY) {
+                  setScrollTop(s => Math.max(0, Math.min(maxScroll, s + e.deltaY * 0.5)))
+                  e.preventDefault()
+                }
+              }
             }}
           >
             {/* Background rows */}

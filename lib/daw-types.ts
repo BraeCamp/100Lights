@@ -320,6 +320,20 @@ export function defaultPolyInstrument(): TrackInstrument {
   }
 }
 
+// Named poly-synth patches — the signature darkwave/dark-pop sounds from the
+// starter songs. Shown as one-click presets in the poly instrument editor.
+export const POLY_PRESETS: Record<string, PolyInstrumentParams> = {
+  'Darkwave Lead':   { waveform: 'square',   attack: 0.01,  decay: 0.2,  sustain: 0.55, release: 0.4,  detune: 7,   filterType: 'lowpass', filterCutoff: 1500, filterResonance: 3,   lfoEnabled: true,  lfoRate: 5,    lfoDepth: 0.12, lfoTarget: 'pitch',  lfoWaveform: 'sine' },
+  'Cold Pad':        { waveform: 'sawtooth', attack: 1.1,   decay: 0.6,  sustain: 0.7,  release: 0.9,  detune: -12, filterType: 'lowpass', filterCutoff: 1000, filterResonance: 2.2, lfoEnabled: true,  lfoRate: 0.22, lfoDepth: 0.25, lfoTarget: 'filter', lfoWaveform: 'sine' },
+  'Sequencer Arp':   { waveform: 'square',   attack: 0.002, decay: 0.18, sustain: 0.0,  release: 0.16, detune: 12,  filterType: 'lowpass', filterCutoff: 2200, filterResonance: 3.2, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0,    lfoTarget: 'filter', lfoWaveform: 'sine' },
+  'Reese Bass':      { waveform: 'sawtooth', attack: 0.006, decay: 0.12, sustain: 0.75, release: 0.2,  detune: 9,   filterType: 'lowpass', filterCutoff: 620,  filterResonance: 6,   lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
+  '808 Sub':         { waveform: 'sine',     attack: 0.006, decay: 0.2,  sustain: 0.92, release: 0.4,  detune: 0,   filterType: 'lowpass', filterCutoff: 3000, filterResonance: 1,   lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
+  'Aggro Lead':      { waveform: 'sawtooth', attack: 0.005, decay: 0.14, sustain: 0.6,  release: 0.28, detune: 10,  filterType: 'lowpass', filterCutoff: 2400, filterResonance: 4,   lfoEnabled: true,  lfoRate: 5.5,  lfoDepth: 0.12, lfoTarget: 'pitch',  lfoWaveform: 'sine' },
+  'Industrial Bass': { waveform: 'sawtooth', attack: 0.004, decay: 0.1,  sustain: 0.75, release: 0.16, detune: 16,  filterType: 'lowpass', filterCutoff: 900,  filterResonance: 6.5, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
+  'Brass Pad':       { waveform: 'sawtooth', attack: 0.4,   decay: 0.5,  sustain: 0.7,  release: 0.9,  detune: -12, filterType: 'lowpass', filterCutoff: 1600, filterResonance: 2,   lfoEnabled: true,  lfoRate: 0.35, lfoDepth: 0.2,  lfoTarget: 'filter', lfoWaveform: 'sine' },
+  'Glass Pluck':     { waveform: 'triangle', attack: 0.004, decay: 0.14, sustain: 0.0,  release: 0.18, detune: 4,   filterType: 'lowpass', filterCutoff: 2400, filterResonance: 3,   lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
+}
+
 export function defaultFm4opInstrument(): TrackInstrument {
   const p: Fm4OpInstrumentParams = {
     name: 'Electric Piano 1',

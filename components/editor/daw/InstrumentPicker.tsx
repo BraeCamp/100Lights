@@ -9,7 +9,7 @@ import type {
   Fm4OpInstrumentParams, Fm4OpOperator, Fm4OpAlgorithm,
   WavetableInstrumentParams,
 } from '@/lib/daw-types'
-import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument, defaultFm4opInstrument, defaultWavetableInstrument } from '@/lib/daw-types'
+import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument, defaultFm4opInstrument, defaultWavetableInstrument, POLY_PRESETS } from '@/lib/daw-types'
 import { previewNote } from '@/lib/daw-instruments'
 import { FM_ALGORITHMS, FM_PRESETS } from '@/lib/fm-synth'
 import { WAVETABLE_PRESETS } from '@/lib/wavetable-synth'
@@ -226,6 +226,19 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Section title="Preset">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {Object.keys(POLY_PRESETS).map(k => (
+            <button key={k}
+              onClick={e => { e.stopPropagation(); onSet({ ...POLY_PRESETS[k] }) }}
+              style={{
+                padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: C.bgCard, color: C.textMuted,
+              }}>{k}</button>
+          ))}
+        </div>
+      </Section>
+
       <Section title="Oscillator">
         <WaveRow label="Wave" value={p.waveform} onChange={w => onSet({ waveform: w })} />
         <SliderRow label="Detune" value={p.detune} min={-100} max={100} step={1} fmt={v => `${v}¢`} onChange={v => onSet({ detune: v })} />
