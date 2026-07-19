@@ -559,6 +559,26 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       setExpandedPianoRollClipId(clip.id)
       return
     }
+    // A generated item dragged out of the Code panel becomes a MIDI clip here.
+    const polyData = e.dataTransfer.getData('application/x-poly-generated')
+    if (polyData) {
+      try {
+        const gen = JSON.parse(polyData) as { name?: string; params?: unknown; notes?: import('@/lib/daw-types').MidiNote[]; durationBeats?: number; rollFx?: Record<string, number> }
+        const bar = project.timeSignatureNum || 4
+        const clip = makeMidiClip(track.id, gen.name || 'Sound', snapBeat(beatX, snap, bar), gen.durationBeats || bar, { isDrumClip: false, ...(gen.rollFx ? { rollFx: gen.rollFx } : {}) })
+        clip.notes = (gen.notes ?? []).map(n => ({ ...n, id: crypto.randomUUID() }))
+        // Give an empty track the generated sound; leave existing instruments alone.
+        if (track.instrument.type === 'none' && gen.params) {
+          dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { type: 'poly', params: gen.params as import('@/lib/daw-types').PolyInstrumentParams } })
+        }
+        dispatch({ type: 'ADD_CLIP', clip })
+        setSelectedClipId(clip.id)
+        setExpandedPianoRollClipId(clip.id)
+      } catch (err) {
+        console.warn('poly item drop failed:', err)
+      }
+      return
+    }
     const libId = e.dataTransfer.getData('application/x-library-entry-id')
     if (libId) {
       const entries = await libraryGetAll()
