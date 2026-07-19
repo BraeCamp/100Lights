@@ -17,6 +17,7 @@ let _recipeCtx: AudioContext | null = null
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getAllChordRecipes, RECIPE_GENRE_ORDER, type PracticeRecipe } from '@/lib/practice-recipes'
 import { clampToViewport } from './daw/menu-clamp'
+import PolyCodePanel from './daw/PolyCodePanel'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
 import {
@@ -1130,7 +1131,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     seedDefaultSamples().catch(() => {})
   }, [isLoaded, user?.id])
 
-  const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
+  const [libTab,           setLibTab]           = useState<'samples' | 'recipes' | 'code'>('samples')
   const [recipesVersion,   setRecipesVersion]   = useState(0)
   const [recipeDetail,     setRecipeDetail]     = useState<{ id: string; x: number; y: number } | null>(null)
   const [openGenres,       setOpenGenres]       = useState<Set<string>>(new Set())
@@ -1636,7 +1637,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       {/* Samples | Recipes tabs (hidden in pickers — onPick contexts expect audio samples) */}
       {!onPick && (
         <div style={{ display: 'flex', gap: 2, padding: '6px 10px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-          {(['samples', 'recipes'] as const).map(t => (
+          {(['samples', 'recipes', 'code'] as const).map(t => (
             <button key={t} onClick={() => setLibTab(t)} style={{
               fontSize: 10, fontWeight: 600, padding: '4px 12px', borderRadius: '5px 5px 0 0', cursor: 'pointer',
               background: libTab === t ? 'var(--bg-card)' : 'transparent',
@@ -1657,7 +1658,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           </a>
         </div>
       )}
-      {!onPick && libTab === 'recipes' ? recipesBody : (<>
+      {!onPick && libTab === 'code' ? <PolyCodePanel /> : !onPick && libTab === 'recipes' ? recipesBody : (<>
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
