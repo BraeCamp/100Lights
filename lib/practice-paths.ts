@@ -15,6 +15,16 @@ export interface PracticeSnapshot {
   anyMute: boolean
   anyTrackEffect: boolean
   anyArmed: boolean
+  // MIDI / piano-roll
+  midiClipCount: number
+  maxClipNotes: number
+  pianoRollOpen: boolean
+  // Sound design
+  anyPolyTrack: boolean
+  // Sends & returns
+  returnCount: number
+  anySend: boolean
+  anyReturnEffect: boolean
 }
 
 export interface PracticeStep {
@@ -101,6 +111,86 @@ export const PRACTICE_PATHS: PracticePath[] = [
         instruction: 'Put an effect on a track — try an EQ or a Reverb — and hear the difference.',
         helpId: 'add-device',
         done: s => s.anyTrackEffect,
+      },
+    ],
+  },
+  {
+    id: 'write-melody',
+    title: 'Write a melody',
+    tagline: 'Draw notes in the piano roll and hear them back.',
+    steps: [
+      {
+        id: 'midi-clip', title: 'Make a MIDI clip',
+        instruction: 'Double-click an empty track lane (or hit PIANO ROLL) to create a MIDI clip.',
+        helpId: 'piano-roll',
+        done: s => s.midiClipCount >= 1,
+      },
+      {
+        id: 'open-roll', title: 'Open the piano roll',
+        instruction: 'Open your clip in the piano roll — the grid where you place notes.',
+        helpId: 'piano-roll',
+        done: s => s.pianoRollOpen,
+      },
+      {
+        id: 'draw-notes', title: 'Draw a few notes',
+        instruction: 'Click into the grid to place at least four notes — a short phrase.',
+        helpId: 'piano-roll',
+        done: s => s.maxClipNotes >= 4,
+      },
+      {
+        id: 'hear-melody', title: 'Play your melody',
+        instruction: 'Press Play (or Space) and listen back to what you wrote.',
+        helpId: 'play',
+        done: s => s.playing && s.maxClipNotes >= 4,
+      },
+    ],
+  },
+  {
+    id: 'sound-from-code',
+    title: 'Design a sound with code',
+    tagline: 'Generate a synth voice from a tiny script, then shape it.',
+    steps: [
+      {
+        id: 'code-track', title: 'Generate a synth from code',
+        instruction: "Open the Code panel in the left rail, pick a template under 'Add new', and press Add track.",
+        helpId: 'sound-code',
+        done: s => s.anyPolyTrack,
+      },
+      {
+        id: 'code-hear', title: 'Hear the voice',
+        instruction: 'Press Play and listen to the notes your script generated.',
+        helpId: 'play',
+        done: s => s.anyPolyTrack && s.playing,
+      },
+      {
+        id: 'code-shape', title: 'Shape it with an effect',
+        instruction: 'Add a Filter, Reverb, or Delay on the track and hear how it changes the character.',
+        helpId: 'add-device',
+        done: s => s.anyPolyTrack && s.anyTrackEffect,
+      },
+    ],
+  },
+  {
+    id: 'shape-the-space',
+    title: 'Shape the space',
+    tagline: 'Sends and returns — one shared reverb for the whole mix.',
+    steps: [
+      {
+        id: 'add-return', title: 'Add a return track',
+        instruction: 'Click +Ret to create a return — a shared effects bus every track can feed.',
+        helpId: 'add-return',
+        done: s => s.returnCount >= 1,
+      },
+      {
+        id: 'send', title: 'Send a track to it',
+        instruction: "In the Mixer, turn up a track's send to your return.",
+        done: s => s.anySend,
+      },
+      {
+        id: 'return-fx', title: 'Add reverb on the return',
+        instruction: 'Drop a Reverb on the return so every send shares one space — the pro way to add depth.',
+        helpId: 'add-device',
+        done: s => s.anyReturnEffect,
       },
     ],
   },

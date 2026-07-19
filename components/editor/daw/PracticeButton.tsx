@@ -25,7 +25,7 @@ function loadProgress(): Progress {
 }
 
 export default function PracticeButton() {
-  const { project, view, playing, metronome, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
+  const { project, view, playing, metronome, expandedPianoRollClipId, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'paths' | 'recipes'>('paths')
   const [activePathId, setActivePathId] = useState<string | null>(null)
@@ -60,7 +60,14 @@ export default function PracticeButton() {
     anyMute: project.tracks.some(t => t.mute),
     anyTrackEffect: project.tracks.some(t => t.effects.length > 0),
     anyArmed: project.tracks.some(t => t.armed),
-  }), [project, playing, metronome, view])
+    midiClipCount: project.arrangementClips.filter(c => c.kind === 'midi').length,
+    maxClipNotes: Math.max(0, ...project.arrangementClips.map(c => (c.kind === 'midi' ? c.notes.length : 0))),
+    pianoRollOpen: expandedPianoRollClipId != null,
+    anyPolyTrack: project.tracks.some(t => t.instrument.type === 'poly'),
+    returnCount: project.returnTracks.length,
+    anySend: project.tracks.some(t => t.sendAmounts != null && Object.values(t.sendAmounts).some(v => v > 0)),
+    anyReturnEffect: project.returnTracks.some(r => r.effects.length > 0),
+  }), [project, playing, metronome, view, expandedPianoRollClipId])
 
   // The verifier: mark the current step of every path when its predicate
   // passes the live snapshot. Derived during render (the sanctioned
