@@ -6,6 +6,7 @@ import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, St
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile } from '@/lib/project-serializer'
 import { saveFolder, loadFolder, clearFolder, verifyPermission } from '@/lib/local-folder'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import type { CfProjFile } from '@/lib/project-serializer'
 
 const CF_EXT = '.cfproj'
@@ -210,6 +211,7 @@ function CloudProjectsView({ reloadKey = 0 }: { reloadKey?: number }) {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(false)
   const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number } | null>(null)
+  const [confirmDel, setConfirmDel] = useState<{ id: string; name: string } | null>(null)
 
   function loadProjects() {
     setLoading(true)
@@ -238,8 +240,15 @@ function CloudProjectsView({ reloadKey = 0 }: { reloadKey?: number }) {
     }
   }, [ctxMenu])
 
-  async function deleteProject(id: string) {
-    if (!confirm('Move this project to trash? It will be permanently deleted after 1 month.')) return
+  function deleteProject(id: string) {
+    const p = projects.find(x => x.id === id)
+    setConfirmDel({ id, name: p?.name ?? 'this project' })
+  }
+
+  async function performDelete() {
+    if (!confirmDel) return
+    const id = confirmDel.id
+    setConfirmDel(null)
     setProjects(prev => prev.filter(p => p.id !== id))
     await fetch(`/api/projects/${id}`, { method: 'DELETE' }).catch(() => loadProjects())
   }
@@ -362,6 +371,15 @@ function CloudProjectsView({ reloadKey = 0 }: { reloadKey?: number }) {
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmDel}
+        title="Move to trash?"
+        message={confirmDel ? `“${confirmDel.name}” will be moved to trash and permanently deleted after 1 month.` : ''}
+        confirmLabel="Move to trash"
+        onConfirm={performDelete}
+        onCancel={() => setConfirmDel(null)}
+      />
     </div>
   )
 }

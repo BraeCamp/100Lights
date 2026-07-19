@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Trash2, RotateCcw, X, Clock } from 'lucide-react'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 
 interface TrashedProject {
   id: string
@@ -20,6 +21,7 @@ export default function TrashPage() {
   const [projects, setProjects] = useState<TrashedProject[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  const [confirmDel, setConfirmDel] = useState<{ id: string; name: string } | null>(null)
 
   useEffect(() => {
     fetch('/api/projects/trash')
@@ -39,8 +41,15 @@ export default function TrashPage() {
     }
   }
 
-  async function deletePermanently(id: string) {
-    if (!confirm('Permanently delete this project and all its media files? This cannot be undone.')) return
+  function deletePermanently(id: string) {
+    const p = projects.find(x => x.id === id)
+    setConfirmDel({ id, name: p?.name ?? 'this project' })
+  }
+
+  async function performPermanentDelete() {
+    if (!confirmDel) return
+    const id = confirmDel.id
+    setConfirmDel(null)
     setBusy(id)
     try {
       const res = await fetch(`/api/projects/${id}?permanent=true`, { method: 'DELETE' })
@@ -122,6 +131,15 @@ export default function TrashPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!confirmDel}
+        title="Delete permanently?"
+        message={confirmDel ? `“${confirmDel.name}” and all its media files will be permanently deleted. This cannot be undone.` : ''}
+        confirmLabel="Delete forever"
+        onConfirm={performPermanentDelete}
+        onCancel={() => setConfirmDel(null)}
+      />
     </div>
   )
 }
