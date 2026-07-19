@@ -55,45 +55,45 @@ export async function GET() {
 
   purgeExpiredTrash(userId).catch(() => {})
 
-  // starred column is added via migration — see Neon console
-  // Gracefully fall back if column doesn't exist yet
-  let rows
-  try {
-    rows = await sql`
-      SELECT
-        id, name, saved_at, starred,
-        data->'clips'            AS clips,
-        data->'media'            AS media,
-        data->'media'->0->>'thumbnail' AS thumbnail,
-        data->'modules'          AS modules
-      FROM projects
-      WHERE user_id = ${userId} AND deleted_at IS NULL
-      ORDER BY starred DESC, saved_at DESC
-    `
-  } catch {
-    rows = await sql`
-      SELECT
-        id, name, saved_at,
-        data->'clips'            AS clips,
-        data->'media'            AS media,
-        data->'media'->0->>'thumbnail' AS thumbnail,
-        data->'modules'          AS modules
-      FROM projects
-      WHERE user_id = ${userId} AND deleted_at IS NULL
-      ORDER BY saved_at DESC
-    `
-  }
+  // Only pull lightweight fields for the list. Counting clips/media via
+  // jsonb_array_length (an int) instead of shipping the full arrays keeps the
+  // response tiny — pulling the whole clips/media JSON for every project could
+  // blow past the serverless driver's response-size/timeout limits on accounts
+  // with large projects and 500 the entire list. Thumbnail is capped for the
+  // same reason (an oversized data-URI thumbnail would bloat the list).
+  const cols = (starred: boolean) => sql`
+    SELECT
+      id, name, saved_at, ${starred ? sql`starred,` : sql`FALSE AS starred,`}
+      CASE WHEN jsonb_typeof(data->'clips') = 'array' THEN jsonb_array_length(data->'clips') ELSE 0 END AS clip_count,
+      CASE WHEN jsonb_typeof(data->'media') = 'array' THEN jsonb_array_length(data->'media') ELSE 0 END AS media_count,
+      CASE WHEN length(data->'media'->0->>'thumbnail') <= 262144 THEN data->'media'->0->>'thumbnail' ELSE NULL END AS thumbnail,
+      data->'modules' AS modules
+    FROM projects
+    WHERE user_id = ${userId} AND deleted_at IS NULL
+    ORDER BY ${starred ? sql`starred DESC,` : sql``} saved_at DESC
+  `
 
-  return Response.json(rows.map(r => ({
-    id:        r.id,
-    name:      r.name,
-    savedAt:   r.saved_at,
-    starred:   r.starred ?? false,
-    clips:     Array.isArray(r.clips) ? r.clips.length : 0,
-    media:     Array.isArray(r.media) ? r.media.length : 0,
-    thumbnail: r.thumbnail ?? null,
-    modules:   Array.isArray(r.modules) ? r.modules : null,
-  })))
+  try {
+    let rows
+    try {
+      rows = await cols(true)  // starred column present
+    } catch {
+      rows = await cols(false) // pre-migration: no starred column
+    }
+    return Response.json(rows.map(r => ({
+      id:        r.id,
+      name:      r.name,
+      savedAt:   r.saved_at,
+      starred:   r.starred ?? false,
+      clips:     Number(r.clip_count) || 0,
+      media:     Number(r.media_count) || 0,
+      thumbnail: r.thumbnail ?? null,
+      modules:   Array.isArray(r.modules) ? r.modules : null,
+    })))
+  } catch (err) {
+    console.error('[GET /api/projects] query failed for user', userId, err)
+    return Response.json({ error: 'Failed to load projects' }, { status: 500 })
+  }
 }
 
 // POST /api/projects — upsert a project for the current user
