@@ -80,13 +80,77 @@ function flatten(arr, acc){
   return acc;
 }
 
+// Seeded RNG (mulberry32) — pass a seed for reproducible tracks.
+function rand(seed){
+  let a = (seed == null ? Math.floor(Math.random() * 4294967296) : seed) >>> 0;
+  return function(){
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Notation: "0 2 4 _ 6" -> [0,2,4,null,6]  ('_' '.' '~' are rests)
+function degs(str){
+  return String(str).trim().split(/\\s+/).map(function(tok){
+    if (tok === '_' || tok === '.' || tok === '~') return null;
+    const n = Number(tok); return Number.isFinite(n) ? n : null;
+  });
+}
+// "x..x.x." -> [true,false,false,true,false,true,false]
+function rhythm(str){
+  return String(str).replace(/\\s+/g, '').split('').map(function(c){
+    return c === 'x' || c === 'X' || c === '1';
+  });
+}
+
+// Pattern combinators: a step sequence of degrees (null = rest) you transform,
+// then materialize to notes with .notes(scale, opts).
+function Pattern(items){ this.items = items.slice(); }
+Pattern.prototype.rev = function(){ return new Pattern(this.items.slice().reverse()); };
+Pattern.prototype.add = function(n){ return new Pattern(this.items.map(function(x){ return x == null ? null : x + n; })); };
+Pattern.prototype.repeat = function(n){
+  let out = []; n = Math.max(1, n | 0);
+  for (let i = 0; i < n; i++) out = out.concat(this.items);
+  return new Pattern(out);
+};
+Pattern.prototype.euclid = function(pulses){
+  const g = euclid(this.items.length, pulses);
+  return new Pattern(this.items.map(function(x, i){ return g[i] ? x : null; }));
+};
+Pattern.prototype.mask = function(bools){
+  return new Pattern(this.items.map(function(x, i){ return bools[i % bools.length] ? x : null; }));
+};
+Pattern.prototype.every = function(n, fn){
+  // apply fn to every nth step's degree
+  return new Pattern(this.items.map(function(x, i){ return (i % n === 0 && x != null) ? fn(x) : x; }));
+};
+Pattern.prototype.notes = function(scale, opts){
+  opts = opts || {};
+  const start = opts.start || 0;
+  const step = opts.step || 0.5;
+  const dur = opts.dur || step * 0.9;
+  const vel = opts.vel == null ? 100 : opts.vel;
+  const out = [];
+  for (let i = 0; i < this.items.length; i++){
+    const it = this.items[i];
+    if (it == null) continue;
+    const p = scale ? scale.note(it) : it; // no scale -> item is absolute MIDI
+    out.push(note(p, start + i * step, dur, typeof vel === 'function' ? vel(i) : vel));
+  }
+  return out;
+};
+// seq("0 2 4") or seq([0,2,4]) -> Pattern
+function seq(x){ return new Pattern(Array.isArray(x) ? x : degs(x)); }
+
 self.onmessage = function(e){
   const data = e.data || {};
   try {
     // Harden: no network / no nested workers from creator scripts.
     self.fetch = undefined; self.XMLHttpRequest = undefined; self.importScripts = undefined;
-    const fn = new Function('scale','note','chord','euclid','pitch','tempo','bars','Math', data.code);
-    const out = fn(scale, note, chord, euclid, pitch, data.tempo, data.bars, Math) || {};
+    const fn = new Function('scale','note','chord','euclid','pitch','seq','rhythm','rand','tempo','bars','Math', data.code);
+    const out = fn(scale, note, chord, euclid, pitch, seq, rhythm, rand, data.tempo, data.bars, Math) || {};
     const notes = flatten(Array.isArray(out.notes) ? out.notes : [], []);
     self.postMessage({ ok: true, name: out.name, patch: out.patch || {}, notes: notes, length: out.length });
   } catch (err) {
@@ -203,10 +267,10 @@ export const POLY_CODE_EXAMPLES: { label: string; code: string }[] = [
     label: 'Arp from a scale',
     code: `// An up-and-down arpeggio over 4 bars, built from the minor scale.
 const s = scale(pitch('A', 3), 'minor');
-const seq = [0, 2, 4, 6, 4, 2];   // scale degrees
+const degrees = [0, 2, 4, 6, 4, 2];
 const notes = [];
 for (let step = 0; step < 32; step++) {
-  const deg = seq[step % seq.length];
+  const deg = degrees[step % degrees.length];
   notes.push(note(s.note(deg), step * 0.5, 0.45, 90));
 }
 return {
@@ -247,6 +311,19 @@ return {
   patch: { waveform: 'sawtooth', cutoff: 1400, attack: 0.4, release: 0.9 },
   length: 16,
   notes,
+};`,
+  },
+  {
+    label: 'Pattern combinators',
+    code: `// Compose a line with pattern combinators + seeded-random velocity.
+const s = scale(pitch('D', 3), 'dorian');
+const r = rand(42);   // reproducible randomness
+const line = seq("0 2 4 6 7 6 4 2").repeat(2).euclid(11);
+return {
+  name: 'Combinator Line',
+  patch: { waveform: 'sawtooth', cutoff: 1800, resonance: 5, decay: 0.18, sustain: 0.4 },
+  length: 16,
+  notes: line.notes(s, { step: 0.5, dur: 0.4, vel: () => 70 + Math.floor(r() * 50) }),
 };`,
   },
 ]

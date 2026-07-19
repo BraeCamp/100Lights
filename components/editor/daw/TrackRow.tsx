@@ -26,6 +26,7 @@ import dynamic from 'next/dynamic'
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
 const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
 const SoundLibrary = dynamic(() => import('../SoundLibrary'), { ssr: false })
+const PolyCodePanel = dynamic(() => import('./PolyCodePanel'), { ssr: false })
 
 // Live take preview: while recording, armed tracks show the take growing
 // behind the playhead with its waveform drawn as it lands.
@@ -358,6 +359,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   useLayoutEffect(() => {
     if (laneCtxMenu) clampToViewport(laneMenuRef.current, { x: laneCtxMenu.x, y: laneCtxMenu.y })
   }, [laneCtxMenu])
+  // Double-click "create" popup (Upload / Record / Browse / Synthesize)
+  const [createMenu, setCreateMenu] = useState<{ x: number; y: number; beat: number } | null>(null)
+  const createMenuRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (createMenu) clampToViewport(createMenuRef.current, { x: createMenu.x, y: createMenu.y })
+  }, [createMenu])
+  const [showSynth, setShowSynth] = useState(false)
   const frozen = track.frozen ?? false
   const [takesExpanded,  setTakesExpanded]  = useState(false)
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
@@ -572,48 +580,57 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     }
   }
 
-  async function handleDoubleClick(e: React.MouseEvent) {
+  // Double-click an empty lane → a "create" popup (Upload / Record / Browse /
+  // Synthesize) at the cursor.
+  function handleDoubleClick(e: React.MouseEvent) {
     if (frozen) return
     const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
-    if (track.instrument.type === 'none') {
-      const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*'
-      input.onchange = async () => {
-        const file = input.files?.[0]; if (!file) return
-        const ext  = file.name.split('.').pop()?.toLowerCase() ?? ''
-        let ab = await file.arrayBuffer()
-        let blobUrl: string
+    setCreateMenu({ x: e.clientX, y: e.clientY, beat: snapBeat(beatX, snap, project.timeSignatureNum) })
+  }
 
-        if (ext === 'aif' || ext === 'aiff') {
-          try {
-            const { channels, sampleRate } = decodeAiff(ab)
-            const wavBuf = encodeWav(channels, sampleRate)
-            const wavBlob = new Blob([wavBuf], { type: 'audio/wav' })
-            ab = wavBuf
-            blobUrl = URL.createObjectURL(wavBlob)
-          } catch {
-            console.error('Could not decode AIFF file:', file.name)
-            return
-          }
-        } else {
-          blobUrl = URL.createObjectURL(file)
+  async function importFileAtBeat(beat: number) {
+    const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*'
+    input.onchange = async () => {
+      const file = input.files?.[0]; if (!file) return
+      const ext  = file.name.split('.').pop()?.toLowerCase() ?? ''
+      let ab = await file.arrayBuffer()
+      let blobUrl: string
+      if (ext === 'aif' || ext === 'aiff') {
+        try {
+          const { channels, sampleRate } = decodeAiff(ab)
+          const wavBuf = encodeWav(channels, sampleRate)
+          ab = wavBuf
+          blobUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }))
+        } catch {
+          console.error('Could not decode AIFF file:', file.name)
+          return
         }
-
-        const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: blobUrl })
-        dispatch({ type: 'ADD_CLIP', clip })
-        // Imported files have no library entry — upload so the clip survives reloads
-        void uploadRecordingBlob(new Blob([ab], { type: 'audio/wav' }), clip.id).then(key => {
-          if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
-        })
-        const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
-        const peaks = extractPeaks(buf)
-        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+      } else {
+        blobUrl = URL.createObjectURL(file)
       }
-      input.click()
-    } else {
-      const clip = makeMidiClip(track.id, 'MIDI Clip', snapBeat(beatX, snap, project.timeSignatureNum), 4, { isDrumClip: track.instrument.type === 'drum' })
+      const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), beat, 8, { audioUrl: blobUrl })
       dispatch({ type: 'ADD_CLIP', clip })
-      setExpandedPianoRollClipId(clip.id)
+      // Imported files have no library entry — upload so the clip survives reloads
+      void uploadRecordingBlob(new Blob([ab], { type: 'audio/wav' }), clip.id).then(key => {
+        if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+      })
+      const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
+      const peaks = extractPeaks(buf)
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+    }
+    input.click()
+  }
+
+  async function recordIntoTrack() {
+    try {
+      const source = track.inputSource ?? 'mic'
+      dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { armed: true, inputSource: source } })
+      await engine.startMicInput(track.id, source)
+      engine.play()
+      await engine.startRecording()
+    } catch (err) {
+      console.error('Could not start recording:', err)
     }
   }
 
@@ -1559,6 +1576,30 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         </div>
       )}
 
+      {createMenu && createPortal(
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1999 }} onMouseDown={() => setCreateMenu(null)} />
+          <div ref={createMenuRef} style={{ position: 'fixed', zIndex: 2000, left: createMenu.x, top: createMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 190, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+            {([
+              ['⬆', 'Upload audio', () => importFileAtBeat(createMenu.beat)],
+              ['●', 'Record from mic', () => recordIntoTrack()],
+              ['♫', 'Browse library', () => { setPickerInsertBeat(snapBeat(createMenu.beat, snap, project.timeSignatureNum)); setShowLibraryPicker(true) }],
+              ['⌁', 'Synthesize (code)', () => setShowSynth(true)],
+            ] as [string, string, () => void][]).map(([icon, label, action]) => (
+              <button key={label}
+                onClick={() => { action(); setCreateMenu(null) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '7px 14px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+                <span style={{ color: '#a78bfa', width: 14, textAlign: 'center' }}>{icon}</span>
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body
+      )}
+
       {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded */}
       {(() => {
         const expandedClip = clips.find(c => isMidiClip(c) && c.id === expandedPianoRollClipId)
@@ -1603,6 +1644,22 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <SoundLibrary embedded onPick={handlePickFromLibrary} />
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showSynth && createPortal(
+        <div className="electron-nodrag" style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowSynth(false) }}>
+          <div style={{ width: 480, height: 560, background: 'var(--bg-card)', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Synthesize with code</span>
+              <button onClick={() => setShowSynth(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <PolyCodePanel onDone={() => setShowSynth(false)} />
             </div>
           </div>
         </div>,

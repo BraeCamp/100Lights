@@ -9,7 +9,7 @@ import { useDaw } from '@/lib/daw-state'
 import type { MidiClip } from '@/lib/daw-types'
 import { runPolyCode, POLY_CODE_EXAMPLES, type GeneratedTrack } from '@/lib/poly-code'
 
-export default function PolyCodePanel() {
+export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) {
   const { project, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
   const [code, setCode] = useState(POLY_CODE_EXAMPLES[0].code)
   const [running, setRunning] = useState(false)
@@ -61,6 +61,7 @@ export default function PolyCodePanel() {
     setSelectedTrackId(trackId)
     setExpandedPianoRollClipId(clip.id)
     setView('arrangement')
+    onDone?.()
   }
 
   const btn: React.CSSProperties = {

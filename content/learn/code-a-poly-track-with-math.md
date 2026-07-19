@@ -47,8 +47,27 @@ So a single kick-drum-simple bass note on beat 1 is `note(36, 0, 1, 120)`.
 | `note(pitch, start, dur, vel)` | One note |
 | `chord(start, dur, [p1,p2,p3], vel)` | Several notes at once |
 | `euclid(steps, pulses)` | A boolean rhythm — `pulses` hits spread evenly over `steps` |
+| `seq("0 2 4")` | A **pattern** of degrees (see combinators below) |
+| `rhythm("x..x")` | A boolean rhythm from a string (`x`/`1` = hit) |
+| `rand(seed)` | A seeded random function → reproducible tracks |
 | `tempo`, `bars` | The project's tempo and loop length |
 | `Math` | The full JavaScript `Math` object |
+
+### Pattern combinators
+
+`seq(...)` gives you a pattern you can transform, then turn into notes:
+
+```js
+seq("0 2 4 6")          // degrees (use _ or . for a rest)
+  .repeat(2)            // play it twice
+  .rev()               // reversed
+  .add(7)              // transpose every degree up a scale-octave
+  .euclid(5)           // keep only 5 evenly-spread hits
+  .notes(scale(pitch('A',3),'minor'), { step: 0.5, dur: 0.4, vel: 90 });
+```
+
+`.notes()` takes a scale and `{ start, step, dur, vel }`; `vel` may be a function
+of the step index. Everything returns a new pattern, so combinators chain.
 
 Scales support `major`, `minor`, `dorian`, `phrygian`, `lydian`, `mixolydian`,
 `locrian`, `harmonic`, `penta-min`, `penta-maj`, `blues`, `chromatic`.
@@ -68,10 +87,10 @@ s.note(-1); // G3  (below the root)
 
 ```js
 const s = scale(pitch('A', 3), 'minor');
-const seq = [0, 2, 4, 6, 4, 2];      // degrees to cycle
+const degrees = [0, 2, 4, 6, 4, 2];  // degrees to cycle
 const notes = [];
 for (let step = 0; step < 32; step++) {
-  const deg = seq[step % seq.length];
+  const deg = degrees[step % degrees.length];
   notes.push(note(s.note(deg), step * 0.5, 0.45, 90));  // an 8th-note grid
 }
 return {
