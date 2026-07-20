@@ -10,6 +10,8 @@ import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
 
 const PadTuner    = dynamic(() => import('./PadTuner'),    { ssr: false })
+// Screen capture pulls in MediaRecorder plumbing nobody needs until they record.
+const ScreenRecorderPanel = dynamic(() => import('./ScreenRecorder'), { ssr: false })
 const MaskingPanel = dynamic(() => import('./MaskingPanel'), { ssr: false })
 
 function fmtHMS(secs: number): string {
@@ -47,6 +49,7 @@ export default function Transport() {
   const [bpmDraft, setBpmDraft] = useState('')
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
+  const [showRecorder, setShowRecorder] = useState(false)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
   const [micError, setMicError] = useState('')
@@ -940,6 +943,23 @@ export default function Transport() {
         ♩
       </button>
 
+      {/* Session recorder toggle */}
+      <button
+        onClick={() => setShowRecorder(v => !v)}
+        title="Record your screen and the studio's audio — for tutorials, demos, or sharing what you made"
+        data-help-id="screen-recorder"
+        style={{
+          ...base,
+          width: 'auto', padding: '0 9px',
+          fontSize: 11,
+          background: showRecorder ? '#dc2626' : '#1e1e1e',
+          border: showRecorder ? '1px solid #dc2626' : '1px solid var(--border)',
+          color: showRecorder ? '#fff' : 'var(--text-secondary)',
+        }}
+      >
+        ●REC
+      </button>
+
       {/* Masking detector toggle */}
       <button
         onClick={() => setShowMask(v => !v)}
@@ -960,6 +980,11 @@ export default function Transport() {
       {/* Collab slot — CollabLayer portals the avatars + invite button here
           so they live in the transport row instead of their own bar */}
       <div id="transport-collab-slot" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexShrink: 0 }} />
+
+      {showRecorder && typeof document !== 'undefined' && createPortal(
+        <ScreenRecorderPanel onClose={() => setShowRecorder(false)} />,
+        document.body,
+      )}
 
       {/* Floating tuner panel */}
       {showTuner && typeof document !== 'undefined' && createPortal(

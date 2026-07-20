@@ -29,10 +29,24 @@ const LANE_COLOR: Record<string, string> = {
   kick: '#f472b6', snare: '#38bdf8', hat: '#34d399', clap: '#fbbf24',
 }
 
+/** Expand the preset pattern into a lane × step boolean grid. */
+function initialGrid(spec: GridSpec): boolean[][] {
+  const grid: boolean[][] = []
+  for (let li = 0; li < spec.lanes.length; li++) {
+    const hits = new Set(spec.pattern[li] ?? [])
+    const row: boolean[] = []
+    for (let si = 0; si < spec.steps; si++) row.push(hits.has(si))
+    grid.push(row)
+  }
+  return grid
+}
+
+function emptyGrid(spec: GridSpec): boolean[][] {
+  return spec.lanes.map(() => new Array<boolean>(spec.steps).fill(false))
+}
+
 export default function ArticleGrid({ spec }: { spec: GridSpec }) {
-  const [on, setOn] = useState<boolean[][]>(() =>
-    spec.lanes.map((_, li) =>
-      Array.from({ length: spec.steps }, (_, si) => spec.pattern[li]?.includes(si) ?? false)))
+  const [on, setOn] = useState<boolean[][]>(() => initialGrid(spec))
   const [playing, setPlaying] = useState(false)
   const [step, setStep] = useState(-1)
 
@@ -40,13 +54,18 @@ export default function ArticleGrid({ spec }: { spec: GridSpec }) {
   const timerRef = useRef<number | null>(null)
   const nextTimeRef = useRef(0)
   const stepRef = useRef(0)
-  // Read the live grid inside the scheduler without re-arming it every edit.
+  // The scheduler reads the grid through a ref so editing a cell mid-playback
+  // takes effect without tearing down and re-arming the interval.
   const onRef = useRef(on)
-  onRef.current = on
+  useEffect(() => { onRef.current = on }, [on])
 
   // AudioContext is created on first play, never on mount — an article with
-  // three of these shouldn't open three audio devices just by being scrolled past.
-  const ctx = () => (ctxRef.current ??= new AudioContext())
+  // three of these shouldn't open three audio devices just by being scrolled
+  // past. Only ever called from event handlers, never during render.
+  function ctx(): AudioContext {
+    if (!ctxRef.current) ctxRef.current = new AudioContext()
+    return ctxRef.current
+  }
 
   function voice(kind: string, t: number) {
     const c = ctx()
@@ -128,7 +147,7 @@ export default function ArticleGrid({ spec }: { spec: GridSpec }) {
           >{playing ? '❚❚' : '▶'}</button>
           <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{spec.bpm} BPM · click any square</span>
           <button
-            onClick={() => setOn(spec.lanes.map(() => Array(spec.steps).fill(false)))}
+            onClick={() => setOn(emptyGrid(spec))}
             style={{ marginLeft: 'auto', fontSize: 10.5, background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--text-muted)', cursor: 'pointer' }}
           >Clear</button>
         </div>

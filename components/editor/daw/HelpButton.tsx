@@ -132,6 +132,8 @@ const FEATURES: Feature[] = [
     description: 'The overall output level for the whole project — everything you hear passes through this final fader before it reaches your speakers or headphones.' },
   { group: 'Transport', name: 'Tuner', helpIds: ['tuner'], modes: ['music'],
     description: 'Open a floating tuner panel to check and adjust the pitch of pads and instruments, so all of your sounds agree on the same reference pitch.' },
+  { group: 'Transport', name: 'Record Session', helpIds: ['screen-recorder'], modes: ['music'],
+    description: 'Records your screen together with the studio’s own audio, taken straight from the mixer rather than from system sound — so notifications and other tabs never end up in the take. Optionally records your microphone too, for talking over what you’re doing. Preview it and save the video when you stop.' },
   { group: 'Transport', name: 'Masking Detector', helpIds: ['masking'], modes: ['music'],
     description: 'Analyzes your mix and shows which tracks are competing for the same frequency bands, so you can EQ or pan them apart for a cleaner, clearer result.' },
 
