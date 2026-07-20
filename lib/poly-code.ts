@@ -47,10 +47,43 @@ const SCALES = {
   chromatic:[0,1,2,3,4,5,6,7,8,9,10,11],
 };
 const NOTE_NAMES = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+const CHORDS = {
+  '':[0,4,7], maj:[0,4,7], m:[0,3,7], min:[0,3,7], dim:[0,3,6], aug:[0,4,8],
+  sus2:[0,2,7], sus4:[0,5,7], '6':[0,4,7,9], m6:[0,3,7,9],
+  '7':[0,4,7,10], maj7:[0,4,7,11], m7:[0,3,7,10], min7:[0,3,7,10],
+  m7b5:[0,3,6,10], dim7:[0,3,6,9], '9':[0,4,7,10,14], m9:[0,3,7,10,14], add9:[0,4,7,14],
+};
 
-function pitch(name, octave){ return (NOTE_NAMES[name] || 0) + ((octave|0) + 1) * 12; }
+// Note name -> MIDI number. "A3", "C#4", "Bb2" — numbers pass straight through.
+function toMidi(x){
+  if (typeof x === 'number') return Math.round(x);
+  const m = String(x).trim().match(/^([A-Ga-g])([#b]?)(-?\\d+)$/);
+  if (m){
+    const pc = NOTE_NAMES[m[1].toUpperCase() + m[2]];
+    if (pc != null) return pc + (parseInt(m[3], 10) + 1) * 12;
+  }
+  return 0;
+}
+
+// Chord name -> array of MIDI notes. "Cm", "Gmaj7", "F#7" (octave 4). For other
+// octaves pass an array of note names/numbers instead, e.g. ["C3","Eb3","G3"].
+function chordNotes(name){
+  const m = String(name).trim().match(/^([A-Ga-g][#b]?)(.*)$/);
+  if (!m) return [];
+  const pc = NOTE_NAMES[m[1][0].toUpperCase() + (m[1].slice(1) || '')];
+  if (pc == null) return [];
+  const iv = CHORDS[m[2]] || CHORDS[''];
+  const root = pc + (4 + 1) * 12;
+  return iv.map(function(x){ return root + x; });
+}
+
+function pitch(name, octave){
+  if (octave == null && typeof name === 'string' && /\\d/.test(name)) return toMidi(name);
+  return (NOTE_NAMES[name] || 0) + ((octave|0) + 1) * 12;
+}
 
 function scale(root, name){
+  root = toMidi(root);
   const iv = SCALES[name] || SCALES.minor;
   return {
     root: root, name: name, length: iv.length,
@@ -64,12 +97,15 @@ function scale(root, name){
   };
 }
 
+// note("A3", start, dur, vel?) — a note name or a raw MIDI number both work.
 function note(pitch, start, dur, vel){
-  return { pitch: Math.round(pitch), startBeat: +start, durationBeats: +dur,
+  return { pitch: toMidi(pitch), startBeat: +start, durationBeats: +dur,
            velocity: vel == null ? 100 : Math.round(vel) };
 }
 
+// chord(start, dur, "Cm" | ["C4","Eb4","G4"] | [60,63,67], vel?)
 function chord(start, dur, pitches, vel){
+  if (typeof pitches === 'string') pitches = chordNotes(pitches);
   return (pitches || []).map(function(p){ return note(p, start, dur, vel); });
 }
 
@@ -299,7 +335,7 @@ export const POLY_CODE_EXAMPLES: { label: string; code: string }[] = [
   {
     label: 'Arp from a scale',
     code: `// An up-and-down arpeggio over 4 bars, built from the minor scale.
-const s = scale(pitch('A', 3), 'minor');
+const s = scale('A3', 'minor');
 const degrees = [0, 2, 4, 6, 4, 2];
 const notes = [];
 for (let step = 0; step < 32; step++) {
@@ -316,7 +352,7 @@ return {
   {
     label: 'Euclidean bass',
     code: `// A driving bass whose hits follow a euclidean rhythm (5 in 8).
-const root = pitch('E', 1);
+const root = 'E1';
 const hits = euclid(16, 7);
 const notes = [];
 for (let i = 0; i < hits.length; i++) {
@@ -332,7 +368,7 @@ return {
   {
     label: 'Chord progression',
     code: `// Four bars of chords from the scale (i – VI – III – VII).
-const s = scale(pitch('C', 3), 'minor');
+const s = scale('C3', 'minor');
 const roots = [0, 5, 2, 6];   // scale degrees to build triads on
 const notes = [];
 roots.forEach((r, bar) => {
@@ -349,7 +385,7 @@ return {
   {
     label: 'Pattern combinators',
     code: `// Compose a line with pattern combinators + seeded-random velocity.
-const s = scale(pitch('D', 3), 'dorian');
+const s = scale('D3', 'dorian');
 const r = rand(42);   // reproducible randomness
 const line = seq("0 2 4 6 7 6 4 2").repeat(2).euclid(11);
 return {

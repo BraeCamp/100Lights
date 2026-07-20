@@ -21,6 +21,10 @@ export interface PracticeSnapshot {
   pianoRollOpen: boolean
   // Sound design
   anyPolyTrack: boolean
+  // Coding lesson — observable results of editing the script
+  polyMaxNotes: number
+  anyPolyBright: boolean
+  anyPolyPad: boolean
   // Sends & returns
   returnCount: number
   anySend: boolean
@@ -38,10 +42,15 @@ export interface PracticeStep {
   done: (s: PracticeSnapshot) => boolean
 }
 
+export type PracticeCategory = 'Recording' | 'Composing' | 'Mixing' | 'Coding'
+
+export const PRACTICE_CATEGORY_ORDER: PracticeCategory[] = ['Recording', 'Composing', 'Mixing', 'Coding']
+
 export interface PracticePath {
   id: string
   title: string
   tagline: string
+  category: PracticeCategory
   steps: PracticeStep[]
 }
 
@@ -49,6 +58,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   {
     id: 'first-take',
     title: 'Your first take',
+    category: 'Recording',
     tagline: 'From an empty session to a captured recording.',
     steps: [
       {
@@ -86,6 +96,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   {
     id: 'mix-basics',
     title: 'Mix basics',
+    category: 'Mixing',
     tagline: 'Hear what solo, mute, and effects actually do.',
     steps: [
       {
@@ -117,6 +128,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   {
     id: 'write-melody',
     title: 'Write a melody',
+    category: 'Composing',
     tagline: 'Draw notes in the piano roll and hear them back.',
     steps: [
       {
@@ -148,6 +160,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   {
     id: 'sound-from-code',
     title: 'Design a sound with code',
+    category: 'Coding',
     tagline: 'Generate a synth voice from a tiny script, then shape it.',
     steps: [
       {
@@ -173,6 +186,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   {
     id: 'shape-the-space',
     title: 'Shape the space',
+    category: 'Mixing',
     tagline: 'Sends and returns — one shared reverb for the whole mix.',
     steps: [
       {
@@ -191,6 +205,44 @@ export const PRACTICE_PATHS: PracticePath[] = [
         instruction: 'Drop a Reverb on the return so every send shares one space — the pro way to add depth.',
         helpId: 'add-device',
         done: s => s.anyReturnEffect,
+      },
+    ],
+  },
+  {
+    id: 'speak-the-language',
+    title: 'Speak the language',
+    tagline: 'Learn the sound-code by changing it — every edit is something you hear.',
+    category: 'Coding',
+    steps: [
+      {
+        id: 'lang-blank', title: 'Start from Blank',
+        instruction: "Open the Code panel, pick 'Blank' under Add new, and press Add track. Read it top to bottom — the comments explain each line. The Reference button lists everything the language can do.",
+        helpId: 'sound-code',
+        done: s => s.anyPolyTrack,
+      },
+      {
+        id: 'lang-notes', title: 'Write two more notes',
+        instruction: "Click your new clip, then add two note() lines to the notes list — try note('D4', 6, 1) and note('F4', 7, 1) — and press Save.",
+        helpId: 'sound-code',
+        done: s => s.polyMaxNotes >= 9,
+      },
+      {
+        id: 'lang-bright', title: 'Brighten the sound',
+        instruction: 'In the patch, raise cutoff to 4000 and Save. The filter opens up — same notes, brighter voice.',
+        helpId: 'sound-code',
+        done: s => s.anyPolyBright,
+      },
+      {
+        id: 'lang-pad', title: 'Turn it into a pad',
+        instruction: 'Now set attack: 0.8 and release: 1 and Save. A slow fade-in turns a pluck into a pad — envelopes are that powerful.',
+        helpId: 'sound-code',
+        done: s => s.anyPolyPad,
+      },
+      {
+        id: 'lang-hear', title: 'Play what you wrote',
+        instruction: 'Press Play. Everything you just heard changing came from four small edits — that\'s the whole language.',
+        helpId: 'play',
+        done: s => s.playing && s.anyPolyTrack,
       },
     ],
   },

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { GraduationCap, Check, ChevronLeft, Sparkles, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
-import { PRACTICE_PATHS, type PracticeSnapshot } from '@/lib/practice-paths'
+import type { PolyInstrumentParams } from '@/lib/daw-types'
+import { PRACTICE_PATHS, PRACTICE_CATEGORY_ORDER, type PracticeSnapshot } from '@/lib/practice-paths'
 import { PRACTICE_RECIPES, buildRecipeClip, type PracticeRecipe } from '@/lib/practice-recipes'
 import { PRACTICE_SONGS, buildSongClip, songTrackName, type PracticeSong, type SongPart } from '@/lib/practice-songs'
 import { highlightHelpTargets } from './HelpButton'
@@ -85,6 +86,13 @@ export default function PracticeButton() {
     maxClipNotes: Math.max(0, ...project.arrangementClips.map(c => (c.kind === 'midi' ? c.notes.length : 0))),
     pianoRollOpen: expandedPianoRollClipId != null,
     anyPolyTrack: project.tracks.some(t => t.instrument.type === 'poly'),
+    polyMaxNotes: Math.max(0, ...project.arrangementClips.map(c => {
+      if (c.kind !== 'midi') return 0
+      const t = project.tracks.find(tr => tr.id === c.trackId)
+      return t?.instrument.type === 'poly' ? c.notes.length : 0
+    })),
+    anyPolyBright: project.tracks.some(t => t.instrument.type === 'poly' && (t.instrument.params as PolyInstrumentParams).filterCutoff >= 3000),
+    anyPolyPad: project.tracks.some(t => t.instrument.type === 'poly' && (t.instrument.params as PolyInstrumentParams).attack >= 0.5),
     returnCount: project.returnTracks.length,
     anySend: project.tracks.some(t => t.sendAmounts != null && Object.values(t.sendAmounts).some(v => v > 0)),
     anyReturnEffect: project.returnTracks.some(r => r.effects.length > 0),
@@ -363,32 +371,43 @@ export default function PracticeButton() {
                     Skill paths are completed by doing, not reading — the editor watches your
                     project and checks steps off as you go.
                   </p>
-                  {PRACTICE_PATHS.map(path => {
-                    const done = doneIds(path.id)
-                    const complete = done.size === path.steps.length
+                  {PRACTICE_CATEGORY_ORDER.map(cat => {
+                    const paths = PRACTICE_PATHS.filter(p => p.category === cat)
+                    if (paths.length === 0) return null
                     return (
-                      <button
-                        key={path.id}
-                        onClick={() => setActivePathId(path.id)}
-                        style={{
-                          textAlign: 'left', cursor: 'pointer',
-                          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
-                          padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
-                        }}
-                      >
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{path.title}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{path.tagline}</div>
+                      <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 0.5, textTransform: 'uppercase', marginTop: 4 }}>
+                          {cat}
                         </div>
-                        <span style={{
-                          fontSize: 10.5, fontWeight: 700, flexShrink: 0,
-                          color: complete ? 'var(--success)' : 'var(--text-muted)',
-                          display: 'flex', alignItems: 'center', gap: 4,
-                        }}>
-                          {complete && <Sparkles size={11} />}
-                          {done.size}/{path.steps.length}
-                        </span>
-                      </button>
+                        {paths.map(path => {
+                          const done = doneIds(path.id)
+                          const complete = done.size === path.steps.length
+                          return (
+                            <button
+                              key={path.id}
+                              onClick={() => setActivePathId(path.id)}
+                              style={{
+                                textAlign: 'left', cursor: 'pointer',
+                                background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+                                padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
+                              }}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{path.title}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{path.tagline}</div>
+                              </div>
+                              <span style={{
+                                fontSize: 10.5, fontWeight: 700, flexShrink: 0,
+                                color: complete ? 'var(--success)' : 'var(--text-muted)',
+                                display: 'flex', alignItems: 'center', gap: 4,
+                              }}>
+                                {complete && <Sparkles size={11} />}
+                                {done.size}/{path.steps.length}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
                     )
                   })}
                 </>

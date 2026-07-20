@@ -19,9 +19,73 @@ const EFFECT_LABELS: Record<string, string> = {
 }
 
 // Starter templates (moved off the top bar into the "Add new" menu).
+const BLANK_TEMPLATE = `// Every script returns one object: a name, a synth patch, and notes.
+// note(pitch, startBeat, lengthBeats, velocity) — pitch is a name like 'C4'.
+return {
+  name: 'New Sound',
+  patch: {
+    waveform: 'sawtooth',   // 'sine' | 'square' | 'sawtooth' | 'triangle'
+    cutoff: 1500,           // filter brightness in Hz (20–20000)
+    resonance: 2,           // filter emphasis (0.1–20)
+    attack: 0.01,           // seconds to reach full volume
+    release: 0.3,           // seconds to fade after a note ends
+  },
+  length: 8,                // clip length in beats
+  notes: [
+    note('C4', 0, 1),       // beat 0, one beat long
+    note('E4', 1, 1),
+    note('G4', 2, 2, 80),   // quieter (velocity 80)
+    chord(4, 4, 'Cm7'),     // chords work too: 'C', 'Am', 'Gmaj7', 'F#m7'…
+  ],
+};`
 const TEMPLATES: { label: string; code: string }[] = [
-  { label: 'Blank', code: `return {\n  name: 'New Sound',\n  patch: { waveform: 'sawtooth', cutoff: 1500, resonance: 2 },\n  length: 8,\n  notes: [\n    note(pitch('C', 4), 0, 1, 100),\n  ],\n};` },
+  { label: 'Blank', code: BLANK_TEMPLATE },
   ...POLY_CODE_EXAMPLES,
+]
+
+// In-panel cheatsheet — the language, one glance at a time.
+const REFERENCE: { title: string; rows: [string, string][] }[] = [
+  {
+    title: 'Notes',
+    rows: [
+      [`note('A3', 0, 1, 90)`, 'pitch, start beat, length in beats, velocity 1–127 (optional)'],
+      [`chord(0, 4, 'Cm7')`, `chord names: C, Am, F#m7, Gmaj7, Bdim, Dsus4, E7…`],
+      [`chord(0, 4, ['C3','E3','G3'])`, 'or spell it yourself — names or MIDI numbers'],
+    ],
+  },
+  {
+    title: 'Scales',
+    rows: [
+      [`const s = scale('C3', 'minor')`, 'major, minor, dorian, mixolydian, penta-min, blues…'],
+      [`s.note(0)`, 'degree → pitch. 0 = root, 7 = an octave up, negatives go down'],
+    ],
+  },
+  {
+    title: 'Rhythm & patterns',
+    rows: [
+      [`euclid(16, 5)`, '5 hits spread evenly over 16 steps → [true/false…]'],
+      [`rhythm('x..x..x.')`, 'x = hit, . = rest'],
+      [`seq('0 2 4 7').repeat(2)`, 'a degree pattern; also .rev() .add(n) .euclid(p) .every(n, fn)'],
+      [`.notes(s, { step: 0.5, vel: 90 })`, 'turn the pattern into notes on a scale'],
+      [`const r = rand(42)`, 'seeded random: r() → 0..1, same result every run'],
+    ],
+  },
+  {
+    title: 'Patch (the sound)',
+    rows: [
+      [`waveform`, `'sine' (soft) | 'triangle' | 'square' (hollow) | 'sawtooth' (bright)`],
+      [`cutoff, resonance`, 'filter: brightness in Hz (20–20000), emphasis (0.1–20)'],
+      [`attack, decay, sustain, release`, 'the volume envelope, in seconds (sustain is 0–1)'],
+      [`detune`, 'cents of drift between the two voices — fattens the sound'],
+      [`lfoEnabled, lfoRate, lfoDepth, lfoTarget`, `wobble: rate in Hz, target 'filter' | 'pitch' | 'volume'`],
+    ],
+  },
+  {
+    title: 'Clip effects',
+    rows: [
+      [`rollFx: { reverbWet: 0.3, distortion: 0.2 }`, 'effects on just this clip: also filterHz, sustain, sub, bass, mid, treble'],
+    ],
+  },
 ]
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000
@@ -73,6 +137,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
   const [newItem, setNewItem] = useState(true)
   const [effectMutes, setEffectMutes] = useState<Record<string, boolean>>({})
   const [showTemplates, setShowTemplates] = useState(false)
+  const [showReference, setShowReference] = useState(false)
 
   const bars = Math.max(1, Math.round(project.loopEnd / project.timeSignatureNum) || 4)
   const selId = expandedPianoRollClipId ?? selectedClipId
@@ -213,9 +278,40 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {/* Status — no code-changing suggestions here (templates live in "Add new"). */}
-      <div style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', fontSize: 10, color: 'var(--text-muted)' }}>
-        {isEditingClip ? `Editing this clip — Save applies changes` : 'New item — Add track (or drag it onto a track)'}
+      <div style={{ padding: '5px 10px', borderBottom: '1px solid var(--border)', fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ flex: 1 }}>
+          {isEditingClip ? `Editing this clip — Save applies changes` : 'New item — Add track (or drag it onto a track)'}
+        </span>
+        <button
+          onClick={() => setShowReference(v => !v)}
+          title="The helpers and patch fields, at a glance"
+          style={{ ...btn, fontSize: 9.5, padding: '2px 8px',
+            background: showReference ? 'var(--accent)' : 'var(--bg-card)',
+            color: showReference ? '#fff' : 'var(--text-muted)', borderColor: showReference ? 'var(--accent)' : 'var(--border)' }}
+        >
+          Reference
+        </button>
       </div>
+
+      {/* Cheatsheet — the in-context lesson on the language. */}
+      {showReference && (
+        <div style={{ borderBottom: '1px solid var(--border)', maxHeight: 240, overflowY: 'auto', padding: '8px 12px', background: 'var(--bg-surface)', flexShrink: 0 }}>
+          {REFERENCE.map(sec => (
+            <div key={sec.title} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 3 }}>{sec.title}</div>
+              {sec.rows.map(([code, desc]) => (
+                <div key={code} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
+                  <code style={{ fontSize: 10, color: 'var(--accent-light)', fontFamily: 'ui-monospace, Menlo, monospace', whiteSpace: 'nowrap', flexShrink: 0 }}>{code}</code>
+                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+          <a href="/learn/code-a-poly-track-with-math" target="_blank" rel="noreferrer" style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>
+            Full guide with examples ↗
+          </a>
+        </div>
+      )}
 
       <textarea
         value={code}
