@@ -109,6 +109,58 @@ function SoundFallback({ caption }: { caption: string }) {
   )
 }
 
+/**
+ * Callouts that keep the two kinds of explanation visually apart.
+ *
+ * `@theory` is why something sounds the way it does. `@math` is the
+ * arithmetic behind it, and is always optional — articles are written so that
+ * deleting every @math block leaves them intact, which is why this one is
+ * styled as an aside and labeled skippable. `@ear` is a listening
+ * instruction. Mixing theory and math in one block was the thing to avoid;
+ * making them different shapes on the page is what enforces it.
+ */
+const CALLOUTS = {
+  theory: { label: 'Theory', accent: '#a78bfa', tint: 'rgba(167,139,250,0.09)', mono: false, note: '' },
+  math:   { label: 'Math',   accent: '#38bdf8', tint: 'rgba(56,189,248,0.08)',  mono: true,  note: 'optional — skip it and nothing breaks' },
+  ear:    { label: 'Ear',    accent: '#34d399', tint: 'rgba(52,211,153,0.08)',  mono: false, note: 'go listen' },
+} as const
+
+type CalloutKind = keyof typeof CALLOUTS
+
+function Callout({ kind, text, keyBase }: { kind: CalloutKind; text: string; keyBase: string }) {
+  const c = CALLOUTS[kind]
+  return (
+    <aside
+      style={{
+        margin: '22px 0',
+        padding: '14px 18px',
+        borderLeft: `3px solid ${c.accent}`,
+        borderRadius: '0 10px 10px 0',
+        background: c.tint,
+      }}
+    >
+      <p style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '0 0 6px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.09em', textTransform: 'uppercase', color: c.accent }}>
+          {c.label}
+        </span>
+        {c.note && (
+          <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontStyle: 'italic' }}>{c.note}</span>
+        )}
+      </p>
+      <div
+        style={{
+          fontSize: c.mono ? 14 : 15,
+          lineHeight: 1.7,
+          color: 'var(--text-secondary)',
+          fontFamily: c.mono ? 'var(--font-geist-mono), ui-monospace, monospace' : undefined,
+        }}
+      >
+        {inline(text, keyBase)}
+      </div>
+    </aside>
+  )
+}
+
 /** GitHub-style pipe table. Added because the one published article uses one
  *  and it was rendering as literal pipe characters on the live site. */
 function Table({ rows, keyBase }: { rows: string[][]; keyBase: string }) {
@@ -163,6 +215,16 @@ export function renderMarkdown(md: string): React.ReactNode {
       const code = b.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '')
       out.push(<pre key={key} style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', overflowX: 'auto', fontSize: 13, lineHeight: 1.55 }}><code>{code}</code></pre>)
       return
+    }
+    // @theory / @math / @ear — see CALLOUTS. Checked before @video so the
+    // prefix match can't be shadowed.
+    {
+      const m = b.match(/^@(theory|math|ear)\b\s*([\s\S]*)$/)
+      if (m) {
+        const text = m[2].trim()
+        if (text) out.push(<Callout key={key} kind={m[1] as CalloutKind} text={text} keyBase={key} />)
+        return
+      }
     }
     if (b.startsWith('@video')) {
       const m = b.match(/^@video(?:\(([^)]+)\))?\s*([\s\S]*)$/)

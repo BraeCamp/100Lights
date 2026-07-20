@@ -1,10 +1,12 @@
 ---
-title: "Code a poly track with math"
-description: "Generate melodies, basslines, arps and chords in the 100Lights studio by writing a few lines of math. A friendly guide to the Code panel — scales, notes, chords and euclidean rhythms."
-date: "2026-07-19"
+title: Code a poly track with math
+description: Generate melodies, basslines, arps and chords by writing a few lines of math in the 100Lights Code panel — scales, notes, chords and euclidean rhythms.
+date: 2026-07-19
 draft: false
-tags: ["synthesis", "midi", "coding", "poly"]
+tags: synthesis, midi, coding, poly
 ---
+
+# Code a poly track with math
 
 The **poly** instrument in 100Lights isn't a sample — it's a synthesizer built
 from oscillators, a filter and an envelope, played live in your browser. That
@@ -177,3 +179,8 @@ adding a new track). Press **New** to go back to creating.
 
 Because a poly track is pure synthesis, what you code is exactly what plays —
 no samples to load. Have fun turning math into music.
+
+When you land on a patch worth keeping, publish it to the
+[community](https://100lights.com/community) — a poly preset is a few hundred
+bytes of settings, so it's the cheapest thing on the site to share and the
+easiest for somebody else to pull apart and learn from.

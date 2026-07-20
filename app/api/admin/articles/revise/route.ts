@@ -1,5 +1,5 @@
 import { isAdmin } from '@/lib/admin-auth'
-import { ARTICLE_VOICE } from '@/lib/article-voice'
+import { buildVoicePrompt, DEFAULT_VOICE, VOICES, type VoiceId } from '@/lib/article-voice'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -13,20 +13,22 @@ export async function POST(req: Request) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return Response.json({ error: 'ANTHROPIC_API_KEY is not set — add it to the environment to enable AI edits.' }, { status: 501 })
 
-  let body: { body?: string; instruction?: string }
+  let body: { body?: string; instruction?: string; voice?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  const voice: VoiceId = body.voice && body.voice in VOICES ? body.voice as VoiceId : DEFAULT_VOICE
   const draft = body.body ?? ''
   const instruction = body.instruction?.trim()
   if (!instruction) return Response.json({ error: 'Tell me what to change' }, { status: 400 })
   if (!draft.trim()) return Response.json({ error: 'Nothing to revise yet' }, { status: 400 })
 
-  const system = `${ARTICLE_VOICE}
+  const system = `${buildVoicePrompt(voice)}
 
 You are now REVISING an existing article, not writing a new one. Apply the editor's instruction and return the COMPLETE updated article in markdown.
 
 Preservation rules (critical):
 - Keep everything the instruction doesn't ask you to change, verbatim where possible.
-- NEVER remove or alter existing @video, @audio(...), or @sound(...) lines unless the instruction explicitly says to — they are embedded media the editor placed.
+- NEVER remove or alter existing @video, @audio(...), @sound(...), or @progression(...) lines unless the instruction explicitly says to — they are embedded media the editor placed.
+- Keep @theory / @math / @ear blocks in their own lanes: never merge them, and never move numbers into a @theory block.
 - Keep the same # H1 title unless the instruction changes the topic.
 - Return ONLY the full markdown, starting with the # H1. No commentary, no explanation of what you changed.`
 

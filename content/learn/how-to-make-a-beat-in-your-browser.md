@@ -1,64 +1,89 @@
 ---
 title: How to Make a Beat in Your Browser (No Downloads)
-description: Build a complete beat — drums, bass, and chords — in about fifteen minutes, using only a free browser studio. No downloads, no plugins, no experience required.
-date: 2026-07-17
+description: Build a complete beat — drums, bass, and chords — in about fifteen minutes in a free browser studio, starting with the three sounds that actually matter.
+date: 2026-07-20
 tags: beats, beginner
 draft: true
 ---
 
 # How to Make a Beat in Your Browser (No Downloads)
 
-You don't need a thousand-dollar program or a studio to make your first beat. A modern browser can run a full music studio — multitrack timeline, drum sequencer, piano roll, effects — and you can go from silence to a looping groove in about fifteen minutes. This guide walks through the whole thing step by step in [100Lights](https://100lights.com), which is free and runs entirely in the browser, but the ideas transfer to any studio you use later.
+Every beginner tutorial starts the same way. Download this DAW, install these plugins, get this sample pack, watch four hours of interface tour. By the time you're allowed to make a sound, you've spent a weekend and forgotten the idea you had on Tuesday.
+
+That order is backwards, and it's the reason most people who want to make music never make any.
+
+You need three sounds and about fifteen minutes. Not because I'm simplifying for beginners — because three sounds is genuinely what a beat is. Everything after that is decoration, and decoration added to nothing is still nothing.
+
+Open [100Lights](https://100lights.com) in the tab you're already in. Nothing to install, and you'll have a looping groove before you'd have finished downloading anything else.
 
 @video A 60-second timelapse of this whole guide: empty project to finished loop
 
-## Step 1: Start with the drums
+## The drums are not where you get creative
 
-Every beat stands on its drums, and the fastest way to write them is a step grid: a row per drum sound, a column per sixteenth note. Click a cell to place a hit.
+Add a track, open the piano roll, and switch to the **STEP** view — a row per drum sound, a column per sixteenth note. Click a cell to place a hit.
 
-Open a new project, add a track, and open the piano roll — for drum sounds you'll get a **STEP** view that shows exactly this grid. Then place the oldest pattern in the book:
+Now place the oldest pattern in recorded music, and don't improve it:
 
-- **Kick** on beats 1, 2, 3, 4 — the "four on the floor" pulse of house and disco
-- **Closed hi-hat** on every "and" (the cells exactly between the kicks)
-- **Snare** on beats 2 and 4
+- **Kick** on beats 1, 2, 3, 4
+- **Closed hi-hat** on every "and" — the cells exactly between the kicks
+- **Snare** on 2 and 4
 
-Press play and let it loop. That's already a beat — everything else is decoration.
+Press play. Let it loop eight times before you touch anything.
 
-> Producer's trick: the snare on 2 and 4 should be *quieter* than you think. Drag its velocity down and listen to the kick and hats breathe.
+That's a beat. Not a beginner's beat — *a* beat. Four-on-the-floor has been carrying house and disco for fifty years, and the snare on 2 and 4 is the backbeat under essentially all Western popular music. You have not made something simple. You've made something load-bearing.
+
+The instinct right now is to add a clap, a shaker, a second snare, a fill. Don't. The producers whose drums you admire aren't adding — they're deciding what to leave out, and they've been deciding since the first bar.
+
+@ear Turn the hi-hats off entirely and let the kick and snare loop alone for thirty seconds. Most people find they don't miss them. Trust that reaction more than any tutorial.
 
 @video Placing the kick/snare/hat pattern in the step grid, then nudging velocities
 
-## Step 2: Add a bassline
+One thing that *is* worth doing: drag the snare's velocity down. Beginners hit everything at full strength, which is exactly why beginner drums sound like a machine gun and yours are about to not.
 
-Add a second track and open its piano roll. A bassline's whole job is to agree with the kick, so start embarrassingly simple: one low note (try C2) placed on the same beats as your kick drum. Loop it. Then earn some movement — move the *last* note of the bar up or down a couple of semitones so the loop "turns around" and pulls back to the start.
+## The bass has one job and it isn't melody
 
-Two rules keep beginners out of trouble:
+Add a second track and open its piano roll. Place one low note — C2 is fine — on the same beats as your kick.
 
-1. Keep bass notes **short** — long overlapping bass notes turn into mud.
-2. Change pitch **at the end of the bar**, not in the middle — that's what makes a loop feel like it breathes.
+That's the bassline. That's all of it.
 
-## Step 3: Chords without theory
+I know how that feels, and the urge to make it more interesting is enormous. Resist it for one loop and listen to what actually happened: the kick got bigger. Not louder. Bigger. Two elements agreeing on the same moment stop reading as two things and start reading as one heavy thing.
 
-You don't need theory to add harmony — you need one good chord progression, and producers have been borrowing the same handful for seventy years. The community library in 100Lights ships **chord recipes**: pre-built progressions you drag onto a track as editable notes. Drag in *The pop progression (I–V–vi–IV)* and you have C → G → Am → F under your beat — the four chords behind a truly embarrassing number of hit records.
+@theory Low frequencies need time to develop before your ear registers them as weight. When bass and kick land together, you hear a single event with more body. When they land slightly apart, you hear mud — same notes, no impact. Agreement is the whole trick.
 
-Because the recipe lands as regular notes in the piano roll, you can stretch it, transpose it, or delete half of it. It's a starting point, not a stamp.
+Then earn some movement. Take the *last* note of the bar and move it up or down a couple of semitones. Now the loop turns around and pulls back to the start instead of just stopping and starting again.
 
-@video Dragging a chord recipe from the library onto a track and stretching it to fit
+Two rules keep beginners out of trouble here. Keep bass notes short, because long overlapping bass notes turn into mud. And change pitch at the end of the bar rather than the middle, because that's what makes a loop breathe instead of wander.
 
-## Step 4: Loop it like you mean it
+## Chords, without learning theory first
 
-Now select everything — drag across the timeline over all three tracks with grid-snap on, so you select the *whole bar*, silence included — copy, and paste. The copy lands exactly one bar later, keeping every track lined up. Or grab the selection's edge and drag: the whole multi-track section tiles itself as one unit.
+You don't need theory to add harmony. You need one good progression, and producers have been recycling the same handful since the 1950s.
 
-This is the point where a beat becomes a track: loop your section four times, then delete one element from the third repeat (drop the kick, or mute the chords). That tiny absence is called a *turnaround*, and it's the cheapest arrangement trick that makes a loop feel produced instead of pasted.
+The library ships **chord recipes** — progressions you drag onto a track as real, editable notes. Drag in *The pop progression* and you have C, G, Am, F under your beat: the four chords behind a genuinely embarrassing number of hit records.
 
-## Step 5: Export it
+Because it lands as ordinary notes in the piano roll, you can stretch it, transpose it, or delete half of it. It's a starting point, not a stamp. Delete the third chord and see whether you prefer it. You might.
 
-Export the mix as a WAV (44.1 kHz for streaming, 48 kHz for video) straight from the studio — or export stems (one WAV per track) if you want to keep working on it elsewhere. If you're proud of it, publish it to the [community](https://100lights.com/community) so other producers can hear it and pull your sounds into their own projects.
+@ear Loop the chords with the drums muted, then unmute them. Notice which chord your ear wants the drums to hit hardest on. That instinct is your arrangement telling you something.
 
-## Where to go from here
+## Now make it a song, by taking things away
 
-- Swap the drum sounds — the same pattern with different samples is a different genre.
-- Record something real over it: arm a track, count in, and hum a topline.
-- Steal more chords: the recipe library has jazz, soul, flamenco, and film-score progressions, each with notes on *why* it works.
+Select everything — drag across the timeline over all three tracks with grid snap on, so you grab the whole bar including the silence — then copy and paste. The copy lands exactly one bar later with every track still aligned.
 
-The whole loop above costs nothing and needs nothing installed. Open the studio and build it.
+Do that until you have four repeats. Then delete something from the third one. Drop the kick for a bar. Or mute the chords. Or pull the hats out.
+
+That absence is called a turnaround, and it's the cheapest arrangement trick in existence. It's also the entire difference between a loop and a piece of music. Nothing was added. Something left, and its leaving is what made you notice what stayed.
+
+This is the part I'd argue about with anybody: your track isn't boring because it's missing an element. It's boring because nothing has ever left.
+
+## Getting it out
+
+Export the mix as a WAV — 44.1 kHz for streaming, 48 kHz if it's going under video — straight from the studio. If you want to keep working elsewhere, export stems instead and you'll get one WAV per track.
+
+Then put it somewhere. Post it in the [community](https://100lights.com/community), send it to one person, whatever. A beat that only exists in your browser tab is functionally a beat you didn't make, and the difference between people who improve and people who don't is almost entirely whether anything ever leaves the project file.
+
+## Where to go next
+
+- Swap the drum sounds without touching the pattern. Same rhythm, different samples, different genre. This teaches more about production in ten minutes than a week of reading.
+- Record something real over it — arm a track, use the count-in, hum a topline. It'll be bad. Do it anyway. The second one won't be.
+- Steal more chords. The recipe library has jazz, soul, flamenco and film-score progressions, each with notes on why it works.
+
+Fifteen minutes, three sounds, nothing installed. The tutorial that told you to spend a weekend preparing was wrong.

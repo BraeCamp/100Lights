@@ -15,6 +15,7 @@ import { getAllChordRecipes } from '@/lib/practice-recipes'
 import { groupIntoChords } from '@/lib/chord-analysis'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { encodeWav } from '@/lib/wav-codec'
+import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
 
 interface Row {
   slug: string
@@ -40,6 +41,8 @@ export default function ArticlesPanel() {
   const [msg, setMsg] = useState('')
   const [genTopic, setGenTopic] = useState('')
   const [genNotes, setGenNotes] = useState('')
+  // '' means "let the topic choose" — pickVoice runs server-side.
+  const [genVoice, setGenVoice] = useState<VoiceId | ''>('')
   const [reviseInstr, setReviseInstr] = useState('')
   const [prevBody, setPrevBody] = useState<string | null>(null)
   const [soundPicker, setSoundPicker] = useState(false)
@@ -93,7 +96,7 @@ export default function ArticlesPanel() {
     try {
       const r = await fetch('/api/admin/articles/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: genTopic, notes: genNotes }),
+        body: JSON.stringify({ topic: genTopic, notes: genNotes, ...(genVoice ? { voice: genVoice } : {}) }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? 'Generation failed')
@@ -102,7 +105,7 @@ export default function ArticlesPanel() {
         date: new Date().toISOString().slice(0, 10), tags: '', draft: true, body: d.body, source: 'db',
       })
       setPreview(true)
-      setMsg('Draft generated — review, edit, and save.')
+      setMsg(`Draft generated in ${VOICES[d.voice as VoiceId]?.label ?? 'the house voice'} — review, edit, and save.`)
       setGenTopic(''); setGenNotes('')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Generation failed') } finally { setBusy(null) }
   }
@@ -424,6 +427,21 @@ export default function ArticlesPanel() {
         <span style={{ fontSize: 12, fontWeight: 800, color: '#a78bfa' }}>Generate a draft</span>
         <input style={input} placeholder="Topic — e.g. Recording vocals at home with just a browser" value={genTopic} onChange={e => setGenTopic(e.target.value)} />
         <input style={input} placeholder="Optional direction — angle, audience, things to include…" value={genNotes} onChange={e => setGenNotes(e.target.value)} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <select
+            style={{ ...input, width: 'auto', minWidth: 190, cursor: 'pointer' }}
+            value={genVoice}
+            onChange={e => setGenVoice(e.target.value as VoiceId | '')}
+          >
+            <option value="">Voice: choose from topic</option>
+            {VOICE_LIST.map(v => <option key={v.id} value={v.id}>{v.label} — {v.blurb}</option>)}
+          </select>
+          {genVoice && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', flex: '1 1 240px' }}>
+              {VOICES[genVoice].bestFor}
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button onClick={() => void generate()} disabled={busy === 'gen' || !genTopic.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer', opacity: genTopic.trim() ? 1 : 0.5 }}>
             {busy === 'gen' ? 'Writing… (30–60s)' : 'Generate draft'}
