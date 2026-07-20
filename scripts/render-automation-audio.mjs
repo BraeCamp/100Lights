@@ -81,40 +81,53 @@ const PROG = [
   [55, 59, 62, 67], // G
 ]
 
-// Bass: root for three beats, then a walk note on beat 4.
+// Bass: root for three beats, then the fifth of the same chord on beat 4.
 //
-// ⚠️ Write walk notes out as real pitches. Do NOT apply a blanket semitone
-// offset to every root — a fixed "+3" is a minor third from A (fine) but
-// lands on G#, D# and A# over F, C and G, each a semitone against a chord
-// tone. That bug shipped once and it is audible immediately.
+// ⚠️ THE RULE: every bass note must be a CHORD TONE of the chord sounding
+// above it. Nothing else. No stepwise walks, and above all no "root + N
+// semitones" arithmetic.
 //
-// Every note here is a diatonic step below the root, so the bar turns around
-// and pulls back to the start (which is what the article tells people to do).
+// Two previous attempts both failed, in different ways, and both were audible:
+//   1. root + 3 semitones for every bar — lands on G#, D#, A# over F, C, G.
+//      Straightforwardly off-key.
+//   2. a diatonic step below each root (E under F, B under C) — in key, but a
+//      minor 2nd against the chord's root. Down in the bass register a minor
+//      2nd is mud, so "in key" was never a strong enough test.
+//
+// Root-and-fifth can't produce either failure: both notes are in the chord by
+// definition, so consonance doesn't depend on getting an interval sum right.
+// Octaves are picked so the line voice-leads smoothly (F's fifth goes up to C3
+// so it lands on the C bar's root; the rest fall to the fifth below).
 const BASS = [
-  { root: 45, walk: 43 }, // Am: A2 → G2
-  { root: 41, walk: 40 }, // F:  F2 → E2
-  { root: 48, walk: 47 }, // C:  C3 → B2
-  { root: 43, walk: 41 }, // G:  G2 → F2
+  { root: 45, fifth: 40 }, // Am: A2 → E2
+  { root: 41, fifth: 48 }, // F:  F2 → C3
+  { root: 48, fifth: 43 }, // C:  C3 → G2
+  { root: 43, fifth: 38 }, // G:  G2 → D2
 ]
 
-// A natural minor / C major — the only pitch classes anything here may use.
-const SCALE = new Set([0, 2, 4, 5, 7, 9, 11])
 const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const name = m => `${NOTE[m % 12]}${Math.floor(m / 12) - 1}`
+// A natural minor / C major — the only pitch classes anything here may use.
+const SCALE = new Set([0, 2, 4, 5, 7, 9, 11])
 
-// Fail the render rather than quietly shipping a wrong note. Cheap insurance:
-// every pitch in the piece gets checked before a single sample is written.
-function assertInKey() {
+// Fail the render rather than quietly shipping a wrong note. Checks the weak
+// condition (in key) AND the strong one (bass notes are chord tones), because
+// attempt 2 above passed the weak check and still sounded bad.
+function assertHarmony() {
   const bad = []
   for (const [i, ch] of PROG.entries())
-    for (const n of ch) if (!SCALE.has(n % 12)) bad.push(`chord ${i} ${name(n)}`)
+    for (const n of ch) if (!SCALE.has(n % 12)) bad.push(`chord ${i}: ${name(n)} out of key`)
+
   for (const [i, b] of BASS.entries()) {
-    if (!SCALE.has(b.root % 12)) bad.push(`bass ${i} root ${name(b.root)}`)
-    if (!SCALE.has(b.walk % 12)) bad.push(`bass ${i} walk ${name(b.walk)}`)
+    const tones = new Set(PROG[i].map(n => n % 12))
+    for (const [role, n] of [['root', b.root], ['fifth', b.fifth]]) {
+      if (!SCALE.has(n % 12)) bad.push(`bass ${i} ${role}: ${name(n)} out of key`)
+      else if (!tones.has(n % 12)) bad.push(`bass ${i} ${role}: ${name(n)} is not a chord tone`)
+    }
   }
-  if (bad.length) throw new Error(`Off-key notes: ${bad.join(', ')}`)
+  if (bad.length) throw new Error(`Harmony check failed — ${bad.join('; ')}`)
 }
-assertInKey()
+assertHarmony()
 
 function events() {
   const drums = [], bass = [], chords = []
@@ -129,7 +142,7 @@ function events() {
       drums.push({ t: t + SPB / 2, kind: 'hat' })
       // Bass follows the kick — the article's own advice.
       const bl = BASS[bar % 4]
-      bass.push({ t, note: b === 3 ? bl.walk : bl.root, dur: SPB * 0.42 })
+      bass.push({ t, note: b === 3 ? bl.fifth : bl.root, dur: SPB * 0.42 })
     }
   }
   return { drums, bass, chords }
