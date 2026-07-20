@@ -24,8 +24,8 @@ export default function FireflyPrivacyPage() {
             body: 'When you export a project or audio file, Firefly hands the file to your device’s system share sheet. Where it goes from there (AirDrop, Files, Drive, email, the 100Lights studio in your browser) is entirely your choice, handled by your device — Firefly itself sends nothing.',
           },
           {
-            title: '4. Permissions',
-            body: 'Firefly requests no permissions. It does not access your microphone, camera, contacts, location, or photos.',
+            title: '4. Microphone',
+            body: 'Firefly asks for microphone access only when you tap record on an audio track, and uses it only to capture that recording. Recordings are stored on your device alongside your project and are never transmitted anywhere. Firefly requests no other permissions — no camera, contacts, location, or photos.',
           },
           {
             title: '5. Children',
