@@ -235,11 +235,16 @@ export function renderMarkdown(md: string): React.ReactNode {
     if (b.startsWith('@audio')) {
       const m = b.match(/^@audio\(([^)]+)\)\s*([\s\S]*)$/)
       if (m) {
+        const caption = m[2]?.trim() ?? ''
+        // Fallback is a real, working native player — this upgrades to the
+        // themed one, it never gates playback on JS.
         out.push(
-          <figure key={key} style={{ margin: '24px 0' }}>
-            <audio controls preload="none" src={m[1]} style={{ width: '100%', height: 40, display: 'block' }} aria-label={m[2]?.trim() ? `Audio: ${m[2].trim()}` : 'Audio clip'} />
-            {m[2]?.trim() && <figcaption style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>{m[2].trim()}</figcaption>}
-          </figure>
+          <LazyArticleWidget key={key} kind="audio" props={{ src: m[1], caption }}>
+            <figure style={{ margin: '22px 0' }}>
+              <audio controls preload="none" src={m[1]} style={{ width: '100%', height: 40, display: 'block' }} aria-label={caption ? `Audio: ${caption}` : 'Audio clip'} />
+              {caption && <figcaption style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.6 }}>{caption}</figcaption>}
+            </figure>
+          </LazyArticleWidget>
         )
       }
       return

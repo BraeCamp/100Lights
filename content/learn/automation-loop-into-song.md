@@ -18,11 +18,11 @@ Here's the test. Take your eight-bar loop and play bar 1 against bar 7. Identica
 
 A low-pass filter opening slowly across sixteen bars will hold a listener better than any instrument you could add in that space. I'll go further: it'll hold them better than *three* instruments you could add, because the three instruments arrive and then sit there, whereas the filter is still arriving.
 
-Listen to what a good producer does with sixteen bars and one synth chord. The chord doesn't change. The filter opens maybe six hundred hertz over the whole span, the reverb send creeps up, and the whole thing feels like it's walking toward you. Same three notes the entire time.
+Listen to what a good producer does with sixteen bars and one chord. The chord doesn't change. The filter opens, the reverb send creeps up, and the whole thing walks toward you. Same notes throughout.
 
 @theory Your ears are change detectors before they're anything else. Sustained, unchanging sound gets pushed into the background by your own perception within a few seconds — it becomes the room rather than the event. A slowly opening filter defeats this by never letting the sound settle into a fixed identity: each moment it's slightly brighter than the last, so the ear keeps re-noticing it. Adding a new instrument buys you one moment of attention. Movement buys you a continuous one.
 
-@video A single held synth chord over 16 bars with a filter cutoff drawn slowly upward — nothing else in the project
+@audio(/learn-audio/automation-filter-sweep.mp3) Sixteen bars, one chord progression, nothing else in the project. The only thing happening is a filter opening and a reverb send creeping up.
 
 ## The three that do 90% of the work
 
@@ -44,7 +44,7 @@ Long. Longer than you think. This is the single most common error and it's not c
 
 The instinct is to automate over one or two bars because that's the timescale you're editing at — you're zoomed in, you're looking at a bar, you draw a bar-length move. Zoom out. Most of the automation that makes a track feel like a track spans sixteen to thirty-two bars, and at that length the listener experiences it as *the song developing* rather than as *an effect happening*.
 
-Rough guide, and treat it as a starting point rather than gospel: filter opens across a whole section, volume rides across a phrase, send moves across two or four bars, and anything under one bar is a transition effect, not automation.
+A starting point rather than gospel: filter opens across a whole section, volume rides across a phrase, send moves across two or four bars. Anything under one bar is a transition effect, not automation.
 
 @math At 128 BPM, one bar of 4/4 is 1.875 seconds — so a 16-bar filter sweep runs 30 seconds and a 32-bar one runs a full minute. Bar length in seconds is 240 divided by BPM for 4/4. Worth calculating once so you know what you're actually asking a listener to sit through: a "slow" sweep you drew across four bars is over in seven and a half seconds.
 
@@ -53,6 +53,20 @@ Rough guide, and treat it as a starting point rather than gospel: filter opens a
 Some genres want stasis. A lot of good techno is deliberately a loop for eleven minutes, and the entire craft is in how little changes. Fair — but go listen closely to one. The filter is moving. The reverb send is moving. There's a hi-hat getting a decibel brighter every thirty-two bars. The stasis is compositional, not literal, and underneath it the automation is working harder than in almost any other genre precisely *because* nothing else is allowed to change.
 
 So the exception proves it. Even the music built on repetition isn't actually repeating.
+
+## Hear it done to the same loop
+
+Here's the argument as audio. Two renders of one loop — same notes, same drums, matched for loudness so neither wins by being louder. The only difference is whether anything moves.
+
+@audio(/learn-audio/automation-before.mp3) Before: nothing automated. Every fader parked, filter parked, send parked. It is not a bad loop.
+
+@audio(/learn-audio/automation-after.mp3) After: same loop, three automation lanes. Filter opening across all sixteen bars, pad rising a couple of decibels, reverb send swelling toward the end.
+
+Play the first and notice the moment you stop listening. For most people it's around bar six — the loop hasn't got worse, you've just finished learning it.
+
+Now play the second. Nothing new arrives, but it keeps arriving *somewhere*. That's the difference between a loop you tolerate and one you sit inside.
+
+@ear Play them back to back, then play the "before" one last time. On the second pass it sounds worse than it did the first time — not because it changed, but because you now know what it was missing.
 
 ## Do this to the loop you already have
 

@@ -23,6 +23,7 @@ import type { ProgressionData } from '@/components/ArticleProgression'
 const LOADERS = {
   sound: () => import('@/components/ArticleSoundEmbed'),
   progression: () => import('@/components/ArticleProgression'),
+  audio: () => import('@/components/ArticleAudio'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -31,6 +32,7 @@ export type WidgetKind = keyof typeof LOADERS
 type WidgetSpec =
   | { kind: 'sound'; props: { itemId: string; caption: string } }
   | { kind: 'progression'; props: { data: ProgressionData } }
+  | { kind: 'audio'; props: { src: string; caption: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 
