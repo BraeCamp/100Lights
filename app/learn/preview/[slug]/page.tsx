@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation'
 import { getArticle, getArticles } from '@/lib/learn-articles'
 import { isAdmin } from '@/lib/admin-auth'
 import { renderMarkdown } from '@/lib/simple-markdown'
+import { pickRecommendations } from '@/lib/article-recommendations'
+import ArticleRecommendations from '@/components/ArticleRecommendations'
 
 // Admin-only draft preview, rendered with the real article template so what
 // you read here is what readers will get.
@@ -50,6 +52,10 @@ export default async function DraftPreviewPage({ params }: { params: Promise<{ s
           )}
           {renderMarkdown(a.body)}
         </article>
+
+        {/* Recommendations come from PUBLISHED articles only, same as the
+            live page — so a preview shows what readers will actually get. */}
+        <ArticleRecommendations items={pickRecommendations(a, all.filter(x => !x.draft), 3)} />
 
         <nav style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginTop: 44, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
           {prev

@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getArticle, getArticles } from '@/lib/learn-articles'
 import { renderMarkdown } from '@/lib/simple-markdown'
+import { pickRecommendations } from '@/lib/article-recommendations'
+import ArticleRecommendations from '@/components/ArticleRecommendations'
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params
@@ -27,6 +29,11 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
   const { slug } = await params
   const a = await getArticle(slug)
   if (!a) notFound()
+
+  // Weighted by shared tags, and re-rolled on every revalidation rather than
+  // seeded — so the set rotates and internal links spread across the section
+  // instead of piling onto the same three articles forever.
+  const recommendations = pickRecommendations(a, await getArticles(), 3)
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -62,6 +69,20 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
           )}
           {renderMarkdown(a.body)}
         </article>
+
+        {a.tags.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 30 }}>
+            {a.tags.map(t => (
+              <span key={t} style={{
+                fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 99, padding: '3px 10px',
+              }}>{t}</span>
+            ))}
+          </div>
+        )}
+
+        <ArticleRecommendations items={recommendations} />
+
         <aside style={{
           marginTop: 48, padding: '26px 24px', borderRadius: 16, textAlign: 'center',
           background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(59,130,246,0.08))',
