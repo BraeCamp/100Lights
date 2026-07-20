@@ -26,6 +26,29 @@ export function sharedTags(a: LearnArticle, b: LearnArticle): string[] {
   return b.tags.filter(t => set.has(norm(t)))
 }
 
+/** Age at which the recency bonus has halved. */
+const RECENCY_HALF_LIFE_DAYS = 45
+/** How much a brand-new article is favoured over an old one, at most. */
+const RECENCY_MAX_BOOST = 1.5
+
+/**
+ * Multiplier that fades from 2.5× on the day of publication toward 1× as an
+ * article ages.
+ *
+ * Deliberately a multiplier on top of tag relevance rather than a term beside
+ * it. Publishing daily means new pieces would otherwise sit at the back of
+ * every shortlist forever, since they compete against a growing pile of older
+ * articles with identical tag overlap — but recency must never let an
+ * unrelated new article outrank a well-matched old one, and as a bounded
+ * multiplier inside the related tier it can't.
+ */
+export function recencyBoost(date: string, now: number = Date.now()): number {
+  const t = Date.parse(date)
+  if (Number.isNaN(t)) return 1
+  const ageDays = Math.max(0, (now - t) / 86400_000)
+  return 1 + RECENCY_MAX_BOOST * Math.exp(-ageDays / RECENCY_HALF_LIFE_DAYS)
+}
+
 /**
  * Weight for a candidate that shares at least one tag.
  *
@@ -69,12 +92,20 @@ export function pickRecommendations(
   all: LearnArticle[],
   count = 3,
   rng: () => number = Math.random,
+  now: number = Date.now(),
 ): Recommendation[] {
   const candidates = all
     .filter(a => a.slug !== current.slug && !a.draft)
     .map(a => {
       const shared = sharedTags(current, a)
-      return { article: a, shared, weight: weightFor(shared.length) }
+      // Recency scales the tag weight rather than adding to it, so a fresh
+      // article rises among equally-related ones without ever jumping ahead
+      // of a better-matched older one.
+      return {
+        article: a,
+        shared,
+        weight: weightFor(shared.length) * recencyBoost(a.date, now),
+      }
     })
 
   const related = candidates.filter(c => c.shared.length > 0)
@@ -86,7 +117,10 @@ export function pickRecommendations(
     if (!c) break
     picked.push({ article: c.article, shared: c.shared })
   }
-  // Only now, and only to fill what's left.
+  // Only now, and only to fill what's left. These carry weight 0 from the
+  // tag term, so give them the recency multiplier alone — otherwise the
+  // fallback would be a flat coin-flip across everything unrelated.
+  for (const c of unrelated) c.weight = recencyBoost(c.article.date, now)
   while (picked.length < count && unrelated.length > 0) {
     const c = drawWeighted(unrelated, rng)
     if (!c) break

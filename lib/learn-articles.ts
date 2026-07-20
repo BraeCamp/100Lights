@@ -9,6 +9,7 @@
 import fs from 'fs'
 import path from 'path'
 import { sql } from './db'
+import { parseTags } from './tags'
 
 export interface LearnArticle {
   slug: string
@@ -78,7 +79,7 @@ function fromRepo(now: number): LearnArticle[] {
       description: meta.description ?? '',
       date: meta.date ?? '2026-01-01',
       updated: meta.updated,
-      tags: (meta.tags ?? '').split(',').map(t => t.trim()).filter(Boolean),
+      tags: parseTags(meta.tags ?? ''),
       ...resolvePublication(meta.draft !== 'false', meta.publishAt, now),
       minutes: minutes(body),
       body,
@@ -115,7 +116,7 @@ function toArticle(r: Record<string, unknown>, now: number): LearnArticle {
       description: (r.description as string) ?? '',
       date: r.date as string,
       updated: (r.updated as string) ?? undefined,
-      tags: ((r.tags as string) ?? '').split(',').map(t => t.trim()).filter(Boolean),
+      tags: parseTags((r.tags as string) ?? ''),
       ...resolvePublication(!!r.draft, r.publish_at as string | null, now),
     minutes: minutes((r.body as string) ?? ''),
     body: (r.body as string) ?? '',
@@ -156,3 +157,5 @@ export async function getTrashedArticles(): Promise<Array<LearnArticle & { delet
 export async function getArticle(slug: string, opts?: { includeDrafts?: boolean }): Promise<LearnArticle | null> {
   return (await getArticles(opts)).find(a => a.slug === slug) ?? null
 }
+
+export { parseTags, MAX_TAGS } from './tags'

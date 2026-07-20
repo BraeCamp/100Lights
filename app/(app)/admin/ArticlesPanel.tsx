@@ -16,6 +16,7 @@ import { groupIntoChords } from '@/lib/chord-analysis'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { encodeWav } from '@/lib/wav-codec'
 import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
+import { parseTags, MAX_TAGS } from '@/lib/tags'
 import type { AudioFile } from '@/app/api/admin/articles/audio/list/route'
 
 interface TrashItem {
@@ -371,6 +372,18 @@ export default function ArticlesPanel() {
             <div>
               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>TAGS (comma-separated)</label>
               <input style={input} value={sel.tags} onChange={e => setSel({ ...sel, tags: e.target.value })} />
+              {(() => {
+                const n = parseTags(sel.tags).length
+                const raw = sel.tags.split(',').filter(t => t.trim()).length
+                const over = raw > MAX_TAGS
+                return (
+                  <p style={{ fontSize: 10, color: over ? '#f59e0b' : 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                    {n}/{MAX_TAGS} tags
+                    {over && ` — only the first ${MAX_TAGS} are used, so put the most applicable first.`}
+                    {!over && ' · these drive which articles get recommended, so keep them to what the piece is really about.'}
+                  </p>
+                )
+              })()}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <label style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
