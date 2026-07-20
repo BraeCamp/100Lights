@@ -16,6 +16,7 @@ import { groupIntoChords } from '@/lib/chord-analysis'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { encodeWav } from '@/lib/wav-codec'
 import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
+import type { AudioFile } from '@/app/api/admin/articles/audio/list/route'
 
 interface Row {
   slug: string
@@ -49,6 +50,8 @@ export default function ArticlesPanel() {
   const [soundQuery, setSoundQuery] = useState('')
   const [soundResults, setSoundResults] = useState<Array<{ id: string; name: string; kind: string; authorName: string }> | null>(null)
   const [libPicker, setLibPicker] = useState(false)
+  const [audioPicker, setAudioPicker] = useState(false)
+  const [audioFiles, setAudioFiles] = useState<AudioFile[] | null>(null)
   const [libTab, setLibTab] = useState<'samples' | 'recipes'>('samples')
   const [libQuery, setLibQuery] = useState('')
   const [libEntries, setLibEntries] = useState<LibraryEntry[] | null>(null)
@@ -224,6 +227,14 @@ export default function ArticlesPanel() {
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Upload failed') } finally { setBusy(null) }
   }
 
+  async function openAudioPicker() {
+    setAudioPicker(v => !v)
+    if (audioFiles !== null) return
+    const r = await fetch('/api/admin/articles/audio/list').catch(() => null)
+    if (r?.ok) setAudioFiles((await r.json()).files as AudioFile[])
+    else setAudioFiles([])
+  }
+
   async function searchSounds(q: string) {
     setSoundQuery(q)
     const r = await fetch(`/api/community?q=${encodeURIComponent(q)}&sort=new`).catch(() => null)
@@ -288,7 +299,45 @@ export default function ArticlesPanel() {
                 onClick={() => { setSoundPicker(v => !v); if (soundResults === null) void searchSounds('') }}
                 style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed var(--border)', background: soundPicker ? 'var(--bg-card)' : 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
               >♪ From the Community</button>
+              <button
+                onClick={() => void openAudioPicker()}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(56,189,248,0.5)', background: audioPicker ? 'rgba(56,189,248,0.08)' : 'transparent', color: '#38bdf8', cursor: 'pointer' }}
+              >🎵 Existing audio files</button>
             </div>
+            {audioPicker && (
+              <div style={{ border: '1px solid rgba(56,189,248,0.35)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Every audio file an article can use. Play one to check it, download it to fix in a DAW, or insert the marker.
+                  <strong style={{ color: 'var(--text-secondary)' }}> Repo</strong> files come from <code>scripts/</code> and are replaced by re-running the script and committing;
+                  <strong style={{ color: 'var(--text-secondary)' }}> uploaded</strong> files are replaced by uploading again.
+                </span>
+                {audioFiles === null && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Loading…</span>}
+                {audioFiles?.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No audio files yet.</span>}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+                  {audioFiles?.map(f => (
+                    <div key={f.url} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', background: 'var(--bg-card)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                        <span style={{ fontSize: 9.5, color: f.source === 'repo' ? '#a78bfa' : '#34d399', flexShrink: 0 }}>{f.source}</span>
+                        <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>{(f.bytes / 1024).toFixed(0)} KB</span>
+                      </div>
+                      <audio controls preload="none" src={f.url} style={{ width: '100%', height: 32, display: 'block', marginBottom: 6 }} />
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => { appendToBody(`@audio(${f.url}) ${f.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ')}`); setAudioPicker(false); setMsg('Audio marker inserted ✓') }}
+                          style={{ fontSize: 10.5, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer' }}
+                        >Insert into article</button>
+                        <a href={f.url} download={f.name} style={{ fontSize: 10.5, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', color: 'var(--text-secondary)', textDecoration: 'none' }}>Download</a>
+                        <button
+                          onClick={() => { void navigator.clipboard.writeText(f.url); setMsg(`Copied ${f.name} URL ✓`) }}
+                          style={{ fontSize: 10.5, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                        >Copy URL</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {libPicker && (
               <div style={{ border: '1px solid rgba(52,211,153,0.35)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

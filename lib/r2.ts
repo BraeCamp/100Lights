@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 function client() {
@@ -45,4 +45,15 @@ export async function deleteObjects(keys: string[]) {
     Bucket: BUCKET(),
     Delete: { Objects: keys.map(Key => ({ Key })), Quiet: true },
   }))
+}
+
+/** Objects under a key prefix, newest-agnostic. Used to browse article audio
+ *  in the admin panel; keeps the S3 SDK contained to this module. */
+export async function listObjects(prefix: string, maxKeys = 200) {
+  const res = await client().send(new ListObjectsV2Command({
+    Bucket: BUCKET(), Prefix: prefix, MaxKeys: maxKeys,
+  }))
+  return (res.Contents ?? [])
+    .filter(o => o.Key && !o.Key.endsWith('/'))
+    .map(o => ({ key: o.Key!, size: o.Size ?? 0, modified: o.LastModified?.toISOString() ?? null }))
 }

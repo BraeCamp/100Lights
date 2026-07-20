@@ -80,7 +80,41 @@ const PROG = [
   [48, 55, 60, 64], // C
   [55, 59, 62, 67], // G
 ]
-const BASS_ROOT = [45, 41, 48, 43]
+
+// Bass: root for three beats, then a walk note on beat 4.
+//
+// ⚠️ Write walk notes out as real pitches. Do NOT apply a blanket semitone
+// offset to every root — a fixed "+3" is a minor third from A (fine) but
+// lands on G#, D# and A# over F, C and G, each a semitone against a chord
+// tone. That bug shipped once and it is audible immediately.
+//
+// Every note here is a diatonic step below the root, so the bar turns around
+// and pulls back to the start (which is what the article tells people to do).
+const BASS = [
+  { root: 45, walk: 43 }, // Am: A2 → G2
+  { root: 41, walk: 40 }, // F:  F2 → E2
+  { root: 48, walk: 47 }, // C:  C3 → B2
+  { root: 43, walk: 41 }, // G:  G2 → F2
+]
+
+// A natural minor / C major — the only pitch classes anything here may use.
+const SCALE = new Set([0, 2, 4, 5, 7, 9, 11])
+const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const name = m => `${NOTE[m % 12]}${Math.floor(m / 12) - 1}`
+
+// Fail the render rather than quietly shipping a wrong note. Cheap insurance:
+// every pitch in the piece gets checked before a single sample is written.
+function assertInKey() {
+  const bad = []
+  for (const [i, ch] of PROG.entries())
+    for (const n of ch) if (!SCALE.has(n % 12)) bad.push(`chord ${i} ${name(n)}`)
+  for (const [i, b] of BASS.entries()) {
+    if (!SCALE.has(b.root % 12)) bad.push(`bass ${i} root ${name(b.root)}`)
+    if (!SCALE.has(b.walk % 12)) bad.push(`bass ${i} walk ${name(b.walk)}`)
+  }
+  if (bad.length) throw new Error(`Off-key notes: ${bad.join(', ')}`)
+}
+assertInKey()
 
 function events() {
   const drums = [], bass = [], chords = []
@@ -94,7 +128,8 @@ function events() {
       if (b === 1 || b === 3) drums.push({ t, kind: 'snare' })
       drums.push({ t: t + SPB / 2, kind: 'hat' })
       // Bass follows the kick — the article's own advice.
-      bass.push({ t, note: BASS_ROOT[bar % 4] + (b === 3 ? 3 : 0), dur: SPB * 0.42 })
+      const bl = BASS[bar % 4]
+      bass.push({ t, note: b === 3 ? bl.walk : bl.root, dur: SPB * 0.42 })
     }
   }
   return { drums, bass, chords }
@@ -102,7 +137,10 @@ function events() {
 
 // ── render ─────────────────────────────────────────────────
 // `auto` is the only difference between the two full mixes.
-function render({ auto, chordOnly = false }) {
+// `bassOnly` renders the bass in isolation. It ships nothing — it exists so
+// the walk notes can be pitch-checked straight from audio, since in the full
+// mix the kick sits on the same frequencies and swamps any detector.
+function render({ auto, chordOnly = false, bassOnly = false }) {
   const L = new Float32Array(N), R = new Float32Array(N)
   const { drums, bass, chords } = events()
   const padFilt = [makeLP(), makeLP()]
@@ -147,8 +185,10 @@ function render({ auto, chordOnly = false }) {
       pad /= ch.notes.length * 2
       const padL = padFilt[0].run(pad) * padGain
       const padR = padFilt[1].run(pad) * padGain
-      dry += padL
-      wet += padL * send
+      if (!bassOnly) {
+        dry += padL
+        wet += padL * send
+      }
 
       if (!chordOnly) {
         // bass
@@ -160,7 +200,7 @@ function render({ auto, chordOnly = false }) {
           dry += bassFilt.run(bassPhase.p * 2 - 1) * e * 0.42
         }
         // drums
-        for (const d of drums) {
+        for (const d of bassOnly ? [] : drums) {
           const age = tt - d.t
           if (age < 0 || age > 0.5) continue
           if (d.kind === 'kick') {
@@ -222,7 +262,9 @@ function wav({ L, R }) {
 }
 
 const out = process.argv[2]
+const DIAG = process.argv.includes('--diagnostic')
 for (const [name, opts] of [
+  ...(DIAG ? [['diagnostic-bass-only', { auto: false, bassOnly: true }]] : []),
   ['automation-before', { auto: false }],
   ['automation-after', { auto: true }],
   ['automation-filter-sweep', { auto: true, chordOnly: true }],
