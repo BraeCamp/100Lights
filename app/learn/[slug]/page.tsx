@@ -18,6 +18,11 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   }
 }
 
+// Draft previews deliberately live on a separate route (/learn/preview/[slug]).
+// This page sets `revalidate`, and a revalidating route may not read cookies
+// at all — even behind an `if` — so an admin check here throws
+// DYNAMIC_SERVER_USAGE and 500s for anonymous visitors. Keeping the two apart
+// is what lets published articles stay fully static.
 export default async function LearnArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
   const a = await getArticle(slug)
