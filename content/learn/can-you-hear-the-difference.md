@@ -28,13 +28,15 @@ Do it again with the output gain compensated so both versions hit the same appar
 
 Go back and listen for the space between them. It's a different test now.
 
+Once you can hear a compressor working on its own signal, try hearing one [triggered by a completely different channel, four times a bar, in a record you've known for years](/learn/sidechain-compression-with-your-ears).
+
 ## Test two: cut or boost?
 
 Same loop. Put an EQ on it. Make one move around the low-mid region — the muddy zone where kick and bass argue — and make it a big move, six decibels or so. Sometimes cut, sometimes boost. Get someone else to do it, or set up two saved states and shuffle which one loads.
 
 @ear Listen to the EQ'd version alone, with no reference, for eight bars. Decide: was that a cut or a boost? Then check.
 
-Nearly everyone can hear that *something* happened. Far fewer can name the direction blind, and that's the skill that actually matters, because in a real mix you don't get an A/B — you get a track that sounds slightly wrong and forty minutes to figure out why.
+Nearly everyone can hear that *something* happened. Far fewer can name the direction blind, and that's the skill that actually matters, because in a real mix you don't get an A/B — you get a track that sounds slightly wrong and forty minutes to figure out why. Which is also why [cuts beat boosts, and faders beat both](/learn/mixing-101-volume-pan-eq).
 
 @theory Boosts and cuts are not mirror images to the ear, even at the same amount. A boost draws attention to itself; you hear the frequency arrive as a new thing in the mix. A cut mostly makes other things audible, so it registers as clarity rather than as a change — which is why engineers who cut sound like they're doing nothing and engineers who boost sound like they're doing a lot. Cutting is quieter work and it usually wins.
 
@@ -76,4 +78,4 @@ All five drills run start to finish in the free studio at [100Lights](https://10
 
 Then go argue with someone. Post a loop to the [community](https://100lights.com/community) with two versions and let people guess which is which — you'll learn more from the people who guess wrong than from the ones who guess right, because their wrong answers will name things you weren't listening for.
 
-The gear is not the bottleneck. It hasn't been for twenty years.
+The gear is not the bottleneck. It hasn't been for twenty years, and [the honest ranking of what actually limits you puts the microphone fifth](/learn/you-dont-need-better-gear).

@@ -36,7 +36,9 @@ That's it. That is the entire notation system, and it took the music world four 
 
 @theory Notes that sit close together vertically feel smooth and connected — the ear follows them without effort, which is why singable melodies mostly move in small steps. Notes that jump a long way vertically feel dramatic and deliberate, because the ear registers the gap as an event. Everything people call "melodic writing" lives in the ratio between those two moves.
 
-For drums, the same panel switches into a STEP grid: a row per drum sound, a column per sixteenth note, click to place a hit. Kick on the beats, snare on 2 and 4, hats on the offbeats. You can write a decent drum pattern before you've learned a single term.
+For drums, the same panel switches into a STEP grid: a row per drum sound, a column per sixteenth note, click to place a hit. Kick on the beats, snare on 2 and 4, hats on the offbeats. You can write a decent drum pattern before you've learned a single term — [here's that exact pattern, plus a bass and chords, in fifteen minutes](/learn/how-to-make-a-beat-in-your-browser).
+
+As for the melodic half: you can get a surprising distance by [drawing a note, moving it one row, and listening to what changed](/learn/piano-roll-basics-melodies-without-a-keyboard). No keyboard skills required, and no terminology either.
 
 @video A single note in the piano roll being dragged upward one step at a time, with the sound audible on each move
 
@@ -56,7 +58,7 @@ The one exception is reverb, because reverb isn't a fix, it's a place. Send a co
 
 The button that turns your project into a file other humans can play.
 
-It sounds trivial. It is not — a project file is worthless outside the software that made it, and the number of producers with two hundred unfinished projects and zero exported songs is genuinely tragic. Export early. Export bad versions. A finished bad song teaches you more than an unfinished good one, and it isn't close.
+It sounds trivial. It is not — a project file is worthless outside the software that made it, and the number of producers with [two hundred unfinished projects and zero exported songs](/learn/you-have-nine-unfinished-projects) is genuinely tragic. Export early. Export bad versions. A finished bad song teaches you more than an unfinished good one, and it isn't close.
 
 @math WAV at 44.1 kHz is the CD and streaming standard; 48 kHz is the video standard, because film runs at frame rates that divide into it cleanly. Stereo 24-bit WAV runs about 15 MB per minute at 44.1 kHz, so a three-minute song is roughly 45 MB before any compression.
 

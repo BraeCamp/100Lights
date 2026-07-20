@@ -48,13 +48,13 @@ That structure has to be *predictable* for anything else to work. A listener can
 
 There's a body reason underneath the mental one. Phrases at this length are roughly the span of a comfortable breath, and roughly the span a dancer needs to complete a movement and reset. Before recorded music, phrase length was set by lungs and legs. Nothing has replaced them; we just added drum machines that don't get tired.
 
-@theory The corollary is the part most producers miss: eight bars is also how long it takes for something unchanging to stop being interesting. The ear's attention decays on a schedule. Not because the sound got worse — because the sound stayed the same and the brain finished categorizing it. Once it's categorized, it's furniture. This is why your four-bar loop sounded great for the first minute and dead by the fifth. It didn't change. You did.
+@theory The corollary is the part most producers miss: eight bars is also how long it takes for something unchanging to stop being interesting. The ear's attention decays on a schedule. Not because the sound got worse — because the sound stayed the same and the brain finished categorizing it. Once it's categorized, it's furniture. This is why your four-bar loop sounded great for the first minute and dead by the fifth. It didn't change. You did. The fix is smaller and more counterintuitive than it sounds: [three ways to take something away rather than add one](/learn/why-your-loop-gets-boring).
 
 @math If you want the arithmetic: at 120 BPM in 4/4, one beat is 0.5 seconds, one bar is 2 seconds, and eight bars is 16 seconds. At 90 BPM, eight bars is about 21 seconds; at 174 (drum and bass), about 11. Sixteen bars at 120 is 32 seconds — which is close to the length of a standard verse, and not by accident. If your track is 128 BPM and you want a 30-second intro, that's 16 bars exactly. Every one of these numbers is deletable; the point stands without them.
 
 ## What to actually do at bar 8
 
-Now that the count is in your ears, use it. In [100Lights](https://100lights.com) you can select across all tracks at once and paste a section forward, so building in eights costs you almost nothing.
+Now that the count is in your ears, use it. In [100Lights](https://100lights.com) you can select across all tracks at once and paste a section forward, so building in eights costs you almost nothing. If you haven't got a loop to count yet, [three sounds and fifteen minutes will get you one](/learn/how-to-make-a-beat-in-your-browser).
 
 Write your loop. Copy it to bar 9. Then, on the copy, change exactly one thing:
 
@@ -66,7 +66,7 @@ Write your loop. Copy it to bar 9. Then, on the copy, change exactly one thing:
 
 That last one is the cheapest trick on the list and it works on everybody, including people who know it's coming.
 
-The mistake to avoid: changing *everything* at bar 9. New drums, new bass, new chords, new sound. That reads as a different song, not a development. One change per eight bars is closer to right than you think, and you can go a very long way on a track where each eight-bar block adds exactly one element and takes one away.
+The mistake to avoid: changing *everything* at bar 9. New drums, new bass, new chords, new sound. That reads as a different song, not a development. The change doesn't even have to be an element arriving or leaving — [a filter drawn open across the whole section counts, and holds attention better than either](/learn/automation-loop-into-song). One change per eight bars is closer to right than you think, and you can go a very long way on a track where each eight-bar block adds exactly one element and takes one away.
 
 @ear Build 32 bars this way — four blocks of eight, one change each — and listen to it end to end without touching anything. Then go back and try to find the moment you got bored. That timestamp is your real feedback.
 

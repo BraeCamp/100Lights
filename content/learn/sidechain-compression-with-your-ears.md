@@ -28,7 +28,7 @@ Before I name it, gather more evidence. This effect is not a dance music thing, 
 
 @ear Now something harder. Put on a modern pop record with a big low end — Billie Eilish's "bad guy" works, so does most of Dua Lipa's "Future Nostalgia." Solo your attention on the sub bass. Under each kick it thins out, then refills. The gap is short, maybe a tenth of a second. It's the reason you can hear both the kick and the bass at once, which should not physically be possible given they occupy nearly the same frequency range.
 
-Two low-frequency sounds in the same place at the same time don't blend. They fight, and the loser is usually clarity — you get a thick low-end smear where you can't tell the pitch of the bass or feel the punch of the kick. Except in these records, you can hear both. Perfectly.
+Two low-frequency sounds in the same place at the same time don't blend. They fight — which is the same collision [you solve everywhere else in the mix with faders, panning and a high-pass filter](/learn/mixing-101-volume-pan-eq) — and the loser is usually clarity — you get a thick low-end smear where you can't tell the pitch of the bass or feel the punch of the kick. Except in these records, you can hear both. Perfectly.
 
 They're taking turns. Somebody arranged for them to take turns, several times per second, and you have been listening to it your entire life without once wondering how.
 
@@ -58,7 +58,7 @@ That's a sidechain. A manual one, with infinite precision and no processor. Half
 
 @ear Loop one bar. Version A: bass note held straight through the kick. Version B: same note, cut to end a sixteenth before each kick and restart after. Listen for the kick's low end — in B it has room, and it thumps rather than thuds. Nothing was compressed. You just moved out of the way.
 
-Once you can hear it, the mixer version is easy to reach for. Put a compressor on the bass channel from the effect chain, set it hard and fast, and you get the automatic version of the same idea — the machine does the ducking that you were writing by hand, on every kick, forever.
+Once you can hear it, the mixer version is easy to reach for. Put a compressor on the bass channel from the effect chain, set it hard and fast, and you get the automatic version of the same idea — the machine does the ducking that you were writing by hand, on every kick, forever. There's a third option in between, and it's the one I reach for most: [draw the dips yourself on a volume lane](/learn/automation-loop-into-song), where you decide each move instead of a detector.
 
 @math If you want the arithmetic: a starting point for a clean, functional duck is a ratio around 4:1, threshold set so the meter shows 4–6 dB of gain reduction on each kick, the fastest attack available, and release timed to the tempo. At 120 BPM a quarter note is 500 ms, so a release of roughly 150–250 ms lets the bass recover just before the next beat. Shorten the release and it snaps; lengthen it past the beat and the bass never fully returns, which sounds gutless. For the audible French house pump, push the ratio higher and the gain reduction toward 10 dB and stop pretending it's a fix.
 
@@ -66,7 +66,7 @@ Ignore all of that if it's noise to you. Set it by ear: increase the effect unti
 
 ## What you actually learned
 
-Not a technique. A listening habit.
+Not a technique. A listening habit — and one you can keep building with [blind drills where you have to commit to an answer before you look](/learn/can-you-hear-the-difference).
 
 The reason this took so long to explain is that sidechain compression is genuinely trivial once you've heard it, and completely opaque until then — which is why every tutorial that opens with "sidechain compression is a technique where a compressor's detection circuit receives an external input" loses people in eleven words. You had to hear it first. You did. Now the words are just labels for something you already know.
 

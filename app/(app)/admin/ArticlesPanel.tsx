@@ -18,6 +18,15 @@ import { encodeWav } from '@/lib/wav-codec'
 import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
 import type { AudioFile } from '@/app/api/admin/articles/audio/list/route'
 
+interface TrashItem {
+  slug: string
+  title: string
+  deletedAt: string
+  expiresAt: string
+  daysLeft: number
+  repoShadow: boolean
+}
+
 interface Row {
   slug: string
   title: string
@@ -65,6 +74,9 @@ export default function ArticlesPanel() {
   })
   const [schedTime, setSchedTime] = useState('09:00')
   const [schedEvery, setSchedEvery] = useState(1)
+  const [filter, setFilter] = useState<'all' | 'live' | 'draft' | 'scheduled'>('all')
+  const [trashOpen, setTrashOpen] = useState(false)
+  const [trash, setTrash] = useState<TrashItem[] | null>(null)
   const { user } = useUser()
 
   const load = useCallback(async () => {
@@ -96,10 +108,36 @@ export default function ArticlesPanel() {
   }
 
   async function remove(slug: string) {
-    if (!window.confirm(`Delete "${slug}" from the database? (A repo file with the same slug would become visible again.)`)) return
+    if (!window.confirm(`Move "${slug}" to the trash? You can restore it for 7 days.`)) return
     await fetch(`/api/admin/articles?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' })
     setSel(null)
     await load()
+    if (trash !== null) await loadTrash()
+    setMsg('Moved to trash — restorable for 7 days')
+  }
+
+  const loadTrash = useCallback(async () => {
+    const r = await fetch('/api/admin/articles/trash').catch(() => null)
+    setTrash(r?.ok ? (await r.json()).items as TrashItem[] : [])
+  }, [])
+
+  async function restore(slug: string) {
+    await fetch('/api/admin/articles', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    })
+    await Promise.all([load(), loadTrash()])
+    setMsg(`Restored "${slug}" ✓`)
+  }
+
+  async function purge(slug: string, repoShadow: boolean) {
+    const warn = repoShadow
+      ? `Delete "${slug}" for good?\n\nThis article comes from a committed file, so a hidden marker has to stay behind to keep it off the site. Everything else is erased.`
+      : `Delete "${slug}" for good? This cannot be undone.`
+    if (!window.confirm(warn)) return
+    await fetch(`/api/admin/articles?slug=${encodeURIComponent(slug)}&permanent=1`, { method: 'DELETE' })
+    await Promise.all([load(), loadTrash()])
+    setMsg('Permanently deleted')
   }
 
   async function generate() {
@@ -505,7 +543,7 @@ export default function ArticlesPanel() {
               />
             </div>
             <div>
-              <button onClick={() => void remove(sel.slug)} style={{ fontSize: 11, background: 'none', border: '1px solid var(--border)', color: '#ef4444', cursor: 'pointer', padding: '5px 12px', borderRadius: 7 }}>Delete from database</button>
+              <button onClick={() => void remove(sel.slug)} style={{ fontSize: 11, background: 'none', border: '1px solid var(--border)', color: '#ef4444', cursor: 'pointer', padding: '5px 12px', borderRadius: 7 }}>Move to trash</button>
             </div>
           </>
         ) : (
@@ -646,11 +684,75 @@ export default function ArticlesPanel() {
         )}
       </div>
 
+      {/* Filter + trash */}
+      {rows !== null && rows.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {([
+            ['all', 'All', rows.length],
+            ['live', 'Live', rows.filter(r => !r.draft).length],
+            ['draft', 'Drafts', rows.filter(r => r.draft && !r.scheduledFor).length],
+            ['scheduled', 'Scheduled', rows.filter(r => r.scheduledFor).length],
+          ] as const).map(([id, label, count]) => (
+            <button
+              key={id}
+              onClick={() => setFilter(id)}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 99, cursor: 'pointer',
+                border: `1px solid ${filter === id ? 'var(--accent)' : 'var(--border)'}`,
+                background: filter === id ? 'rgba(124,58,237,0.15)' : 'transparent',
+                color: filter === id ? 'var(--accent-light)' : 'var(--text-muted)',
+              }}
+            >{label} <span style={{ opacity: 0.7 }}>{count}</span></button>
+          ))}
+          <button
+            onClick={() => { setTrashOpen(v => !v); if (trash === null) void loadTrash() }}
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 99, cursor: 'pointer', marginLeft: 'auto',
+              border: `1px solid ${trashOpen ? 'rgba(239,68,68,0.5)' : 'var(--border)'}`,
+              background: trashOpen ? 'rgba(239,68,68,0.08)' : 'transparent',
+              color: trashOpen ? '#ef4444' : 'var(--text-muted)',
+            }}
+          >🗑 Trash{trash?.length ? ` ${trash.length}` : ''}</button>
+        </div>
+      )}
+
+      {trashOpen && (
+        <div style={{ border: '1px solid rgba(239,68,68,0.3)', borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            Deleted articles stay here for 7 days, then go for good. They&rsquo;re already off the public site.
+          </span>
+          {trash === null && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Loading…</span>}
+          {trash?.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Trash is empty.</span>}
+          {trash?.map(t => (
+            <div key={t.slug} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-card)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
+                <div style={{ fontSize: 10, color: t.daysLeft <= 1 ? '#ef4444' : 'var(--text-muted)', marginTop: 2 }}>
+                  {t.daysLeft === 0 ? 'deletes today' : `${t.daysLeft} day${t.daysLeft === 1 ? '' : 's'} left`}
+                  {t.repoShadow && ' · from a committed file'}
+                </div>
+              </div>
+              <button onClick={() => void restore(t.slug)}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#059669', color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+              >Restore</button>
+              <button onClick={() => void purge(t.slug, t.repoShadow)}
+                style={{ fontSize: 11, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: '#ef4444', cursor: 'pointer', flexShrink: 0 }}
+              >Delete now</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* List */}
       {rows === null && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</p>}
       {rows?.length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No articles yet.</p>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {rows?.map(r => (
+        {rows?.filter(r =>
+          filter === 'all' ? true
+          : filter === 'live' ? !r.draft
+          : filter === 'draft' ? r.draft && !r.scheduledFor
+          : !!r.scheduledFor,
+        ).map(r => (
           <button key={r.slug} onClick={() => { setSel(r); setPreview(false); setMsg('') }} style={{
             display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', padding: '10px 14px',
             borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', cursor: 'pointer',

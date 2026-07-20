@@ -8,7 +8,7 @@ draft: true
 
 # Writing Melodies Without Touching a Piano
 
-Don't read ahead. Open a project in [100Lights](https://100lights.com), add a track with a piano or a soft synth on it, and open the piano roll. Set the tempo to something slow — 90 or so. You'll need about twenty minutes and no musical training whatsoever.
+Don't read ahead. Open a project in [100Lights](https://100lights.com), add a track with a piano or a soft synth on it, and open the piano roll — [one of the four things any studio actually is](/learn/what-is-a-daw-beginners-guide), and the one where the writing happens. Set the tempo to something slow — 90 or so. You'll need about twenty minutes and no musical training whatsoever.
 
 I'm not going to tell you what makes a melody work. You're going to find out, and then I'll name it.
 
@@ -18,7 +18,7 @@ Draw a single note. Any pitch, roughly in the middle of the vertical range. Make
 
 @ear Play the five notes. Then play them again and stay with them long enough to get uncomfortable. Ask yourself one question: does this want to go up, or does it want to go down? Don't reason about it. Just notice which direction your body expects.
 
-Most people feel a pull. Some feel it upward, some down, and if you feel nothing at all, that's information too — the note is sitting there refusing to be a melody, and you're about to learn why.
+Most people feel a pull. Some feel it upward, some down, and if you feel nothing at all, that's information too — the note is refusing to be a melody, and you're about to learn why.
 
 ## Experiment two: move the fifth one
 
@@ -48,7 +48,7 @@ Now copy that whole four-note group and paste it directly after itself, so it pl
 
 Now select only the second copy and drag the whole thing up two rows, keeping its internal shape identical. Play it again.
 
-That version is doing something the first wasn't. The pattern is recognizable, so your ear isn't lost, but it isn't identical, so your ear isn't bored. Almost every hook you can hum is built on this move — the "Seven Nation Army" riff is the same shape, moved.
+That version is doing something the first wasn't. The pattern is recognizable, so your ear isn't lost, but it isn't identical, so your ear isn't bored. Almost every hook you can hum is built on this move — the "Seven Nation Army" riff is the same shape, moved. It's one of a small set of gestures that keep getting redeployed; [here are ten more worth taking outright](/learn/ten-licks-worth-stealing).
 
 @video Selecting the second half of an eight-note phrase in the piano roll and dragging it up as a block, with playback before and after
 
@@ -70,13 +70,13 @@ Delete the third note. Delete the sixth. Play what's left.
 
 @ear Listen to the two holes. That silence isn't absence — it's phrasing. Melodies breathe where singers breathe, and a melody with no gaps is a melody nobody can sing.
 
-Then take the note right before each hole and stretch it to fill half the gap. Play again. That's a different feeling entirely: instead of two silences you now have two long notes, and the phrase reads as lyrical rather than clipped.
+Then take the note right before each hole and stretch it to fill half the gap. Play again. Different feeling entirely: instead of two silences you have two long notes, and the phrase reads lyrical rather than clipped.
 
 Neither is better. But you can now produce both on purpose, which you couldn't twenty minutes ago.
 
 ## Experiment six: the wrong notes
 
-Here's the one that surprises people. Take your phrase and drag one middle note up or down by a single row — pick a note that's currently sounding fine and deliberately spoil it.
+Here's the one that surprises people. Drag one middle note up or down by a single row — pick one that currently sounds fine and deliberately spoil it.
 
 @ear Play it. It'll probably sound sour. Now, without moving that note back, shorten it to a quarter of its length and place it right before a longer note. Play again.
 
@@ -88,6 +88,6 @@ The sourness mostly evaporates. Passing quickly through a note that doesn't belo
 
 Not chords. Not scales. Not one term you'd need to look up. You learned that small moves feel smooth, big moves feel dramatic, repetition with one change is the engine of every hook, length turns accidents into intentions, and silence is a note.
 
-You can now write melodies by drawing rectangles and listening, which is what a lot of professional writers do — plenty of people who play beautifully still write in the grid, because the grid lets you edit a decision instead of re-performing it.
+You can now write melodies by drawing rectangles and listening, which is what a lot of professional writers do: the grid lets you edit a decision instead of re-performing it.
 
-All six experiments run in a free browser tab. When one of them turns into something you like, keep going: drag a chord recipe underneath your melody and hear how the same notes change meaning against different harmony, or export the MIDI and hand it to a friend. And when you've written something you'd defend, publish it to [the 100Lights community](https://100lights.com/community), where you can also pull apart other people's songs note by note — which is experiment seven, and the one that never stops paying.
+All six experiments run in a free browser tab. When one of them turns into something you like, keep going — drag [one of the four-chord loops half of popular music is built from](/learn/five-chord-progressions-every-producer-should-know) underneath your melody and hear how the same notes change meaning against different harmony. And when you've written something you'd defend, publish it to [the 100Lights community](https://100lights.com/community), where you can also pull apart other people's songs note by note — which is experiment seven, and the one that never stops paying.

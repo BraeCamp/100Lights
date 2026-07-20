@@ -20,5 +20,36 @@ export async function ensureLearnSchema() {
   `
   // Added later for scheduled publishing — ISO datetime a draft goes live at.
   await sql`ALTER TABLE learn_articles ADD COLUMN IF NOT EXISTS publish_at TEXT`
+  // Soft delete, mirroring projects. `repo_shadow` marks a row that exists
+  // only to hide a committed content/learn/*.md file.
+  await sql`ALTER TABLE learn_articles ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`
+  await sql`ALTER TABLE learn_articles ADD COLUMN IF NOT EXISTS repo_shadow BOOLEAN NOT NULL DEFAULT false`
   ready = true
+}
+
+/** Articles keep 7 days in the trash before permanent deletion. */
+export const TRASH_DAYS = 7
+
+/**
+ * Drop rows whose trash window has expired.
+ *
+ * A row shadowing a repo file can never be fully removed — deleting it would
+ * un-delete the article, because the .md file is still committed and would
+ * become visible again. Those rows are emptied and kept as permanent
+ * tombstones instead; everything else is deleted outright.
+ */
+export async function purgeExpiredArticleTrash() {
+  await sql`
+    DELETE FROM learn_articles
+    WHERE deleted_at IS NOT NULL
+      AND repo_shadow = false
+      AND deleted_at < NOW() - INTERVAL '7 days'
+  `
+  await sql`
+    UPDATE learn_articles SET body = '', description = ''
+    WHERE deleted_at IS NOT NULL
+      AND repo_shadow = true
+      AND deleted_at < NOW() - INTERVAL '7 days'
+      AND body <> ''
+  `
 }

@@ -10,7 +10,7 @@ draft: true
 
 Your mix is not muddy because you're missing a plugin. It's muddy because you put reverb on it before the faders were right, and now you're trying to fix a balance problem with an effect, which has never once worked for anybody.
 
-Every mixing tutorial on the internet is structured as a tour of processors. Here's compression. Here's saturation. Here's a multiband thing with fourteen knobs. The video is nine minutes long and roughly eight of them are about equipment, because equipment is what you can film. Nobody makes a nine-minute video about dragging a fader down four decibels, even though that is the single most powerful move in mixing and it is free and it comes with every studio ever made.
+Every mixing tutorial on the internet is structured as a tour of processors. Here's compression. Here's saturation. Here's a multiband thing with fourteen knobs. The video is nine minutes long and roughly eight of them are about equipment, because equipment is what you can film. Nobody makes a nine-minute video about dragging a fader down four decibels, even though that is the single most powerful move in mixing and it is free and it comes with every studio ever made. A mixer is [one of only four things a DAW actually is](/learn/what-is-a-daw-beginners-guide), and volume is one of only two things a mixer does that you need on day one.
 
 I'll go further. Volume balance is about eighty percent of a finished mix. Panning is another ten. Subtractive EQ is most of what's left. Everything you've been sold — the compressors, the reverbs, the tape emulations — is fighting over the last few percent, and it cannot save a mix where the snare is too loud.
 
@@ -63,12 +63,12 @@ Then hunt. Sweep a narrow boost across a track until you find the frequency that
 
 @math Rough starting points, all adjustable by ear: high-pass hats and cymbals around 400 Hz, most synths and guitars around 100–150 Hz, and a lead vocal around 80–100 Hz. Boxiness usually hides between 200 and 500 Hz; harshness between 2 and 4 kHz. Cuts of 3–6 dB with a moderately narrow bandwidth do more than most people expect. None of these are laws — they're where to point the flashlight first.
 
-Every one of those numbers can be ignored. Find the ugly frequency by ear, turn it down until it stops being ugly, move on.
+Every one of those numbers can be ignored. Find the ugly frequency by ear, turn it down until it stops being ugly, move on. Naming a cut blind, with no A/B to lean on, is a trainable skill — and [there's a drill for it, along with four others that will humble you](/learn/can-you-hear-the-difference).
 
 ## Then, and only then
 
 Once the faders are right, the panning is wide and the mud is gone, put on your compressor and your reverb. Two things will happen. You'll use far less of both than you used to, and they'll do something you can actually hear — because they'll be shaping a mix instead of hiding one.
 
-All of this — the mixer, the sends and returns, EQ, compression, reverb, delay — runs in the browser for free at [100Lights](https://100lights.com), which means the excuse about gear is gone. The faders were always the point.
+All of this — the mixer, the sends and returns, EQ, compression, reverb, delay — runs in the browser for free at [100Lights](https://100lights.com), which means the excuse about gear is gone — and [it was never the thing holding your tracks back anyway](/learn/you-dont-need-better-gear). The faders were always the point.
 
 Mix something this way, then publish the stems to the [community](https://100lights.com/community) and let somebody else mix it their way. Comparing two balances of the same song will teach you more in an afternoon than a year of plugin videos.

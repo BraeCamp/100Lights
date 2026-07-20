@@ -12,7 +12,7 @@ C major. G major. A minor. F major. One bar each, block chords, middle of the ke
 
 Play it. Loop it eight times. Don't do anything else yet.
 
-That's I–V–vi–IV, and if you've heard music made since roughly 1955 you've heard it several thousand times. Drag the *pop progression* recipe into a project in [100Lights](https://100lights.com) if you want it in front of you as editable notes — it drops in as C, G, Am, F, four beats each, and everything below is a modification of that one clip.
+That's I–V–vi–IV, [the first and most-used of the five progressions worth memorising](/learn/five-chord-progressions-every-producer-should-know), and if you've heard music made since roughly 1955 you've heard it thousands of times. Drag the *pop progression* recipe into a project in [100Lights](https://100lights.com) if you want it in front of you as editable notes — it drops in as C, G, Am, F, four beats each, and everything below is a modification of that one clip.
 
 @ear Loop it eight times with no drums and no changes. Sit with how *generic* it sounds. Almost aggressively neutral. Remember that feeling, because by the end of this article those exact four chords are going to sound like five unrelated pieces of music, and the chords will never once change.
 
@@ -66,7 +66,7 @@ Take only the top note of each chord and turn it into a sixteenth-note arpeggio:
 
 Underneath, put a sustained sub-bass on the root of each chord, and nothing in the middle at all.
 
-Then automate a low-pass filter on the arp so it opens gradually across eight bars.
+Then automate a low-pass filter on the arp so it opens gradually across eight bars. Drawn long and slow, [that one moving line does more arrangement work than any part you could add](/learn/automation-loop-into-song).
 
 @ear Loop it for eight bars with the filter opening. Notice you stopped hearing chords. You're hearing *texture that is slowly brightening*, and the harmony has become the thing underneath rather than the thing you're listening to.
 
@@ -74,7 +74,7 @@ Then automate a low-pass filter on the arp so it opens gradually across eight ba
 
 ## What this proves
 
-Five pieces of music that share a chord progression exactly, bar for bar, and would never be filed in the same section of a record store.
+Five pieces of music that share a chord progression exactly, bar for bar, and would never be filed in the same section of a record store. Run the same experiment on a darker set and you get [flamenco, surf rock, metal and pop out of one descending four-chord line](/learn/andalusian-cadence-one-progression-four-genres).
 
 @theory Harmony sets the emotional weather. It decides whether something is bright or sad or unresolved. It does not decide genre. Genre is made from rhythm, register, spacing, timbre, and what you leave out — and every one of those is an arrangement decision, available to you right now, without learning a single new chord.
 

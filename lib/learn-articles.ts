@@ -87,10 +87,29 @@ function fromRepo(now: number): LearnArticle[] {
   })
 }
 
-async function fromDb(now: number): Promise<LearnArticle[]> {
+/**
+ * Live DB articles, plus the slugs of trashed ones.
+ *
+ * Deleted rows are returned separately rather than dropped, because a row
+ * shadowing a repo file has to keep suppressing that file while it sits in
+ * the trash. Filter them out of the query and the .md would spring back to
+ * life the moment it was deleted.
+ */
+async function fromDb(now: number): Promise<{ live: LearnArticle[]; deleted: Set<string> }> {
   try {
     const rows = await sql`SELECT * FROM learn_articles`
-    return rows.map(r => ({
+    const deleted = new Set<string>()
+    const live: LearnArticle[] = []
+    for (const r of rows) {
+      if (r.deleted_at != null) { deleted.add(r.slug as string); continue }
+      live.push(toArticle(r, now))
+    }
+    return { live, deleted }
+  } catch { return { live: [], deleted: new Set() } }
+}
+
+function toArticle(r: Record<string, unknown>, now: number): LearnArticle {
+  return {
       slug: r.slug as string,
       title: r.title as string,
       description: (r.description as string) ?? '',
@@ -98,22 +117,40 @@ async function fromDb(now: number): Promise<LearnArticle[]> {
       updated: (r.updated as string) ?? undefined,
       tags: ((r.tags as string) ?? '').split(',').map(t => t.trim()).filter(Boolean),
       ...resolvePublication(!!r.draft, r.publish_at as string | null, now),
-      minutes: minutes((r.body as string) ?? ''),
-      body: (r.body as string) ?? '',
-      source: 'db' as const,
-    }))
-  } catch { return [] }   // table absent / DB down / build time — repo still ships
+    minutes: minutes((r.body as string) ?? ''),
+    body: (r.body as string) ?? '',
+    source: 'db' as const,
+  }
 }
 
 export async function getArticles(opts?: { includeDrafts?: boolean }): Promise<LearnArticle[]> {
   const includeDrafts = opts?.includeDrafts ?? process.env.NODE_ENV === 'development'
   const now = Date.now()
-  const db = await fromDb(now)
-  const dbSlugs = new Set(db.map(a => a.slug))
-  const all = [...db, ...fromRepo(now).filter(a => !dbSlugs.has(a.slug))]
+  const { live, deleted } = await fromDb(now)
+  // A slug is hidden if the DB has it live (that row wins) or trashed (the
+  // tombstone suppresses the file).
+  const claimed = new Set([...live.map(a => a.slug), ...deleted])
+  const all = [...live, ...fromRepo(now).filter(a => !claimed.has(a.slug))]
   return all
     .filter(a => includeDrafts || !a.draft)
     .sort((a, b) => b.date.localeCompare(a.date))
+}
+
+/** Trashed articles, newest first — for the admin trash view. */
+export async function getTrashedArticles(): Promise<Array<LearnArticle & { deletedAt: string; repoShadow: boolean }>> {
+  try {
+    const rows = await sql`
+      SELECT * FROM learn_articles
+      WHERE deleted_at IS NOT NULL
+      ORDER BY deleted_at DESC
+    `
+    const now = Date.now()
+    return rows.map(r => ({
+      ...toArticle(r, now),
+      deletedAt: new Date(r.deleted_at as string).toISOString(),
+      repoShadow: !!r.repo_shadow,
+    }))
+  } catch { return [] }
 }
 
 export async function getArticle(slug: string, opts?: { includeDrafts?: boolean }): Promise<LearnArticle | null> {

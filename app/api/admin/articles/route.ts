@@ -40,11 +40,67 @@ export async function PUT(req: Request) {
   return Response.json({ ok: true, slug })
 }
 
+// Soft delete into the trash, restorable for 7 days.
+//
+// Deleting a repo-backed article writes a shadow row rather than removing
+// anything: the .md file is committed and can't be deleted at runtime, so a
+// tombstone is the only way to hide it. Those rows are marked `repo_shadow`
+// and survive the purge, because dropping one would bring the file back.
 export async function DELETE(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
   await ensureLearnSchema()
-  const slug = new URL(req.url).searchParams.get('slug')
+  const url = new URL(req.url)
+  const slug = url.searchParams.get('slug')
   if (!slug) return Response.json({ error: 'slug required' }, { status: 400 })
-  await sql`DELETE FROM learn_articles WHERE slug = ${slug}`
+
+  // ?permanent=1 empties the trash for one item ahead of the 7 days.
+  if (url.searchParams.get('permanent') === '1') {
+    const [row] = await sql`SELECT repo_shadow FROM learn_articles WHERE slug = ${slug}`
+    if (row?.repo_shadow) {
+      await sql`UPDATE learn_articles SET body = '', description = '' WHERE slug = ${slug}`
+      return Response.json({ ok: true, keptAsTombstone: true })
+    }
+    await sql`DELETE FROM learn_articles WHERE slug = ${slug}`
+    return Response.json({ ok: true })
+  }
+
+  const article = (await getArticles({ includeDrafts: true })).find(a => a.slug === slug)
+  if (!article) return Response.json({ error: 'No such article' }, { status: 404 })
+
+  await sql`
+    INSERT INTO learn_articles (slug, title, description, date, updated, tags, draft, body, repo_shadow, deleted_at)
+    VALUES (${article.slug}, ${article.title}, ${article.description}, ${article.date}, ${article.updated ?? null},
+            ${article.tags.join(', ')}, ${article.draft}, ${article.body}, ${article.source === 'repo'}, NOW())
+    ON CONFLICT (slug) DO UPDATE SET deleted_at = NOW()
+  `
+  return Response.json({ ok: true, trashed: true })
+}
+
+// Restore from the trash. Clears any schedule too — a slot that passed while
+// the article sat in the trash would otherwise republish it the instant it
+// came back, which is not what "restore" should mean.
+export async function PATCH(req: Request) {
+  if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
+  await ensureLearnSchema()
+  let body: { slug?: string }
+  try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  if (!body.slug) return Response.json({ error: 'slug required' }, { status: 400 })
+
+  const [row] = await sql`
+    UPDATE learn_articles
+    SET deleted_at = NULL,
+        publish_at = CASE WHEN publish_at IS NOT NULL AND publish_at < ${new Date().toISOString()}
+                          THEN NULL ELSE publish_at END
+    WHERE slug = ${body.slug} AND deleted_at IS NOT NULL
+    RETURNING slug, repo_shadow, body
+  `
+  if (!row) return Response.json({ error: 'Not in the trash' }, { status: 404 })
+
+  // A purged repo shadow has no content left; dropping the row hands the
+  // article back to its committed file.
+  if (row.repo_shadow && !row.body) {
+    await sql`DELETE FROM learn_articles WHERE slug = ${body.slug}`
+    return Response.json({ ok: true, restoredFromRepo: true })
+  }
   return Response.json({ ok: true })
 }

@@ -12,7 +12,7 @@ Before you read anything else, play these four chords. One per bar, hold each on
 
 A minor. G major. F major. E major.
 
-If you don't have an instrument in front of you, open a project in [100Lights](https://100lights.com), drag the *Andalusian cadence* recipe from the library onto a track, and press play. It lands as regular notes in the piano roll, so everything below is editable.
+If you don't have an instrument in front of you, open a project in [100Lights](https://100lights.com), drag the *Andalusian cadence* recipe from the library onto a track, and press play. It lands as regular notes in the piano roll, so everything below is editable. It's also the fifth of [the handful of progressions worth knowing before anything else](/learn/five-chord-progressions-every-producer-should-know), and the strangest of them.
 
 @ear Play all four bars twice through. Don't analyze it. Just answer one question: at which chord does the loop stop sounding like ordinary sad music and start sounding like *somewhere*?
 
@@ -34,7 +34,7 @@ Staircase. Every time. It only goes down, one step at a time, and it never turns
 
 Delete the strum. Give every chord exactly eight even eighth notes, machine-steady. Drop the whole thing an octave. Swap the preset to something bright and thin with a fast attack. Add reverb on the track — a lot of it, more than feels tasteful, because tasteful is not what 1962 was doing.
 
-You have just written the skeleton of "Misirlou," which is the Andalusian cadence played by a man in a hurry.
+You have just written the skeleton of "Misirlou," which is the Andalusian cadence played by a man in a hurry. That low root-and-back figure is [one of the short borrowed gestures that carry entire records](/learn/ten-licks-worth-stealing), and it turns up far outside surf.
 
 @ear Loop your surf version four times without stopping. Somewhere around the third pass you'll notice you don't want it to end on the fourth chord — you want it to go around again. Note that feeling. It's going to be the whole point.
 
@@ -50,7 +50,7 @@ Slow it down. Give each chord a full bar again, held. Put a soft pad underneath,
 
 @ear Play the pop version and the flamenco version back to back, one after the other, in the same project. Two tracks, same four chords, muted alternately. Ask a friend if it's the same progression. They will hesitate.
 
-Four genres. One harmonic sentence. Nothing changed but voicing, rhythm, register, and instrument.
+Four genres. One harmonic sentence. Nothing changed but voicing, rhythm, register, and instrument — which is exactly [what happens when you do this to the four chords behind half of pop radio](/learn/same-four-chords-five-genres), too.
 
 ## Here's what you've been hearing
 

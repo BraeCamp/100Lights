@@ -10,7 +10,7 @@ draft: true
 
 Every beginner tutorial starts the same way. Download this DAW, install these plugins, get this sample pack, watch four hours of interface tour. By the time you're allowed to make a sound, you've spent a weekend and forgotten the idea you had on Tuesday.
 
-That order is backwards, and it's the reason most people who want to make music never make any.
+That order is backwards, and it's the reason most people who want to make music never make any. The software isn't a subject you pass — [it's four things, and you'll use all four in the next fifteen minutes](/learn/what-is-a-daw-beginners-guide).
 
 You need three sounds and about fifteen minutes. Not because I'm simplifying for beginners — because three sounds is genuinely what a beat is. Everything after that is decoration, and decoration added to nothing is still nothing.
 
@@ -56,7 +56,7 @@ Two rules keep beginners out of trouble here. Keep bass notes short, because lon
 
 ## Chords, without learning theory first
 
-You don't need theory to add harmony. You need one good progression, and producers have been recycling the same handful since the 1950s.
+You don't need theory to add harmony. You need one good progression, and producers have been recycling [the same handful since the 1950s](/learn/five-chord-progressions-every-producer-should-know).
 
 The library ships **chord recipes** — progressions you drag onto a track as real, editable notes. Drag in *The pop progression* and you have C, G, Am, F under your beat: the four chords behind a genuinely embarrassing number of hit records.
 
@@ -72,7 +72,7 @@ Do that until you have four repeats. Then delete something from the third one. D
 
 That absence is called a turnaround, and it's the cheapest arrangement trick in existence. It's also the entire difference between a loop and a piece of music. Nothing was added. Something left, and its leaving is what made you notice what stayed.
 
-This is the part I'd argue about with anybody: your track isn't boring because it's missing an element. It's boring because nothing has ever left.
+This is the part I'd argue about with anybody: your track isn't boring because it's missing an element. It's boring because [nothing has ever left it](/learn/why-your-loop-gets-boring).
 
 ## Getting it out
 
