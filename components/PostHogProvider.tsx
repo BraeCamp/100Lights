@@ -1,15 +1,30 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { usePathname, useSearchParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import posthog from 'posthog-js'
 
 let initialised = false
 
-export function PostHogProvider({ children }: { children: React.ReactNode }) {
+/**
+ * Analytics side effects only — deliberately renders nothing and wraps
+ * nothing.
+ *
+ * This used to wrap `{children}` and call `useSearchParams()`, which together
+ * cost the whole site its server-rendered HTML: that hook opts its subtree
+ * out of static rendering, and with every page nested inside, no page body
+ * survived into the HTML — headings, article text, tables, all of it arrived
+ * only as client-rendered payload.
+ *
+ * Two rules keep it fixed, and both matter:
+ *   1. Render nothing and wrap nothing — do not pass children through here.
+ *   2. Do not call `useSearchParams()`. The query string is only needed
+ *      inside an effect, where `window.location` has it anyway, and reading
+ *      it there costs no static rendering.
+ */
+export function PostHogProvider() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
   const { user } = useUser()
   const identifiedRef = useRef(false)
 
@@ -58,9 +73,8 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
   // Track page views on every route change
   useEffect(() => {
     if (!initialised) return
-    const url = pathname + (searchParams.toString() ? `?${searchParams}` : '')
-    posthog.capture('$pageview', { $current_url: url })
-  }, [pathname, searchParams])
+    posthog.capture('$pageview', { $current_url: pathname + window.location.search })
+  }, [pathname])
 
-  return <>{children}</>
+  return null
 }

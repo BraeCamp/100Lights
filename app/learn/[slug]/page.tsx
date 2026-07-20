@@ -46,6 +46,15 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
           <p style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', letterSpacing: '0.08em', margin: '0 0 14px' }}>DRAFT — not yet published</p>
         )}
         <article>
+          {/* Guarantee exactly one H1. Articles are supposed to open with a
+              `#` line, but nothing enforces it — code-a-poly-track-with-math
+              starts at `##`, so the page had no H1 at all and the title lived
+              only in <title>. */}
+          {!/^\s*#\s/.test(a.body) && (
+            <h1 style={{ color: 'var(--text-primary)', fontSize: 32, fontWeight: 800, letterSpacing: '-0.01em', lineHeight: 1.3, margin: '0 0 12px' }}>
+              {a.title}
+            </h1>
+          )}
           {renderMarkdown(a.body)}
         </article>
         <aside style={{

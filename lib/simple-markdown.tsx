@@ -8,8 +8,8 @@
 // renders the actual player once a URL is added.
 
 import React from 'react'
-import ArticleSoundEmbed from '@/components/ArticleSoundEmbed'
-import ArticleProgression, { type ProgressionData } from '@/components/ArticleProgression'
+import LazyArticleWidget from '@/components/LazyArticleWidget'
+import type { ProgressionData } from '@/components/ArticleProgression'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
@@ -73,6 +73,85 @@ function VideoSlot({ url, caption }: { url: string | null; caption: string }) {
   )
 }
 
+/**
+ * Server-rendered stand-in for the interactive piano.
+ *
+ * This is not a spinner — it's the article's actual content in text form.
+ * The chord names and key are the substance a search engine should see, and
+ * they're identical to what the widget shows collapsed, so the swap is
+ * invisible to a reader.
+ */
+function ProgressionFallback({ data }: { data: ProgressionData }) {
+  const names = data.chords.map(c => c.name).join(' → ')
+  return (
+    <figure style={{ margin: '24px 0', padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em' }}>{names}</p>
+      {data.originalKey && (
+        <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '6px 0 0' }}>Key of {data.originalKey}</p>
+      )}
+      {data.caption && (
+        <figcaption style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '10px 0 0', lineHeight: 1.6 }}>{data.caption}</figcaption>
+      )}
+    </figure>
+  )
+}
+
+/** Server-rendered stand-in for a community sound embed — keeps the caption
+ *  in the document even if the fetch never happens. */
+function SoundFallback({ caption }: { caption: string }) {
+  return (
+    <figure style={{ margin: '24px 0', padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>♪ Sound preview</p>
+      {caption && (
+        <figcaption style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.6 }}>{caption}</figcaption>
+      )}
+    </figure>
+  )
+}
+
+/** GitHub-style pipe table. Added because the one published article uses one
+ *  and it was rendering as literal pipe characters on the live site. */
+function Table({ rows, keyBase }: { rows: string[][]; keyBase: string }) {
+  const [head, ...body] = rows
+  const cell: React.CSSProperties = { padding: '8px 12px', borderBottom: '1px solid var(--border)', textAlign: 'left', verticalAlign: 'top' }
+  return (
+    <div style={{ overflowX: 'auto', margin: '20px 0' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14.5 }}>
+        <thead>
+          <tr>
+            {head.map((h, i) => (
+              <th key={`${keyBase}-h${i}`} style={{ ...cell, color: 'var(--text-primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                {inline(h, `${keyBase}-h${i}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={`${keyBase}-r${ri}`}>
+              {r.map((c, ci) => (
+                <td key={`${keyBase}-r${ri}c${ci}`} style={{ ...cell, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  {inline(c, `${keyBase}-r${ri}c${ci}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Splits a pipe-table block into cells, or returns null if it isn't one. */
+function parseTable(block: string): string[][] | null {
+  const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+  if (lines.length < 2 || !lines.every(l => l.includes('|'))) return null
+  // Second line must be the ---|--- separator.
+  if (!/^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(lines[1])) return null
+  const cells = (l: string) => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+  return [cells(lines[0]), ...lines.slice(2).map(cells)]
+}
+
 export function renderMarkdown(md: string): React.ReactNode {
   const blocks = md.split(/\n\s*\n/)
   const out: React.ReactNode[] = []
@@ -106,7 +185,14 @@ export function renderMarkdown(md: string): React.ReactNode {
     // @sound(communityItemId) caption — embeds a shared sample/recipe/song
     if (b.startsWith('@sound')) {
       const m = b.match(/^@sound\(([^)]+)\)\s*([\s\S]*)$/)
-      if (m) out.push(<ArticleSoundEmbed key={key} itemId={m[1].trim()} caption={m[2]?.trim() ?? ''} />)
+      if (m) {
+        const caption = m[2]?.trim() ?? ''
+        out.push(
+          <LazyArticleWidget key={key} kind="sound" props={{ itemId: m[1].trim(), caption }}>
+            <SoundFallback caption={caption} />
+          </LazyArticleWidget>
+        )
+      }
       return
     }
     // @progression(<uri-encoded json>) caption — chord progression with the
@@ -117,7 +203,13 @@ export function renderMarkdown(md: string): React.ReactNode {
         try {
           const parsed = JSON.parse(decodeURIComponent(m[1])) as ProgressionData
           if (m[2]?.trim()) parsed.caption = m[2].trim()
-          if (parsed.chords?.length) out.push(<ArticleProgression key={key} data={parsed} />)
+          if (parsed.chords?.length) {
+            out.push(
+              <LazyArticleWidget key={key} kind="progression" props={{ data: parsed }}>
+                <ProgressionFallback data={parsed} />
+              </LazyArticleWidget>
+            )
+          }
         } catch { /* malformed payload — skip */ }
       }
       return
@@ -131,6 +223,10 @@ export function renderMarkdown(md: string): React.ReactNode {
       else if (level === 2) out.push(<h2 key={key} id={id} style={{ ...style, fontSize: 23, fontWeight: 750 }}>{inline(text, key)}</h2>)
       else out.push(<h3 key={key} id={id} style={{ ...style, fontSize: 17, fontWeight: 700 }}>{inline(text, key)}</h3>)
       return
+    }
+    if (b.includes('|')) {
+      const rows = parseTable(b)
+      if (rows) { out.push(<Table key={key} rows={rows} keyBase={key} />); return }
     }
     if (/^>\s/.test(b)) {
       out.push(<blockquote key={key} style={{ borderLeft: '3px solid #a78bfa', margin: '20px 0', padding: '4px 0 4px 16px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>{inline(b.replace(/^>\s?/gm, ''), key)}</blockquote>)

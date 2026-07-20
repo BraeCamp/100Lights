@@ -33,7 +33,11 @@ function parseFrontmatter(raw: string): { meta: Record<string, string>; body: st
   for (const line of raw.slice(3, end).split('\n')) {
     const i = line.indexOf(':')
     if (i === -1) continue
-    meta[line.slice(0, i).trim()] = line.slice(i + 1).trim()
+    // Strip matching surrounding quotes — YAML treats them as delimiters, and
+    // without this a quoted title carried its quotes into the <h1>, <title>,
+    // and OG tags.
+    const value = line.slice(i + 1).trim().replace(/^(['"])([\s\S]*)\1$/, '$2')
+    meta[line.slice(0, i).trim()] = value
   }
   return { meta, body: raw.slice(end + 4).trim() }
 }

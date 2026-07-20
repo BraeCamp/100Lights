@@ -60,9 +60,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="#main" className="skip-link">Skip to main content</a>
           <ZoomBlock />
           <ServiceWorkerRegistrar />
+          {/* Analytics is a leaf, not a wrapper: it reads searchParams, which
+              opts its subtree out of static HTML. Keeping `children` outside
+              this boundary is what lets pages prerender their real markup. */}
           <Suspense>
-            <PostHogProvider>{children}</PostHogProvider>
+            <PostHogProvider />
           </Suspense>
+          {children}
         </body>
       </html>
     </ClerkProvider>
