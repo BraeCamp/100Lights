@@ -5,6 +5,11 @@ import { getArticles } from '@/lib/learn-articles'
 // Community items are the long-tail SEO surface: every shared sample, recipe,
 // and song is a public, playable page with its own OG card. Fragments (#…)
 // are omitted — crawlers ignore them.
+// Rebuild hourly. Scheduled articles publish themselves without a deploy, so
+// a fully static sitemap would keep advertising yesterday's set and newly
+// live guides would go undiscovered until someone shipped code.
+export const revalidate = 3600
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = 'https://100lights.com'
   const staticPages: MetadataRoute.Sitemap = [

@@ -1,6 +1,7 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { getArticles } from '@/lib/learn-articles'
+import { ensureLearnSchema } from '@/lib/learn-schema'
 
 export const runtime = 'nodejs'
 
@@ -8,39 +9,22 @@ export const runtime = 'nodejs'
 // content/learn/ (DB wins on slug clashes), and publish instantly — no
 // deploy needed. See lib/learn-articles.ts for the merge.
 
-let schemaReady = false
-async function ensureSchema() {
-  if (schemaReady) return
-  await sql`
-    CREATE TABLE IF NOT EXISTS learn_articles (
-      slug        TEXT PRIMARY KEY,
-      title       TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      date        TEXT NOT NULL,
-      updated     TEXT,
-      tags        TEXT NOT NULL DEFAULT '',
-      draft       BOOLEAN NOT NULL DEFAULT true,
-      body        TEXT NOT NULL DEFAULT ''
-    )
-  `
-  schemaReady = true
-}
-
 export async function GET() {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
-  await ensureSchema()
+  await ensureLearnSchema()
   // Merged view (repo drafts + DB rows, DB wins) — the same list /learn sees,
   // drafts included, with tags flattened for the editor
   const articles = (await getArticles({ includeDrafts: true })).map(a => ({
     slug: a.slug, title: a.title, description: a.description, date: a.date,
-    tags: a.tags.join(', '), draft: a.draft, body: a.body, source: a.source,
+    tags: a.tags.join(', '), draft: a.draft, scheduledFor: a.scheduledFor,
+    body: a.body, source: a.source,
   }))
   return Response.json({ articles })
 }
 
 export async function PUT(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
-  await ensureSchema()
+  await ensureLearnSchema()
   let a: { slug?: string; title?: string; description?: string; date?: string; tags?: string; draft?: boolean; body?: string }
   try { a = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
   const slug = (a.slug ?? '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
@@ -58,7 +42,7 @@ export async function PUT(req: Request) {
 
 export async function DELETE(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
-  await ensureSchema()
+  await ensureLearnSchema()
   const slug = new URL(req.url).searchParams.get('slug')
   if (!slug) return Response.json({ error: 'slug required' }, { status: 400 })
   await sql`DELETE FROM learn_articles WHERE slug = ${slug}`

@@ -25,6 +25,8 @@ interface Row {
   date: string
   tags: string
   draft: boolean
+  /** Set while a draft is waiting for its scheduled slot (ISO datetime). */
+  scheduledFor?: string
   body: string
   source: 'repo' | 'db'
 }
@@ -56,6 +58,13 @@ export default function ArticlesPanel() {
   const [libQuery, setLibQuery] = useState('')
   const [libEntries, setLibEntries] = useState<LibraryEntry[] | null>(null)
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
+  const [schedOpen, setSchedOpen] = useState(false)
+  const [schedStart, setSchedStart] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 1)
+    return d.toISOString().slice(0, 10)
+  })
+  const [schedTime, setSchedTime] = useState('09:00')
+  const [schedEvery, setSchedEvery] = useState(1)
   const { user } = useUser()
 
   const load = useCallback(async () => {
@@ -225,6 +234,45 @@ export default function ArticlesPanel() {
       await uploadBlobAsArticleAudio(named, file.name.replace(/\.[^.]+$/, ''))
       setMsg('Audio uploaded & inserted ✓')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Upload failed') } finally { setBusy(null) }
+  }
+
+  /** Unscheduled drafts, oldest first — the order they'll be published in. */
+  const queue = (rows ?? []).filter(r => r.draft && !r.scheduledFor)
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const pending = (rows ?? []).filter(r => r.scheduledFor)
+    .sort((a, b) => (a.scheduledFor ?? '').localeCompare(b.scheduledFor ?? ''))
+
+  /**
+   * Assign one slot per interval, starting at the chosen local date and time.
+   * Dates are built in the browser so they mean what the editor's clock says —
+   * computing them server-side would silently schedule for UTC.
+   */
+  function plannedSlots(slugs: string[]) {
+    const [h, m] = schedTime.split(':').map(Number)
+    return slugs.map((slug, i) => {
+      const d = new Date(`${schedStart}T00:00:00`)
+      d.setDate(d.getDate() + i * Math.max(1, schedEvery))
+      d.setHours(h || 0, m || 0, 0, 0)
+      return { slug, publishAt: d.toISOString() }
+    })
+  }
+
+  async function applySchedule(slots: Array<{ slug: string; publishAt: string | null }>) {
+    setBusy('sched'); setMsg('')
+    try {
+      const r = await fetch('/api/admin/articles/schedule', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slots }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error ?? 'Scheduling failed')
+      const bits = []
+      if (d.scheduled) bits.push(`${d.scheduled} scheduled`)
+      if (d.cleared) bits.push(`${d.cleared} unscheduled`)
+      if (d.skipped?.length) bits.push(`${d.skipped.length} skipped (already live)`)
+      setMsg(`${bits.join(', ')} ✓`)
+      await load()
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Scheduling failed') } finally { setBusy(null) }
   }
 
   async function openAudioPicker() {
@@ -507,6 +555,97 @@ export default function ArticlesPanel() {
         >+ New article</button>
       </div>
 
+      {/* Publishing schedule */}
+      <div style={{ border: '1px solid rgba(52,211,153,0.35)', background: 'rgba(52,211,153,0.05)', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <button
+          onClick={() => setSchedOpen(v => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 800, color: '#34d399' }}>Publishing schedule</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {pending.length > 0
+              ? `${pending.length} queued · next ${new Date(pending[0].scheduledFor!).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+              : `${queue.length} unscheduled draft${queue.length === 1 ? '' : 's'}`}
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>{schedOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {schedOpen && (
+          <>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+              Drafts publish themselves at their slot — no deploy, and nothing to come back and click.
+              Pages refresh about once a minute, so an article appears within a minute of its time.
+            </p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                First post
+                <input type="date" value={schedStart} onChange={e => setSchedStart(e.target.value)} style={{ ...input, marginTop: 3 }} />
+              </label>
+              <label style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                Time
+                <input type="time" value={schedTime} onChange={e => setSchedTime(e.target.value)} style={{ ...input, marginTop: 3 }} />
+              </label>
+              <label style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                Every
+                <select value={schedEvery} onChange={e => setSchedEvery(Number(e.target.value))} style={{ ...input, marginTop: 3, cursor: 'pointer' }}>
+                  <option value={1}>1 day</option>
+                  <option value={2}>2 days</option>
+                  <option value={3}>3 days</option>
+                  <option value={7}>1 week</option>
+                </select>
+              </label>
+              <button
+                onClick={() => void applySchedule(plannedSlots(queue.map(q => q.slug)))}
+                disabled={busy === 'sched' || queue.length === 0}
+                style={{ fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 8, border: 'none', background: '#059669', color: '#fff', cursor: 'pointer', opacity: queue.length ? 1 : 0.5 }}
+              >
+                {busy === 'sched' ? 'Scheduling…' : `Schedule ${queue.length} draft${queue.length === 1 ? '' : 's'}`}
+              </button>
+              {pending.length > 0 && (
+                <button
+                  onClick={() => void applySchedule(pending.map(p => ({ slug: p.slug, publishAt: null })))}
+                  disabled={busy === 'sched'}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                >Clear queue</button>
+              )}
+            </div>
+
+            {queue.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                Preview — first three of {queue.length}:
+                {plannedSlots(queue.map(q => q.slug)).slice(0, 3).map(s => (
+                  <div key={s.slug} style={{ marginLeft: 8 }}>
+                    · {new Date(s.publishAt).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} — {s.slug}
+                  </div>
+                ))}
+                {queue.length > 3 && (
+                  <div style={{ marginLeft: 8 }}>
+                    · … last one {new Date(plannedSlots(queue.map(q => q.slug)).at(-1)!.publishAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {pending.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+                {pending.map(p => (
+                  <div key={p.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '5px 8px', borderRadius: 6, background: 'var(--bg-card)' }}>
+                    <span style={{ color: '#34d399', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                      {new Date(p.scheduledFor!).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{p.title}</span>
+                    <button
+                      onClick={() => void applySchedule([{ slug: p.slug, publishAt: null }])}
+                      style={{ fontSize: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}
+                    >unschedule</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* List */}
       {rows === null && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</p>}
       {rows?.length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No articles yet.</p>}
@@ -523,9 +662,15 @@ export default function ArticlesPanel() {
             <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 8px', borderRadius: 99, flexShrink: 0, color: r.source === 'repo' ? '#60a5fa' : '#a78bfa', border: `1px solid ${r.source === 'repo' ? 'rgba(96,165,250,0.4)' : 'rgba(167,139,250,0.4)'}` }}>
               {r.source === 'repo' ? 'REPO' : 'DB'}
             </span>
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 8px', borderRadius: 99, flexShrink: 0, color: r.draft ? '#f59e0b' : '#34d399', border: `1px solid ${r.draft ? 'rgba(245,158,11,0.4)' : 'rgba(52,211,153,0.4)'}` }}>
-              {r.draft ? 'DRAFT' : 'LIVE'}
-            </span>
+            {r.scheduledFor ? (
+              <span title={new Date(r.scheduledFor).toLocaleString()} style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 8px', borderRadius: 99, flexShrink: 0, color: '#38bdf8', border: '1px solid rgba(56,189,248,0.4)', whiteSpace: 'nowrap' }}>
+                ⏱ {new Date(r.scheduledFor).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+              </span>
+            ) : (
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 8px', borderRadius: 99, flexShrink: 0, color: r.draft ? '#f59e0b' : '#34d399', border: `1px solid ${r.draft ? 'rgba(245,158,11,0.4)' : 'rgba(52,211,153,0.4)'}` }}>
+                {r.draft ? 'DRAFT' : 'LIVE'}
+              </span>
+            )}
             <a
               href={`/learn/${r.slug}`} target="_blank" rel="noreferrer"
               onClick={e => e.stopPropagation()}

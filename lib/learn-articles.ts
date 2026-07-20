@@ -17,10 +17,30 @@ export interface LearnArticle {
   date: string          // ISO yyyy-mm-dd
   updated?: string
   tags: string[]
+  /** EFFECTIVE draft state: false once a scheduled time has passed. */
   draft: boolean
+  /** Set only while an article is still waiting for its slot (ISO datetime). */
+  scheduledFor?: string
   minutes: number       // rough read time, computed
   body: string          // markdown after frontmatter
   source: 'repo' | 'db'
+}
+
+/**
+ * Resolve a stored draft flag + optional publish time into the effective one.
+ *
+ * `draft` is what every consumer already reads, so scheduling collapses into
+ * it rather than adding a second concept they'd all have to learn: an article
+ * whose slot has passed simply isn't a draft any more. Pages revalidate every
+ * 60s, so a slot goes live within about a minute of its time with no deploy.
+ */
+function resolvePublication(draft: boolean, publishAt: string | null | undefined, now: number) {
+  if (!draft || !publishAt) return { draft, scheduledFor: undefined }
+  const t = Date.parse(publishAt)
+  if (Number.isNaN(t)) return { draft, scheduledFor: undefined }
+  return t <= now
+    ? { draft: false, scheduledFor: undefined }
+    : { draft: true, scheduledFor: new Date(t).toISOString() }
 }
 
 const DIR = path.join(process.cwd(), 'content', 'learn')
@@ -46,7 +66,7 @@ function minutes(body: string): number {
   return Math.max(2, Math.round(body.split(/\s+/).length / 220))
 }
 
-function fromRepo(): LearnArticle[] {
+function fromRepo(now: number): LearnArticle[] {
   let files: string[] = []
   try { files = fs.readdirSync(DIR).filter(f => f.endsWith('.md') && f !== 'IDEAS.md' && !f.startsWith('_')) } catch { return [] }
   return files.map(f => {
@@ -59,7 +79,7 @@ function fromRepo(): LearnArticle[] {
       date: meta.date ?? '2026-01-01',
       updated: meta.updated,
       tags: (meta.tags ?? '').split(',').map(t => t.trim()).filter(Boolean),
-      draft: meta.draft !== 'false',
+      ...resolvePublication(meta.draft !== 'false', meta.publishAt, now),
       minutes: minutes(body),
       body,
       source: 'repo' as const,
@@ -67,7 +87,7 @@ function fromRepo(): LearnArticle[] {
   })
 }
 
-async function fromDb(): Promise<LearnArticle[]> {
+async function fromDb(now: number): Promise<LearnArticle[]> {
   try {
     const rows = await sql`SELECT * FROM learn_articles`
     return rows.map(r => ({
@@ -77,7 +97,7 @@ async function fromDb(): Promise<LearnArticle[]> {
       date: r.date as string,
       updated: (r.updated as string) ?? undefined,
       tags: ((r.tags as string) ?? '').split(',').map(t => t.trim()).filter(Boolean),
-      draft: !!r.draft,
+      ...resolvePublication(!!r.draft, r.publish_at as string | null, now),
       minutes: minutes((r.body as string) ?? ''),
       body: (r.body as string) ?? '',
       source: 'db' as const,
@@ -87,9 +107,10 @@ async function fromDb(): Promise<LearnArticle[]> {
 
 export async function getArticles(opts?: { includeDrafts?: boolean }): Promise<LearnArticle[]> {
   const includeDrafts = opts?.includeDrafts ?? process.env.NODE_ENV === 'development'
-  const db = await fromDb()
+  const now = Date.now()
+  const db = await fromDb(now)
   const dbSlugs = new Set(db.map(a => a.slug))
-  const all = [...db, ...fromRepo().filter(a => !dbSlugs.has(a.slug))]
+  const all = [...db, ...fromRepo(now).filter(a => !dbSlugs.has(a.slug))]
   return all
     .filter(a => includeDrafts || !a.draft)
     .sort((a, b) => b.date.localeCompare(a.date))
