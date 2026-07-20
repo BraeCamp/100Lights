@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type { AudioClip } from '@/lib/daw-types'
+import { ROOT_NOTES } from '@/lib/scale-constants'
+import { inScaleOffsets, snapOffsetToScale, type SnapContext } from '@/lib/pitch-snap'
+import { useAltKey } from '@/lib/use-alt-key'
 import Waveform from './Waveform'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -23,11 +26,36 @@ function Section({ title }: { title: string }) {
   )
 }
 
-function Slider({ value, min, max, step, onChange }: { value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
-  return (
+function Slider({ value, min, max, step, onChange, ticks, disabled }: {
+  value: number; min: number; max: number; step: number
+  onChange: (v: number) => void
+  /** Values to mark on the track — used to show which shifts stay in key. */
+  ticks?: number[]
+  disabled?: boolean
+}) {
+  const input = (
     <input type="range" min={min} max={max} step={step} value={value}
+      disabled={disabled}
       onChange={e => onChange(parseFloat(e.target.value))}
-      className="cf-slider" style={{ flex: 1 }} />
+      className="cf-slider" style={{ flex: 1, opacity: disabled ? 0.4 : 1 }} />
+  )
+  if (!ticks?.length) return input
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {input}
+      <div style={{ position: 'relative', height: 4, marginInline: 7 }} aria-hidden="true">
+        {ticks.map(t => (
+          <span key={t} style={{
+            position: 'absolute',
+            left: `${((t - min) / (max - min)) * 100}%`,
+            width: 1, height: t === 0 ? 4 : 3,
+            background: t === 0 ? 'var(--accent-light)' : 'var(--text-muted)',
+            opacity: t === 0 ? 0.9 : 0.45,
+            transform: 'translateX(-50%)',
+          }} />
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -105,7 +133,8 @@ function detectBufferPitch(buffer: AudioBuffer, trimStartSec: number): number | 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; onClose: () => void }) {
-  const { dispatch, engine } = useDaw()
+  const { dispatch, engine, project } = useDaw()
+  const altHeld = useAltKey()
 
   const gainDb = 20 * Math.log10(Math.max(0.001, clip.gain))
 
@@ -133,6 +162,15 @@ export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; 
   }, [onClose])
 
   const [detectedPitch, setDetectedPitch] = useState<number | null>(null)
+
+  const snapCtx: SnapContext = useMemo(
+    () => ({ detectedHz: detectedPitch, key: project.key, scale: project.scale }),
+    [detectedPitch, project.key, project.scale],
+  )
+  // Chromatic projects have nothing to snap to, and a clip with no detectable
+  // pitch has no reference for "in key" — in both cases stay out of the way.
+  const snapping = !altHeld && project.scale !== 'chromatic' && detectedPitch != null
+  const inScale = useMemo(() => inScaleOffsets(-24, 24, snapCtx), [snapCtx])
 
   // Detect pitch once on open from the buffer cache
   useEffect(() => {
@@ -245,13 +283,45 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
         <Section title="Pitch" />
 
         <Row label="Semitones">
-          <Slider value={clip.pitchSemitones ?? 0} min={-24} max={24} step={1} onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchSemitones: v }) }} />
+          <Slider
+            value={clip.pitchSemitones ?? 0}
+            min={-24} max={24} step={1}
+            ticks={snapping ? inScale : undefined}
+            onChange={v => {
+              engine.clearPitchCache(clip.id)
+              // Snapping targets the resulting note, so a shift that would
+              // land outside the song's key is pulled to the nearest degree
+              // that doesn't. ⌥ Option gives back every semitone.
+              const semis = snapping ? snapOffsetToScale(v, snapCtx) : v
+              patch(snapping
+                ? { pitchSemitones: semis, pitchCents: 0 }
+                : { pitchSemitones: semis })
+            }}
+          />
           <NumDisplay value={clip.pitchSemitones ?? 0} unit="st" decimals={0} sign />
         </Row>
         <Row label="Fine">
-          <Slider value={clip.pitchCents ?? 0} min={-100} max={100} step={1} onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchCents: v }) }} />
+          <Slider
+            value={clip.pitchCents ?? 0}
+            min={-100} max={100} step={1}
+            disabled={snapping}
+            onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchCents: v }) }}
+          />
           <NumDisplay value={clip.pitchCents ?? 0} unit="¢" decimals={0} sign />
         </Row>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 100, marginBottom: 8, marginTop: -4, lineHeight: 1.6 }}>
+          {snapping ? (
+            <>
+              Snapping to <strong style={{ color: 'var(--text-secondary)' }}>{ROOT_NOTES[((project.key % 12) + 12) % 12]} {project.scale}</strong>
+              {' '}— only shifts that stay in the song&rsquo;s key. Hold <strong style={{ color: 'var(--text-secondary)' }}>⌥ Option</strong> for every semitone and fine cents.
+              {detectedPitch == null && ' (No clear pitch detected in this clip, so every semitone is offered.)'}
+            </>
+          ) : (
+            <>
+              <strong style={{ color: '#f59e0b' }}>⌥ Free pitch</strong> — every semitone and cent available. Release ⌥ to snap back to {ROOT_NOTES[((project.key % 12) + 12) % 12]} {project.scale}.
+            </>
+          )}
+        </div>
         <Row label="Note">
           {detectedPitch ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
