@@ -24,13 +24,13 @@ You've been doing this your entire life. Every time you hummed along with a chor
 
 @theory One note in a piece of music behaves like the floor of the room. Everything else is measured against it — some notes lean toward it, some pull hard away, but they all describe their position relative to that one. When the music sits on it, you feel arrival. When it moves away, you feel distance, and the further it goes the more you want it back. Nobody teaches you this. You absorb it from a few thousand hours of hearing music resolve, and by the time anyone hands you a definition you already have the sensation and just don't have a name for it.
 
-Musicians call the floor the *tonic*. That's all a key is: a declaration of which note is the floor. Once you can find it, [the small handful of chord progressions the whole of popular music runs on](/learn/five-chord-progressions-every-producer-should-know) stop being letters on a page and start being distances from that one note.
+Musicians call the floor the *tonic*. That's all a key is: a declaration of which note is the floor.
 
 ## Getting the note out of your head and onto a screen
 
 Humming it is one thing. Naming it is another, and this is where people stall.
 
-Here's the shortcut. Open a piano roll in a browser studio — [100Lights](https://100lights.com) runs entirely in the browser and takes about ten seconds to get to a playable keyboard, no download involved. If the grid itself is unfamiliar, [six experiments will teach you to write in it without ever touching a piano](/learn/piano-roll-basics-melodies-without-a-keyboard). Play the song. Keep humming your note. Then start clicking piano keys, low in the range, until one of them matches the thing you're humming.
+Here's the shortcut. Open a piano roll in a browser studio — [100Lights](https://100lights.com) runs entirely in the browser and takes about ten seconds to get to a playable keyboard, no download involved. Play the song. Keep humming your note. Then start clicking piano keys, low in the range, until one of them matches the thing you're humming.
 
 You will hunt. It'll take you six or seven tries the first time and you'll feel stupid doing it. Fine. By the tenth song it takes two tries, and eventually you skip the piano entirely because your hand goes to the right key.
 
@@ -50,7 +50,7 @@ The higher one is the major third. The lower one is the minor third. Whichever o
 
 The third is the single most opinionated note in music. Everything else in the scale can be bent, borrowed, or skipped without changing what key you're in. Move the third and you've changed the entire emotional character of the piece. Which is why this test works so well: it's the one note the song absolutely cannot be ambiguous about.
 
-Some songs will fight you. "Creep" is a real one — it's in G major but it keeps borrowing a chord that isn't, which is exactly why it sounds haunted. One borrowed note can do that: it's [the entire reason a certain four-chord descent sounds Spanish instead of merely sad](/learn/andalusian-cadence-one-progression-four-genres). Modal tracks will also refuse to settle. When a song genuinely won't commit, that's usually the interesting thing about it, not a failure of your ears.
+Some songs will fight you. "Creep" is a real one — it's in G major but it keeps borrowing a chord that isn't, which is exactly why it sounds haunted. Modal tracks will also refuse to settle. When a song genuinely won't commit, that's usually the interesting thing about it, not a failure of your ears.
 
 ## What about all those sharps and flats
 

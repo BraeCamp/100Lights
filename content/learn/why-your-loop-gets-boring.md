@@ -14,7 +14,7 @@ Count it yourself. Bar one: everything's playing. Bar four: everything's playing
 
 ## The thing you're actually hearing
 
-Boredom in a loop isn't a shortage of information. It's a shortage of change. After about eight bars — and [it is almost always eight, in every genre and every decade](/learn/song-structure-and-why-eight-bars) — your ear has finished cataloguing what's there and moves on to asking what happens next — and if the answer is "the same thing, again, at the same density," attention leaves. It leaves whether or not you added a shaker.
+Boredom in a loop isn't a shortage of information. It's a shortage of change. After about eight bars your ear has finished cataloguing what's there and moves on to asking what happens next — and if the answer is "the same thing, again, at the same density," attention leaves. It leaves whether or not you added a shaker.
 
 @theory Repetition is what makes a groove feel good; it's the reason a loop is pleasurable in the first place. But repetition only stays pleasurable while it's still resolving expectation. Once the ear has fully predicted the next bar, the prediction stops being satisfying and starts being noise. What restores it is not new material — it's a break in the pattern, after which the return of the original pattern feels like an arrival. You cannot arrive somewhere you never left.
 
@@ -68,8 +68,6 @@ Doing this properly means having fewer elements, not more, because you can only 
 
 I spent about three years adding. Every project got denser and every project got worse, and I diagnosed it as a mixing problem, so I learned mixing, and the mixing was fine — the arrangement was a wall. The fix wasn't a technique I lacked. It was the willingness to mute something good.
 
-Subtraction has a twin, and you want both: nothing has to leave if [something is continuously on its way somewhere](/learn/automation-loop-into-song). A filter opening across sixteen bars holds a listener for the same reason a mute does — the sound never settles into a fixed thing.
-
-You can build all three of these in a browser in ten minutes: loop a four-bar section, mute a track on the third repeat, edit bar four, [export a WAV](https://100lights.com), compare. Do the mute version and the everything-on version and listen to them back to back. If you can't hear the difference yet, that's a separate and very fixable problem — go [run five blind drills on your own ears](/learn/can-you-hear-the-difference) and come back.
+You can build all three of these in a browser in ten minutes: loop a four-bar section, mute a track on the third repeat, edit bar four, [export a WAV](https://100lights.com), compare. Do the mute version and the everything-on version and listen to them back to back. If you can't hear the difference yet, that's a separate and very fixable problem.
 
 Then post the loop to the [community](https://100lights.com/community) and ask people where it started to drag. They'll tell you the bar number. They're usually right.

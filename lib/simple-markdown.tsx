@@ -10,6 +10,8 @@
 import React from 'react'
 import LazyArticleWidget from '@/components/LazyArticleWidget'
 import type { ProgressionData } from '@/components/ArticleProgression'
+import type { GridSpec } from '@/components/ArticleGrid'
+import type { ABSpec } from '@/components/ArticleAB'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
@@ -161,6 +163,48 @@ function Callout({ kind, text, keyBase }: { kind: CalloutKind; text: string; key
   )
 }
 
+/**
+ * Server-rendered stand-in for the step sequencer: the pattern written out in
+ * words. A crawler and a no-JS reader get the actual drum pattern, which is
+ * the content — the grid is a nicer way to receive it, not the only way.
+ */
+function GridFallback({ spec }: { spec: GridSpec }) {
+  return (
+    <figure style={{ margin: '24px 0', padding: '16px 18px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+        {spec.bpm} BPM pattern
+      </p>
+      <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+        {spec.lanes.map((lane, li) => {
+          const hits = (spec.pattern[li] ?? []).map(s => s / 4 + 1)
+          return (
+            <li key={lane.name}>
+              <strong>{lane.name}</strong> — {hits.length ? `beats ${hits.map(h => (Number.isInteger(h) ? h : h.toFixed(2))).join(', ')}` : 'silent'}
+            </li>
+          )
+        })}
+      </ul>
+      {spec.caption && (
+        <figcaption style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.6 }}>{spec.caption}</figcaption>
+      )}
+    </figure>
+  )
+}
+
+/** Server-rendered stand-in for the A/B test — both clips as plain players. */
+function ABFallback({ spec }: { spec: ABSpec }) {
+  return (
+    <figure style={{ margin: '24px 0', padding: '16px 18px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ margin: '0 0 10px', fontSize: 13.5, color: 'var(--text-primary)', fontWeight: 600 }}>{spec.question}</p>
+      <audio controls preload="none" src={spec.plainSrc} style={{ width: '100%', height: 36, display: 'block', marginBottom: 6 }} aria-label="Clip one" />
+      <audio controls preload="none" src={spec.treatedSrc} style={{ width: '100%', height: 36, display: 'block' }} aria-label="Clip two" />
+      {spec.explanation && (
+        <p style={{ margin: '10px 0 0', fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.65 }}>{spec.explanation}</p>
+      )}
+    </figure>
+  )
+}
+
 /** GitHub-style pipe table. Added because the one published article uses one
  *  and it was rendering as literal pipe characters on the live site. */
 function Table({ rows, keyBase }: { rows: string[][]; keyBase: string }) {
@@ -246,6 +290,42 @@ export function renderMarkdown(md: string): React.ReactNode {
             </figure>
           </LazyArticleWidget>
         )
+      }
+      return
+    }
+    // @grid(<uri-encoded json>) caption — playable step sequencer
+    if (b.startsWith('@grid')) {
+      const m = b.match(/^@grid\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) {
+        try {
+          const spec = JSON.parse(decodeURIComponent(m[1])) as GridSpec
+          if (m[2]?.trim()) spec.caption = m[2].trim()
+          if (spec.lanes?.length) {
+            out.push(
+              <LazyArticleWidget key={key} kind="grid" props={{ spec }}>
+                <GridFallback spec={spec} />
+              </LazyArticleWidget>
+            )
+          }
+        } catch { /* malformed payload — skip */ }
+      }
+      return
+    }
+    // @ab(<uri-encoded json>) caption — blind A/B listening test
+    if (b.startsWith('@ab')) {
+      const m = b.match(/^@ab\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) {
+        try {
+          const spec = JSON.parse(decodeURIComponent(m[1])) as ABSpec
+          if (m[2]?.trim()) spec.caption = m[2].trim()
+          if (spec.treatedSrc && spec.plainSrc) {
+            out.push(
+              <LazyArticleWidget key={key} kind="ab" props={{ spec }}>
+                <ABFallback spec={spec} />
+              </LazyArticleWidget>
+            )
+          }
+        } catch { /* malformed payload — skip */ }
       }
       return
     }

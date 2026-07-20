@@ -14,7 +14,7 @@ Session players call these licks. Arrangers call them devices. Producers mostly 
 
 What follows is ten of them. Each one is short — most fit in two bars — and each one has carried entire records on its own. You have heard all ten. You have probably never separated them out from the songs they were embedded in, which is precisely why they keep working on you.
 
-Every one of these can be played into a piano roll in the free browser studio at [100Lights](https://100lights.com) in under a minute — and if drawing notes as rectangles is still new to you, [start by moving one note around until you hear why it matters](/learn/piano-roll-basics-melodies-without-a-keyboard). That's the whole assignment: play them badly, then play them wrong on purpose.
+Every one of these can be played into a piano roll in the free browser studio at [100Lights](https://100lights.com) in under a minute. That's the whole assignment: play them badly, then play them wrong on purpose.
 
 @video Each of the ten licks played back to back on the same piano sound, eight seconds apiece
 
@@ -30,7 +30,7 @@ Use it when a section needs to conclude without drama. It settles instead of arr
 
 Root, then the note immediately above it, then back. Played low, played slowly, played with total confidence. This is the flamenco cadence, the Andalusian sound, and it is the entire basis of "Misirlou," of Metallica's "Wherever I May Roam," of about eighty percent of soundtrack cues that need to signal danger.
 
-Keep it on one string, so to speak. The move loses everything if you harmonize it. The full four-chord version of it is [the same progression that turns into surf, metal or pop depending only on how you play it](/learn/andalusian-cadence-one-progression-four-genres).
+Keep it on one string, so to speak. The move loses everything if you harmonize it.
 
 ## 3. The pedal-point lift
 
@@ -88,6 +88,6 @@ Program a minor triad as continuous triplet arpeggios. Put a melody of long held
 
 ## Where to put them
 
-None of these are complete ideas. They're gestures, and a gesture needs somewhere to happen — which usually means an existing chord loop underneath it. The chord recipe library ships progressions you can drag straight onto a track as editable notes, each with a study note explaining why it works, and every lick above will sit on top of at least three of them. If you don't have a loop waiting, [five progressions cover almost everything you'd want to put one of these over](/learn/five-chord-progressions-every-producer-should-know).
+None of these are complete ideas. They're gestures, and a gesture needs somewhere to happen — which usually means an existing chord loop underneath it. The chord recipe library ships progressions you can drag straight onto a track as editable notes, each with a study note explaining why it works, and every lick above will sit on top of at least three of them.
 
 Then, honestly: change them. Play the amen turn but land on the wrong bass note. Run the pentatonic cascade upward. The licks that become *yours* are the ones you broke in a way you liked and then couldn't undo. When one of them turns into something worth keeping, save it as a recipe and publish it to the [community](https://100lights.com/community) — the whole tradition of this stuff is theft in both directions.

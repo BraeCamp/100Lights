@@ -12,7 +12,7 @@ Here is what happened. You opened a project on a Tuesday. You made a drum patter
 
 Then you listened to it. Then you listened to it again. Then you listened to it thirty-eight more times.
 
-Somewhere around listen twenty you stopped hearing it as music and started hearing it as a problem. The kick sounded thin. You spent forty minutes on the kick. The kick now sounds different, not better. You solved nothing, and you know you solved nothing, and the loop has stopped meaning anything to you at all. Those forty minutes were avoidance in the same coat as [an evening spent comparing audio interfaces](/learn/you-dont-need-better-gear).
+Somewhere around listen twenty you stopped hearing it as music and started hearing it as a problem. The kick sounded thin. You spent forty minutes on the kick. The kick now sounds different, not better. You solved nothing, and you know you solved nothing, and the loop has stopped meaning anything to you at all.
 
 So you opened a new project.
 
@@ -34,11 +34,9 @@ Not a goal. A deadline. Goals are decorative.
 
 Give yourself one session — two hours, one sitting — to take an existing loop from eight bars to a two-minute arrangement that has a beginning, a middle, and an end. Two hours is deliberately not enough time to do it well. That's the point. You cannot fix the kick in two hours, so you won't try.
 
-If the two hours still stall, the problem may be that you're arranging before you know the song. [Play the parts live from a clip grid until your hands decide the order](/learn/session-view-vs-arrangement-view), then write down what they did.
-
 If you need help getting there, the crudest arrangement that works is this: intro with one element removed, your loop, your loop with something added, a section where the drums drop out entirely, your loop back with everything, and an ending that just stops. That's it. That's an arrangement. Copy your section, paste it five times, then go through and take things away.
 
-Taking away is the whole job, and [the three subtractions worth knowing take about ten minutes to learn](/learn/why-your-loop-gets-boring). In [100Lights](https://100lights.com) you can select across every track at once and tile a section, so building the skeleton takes about ninety seconds. The remaining hour and fifty-eight minutes is muting things and listening.
+Taking away is the whole job. In [100Lights](https://100lights.com) you can select across every track at once and tile a section, so building the skeleton takes about ninety seconds. The remaining hour and fifty-eight minutes is muting things and listening.
 
 @video Tiling an eight-bar loop six times across the timeline, then muting elements to carve out an intro and a breakdown
 

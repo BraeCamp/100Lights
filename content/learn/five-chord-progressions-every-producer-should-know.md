@@ -18,8 +18,6 @@ That's not laziness. It's the thing nobody tells you when they hand you a scale 
 
 @ear Play the chorus of a song you love. Hum the note it keeps returning to — the one that feels like the floor. That note is the key, and every progression below is measured from it.
 
-If humming it and then *naming* it is the part that stops you, [there's a twenty-second way to find the floor of any record by ear](/learn/what-key-is-this-in). It takes no reading and no counting of sharps.
-
 Every progression here exists as a drag-and-drop recipe in the [100Lights](https://100lights.com) library, so you can hear each one inside a real project and pull the notes apart yourself.
 
 @video Auditioning each of the five progressions back to back in the studio
@@ -47,8 +45,6 @@ Here's the trick: **it is the same four chords.** Am, F, C, G. Nothing was added
 @theory Whichever chord you land on first becomes "home" for your ear. Start on the minor one and the entire loop reorganises itself around sadness — the major chords stop sounding like the destination and start sounding like brief relief on the way back down.
 
 This is the cheapest songwriting tool in existence and almost nobody uses it deliberately. Before you throw out a progression that isn't working, rotate it. *Zombie* lives here. So does *Save Tonight*. So does *Numb*.
-
-Rotation is only the first thing you can do without changing a chord. [Leave the order alone and change only the rhythm, spacing and instrument](/learn/same-four-chords-five-genres) and these same four turn into five genres.
 
 ## 3. The one that can't stop
 
@@ -88,7 +84,7 @@ This is the **Andalusian cadence**, and it's doing something sneaky at the end.
 
 @theory The final chord is major in a minor world. That single borrowed note is out of key on purpose, and it's the reason this reads as flamenco rather than as a sad pop loop. Take it away and you have a perfectly nice progression that sounds like nothing in particular.
 
-*Hit the Road Jack*. The intro to *Sultans of Swing*. *Stray Cat Strut*. Drama and momentum without needing a chorus lift. This one has enough range that [it becomes flamenco, surf, metal or pop depending on nothing but how you play it](/learn/andalusian-cadence-one-progression-four-genres).
+*Hit the Road Jack*. The intro to *Sultans of Swing*. *Stray Cat Strut*. Drama and momentum without needing a chorus lift.
 
 @video Loading the Andalusian recipe and switching the E between major and minor
 

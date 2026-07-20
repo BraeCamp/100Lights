@@ -10,9 +10,9 @@ draft: true
 
 Every tutorial answers a boring loop the same way: add something. A riser. A vocal chop. A second percussion layer, a counter-melody, a pad underneath the pad. This advice has ruined more tracks than bad sound selection ever will, because it treats staticness as an absence when staticness is actually a *behavior*.
 
-Your loop isn't missing an instrument. Nothing in it is changing. Those are completely different problems, and only one of them is fixed by adding — the other is fixed by [letting something leave](/learn/why-your-loop-gets-boring), or, as here, by making something move.
+Your loop isn't missing an instrument. Nothing in it is changing. Those are completely different problems, and only one of them is fixed by adding.
 
-Here's the test. Play bar 1 of your loop against bar 7. Identical? Then it doesn't matter whether there are four instruments or fourteen — attention tracks change, not density, and it will leave at the same moment either way.
+Here's the test. Take your eight-bar loop and play bar 1 against bar 7. Identical? Then it doesn't matter if there are four instruments or fourteen — a listener's attention will leave at the same moment either way, because attention tracks change, not density. Adding a fifteenth layer just gives you a thicker thing that also doesn't move.
 
 ## Movement beats addition, and it isn't close
 
@@ -28,7 +28,7 @@ Listen to what a good producer does with sixteen bars and one chord. The chord d
 
 **Volume.** The most underrated, because it's the least glamorous. Not mixing — I don't mean setting your levels. I mean drawing the hi-hats down four decibels for the eight bars before the chorus so the chorus is louder without touching the chorus. I mean fading a pad in over two full bars instead of having it appear. I mean pulling the bass down one and a half decibels under the vocal, then back up in the gaps.
 
-That last one does by hand what [a compressor listening to the kick does automatically](/learn/sidechain-compression-with-your-ears), except you're deciding each move, and it sounds better every time. It's also tedious — a proper volume ride is forty little moves and half an hour.
+That last one is doing what a compressor sidechain does, except you're deciding each move rather than letting a detector decide it, and it sounds better every time. It's also tedious. I won't pretend otherwise — a proper volume ride on a vocal is thirty or forty little moves and takes half an hour.
 
 **Filter.** The workhorse. Cutoff automation is how sections get introduced and how energy gets built without changing a single note. The pattern that works nearly always: close the filter hard at the top of a section so the part is a muffled suggestion, then open it across the whole section so it arrives fully at the last possible moment. Not over two bars. Over sixteen. Slow enough that nobody consciously notices, which is exactly the point.
 
@@ -42,7 +42,7 @@ The failure mode is doing it fast and doing it everywhere. A filter sweep that r
 
 Long. Longer than you think. This is the single most common error and it's not close.
 
-The instinct is to automate over one or two bars, because that's the timescale you're zoomed in at. Zoom out. Most automation that makes a track feel like a track spans sixteen to thirty-two bars — [two or four of the eight-bar blocks everything else is already built from](/learn/song-structure-and-why-eight-bars) — and at that length the listener experiences it as *the song developing* rather than as *an effect happening*.
+The instinct is to automate over one or two bars because that's the timescale you're editing at — you're zoomed in, you're looking at a bar, you draw a bar-length move. Zoom out. Most of the automation that makes a track feel like a track spans sixteen to thirty-two bars, and at that length the listener experiences it as *the song developing* rather than as *an effect happening*.
 
 A starting point rather than gospel: filter opens across a whole section, volume rides across a phrase, send moves across two or four bars. Anything under one bar is a transition effect, not automation.
 
@@ -50,19 +50,21 @@ A starting point rather than gospel: filter opens across a whole section, volume
 
 ## The counter-argument
 
-Some genres want stasis. A lot of good techno is deliberately a loop for eleven minutes, and the craft is in how little changes. Fair — but go listen closely to one. The filter is moving. The reverb send is moving. The stasis is compositional, not literal, and underneath it the automation works harder than in almost any other genre precisely *because* nothing else may change.
+Some genres want stasis. A lot of good techno is deliberately a loop for eleven minutes, and the entire craft is in how little changes. Fair — but go listen closely to one. The filter is moving. The reverb send is moving. There's a hi-hat getting a decibel brighter every thirty-two bars. The stasis is compositional, not literal, and underneath it the automation is working harder than in almost any other genre precisely *because* nothing else is allowed to change.
 
 So the exception proves it. Even the music built on repetition isn't actually repeating.
 
 ## Hear it done to the same loop
 
-Here's the argument as audio. Two renders of one loop — same notes, same drums, loudness-matched. The only difference is whether anything moves.
+Here's the argument as audio. Two renders of one loop — same notes, same drums, matched for loudness so neither wins by being louder. The only difference is whether anything moves.
 
 @audio(/learn-audio/automation-before.mp3) Before: nothing automated. Every fader parked, filter parked, send parked. It is not a bad loop.
 
 @audio(/learn-audio/automation-after.mp3) After: same loop, three automation lanes. Filter opening across all sixteen bars, pad rising a couple of decibels, reverb send swelling toward the end.
 
-Play the first and notice the moment you stop listening. For most people it's bar six — the loop hasn't got worse, you've just finished learning it. Now play the second. Nothing new arrives, but it keeps arriving *somewhere*.
+Play the first and notice the moment you stop listening. For most people it's around bar six — the loop hasn't got worse, you've just finished learning it.
+
+Now play the second. Nothing new arrives, but it keeps arriving *somewhere*. That's the difference between a loop you tolerate and one you sit inside.
 
 @ear Play them back to back, then play the "before" one last time. On the second pass it sounds worse than it did the first time — not because it changed, but because you now know what it was missing.
 
@@ -74,6 +76,6 @@ Pick your busiest element and automate its volume down across the eight bars bef
 
 Three moves. No new sounds. Play it back and see whether the thing you thought was missing an instrument was actually just missing motion.
 
-All of it runs in the free browser studio — [100Lights](https://100lights.com) has per-track effect chains and a mixer with sends and returns, so the filter and the send you need are already there. If you want to hear how other people are using it, the [community](https://100lights.com/community) has published songs you can open and inspect — automation is one of the few things that's genuinely easier to learn by looking at somebody else's project than by reading about it.
+All of it runs in the free browser studio — [100Lights](https://100lights.com) has per-track effect chains and a mixer with sends and returns, so the filter and the send you need are already there, and when you're happy you can export a WAV or stems straight out. If you want to hear how other people are using it, the [community](https://100lights.com/community) has published songs you can open and inspect — automation is one of the few things that's genuinely easier to learn by looking at somebody else's project than by reading about it.
 
 It took me an embarrassingly long time to believe this, mostly because automation is dull work and adding a new instrument is fun. But the tracks that sounded finished were never the crowded ones. They were the ones where something, somewhere, was always quietly on its way somewhere else.

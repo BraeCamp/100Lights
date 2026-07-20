@@ -10,7 +10,7 @@ draft: true
 
 Every beginner tutorial starts the same way. Download this DAW, install these plugins, get this sample pack, watch four hours of interface tour. By the time you're allowed to make a sound, you've spent a weekend and forgotten the idea you had on Tuesday.
 
-That order is backwards, and it's the reason most people who want to make music never make any. The software isn't a subject you pass — [it's four things, and you'll use all four in the next fifteen minutes](/learn/what-is-a-daw-beginners-guide).
+That order is backwards, and it's the reason most people who want to make music never make any.
 
 You need three sounds and about fifteen minutes. Not because I'm simplifying for beginners — because three sounds is genuinely what a beat is. Everything after that is decoration, and decoration added to nothing is still nothing.
 
@@ -29,6 +29,8 @@ Now place the oldest pattern in recorded music, and don't improve it:
 - **Snare** on 2 and 4
 
 Press play. Let it loop eight times before you touch anything.
+
+@grid(%7B%22lanes%22%3A%5B%7B%22name%22%3A%22Kick%22%2C%22sound%22%3A%22kick%22%7D%2C%7B%22name%22%3A%22Snare%22%2C%22sound%22%3A%22snare%22%7D%2C%7B%22name%22%3A%22Hat%22%2C%22sound%22%3A%22hat%22%7D%5D%2C%22steps%22%3A16%2C%22bpm%22%3A120%2C%22pattern%22%3A%5B%5B0%2C4%2C8%2C12%5D%2C%5B4%2C12%5D%2C%5B2%2C6%2C10%2C14%5D%5D%7D) That exact pattern, playable. Click any square to change it — the kick row is the four-on-the-floor pulse, the hats sit between the kicks, the snare answers on 2 and 4.
 
 That's a beat. Not a beginner's beat — *a* beat. Four-on-the-floor has been carrying house and disco for fifty years, and the snare on 2 and 4 is the backbeat under essentially all Western popular music. You have not made something simple. You've made something load-bearing.
 
@@ -56,7 +58,7 @@ Two rules keep beginners out of trouble here. Keep bass notes short, because lon
 
 ## Chords, without learning theory first
 
-You don't need theory to add harmony. You need one good progression, and producers have been recycling [the same handful since the 1950s](/learn/five-chord-progressions-every-producer-should-know).
+You don't need theory to add harmony. You need one good progression, and producers have been recycling the same handful since the 1950s.
 
 The library ships **chord recipes** — progressions you drag onto a track as real, editable notes. Drag in *The pop progression* and you have C, G, Am, F under your beat: the four chords behind a genuinely embarrassing number of hit records.
 
@@ -72,7 +74,7 @@ Do that until you have four repeats. Then delete something from the third one. D
 
 That absence is called a turnaround, and it's the cheapest arrangement trick in existence. It's also the entire difference between a loop and a piece of music. Nothing was added. Something left, and its leaving is what made you notice what stayed.
 
-This is the part I'd argue about with anybody: your track isn't boring because it's missing an element. It's boring because [nothing has ever left it](/learn/why-your-loop-gets-boring).
+This is the part I'd argue about with anybody: your track isn't boring because it's missing an element. It's boring because nothing has ever left.
 
 ## Getting it out
 
