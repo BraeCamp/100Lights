@@ -27,23 +27,42 @@ export function sharedTags(a: LearnArticle, b: LearnArticle): string[] {
 }
 
 /**
- * Weight for one candidate.
+ * Weight for a candidate that shares at least one tag.
  *
- * Squared so that the difference between one shared tag and three is
- * pronounced rather than merely present — with linear weights a
- * three-tag match is only 3× as likely as a one-tag match, which in practice
- * reads as almost random. Zero-overlap articles keep a small floor so a
- * niche piece with unique tags still has somewhere to send readers.
+ * Squared, so two shared tags is four times as likely as one rather than
+ * merely twice — with only three slots the difference has to be pronounced
+ * to be felt at all.
  */
 export function weightFor(shared: number): number {
-  return shared === 0 ? 0.15 : shared * shared
+  return shared * shared
+}
+
+/** Draw one item, chance proportional to weight. Mutates `pool`. */
+function drawWeighted<T extends { weight: number }>(pool: T[], rng: () => number): T | undefined {
+  const total = pool.reduce((s, c) => s + c.weight, 0)
+  if (total <= 0) return pool.splice(Math.floor(rng() * pool.length), 1)[0]
+  let r = rng() * total
+  let idx = pool.length - 1          // guard against float drift at the tail
+  for (let i = 0; i < pool.length; i++) {
+    r -= pool[i].weight
+    if (r <= 0) { idx = i; break }
+  }
+  return pool.splice(idx, 1)[0]
 }
 
 /**
  * Pick [count] recommendations, weighted by shared tags, without repeats.
  *
- * [rng] is injectable so the selection can be tested deterministically and so
- * callers can seed it — see `seededRng`.
+ * Articles sharing a tag are drawn first and exhausted before any unrelated
+ * one is considered. An earlier version gave zero-overlap articles a small
+ * floor weight instead, which sounds harmless but isn't: with 23 articles and
+ * only three slots, the ~14 unrelated candidates collectively outvoted the
+ * related ones often enough to take roughly a fifth of all slots. Three slots
+ * is too few to spend any of them on an article that has nothing to do with
+ * what someone just read — the fallback exists only so a piece with unique
+ * tags isn't a dead end.
+ *
+ * [rng] is injectable so the selection can be tested deterministically.
  */
 export function pickRecommendations(
   current: LearnArticle,
@@ -51,29 +70,28 @@ export function pickRecommendations(
   count = 3,
   rng: () => number = Math.random,
 ): Recommendation[] {
-  const pool = all
+  const candidates = all
     .filter(a => a.slug !== current.slug && !a.draft)
     .map(a => {
       const shared = sharedTags(current, a)
       return { article: a, shared, weight: weightFor(shared.length) }
     })
 
+  const related = candidates.filter(c => c.shared.length > 0)
+  const unrelated = candidates.filter(c => c.shared.length === 0)
+
   const picked: Recommendation[] = []
-  const remaining = [...pool]
-
-  while (picked.length < count && remaining.length > 0) {
-    const total = remaining.reduce((s, c) => s + c.weight, 0)
-    if (total <= 0) break
-    let r = rng() * total
-    let idx = remaining.length - 1        // guard against float drift at the tail
-    for (let i = 0; i < remaining.length; i++) {
-      r -= remaining[i].weight
-      if (r <= 0) { idx = i; break }
-    }
-    const [chosen] = remaining.splice(idx, 1)
-    picked.push({ article: chosen.article, shared: chosen.shared })
+  while (picked.length < count && related.length > 0) {
+    const c = drawWeighted(related, rng)
+    if (!c) break
+    picked.push({ article: c.article, shared: c.shared })
   }
-
+  // Only now, and only to fill what's left.
+  while (picked.length < count && unrelated.length > 0) {
+    const c = drawWeighted(unrelated, rng)
+    if (!c) break
+    picked.push({ article: c.article, shared: c.shared })
+  }
   return picked
 }
 
