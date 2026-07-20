@@ -28,6 +28,10 @@ const isPublicRoute = createRouteMatcher([
   '/inspector',
   '/assistant',
   '/api/community(.*)',
+  // Crawler files. Also excluded from the matcher below, so middleware never
+  // runs on them — listed here too so they stay public if that changes.
+  '/sitemap.xml',
+  '/robots.txt',
 ])
 
 export default clerkMiddleware(async (auth, request) => {
@@ -40,7 +44,10 @@ export default clerkMiddleware(async (auth, request) => {
 
 export const config = {
   matcher: [
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jte|ttf|woff2?|png|jpg|jpeg|gif|svg|ico|webp)).*)',
+    // `xml` and `txt` matter: without them /sitemap.xml and /robots.txt fall
+    // through to auth.protect() and 404 for signed-out visitors — which means
+    // every crawler, so neither file was ever reachable by Google.
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jte|ttf|woff2?|png|jpg|jpeg|gif|svg|ico|webp|xml|txt)).*)',
     '/(api|trpc)(.*)',
   ],
 }
