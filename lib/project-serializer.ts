@@ -7,6 +7,7 @@
  * the same way DaVinci Resolve handles moved or missing media.
  */
 
+import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bundle'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, Track, VideoAdjustments, ModuleKey } from '@/lib/editor-types'
@@ -271,8 +272,15 @@ interface OpenFilePickerOptions {
 
 const PICKER_TYPES = [{
   description: '100Lights Project',
-  accept: { [CF_MIME]: [CF_EXT] },
+  accept: {
+    [CF_MIME]: [CF_EXT],
+    // Firefly (mobile) exports a .zip bundle when the sketch has recordings.
+    'application/zip': ['.zip'],
+  },
 }]
+
+/** File-input `accept` covering both a bare project and a Firefly bundle. */
+const ACCEPT_ATTR = `${CF_EXT},.zip`
 
 /**
  * Save to the user's computer.
@@ -317,8 +325,7 @@ export async function openProjectFromFile(): Promise<CfProjFile | null> {
   if (window.showOpenFilePicker) {
     try {
       const [fh] = await window.showOpenFilePicker({ types: PICKER_TYPES })
-      const file = await fh.getFile()
-      return JSON.parse(await file.text()) as CfProjFile
+      return (await readProjectFile(await fh.getFile())).project
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return null
       throw err
@@ -326,46 +333,94 @@ export async function openProjectFromFile(): Promise<CfProjFile | null> {
   }
 
   // Fallback: hidden file input
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const input = Object.assign(document.createElement('input'), {
       type: 'file',
-      accept: CF_EXT,
+      accept: ACCEPT_ATTR,
     })
     input.onchange = async () => {
       const file = input.files?.[0]
-      resolve(file ? JSON.parse(await file.text()) as CfProjFile : null)
+      if (!file) return resolve(null)
+      try { resolve((await readProjectFile(file)).project) } catch (e) { reject(e) }
     }
     input.click()
   })
 }
 
 /**
+ * Read one picked file into a project.
+ *
+ * A `.cfproj` is plain JSON. A ZIP is a Firefly bundle: it also carries the
+ * recordings, which get uploaded to durable storage on the way in — hence the
+ * counts, so callers can tell the user when audio only landed for the session.
+ * Throws on unreadable input rather than returning null, so failures are
+ * visible instead of a file silently vanishing from the import list.
+ */
+export async function readProjectFile(file: File): Promise<ProjectFileRead> {
+  if (await isZipFile(file)) {
+    const { project, uploaded, degraded } = await importFireflyBundle(file)
+    return { project, uploaded, degraded }
+  }
+  let project: CfProjFile
+  try {
+    project = JSON.parse(await file.text()) as CfProjFile
+  } catch {
+    throw new BundleImportError(`“${file.name}” is not a readable project file.`)
+  }
+  return { project, uploaded: 0, degraded: 0 }
+}
+
+export interface ProjectFileRead {
+  project: CfProjFile
+  uploaded: number
+  degraded: number
+}
+
+/**
  * Open one or more .cfproj files from the user's computer.
  * Returns the parsed projects (empty array if the user cancels).
  */
-export async function openProjectsFromFile(): Promise<CfProjFile[]> {
-  const parseFile = async (file: File): Promise<CfProjFile | null> => {
-    try { return JSON.parse(await file.text()) as CfProjFile } catch { return null }
+export async function openProjectsFromFile(): Promise<OpenProjectsResult> {
+  const read = async (file: File): Promise<ProjectFileRead | Error> => {
+    try { return await readProjectFile(file) } catch (e) {
+      return e instanceof Error ? e : new Error(`Could not read “${file.name}”.`)
+    }
   }
+  const collect = (results: Array<ProjectFileRead | Error>): OpenProjectsResult => ({
+    projects: results.filter((r): r is ProjectFileRead => !(r instanceof Error)).map(r => r.project),
+    uploaded: results.reduce((n, r) => n + (r instanceof Error ? 0 : r.uploaded), 0),
+    degraded: results.reduce((n, r) => n + (r instanceof Error ? 0 : r.degraded), 0),
+    errors: results.filter((r): r is Error => r instanceof Error).map(e => e.message),
+  })
+  const empty: OpenProjectsResult = { projects: [], uploaded: 0, degraded: 0, errors: [] }
+
   if (window.showOpenFilePicker) {
     try {
       const handles = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: true })
-      const files = await Promise.all(handles.map(h => h.getFile().then(parseFile)))
-      return files.filter((f): f is CfProjFile => f != null)
+      return collect(await Promise.all(handles.map(h => h.getFile().then(read))))
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return []
+      if (err instanceof Error && err.name === 'AbortError') return empty
       throw err
     }
   }
   // Fallback: hidden multi-file input
   return new Promise((resolve) => {
-    const input = Object.assign(document.createElement('input'), { type: 'file', accept: CF_EXT, multiple: true })
+    const input = Object.assign(document.createElement('input'), { type: 'file', accept: ACCEPT_ATTR, multiple: true })
     input.onchange = async () => {
-      const files = await Promise.all([...(input.files ?? [])].map(parseFile))
-      resolve(files.filter((f): f is CfProjFile => f != null))
+      resolve(collect(await Promise.all([...(input.files ?? [])].map(read))))
     }
     input.click()
   })
+}
+
+export interface OpenProjectsResult {
+  projects: CfProjFile[]
+  /** Firefly recordings uploaded to durable storage. */
+  uploaded: number
+  /** Recordings that are session-only (upload failed or asset missing). */
+  degraded: number
+  /** Human-readable reasons individual files were skipped. */
+  errors: string[]
 }
 
 function triggerDownload(content: string, filename: string) {

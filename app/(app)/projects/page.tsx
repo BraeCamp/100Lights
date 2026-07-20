@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, LogIn, FileX } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
-import { openProjectsFromFile } from '@/lib/project-serializer'
+import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
 import { saveFolder, loadFolder, clearFolder, verifyPermission } from '@/lib/local-folder'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import type { CfProjFile } from '@/lib/project-serializer'
@@ -64,7 +64,7 @@ function LocalProjectsView() {
       list.push({
         name,
         handle: entry as FileSystemFileHandle,
-        isProject: name.endsWith(CF_EXT),
+        isProject: name.endsWith(CF_EXT) || name.endsWith('.zip'),
         modifiedAt: file?.lastModified ?? null,
       })
     }
@@ -98,13 +98,13 @@ function LocalProjectsView() {
   async function openProject(file: LocalFile) {
     setOpening(file.name)
     try {
-      const raw  = await file.handle.getFile()
-      const text = await raw.text()
-      const proj = JSON.parse(text) as CfProjFile
-      localStorage.setItem(`cf_pending_cfproj_${proj.id}`, text)
-      window.location.href = `/projects/${proj.id}`
-    } catch {
-      alert('Could not open this file. It may be corrupted or not a valid 100Lights project.')
+      const { project } = await readProjectFile(await file.handle.getFile())
+      localStorage.setItem(`cf_pending_cfproj_${project.id}`, JSON.stringify(project))
+      window.location.href = `/projects/${project.id}`
+    } catch (e) {
+      alert(e instanceof Error
+        ? e.message
+        : 'Could not open this file. It may be corrupted or not a valid 100Lights project.')
     } finally {
       setOpening(null)
     }
@@ -393,8 +393,34 @@ export default function ProjectsPage() {
   const [importMsg, setImportMsg] = useState<string | null>(null)
 
   async function handleOpenFromFile() {
-    const files = await openProjectsFromFile()
-    if (files.length === 0) return
+    // Uploading a Firefly bundle's recordings can take a moment, so the
+    // spinner goes up before the read, not after it.
+    setImporting(true)
+    let read
+    try {
+      read = await openProjectsFromFile()
+    } finally {
+      setImporting(false)
+    }
+    const { projects: files, degraded, errors } = read
+
+    // Recordings that never reached storage play now and die on reload — say
+    // so, rather than letting the user find out later.
+    const notes = [
+      ...errors,
+      ...(degraded
+        ? [`${degraded} recording${degraded !== 1 ? 's' : ''} couldn't be saved to your library — ${degraded !== 1 ? 'they' : 'it'} will play now but won't survive a reload.`]
+        : []),
+    ]
+    const flash = (msg: string) => {
+      setImportMsg([msg, ...notes].join(' '))
+      setTimeout(() => setImportMsg(null), 8000)
+    }
+
+    if (files.length === 0) {
+      if (notes.length) flash('Nothing imported.')
+      return
+    }
 
     // A single file opens straight into the editor (edit-and-save flow).
     if (files.length === 1 && !isSignedIn) {
@@ -403,7 +429,7 @@ export default function ProjectsPage() {
       window.location.href = `/projects/${cfproj.id}`
       return
     }
-    if (!isSignedIn) { setImportMsg('Sign in to import project files to your account.'); return }
+    if (!isSignedIn) { flash('Sign in to import project files to your account.'); return }
 
     // Signed in: import all selected files straight into the projects list.
     setImporting(true)
@@ -418,12 +444,11 @@ export default function ProjectsPage() {
       } catch { fail++ }
     }
     setImporting(false)
-    setImportMsg(
+    flash(
       `Imported ${ok} project${ok !== 1 ? 's' : ''}` +
       (fail ? ` — ${fail} failed${limit ? ' (project limit reached)' : ''}` : '') + '.'
     )
     setReloadKey(k => k + 1)
-    setTimeout(() => setImportMsg(null), 6000)
   }
 
   return (
