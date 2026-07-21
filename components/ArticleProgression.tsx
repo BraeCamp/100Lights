@@ -31,8 +31,16 @@ const octaveOf = (m: number) => Math.floor(m / 12) - 1
 const PC_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const noteName = (m: number) => `${PC_NAMES[((m % 12) + 12) % 12]}${octaveOf(m)}`
 
-export default function ArticleProgression({ data, defaultOpen = false }: { data: ProgressionData; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen)
+export default function ArticleProgression({ data, defaultOpen = false, hideToggle = false, autoPlay = false }: {
+  data: ProgressionData
+  defaultOpen?: boolean
+  /** Force the piano open and hide the see-more toggle — for the tool page. */
+  hideToggle?: boolean
+  /** Play the progression once on mount — used when a fresh selection is
+   *  loaded and the component is remounted (via a changing `key`). */
+  autoPlay?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen || hideToggle)
   const [keyPc, setKeyPc] = useState(data.originalKey ?? 0)
   const [active, setActive] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -44,6 +52,14 @@ export default function ArticleProgression({ data, defaultOpen = false }: { data
   const chords = useMemo(() => transposeChords(data.chords, semis), [data.chords, semis])
 
   useEffect(() => () => stopRef.current(), [])
+
+  // Play once on mount when asked (the tool remounts this on each selection).
+  useEffect(() => {
+    if (!autoPlay) return
+    const t = window.setTimeout(() => playFrom(0, chords.length > 1), 90)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Tap-to-play: click any key to hear that exact note
   function pressKey(midi: number) {
@@ -122,18 +138,20 @@ export default function ArticleProgression({ data, defaultOpen = false }: { data
         Chords: {chords.map(c => c.name).join(' – ')} <span style={{ color: 'var(--text-muted)' }}>(key of {KEY_NAMES[keyPc]})</span>
       </div>
 
-      <button
-        onClick={() => setOpen(o => !o)}
-        aria-expanded={open}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 8,
-          fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 8,
-          border: '1px solid var(--border)', background: 'var(--bg-card)', color: '#a78bfa', cursor: 'pointer',
-        }}
-      >
-        <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-        {open ? 'Hide the piano' : 'See more — show it on a piano'}
-      </button>
+      {!hideToggle && (
+        <button
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 8,
+            fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 8,
+            border: '1px solid var(--border)', background: 'var(--bg-card)', color: '#a78bfa', cursor: 'pointer',
+          }}
+        >
+          <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+          {open ? 'Hide the piano' : 'See more — show it on a piano'}
+        </button>
+      )}
 
       {/* Animated expander. Kept in the DOM; the piano SVG only mounts once
           opened, so it stays lazy. */}
@@ -142,11 +160,11 @@ export default function ArticleProgression({ data, defaultOpen = false }: { data
           // Fixed generous ceiling (content is a fixed-height piano + wrapping
           // chips, always well under this) so the reveal animates without
           // reading layout during render
-          maxHeight: open ? 900 : 0,
+          maxHeight: (open || hideToggle) ? 900 : 0,
           overflow: 'hidden', transition: 'max-height 0.35s ease',
         }}
       >
-        {open && (
+        {(open || hideToggle) && (
           <div style={{ padding: '14px 2px 2px' }}>
             {/* Key selector */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>

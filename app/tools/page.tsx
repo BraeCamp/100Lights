@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { Guitar, Gauge, Piano, ArrowRight, Sparkles } from 'lucide-react'
 
 export const metadata: Metadata = {
-  title: 'Free Music Tools — Tuner, Metronome, Chord Generator',
-  description: 'Free browser music tools from 100Lights: an online tuner, a metronome with tap tempo, and a chord progression generator. No downloads, no sign-up.',
+  title: 'Free Music Tools — Tuner, Metronome, Chord Teacher',
+  description: 'Free browser music tools from 100Lights: an online tuner, a metronome with tempo trainer, and a chord teacher for progressions and every chord. No downloads, no sign-up.',
   alternates: { canonical: 'https://100lights.com/tools' },
   openGraph: {
     title: '100Lights — Free Music Tools',
@@ -35,8 +35,8 @@ const TOOLS = [
   {
     href: '/tools/chord-progressions',
     icon: Piano,
-    title: 'Chord Progressions',
-    hook: 'Hear it, move it to any key, keep the MIDI',
+    title: 'Chord Teacher',
+    hook: 'Every chord, played and explained',
     blurb: 'The progressions behind a thousand songs — play them, transpose with a click, and download the MIDI.',
     from: '#34d399', to: '#10b981',
   },
