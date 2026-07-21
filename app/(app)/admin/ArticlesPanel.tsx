@@ -18,6 +18,7 @@ import { encodeWav } from '@/lib/wav-codec'
 import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
 import { parseTags, MAX_TAGS } from '@/lib/tags'
 import type { AudioFile } from '@/app/api/admin/articles/audio/list/route'
+import ArticleScheduleCalendar from './ArticleScheduleCalendar'
 
 interface TrashItem {
   slug: string
@@ -78,6 +79,7 @@ export default function ArticlesPanel() {
   const [filter, setFilter] = useState<'all' | 'live' | 'draft' | 'scheduled'>('all')
   const [trashOpen, setTrashOpen] = useState(false)
   const [trash, setTrash] = useState<TrashItem[] | null>(null)
+  const [calendarOpen, setCalendarOpen] = useState(false)
   const { user } = useUser()
 
   const load = useCallback(async () => {
@@ -570,6 +572,13 @@ export default function ArticlesPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {calendarOpen && (
+        <ArticleScheduleCalendar
+          rows={(rows ?? []).map(r => ({ slug: r.slug, title: r.title, draft: r.draft, scheduledFor: r.scheduledFor }))}
+          onSchedule={async (slug, publishAt) => { await applySchedule([{ slug, publishAt }]) }}
+          onClose={() => setCalendarOpen(false)}
+        />
+      )}
       {/* Generate */}
       <div style={{ border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(124,58,237,0.06)', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 800, color: '#a78bfa' }}>Generate a draft</span>
@@ -620,6 +629,11 @@ export default function ArticlesPanel() {
           </span>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>{schedOpen ? '▲' : '▼'}</span>
         </button>
+
+        <button
+          onClick={() => setCalendarOpen(true)}
+          style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, border: '1px solid rgba(52,211,153,0.5)', background: 'rgba(52,211,153,0.1)', color: '#34d399', cursor: 'pointer' }}
+        >📅 Open schedule — pick dates on a calendar</button>
 
         {schedOpen && (
           <>
