@@ -40,6 +40,9 @@ interface Row {
   scheduledFor?: string
   body: string
   source: 'repo' | 'db'
+  /** True when a committed .md file exists for this slug — if the row is also
+   *  DB-sourced, that file is being shadowed and can be resynced from. */
+  hasRepo?: boolean
 }
 
 const input: React.CSSProperties = {
@@ -108,6 +111,28 @@ export default function ArticlesPanel() {
       setMsg('Saved ✓')
       if (opts?.thenReload !== false) await load()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Save failed') } finally { setBusy(null) }
+  }
+
+  // Copy a shadowed .md file's content back over its frozen DB row, then pull
+  // the refreshed article back into the editor.
+  async function syncFromRepo(row: Row) {
+    setBusy('sync'); setMsg('')
+    try {
+      const r = await fetch('/api/admin/articles/resync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: row.slug }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error ?? 'Sync failed')
+      const list = await fetch('/api/admin/articles').then(x => x.ok ? x.json() : null).catch(() => null)
+      const next = (list?.articles as Row[] | undefined) ?? null
+      if (next) {
+        setRows(next)
+        const fresh = next.find(a => a.slug === row.slug)
+        if (fresh) setSel(fresh)
+      }
+      setMsg('Synced from repo file ✓')
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Sync failed') } finally { setBusy(null) }
   }
 
   async function remove(slug: string) {
@@ -346,6 +371,11 @@ export default function ArticlesPanel() {
           <button onClick={() => setPreview(p => !p)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: preview ? 'var(--bg-card)' : 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}>
             {preview ? 'Edit' : 'Preview'}
           </button>
+          {sel.source === 'db' && sel.hasRepo && (
+            <button onClick={() => void syncFromRepo(sel)} disabled={busy === 'sync'} title="This article was published from its committed file, then frozen in the database. Pull the file's current content back in." style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent-light)', cursor: 'pointer' }}>
+              {busy === 'sync' ? 'Syncing…' : '↻ Sync from repo file'}
+            </button>
+          )}
           <button onClick={() => void save(sel)} disabled={busy === 'save'} style={{ fontSize: 12, fontWeight: 700, padding: '6px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
             {busy === 'save' ? 'Saving…' : 'Save'}
           </button>

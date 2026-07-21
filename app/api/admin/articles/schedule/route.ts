@@ -1,6 +1,6 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
-import { getArticles } from '@/lib/learn-articles'
+import { getArticles, getRepoArticle } from '@/lib/learn-articles'
 import { ensureLearnSchema } from '@/lib/learn-schema'
 
 export const runtime = 'nodejs'
@@ -44,11 +44,14 @@ export async function POST(req: Request) {
   let scheduled = 0, cleared = 0
   const skipped: string[] = []
   for (const s of slots) {
-    const a = bySlug.get(s.slug)
-    if (!a) continue
+    const merged = bySlug.get(s.slug)
+    if (!merged) continue
+    // Snapshot the committed file's CURRENT content when one exists — the
+    // merged view can hand back a stale DB copy that already shadows the file.
+    const a = getRepoArticle(s.slug) ?? merged
     // Scheduling something already live would pull it back off the site until
     // its slot — never what's intended, so refuse rather than surprise.
-    if (s.publishAt && !a.draft) { skipped.push(a.slug); continue }
+    if (s.publishAt && !merged.draft) { skipped.push(a.slug); continue }
     const at = s.publishAt ? new Date(s.publishAt).toISOString() : null
 
     // Upsert carries the article's content so a repo article keeps working

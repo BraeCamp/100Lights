@@ -158,4 +158,22 @@ export async function getArticle(slug: string, opts?: { includeDrafts?: boolean 
   return (await getArticles(opts)).find(a => a.slug === slug) ?? null
 }
 
+/**
+ * A single article straight from its committed .md, ignoring the DB merge.
+ *
+ * Scheduling/publishing a repo article snapshots its body into a DB row, and
+ * the DB then wins on slug — so later commits to the file stop showing. This
+ * reads the file directly, so the admin "sync from repo" action can copy the
+ * fresh content back over the frozen row.
+ */
+export function getRepoArticle(slug: string): LearnArticle | null {
+  return fromRepo(Date.now()).find(a => a.slug === slug) ?? null
+}
+
+/** Slugs that have a committed .md file — lets the admin list flag which DB
+ *  rows are shadowing a repo article (and so can be resynced from it). */
+export function getRepoSlugs(): Set<string> {
+  return new Set(fromRepo(Date.now()).map(a => a.slug))
+}
+
 export { parseTags, MAX_TAGS } from './tags'

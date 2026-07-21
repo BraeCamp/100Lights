@@ -1,6 +1,6 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
-import { getArticles } from '@/lib/learn-articles'
+import { getArticles, getRepoSlugs } from '@/lib/learn-articles'
 import { ensureLearnSchema } from '@/lib/learn-schema'
 
 export const runtime = 'nodejs'
@@ -13,11 +13,14 @@ export async function GET() {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
   await ensureLearnSchema()
   // Merged view (repo drafts + DB rows, DB wins) — the same list /learn sees,
-  // drafts included, with tags flattened for the editor
+  // drafts included, with tags flattened for the editor. `hasRepo` flags a DB
+  // row that is shadowing a committed .md file, so the editor can offer to
+  // resync its content from that file.
+  const repoSlugs = getRepoSlugs()
   const articles = (await getArticles({ includeDrafts: true })).map(a => ({
     slug: a.slug, title: a.title, description: a.description, date: a.date,
     tags: a.tags.join(', '), draft: a.draft, scheduledFor: a.scheduledFor,
-    body: a.body, source: a.source,
+    body: a.body, source: a.source, hasRepo: repoSlugs.has(a.slug),
   }))
   return Response.json({ articles })
 }
