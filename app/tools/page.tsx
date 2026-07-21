@@ -118,7 +118,8 @@ export default function ToolsIndex() {
                   <Icon size={24} />
                 </div>
                 <h2 style={{ fontSize: 19, fontWeight: 750, color: 'var(--text-primary)', margin: '0 0 4px', letterSpacing: '-0.01em' }}>{t.title}</h2>
-                <p style={{ fontSize: 13, fontWeight: 600, color: t.to, margin: '0 0 10px' }}>{t.hook}</p>
+                {/* Hook uses the lighter gradient start for legible contrast on the card. */}
+                <p style={{ fontSize: 13, fontWeight: 600, color: t.from, margin: '0 0 10px' }}>{t.hook}</p>
                 <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 16px', flex: 1 }}>{t.blurb}</p>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
                   Open <ArrowRight size={14} />

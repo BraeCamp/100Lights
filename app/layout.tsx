@@ -4,7 +4,6 @@ import { Geist, Geist_Mono } from "next/font/google"
 import { ClerkProvider } from "@clerk/nextjs"
 import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
-import ZoomBlock from "@/components/ZoomBlock"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import "./globals.css"
 
@@ -30,11 +29,12 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 }
 
+// Public pages allow pinch-zoom — blocking it hurts accessibility and mobile
+// usability. The DAW re-locks zoom in app/(app)/layout.tsx, where editing
+// gestures conflict with it.
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -58,7 +58,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
         <body className="h-full">
           <a href="#main" className="skip-link">Skip to main content</a>
-          <ZoomBlock />
           <ServiceWorkerRegistrar />
           {/* Analytics is a leaf, not a wrapper: it reads searchParams, which
               opts its subtree out of static HTML. Keeping `children` outside
