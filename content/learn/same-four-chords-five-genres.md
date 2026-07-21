@@ -12,6 +12,8 @@ C major. G major. A minor. F major. One bar each, block chords, middle of the ke
 
 Play it. Loop it eight times. Don't do anything else yet.
 
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22G%22%2C%22pitches%22%3A%5B59%2C62%2C67%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22Am%22%2C%22pitches%22%3A%5B57%2C60%2C64%5D%2C%22beat%22%3A8%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22F%22%2C%22pitches%22%3A%5B57%2C60%2C65%5D%2C%22beat%22%3A12%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A0%7D) I–V–vi–IV in C. This is the only set of chords in the whole article — everything that follows changes the voicing, rhythm, and instrument, never these four.
+
 That's I–V–vi–IV, and if you've heard music made since roughly 1955 you've heard it several thousand times. Drag the *pop progression* recipe into a project in [100Lights](https://100lights.com) if you want it in front of you as editable notes — it drops in as C, G, Am, F, four beats each, and everything below is a modification of that one clip.
 
 @ear Loop it eight times with no drums and no changes. Sit with how *generic* it sounds. Almost aggressively neutral. Remember that feeling, because by the end of this article those exact four chords are going to sound like five unrelated pieces of music, and the chords will never once change.

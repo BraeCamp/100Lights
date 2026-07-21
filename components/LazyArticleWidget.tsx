@@ -85,7 +85,13 @@ export default function LazyArticleWidget({
   }, [kind])
 
   return (
-    <div ref={ref}>
+    // content-visibility (via the .cf-lazy-widget class in globals.css) skips
+    // layout/paint for widgets still below the fold, so an article with several
+    // tools costs almost nothing to render until you scroll to each one. The JS
+    // itself is already deferred by the observer above; this defers rendering
+    // too. Kept in a class, not an inline style, because React serialises the
+    // contain-intrinsic-size shorthand inconsistently and trips hydration.
+    <div ref={ref} className="cf-lazy-widget">
       {Widget ? <Widget {...(props as Record<string, unknown>)} /> : children}
     </div>
   )

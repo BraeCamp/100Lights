@@ -4,21 +4,35 @@
 // localStorage), with live counts for light social proof. Counts load after
 // paint so they never block or de-static the page.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 type Counts = { yes: number; no: number }
 
 export default function ArticleReactions({ slug }: { slug: string }) {
   const [counts, setCounts] = useState<Counts | null>(null)
   const [voted, setVoted] = useState<'yes' | 'no' | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const prior = localStorage.getItem(`react:${slug}`)
     if (prior === 'yes' || prior === 'no') setVoted(prior)
-    fetch(`/api/learn/react?slug=${encodeURIComponent(slug)}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (d && typeof d.yes === 'number') setCounts({ yes: d.yes, no: d.no }) })
-      .catch(() => {})
+
+    // Fetch counts only once the widget is near the viewport — this sits at the
+    // foot of the article, so most page loads never need to hit the DB at all.
+    let done = false
+    const load = () => {
+      if (done) return
+      done = true
+      fetch(`/api/learn/react?slug=${encodeURIComponent(slug)}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (d && typeof d.yes === 'number') setCounts({ yes: d.yes, no: d.no }) })
+        .catch(() => {})
+    }
+    const el = ref.current
+    if (typeof IntersectionObserver === 'undefined' || !el) { load(); return }
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); load() } }, { rootMargin: '200px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
   }, [slug])
 
   const vote = (v: 'yes' | 'no') => {
@@ -42,7 +56,7 @@ export default function ArticleReactions({ slug }: { slug: string }) {
   })
 
   return (
-    <div style={{ marginTop: 40, paddingTop: 22, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <div ref={ref} style={{ marginTop: 40, paddingTop: 22, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
       <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>
         {voted ? 'Thanks for the feedback.' : 'Was this helpful?'}
       </span>

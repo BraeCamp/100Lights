@@ -18,6 +18,8 @@ Don't think about it. Don't hum the last note you heard. Hum the note that would
 
 That note is the root. You now know the key, minus one detail. We'll get the detail in a minute.
 
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22F%22%2C%22pitches%22%3A%5B57%2C60%2C65%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22G%22%2C%22pitches%22%3A%5B59%2C62%2C67%5D%2C%22beat%22%3A8%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A12%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A0%7D) I–IV–V–I in C. That final chord is "home" — the same note you hummed. Change the key up top and home moves with it, which is the whole point: the key is just wherever home is.
+
 ## Why you could already do that
 
 You've been doing this your entire life. Every time you hummed along with a chorus you'd never heard before and guessed right. Every time a song faded out and you felt slightly cheated. That feeling of being cheated *is* the skill.

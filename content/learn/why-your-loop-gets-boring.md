@@ -12,6 +12,8 @@ Every tutorial tells you to add more. More layers, more percussion, a riser, a v
 
 Count it yourself. Bar one: everything's playing. Bar four: everything's playing. Bar sixteen, bar thirty-two, the outro you never wrote: everything is still playing. You've built a sixteen-bar photograph and you're wondering why it doesn't move.
 
+@grid(%7B%22lanes%22%3A%5B%7B%22name%22%3A%22Kick%22%2C%22sound%22%3A%22kick%22%7D%2C%7B%22name%22%3A%22Snare%22%2C%22sound%22%3A%22snare%22%7D%2C%7B%22name%22%3A%22Hat%22%2C%22sound%22%3A%22hat%22%7D%2C%7B%22name%22%3A%22Clap%22%2C%22sound%22%3A%22clap%22%7D%5D%2C%22steps%22%3A16%2C%22bpm%22%3A100%2C%22pattern%22%3A%5B%5B0%2C6%2C8%2C14%5D%2C%5B4%2C12%5D%2C%5B0%2C2%2C4%2C6%2C8%2C10%2C12%2C14%5D%2C%5B4%2C12%5D%5D%7D) Here's a full loop. Play it a few times until your ear finishes cataloguing it — then mute a row and bring it back. That return is the thing the rest of this article is about.
+
 ## The thing you're actually hearing
 
 Boredom in a loop isn't a shortage of information. It's a shortage of change. After about eight bars your ear has finished cataloguing what's there and moves on to asking what happens next — and if the answer is "the same thing, again, at the same density," attention leaves. It leaves whether or not you added a shaker.

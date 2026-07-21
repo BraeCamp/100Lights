@@ -17,6 +17,8 @@ The **Code** tab in the sound library (next to *Samples* and *Recipes*) lets you
 do exactly that: write a short script, hit **Run**, and **Add track**. It runs
 safely in a background worker, so a runaway loop can't freeze the studio.
 
+@synth(%7B%22note%22%3A48%2C%22detune%22%3A14%2C%22cutoff%22%3A1800%2C%22resonance%22%3A4%2C%22voices%22%3A2%7D) This is the poly synth the script controls — the same oscillators, filter, and envelope, here as knobs. Everything the code sets, you can also just drag.
+
 ## The idea
 
 Your script returns an object describing a track:

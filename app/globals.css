@@ -82,6 +82,13 @@ body {
   --accent-contrast: #ffffff;
 }
 
+/* Article widgets: skip layout/paint until scrolled near, so tool-heavy
+   articles stay cheap to render. The size hint keeps the scrollbar stable. */
+.cf-lazy-widget {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+
 /* Slider reset for Inspector controls */
 input[type="range"].cf-slider {
   -webkit-appearance: none;

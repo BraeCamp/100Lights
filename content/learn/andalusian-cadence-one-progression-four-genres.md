@@ -12,6 +12,8 @@ Before you read anything else, play these four chords. One per bar, hold each on
 
 A minor. G major. F major. E major.
 
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22Am%22%2C%22pitches%22%3A%5B57%2C60%2C64%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22G%22%2C%22pitches%22%3A%5B55%2C59%2C62%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22F%22%2C%22pitches%22%3A%5B53%2C57%2C60%5D%2C%22beat%22%3A8%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22E%22%2C%22pitches%22%3A%5B52%2C56%2C59%5D%2C%22beat%22%3A12%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A9%7D) The Andalusian cadence, live — Am, G, F, E. Play it and listen for where it stops sounding like ordinary sad music and starts sounding like *somewhere*.
+
 If you don't have an instrument in front of you, open a project in [100Lights](https://100lights.com), drag the *Andalusian cadence* recipe from the library onto a track, and press play. It lands as regular notes in the piano roll, so everything below is editable.
 
 @ear Play all four bars twice through. Don't analyze it. Just answer one question: at which chord does the loop stop sounding like ordinary sad music and start sounding like *somewhere*?
