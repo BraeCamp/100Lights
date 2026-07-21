@@ -31,8 +31,8 @@ const octaveOf = (m: number) => Math.floor(m / 12) - 1
 const PC_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const noteName = (m: number) => `${PC_NAMES[((m % 12) + 12) % 12]}${octaveOf(m)}`
 
-export default function ArticleProgression({ data }: { data: ProgressionData }) {
-  const [open, setOpen] = useState(false)
+export default function ArticleProgression({ data, defaultOpen = false }: { data: ProgressionData; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
   const [keyPc, setKeyPc] = useState(data.originalKey ?? 0)
   const [active, setActive] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)

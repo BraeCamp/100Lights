@@ -444,6 +444,17 @@ export function getAllChordRecipes(): PracticeRecipe[] {
   return [...CHORD_RECIPES, ...SOUND_RECIPES, ...getImportedRecipes()].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
 }
 
+/**
+ * Built-in recipes only — no localStorage read.
+ *
+ * Server-rendered surfaces (the public chord tool) must use this: the imported
+ * recipes live in localStorage, so including them makes the client render
+ * differ from the server and triggers a hydration mismatch.
+ */
+export function getBuiltInChordRecipes(): PracticeRecipe[] {
+  return [...CHORD_RECIPES, ...SOUND_RECIPES].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
+}
+
 /** Materializes a recipe into a clip for a given track, with fresh ids. */
 export function buildRecipeClip(recipe: PracticeRecipe, trackId: string, startBeat: number): MidiClip {
   const spec = recipe.build()
