@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Guitar, Gauge, Piano, ArrowRight, Search, RefreshCw, Grid3x3, Timer, Ear, Mic } from 'lucide-react'
+import { Guitar, Gauge, Piano, ArrowRight, RefreshCw, Grid3x3, Timer, Ear, Mic } from 'lucide-react'
 
 export const metadata: Metadata = {
   title: 'Free Music Tools — Tuner, Metronome, Chord Teacher',
@@ -39,14 +39,6 @@ const TOOLS = [
     hook: 'Every chord, played and explained',
     blurb: 'The progressions behind a thousand songs — play them, transpose with a click, and download the MIDI.',
     from: '#34d399', to: '#10b981',
-  },
-  {
-    href: '/tools/bpm-key-finder',
-    icon: Search,
-    title: 'BPM & Key Finder',
-    hook: 'Drop in a song, get its tempo and key',
-    blurb: 'Detects the BPM and musical key of any audio file, right in your browser. Nothing gets uploaded.',
-    from: '#fbbf24', to: '#f59e0b',
   },
   {
     href: '/tools/chord-identifier',

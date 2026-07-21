@@ -27,7 +27,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/tools/delay-calculator`,    lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/ear-training`,        lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/vocal-range`,         lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
-    { url: `${base}/tools/bpm-key-finder`,      lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/sign-in`,       lastModified: new Date(), changeFrequency: 'monthly', priority: 0.5 },
     { url: `${base}/legal/terms`,   lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
     { url: `${base}/legal/privacy`, lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
