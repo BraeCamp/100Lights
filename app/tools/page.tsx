@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Guitar, Gauge, Piano, ArrowRight } from 'lucide-react'
+import { Guitar, Gauge, Piano, ArrowRight, Search, RefreshCw, Grid3x3, Timer, Ear, Mic } from 'lucide-react'
 
 export const metadata: Metadata = {
   title: 'Free Music Tools — Tuner, Metronome, Chord Teacher',
@@ -39,6 +39,62 @@ const TOOLS = [
     hook: 'Every chord, played and explained',
     blurb: 'The progressions behind a thousand songs — play them, transpose with a click, and download the MIDI.',
     from: '#34d399', to: '#10b981',
+  },
+  {
+    href: '/tools/bpm-key-finder',
+    icon: Search,
+    title: 'BPM & Key Finder',
+    hook: 'Drop in a song, get its tempo and key',
+    blurb: 'Detects the BPM and musical key of any audio file, right in your browser. Nothing gets uploaded.',
+    from: '#fbbf24', to: '#f59e0b',
+  },
+  {
+    href: '/tools/chord-identifier',
+    icon: Piano,
+    title: 'Chord Identifier',
+    hook: 'Click the notes, it names the chord',
+    blurb: 'Build a chord on the piano and it tells you what it is — sevenths, extensions, and inversions included.',
+    from: '#a78bfa', to: '#7c3aed',
+  },
+  {
+    href: '/tools/circle-of-fifths',
+    icon: RefreshCw,
+    title: 'Circle of Fifths',
+    hook: 'Hear every key and its chords',
+    blurb: 'An interactive circle of fifths — click a key to hear it, see its relative minor, and play the chords in it.',
+    from: '#f472b6', to: '#ec4899',
+  },
+  {
+    href: '/tools/scales',
+    icon: Grid3x3,
+    title: 'Guitar Scales',
+    hook: 'Any scale, any key, on the neck',
+    blurb: 'An interactive fretboard for every scale — major, minor, pentatonic, blues, and the modes. Click to hear.',
+    from: '#fb923c', to: '#ea580c',
+  },
+  {
+    href: '/tools/ear-training',
+    icon: Ear,
+    title: 'Ear Trainer',
+    hook: 'Name the interval you hear',
+    blurb: 'Hear two notes and name the distance — ascending, descending, or harmonic. Tracks your score.',
+    from: '#38bdf8', to: '#0ea5e9',
+  },
+  {
+    href: '/tools/vocal-range',
+    icon: Mic,
+    title: 'Vocal Range Finder',
+    hook: 'Sing low and high, find your range',
+    blurb: 'Sing your lowest and highest notes and it finds your range and closest voice type. Nothing recorded.',
+    from: '#c084fc', to: '#9333ea',
+  },
+  {
+    href: '/tools/delay-calculator',
+    icon: Timer,
+    title: 'Delay Calculator',
+    hook: 'BPM to delay time in milliseconds',
+    blurb: 'Every note value in ms for your tempo — straight, dotted, and triplet. Tap a value to copy it.',
+    from: '#2dd4bf', to: '#0d9488',
   },
 ]
 

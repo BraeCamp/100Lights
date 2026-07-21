@@ -54,6 +54,7 @@ export default function Metronome({ initialBpm }: { initialBpm?: number }) {
   const [beat, setBeat] = useState(-1)
   const [editingBpm, setEditingBpm] = useState(false)
   const [trainer, setTrainer] = useState<Trainer>({ on: false, target: 160, step: 5, everyBars: 2 })
+  const [practiceMs, setPracticeMs] = useState(0) // accumulates while the click runs
 
   const ctxRef = useRef<AudioContext | null>(null)
   const bufs = useRef<{ accent: AudioBuffer; normal: AudioBuffer; sub: AudioBuffer } | null>(null)
@@ -209,6 +210,13 @@ export default function Metronome({ initialBpm }: { initialBpm?: number }) {
     void ctxRef.current?.close()
   }, [])
 
+  // Practice timer: counts up while the metronome is running.
+  useEffect(() => {
+    if (!playing) return
+    const id = window.setInterval(() => setPracticeMs(m => m + 1000), 1000)
+    return () => window.clearInterval(id)
+  }, [playing])
+
   function cycleAccent(i: number) {
     setAccents(prev => prev.map((v, j) => j === i ? (((v + 1) % 3) as AccentLevel) : v))
   }
@@ -294,7 +302,18 @@ export default function Metronome({ initialBpm }: { initialBpm?: number }) {
         )}
       </div>
 
-      <p style={{ fontSize: 10.5, color: 'var(--text-muted)', textAlign: 'center', marginTop: 14, marginBottom: 0 }}>
+      {/* Practice timer */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
+        <span>Practised this session</span>
+        <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: practiceMs > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+          {Math.floor(practiceMs / 60000)}:{String(Math.floor(practiceMs / 1000) % 60).padStart(2, '0')}
+        </span>
+        {practiceMs > 0 && (
+          <button onClick={() => setPracticeMs(0)} style={{ fontSize: 10.5, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline' }}>reset</button>
+        )}
+      </div>
+
+      <p style={{ fontSize: 10.5, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8, marginBottom: 0 }}>
         Press <kbd style={kbd}>space</kbd> to start/stop · <kbd style={kbd}>↑</kbd><kbd style={kbd}>↓</kbd> to nudge tempo
       </p>
     </div>
