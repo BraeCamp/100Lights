@@ -32,13 +32,10 @@ function tunerColor(cents: number, conf: number) {
   return C.red
 }
 
-// Reference-tone notes: two octaves centred on middle C, plus concert A.
-const REF_NOTES = [
-  { name: 'C3', midi: 48 }, { name: 'D3', midi: 50 }, { name: 'E3', midi: 52 }, { name: 'F3', midi: 53 },
-  { name: 'G3', midi: 55 }, { name: 'A3', midi: 57 }, { name: 'B3', midi: 59 }, { name: 'C4', midi: 60 },
-  { name: 'D4', midi: 62 }, { name: 'E4', midi: 64 }, { name: 'F4', midi: 65 }, { name: 'G4', midi: 67 },
-  { name: 'A4', midi: 69 }, { name: 'B4', midi: 71 }, { name: 'C5', midi: 72 },
-]
+// One octave of chromatic reference notes, sharps included. Middle C is C4
+// (MIDI 60), so a note's MIDI = (octave + 1) * 12 + pitchClass.
+const PITCH_CLASSES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B']
+const MIN_OCT = 1, MAX_OCT = 6
 const midiToHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
 
 export default function StandaloneTuner() {
@@ -88,6 +85,7 @@ export default function StandaloneTuner() {
   const refCtx = useRef<AudioContext | null>(null)
   const refOsc = useRef<{ osc: OscillatorNode; gain: GainNode } | null>(null)
   const [refNote, setRefNote] = useState<number | null>(null)
+  const [refOctave, setRefOctave] = useState(4) // the octave containing middle C and A4
 
   function stopRefTone() {
     const o = refOsc.current
@@ -221,28 +219,55 @@ export default function StandaloneTuner() {
           <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', textAlign: 'center', margin: '0 0 14px', lineHeight: 1.5 }}>
             Tap a note to hear it, then tune your string or your voice to match. Tap again to stop.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(52px, 1fr))', gap: 6 }}>
-            {REF_NOTES.map(n => {
-              const on = refNote === n.midi
-              const isA4 = n.midi === 69
+
+          {/* Octave selector */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 14 }}>
+            <button onClick={() => { stopRefTone(); setRefOctave(o => Math.max(MIN_OCT, o - 1)) }} disabled={refOctave <= MIN_OCT}
+              aria-label="Octave down" style={octBtn(refOctave > MIN_OCT)}>–</button>
+            <div style={{ textAlign: 'center', minWidth: 74 }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Octave</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{refOctave}</div>
+            </div>
+            <button onClick={() => { stopRefTone(); setRefOctave(o => Math.min(MAX_OCT, o + 1)) }} disabled={refOctave >= MAX_OCT}
+              aria-label="Octave up" style={octBtn(refOctave < MAX_OCT)}>+</button>
+          </div>
+
+          {/* One octave, chromatic (sharps included) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+            {PITCH_CLASSES.map((name, pc) => {
+              const midi = (refOctave + 1) * 12 + pc
+              const on = refNote === midi
+              const sharp = name.includes('♯')
+              const isA4 = midi === 69
               return (
-                <button key={n.midi} onClick={() => playRefTone(n.midi)} style={{
+                <button key={pc} onClick={() => playRefTone(midi)} style={{
                   padding: '12px 0', borderRadius: 9, cursor: 'pointer', fontSize: 14, fontWeight: 700,
-                  border: `1px solid ${on ? 'var(--accent)' : isA4 ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`,
-                  background: on ? 'var(--accent)' : isA4 ? 'rgba(124,58,237,0.08)' : 'var(--bg-base)',
-                  color: on ? '#fff' : 'var(--text-primary)',
+                  border: `1px solid ${on ? 'var(--accent)' : isA4 ? 'rgba(139,92,246,0.45)' : 'var(--border)'}`,
+                  background: on ? 'var(--accent)' : isA4 ? 'rgba(124,58,237,0.10)' : sharp ? 'var(--bg-base)' : 'rgba(255,255,255,0.03)',
+                  color: on ? '#fff' : sharp ? 'var(--text-muted)' : 'var(--text-primary)',
                 }}>
-                  {n.name}
+                  {name}{refOctave}
                   {isA4 && <div style={{ fontSize: 8, fontWeight: 600, color: on ? 'rgba(255,255,255,0.8)' : 'var(--text-muted)' }}>440 Hz</div>}
                 </button>
               )
             })}
           </div>
           <p style={{ fontSize: 10.5, color: 'var(--text-muted)', textAlign: 'center', marginTop: 12, marginBottom: 0 }}>
-            A4 is concert pitch (440 Hz), the standard reference. Guitar strings low to high: E A D G B E.
+            {refOctave === 4
+              ? 'A4 is concert pitch (440 Hz), the standard reference. Guitar strings low to high: E A D G B E.'
+              : 'Natural notes are brighter, sharps dimmer. A4 (concert pitch) lives in octave 4.'}
           </p>
         </div>
       )}
     </div>
   )
+}
+
+function octBtn(enabled: boolean): React.CSSProperties {
+  return {
+    width: 40, height: 40, borderRadius: 10, cursor: enabled ? 'pointer' : 'default', fontSize: 22, fontWeight: 700,
+    border: '1px solid var(--border)', background: 'transparent',
+    color: enabled ? 'var(--text-secondary)' : 'var(--text-muted)', opacity: enabled ? 1 : 0.4,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
 }
