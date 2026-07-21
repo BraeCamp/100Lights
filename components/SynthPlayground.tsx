@@ -265,23 +265,28 @@ function Slider({ label, value, min, max, step, unit, onChange, hint, disabled, 
 }) {
   const pct = (v: number) => ((v - min) / (max - min)) * 100
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, opacity: disabled ? 0.4 : 1 }}>
-      <span style={{ fontSize: 11.5, color: spot ? 'var(--accent-light)' : 'var(--text-secondary)', fontWeight: spot ? 700 : 400, width: 96, flexShrink: 0 }}>{label}</span>
-      <div className={spot ? 'reese-spot' : undefined} style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 6, padding: spot ? '4px 6px' : 0, margin: spot ? '0 -6px' : 0 }}>
-        {zone && (
-          <div aria-hidden="true" style={{
-            position: 'absolute', left: `calc(${pct(zone[0])}% )`, width: `${pct(zone[1]) - pct(zone[0])}%`,
-            top: '50%', height: 10, transform: 'translateY(-50%)', pointerEvents: 'none',
-            background: 'rgba(124,58,237,0.30)', border: '1px solid var(--accent)', borderRadius: 4,
-          }} />
-        )}
-        <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
-          onChange={e => onChange(parseFloat(e.target.value))} className="cf-slider" style={{ width: '100%', position: 'relative' }} />
+    <div style={{ marginBottom: 8, opacity: disabled ? 0.4 : 1 }}>
+      {/* Control row — only fixed-width pieces, so the track never resizes. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 11.5, color: spot ? 'var(--accent-light)' : 'var(--text-secondary)', fontWeight: spot ? 700 : 400, width: 96, flexShrink: 0 }}>{label}</span>
+        <div className={spot ? 'reese-spot' : undefined} style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 6, padding: spot ? '4px 6px' : 0, margin: spot ? '0 -6px' : 0 }}>
+          {zone && (
+            <div aria-hidden="true" style={{
+              position: 'absolute', left: `${pct(zone[0])}%`, width: `${pct(zone[1]) - pct(zone[0])}%`,
+              top: '50%', height: 10, transform: 'translateY(-50%)', pointerEvents: 'none',
+              background: 'rgba(124,58,237,0.30)', border: '1px solid var(--accent)', borderRadius: 4,
+            }} />
+          )}
+          <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
+            onChange={e => onChange(parseFloat(e.target.value))} className="cf-slider" style={{ width: '100%', position: 'relative' }} />
+        </div>
+        <span style={{ fontSize: 11.5, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', width: 62, textAlign: 'right', flexShrink: 0 }}>
+          {value} {unit}
+        </span>
       </div>
-      <span style={{ fontSize: 11.5, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', width: 62, textAlign: 'right', flexShrink: 0 }}>
-        {value} {unit}
-      </span>
-      {hint && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', width: 150, flexShrink: 0, lineHeight: 1.3 }}>{hint}</span>}
+      {/* Hint in its own box below, with reserved height so it can change or
+          vanish without nudging the slider or the rows around it. */}
+      <div style={{ minHeight: 14, marginLeft: 106, marginTop: 2, fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.3 }}>{hint}</div>
     </div>
   )
 }
