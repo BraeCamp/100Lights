@@ -1,12 +1,8 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
-import Link from 'next/link'
 import ToolShell from '@/components/tools/ToolShell'
 
 const Metronome = dynamic(() => import('@/components/tools/Metronome'))
-
-// Popular jump-off tempos, deep-linking into the per-tempo pages.
-const COMMON = [60, 80, 90, 100, 110, 120, 128, 140, 160, 174]
 
 export const metadata: Metadata = {
   title: 'Online Metronome — Free, with Tap Tempo & Tempo Trainer',
@@ -28,18 +24,6 @@ export default function MetronomePage() {
       intro="A clean, accurate metronome that runs in your browser — with a tempo trainer that speeds up as you play, subdivisions, and beats you can accent, quiet, or silence. Set the tempo by dragging, tapping, typing, or the arrow keys."
     >
       <Metronome />
-
-      <div style={{ marginTop: 22 }}>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 8 }}>Jump to a tempo</div>
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-          {COMMON.map(b => (
-            <Link key={b} href={`/tools/metronome/${b}`} style={{
-              fontSize: 12.5, fontWeight: 700, padding: '5px 12px', borderRadius: 99, textDecoration: 'none',
-              border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-card)',
-            }}>{b} BPM</Link>
-          ))}
-        </div>
-      </div>
 
       <div style={{ marginTop: 26, fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>How to use it</h2>

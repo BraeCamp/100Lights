@@ -20,12 +20,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/tools`,                     lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/tuner`,               lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/metronome`,           lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
-    // Per-tempo metronome pages (40–220 BPM) — each targets a "N bpm metronome"
-    // search. Lower priority than the hubs but a broad long-tail surface.
-    ...Array.from({ length: 220 - 40 + 1 }, (_, i) => ({
-      url: `${base}/tools/metronome/${40 + i}`,
-      lastModified: new Date(), changeFrequency: 'yearly' as const, priority: 0.5,
-    })),
     { url: `${base}/tools/chord-progressions`,  lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/sign-in`,       lastModified: new Date(), changeFrequency: 'monthly', priority: 0.5 },
     { url: `${base}/legal/terms`,   lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
