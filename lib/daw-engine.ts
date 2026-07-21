@@ -1,7 +1,8 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
+import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
@@ -747,6 +748,14 @@ export class DawEngine extends EventTarget {
       }
     }
     this._tracks      = project.tracks
+    // Pre-warm sample-oscillator buffers for poly instruments — same reason as
+    // preset buffers: a lazily-loaded sample would miss its first note.
+    for (const track of project.tracks) {
+      if (track.instrument?.type !== 'poly') continue
+      const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
+      if (!oscs) continue
+      for (const l of oscs) if (l.source === 'sample' && l.sampleId) void ensurePolySample(this.ctx, l.sampleId)
+    }
     this._automationLanes = project.automationLanes ?? []
     this._clipEffects     = project.clipEffects ?? []
     this.setMasterVolume(project.masterVolume)

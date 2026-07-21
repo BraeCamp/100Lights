@@ -290,7 +290,10 @@ export interface PolyOscLayer {
   unison: number   // stacked detuned voices, 1..7
   spread: number   // total unison detune spread in cents
   level: number    // layer mix, 0..1
-  sampleId?: string // reserved for source === 'sample'
+  // source === 'sample': a library sample played back pitched to the note.
+  sampleId?: string
+  sampleName?: string // display label for the picked sample
+  sampleRoot?: number // MIDI note the sample is recorded at (default 60), for playbackRate pitching
 }
 
 export interface PolyInstrumentParams {

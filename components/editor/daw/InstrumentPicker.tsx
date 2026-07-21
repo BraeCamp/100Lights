@@ -2,7 +2,9 @@
 
 import { memo, useCallback } from 'react'
 import { useDaw } from '@/lib/daw-state'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
+import { ensurePolySample } from '@/lib/poly-sample-cache'
 import type {
   TrackInstrument, InstrumentType,
   FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, PolyOscLayer, DrumPadSettings,
@@ -229,12 +231,53 @@ const addOscBtn: React.CSSProperties = {
 }
 const octaveLabel = (v: number) => (v === 0 ? '0' : `${v > 0 ? '+' : ''}${v}`)
 
-// Stacked oscillator editor: osc 1 + osc 2 + a sub…, each with its own
-// waveform / octave / fine detune, and a unison count that fans a layer into
-// up to 7 detuned voices (the supersaw / Reese growl).
-function OscillatorStack({ layers, onChange }: {
+// Dropdown of the user's library samples for a 'sample' oscillator layer.
+function SamplePicker({ layer, onPick, onWarm }: {
+  layer: PolyOscLayer
+  onPick: (patch: Partial<PolyOscLayer>) => void
+  onWarm: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [entries, setEntries] = useState<LibraryEntry[] | null>(null)
+  useEffect(() => {
+    if (open && entries === null) libraryGetAll().then(setEntries).catch(() => setEntries([]))
+  }, [open, entries])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ width: 72, fontSize: 11, color: C.textMuted, flexShrink: 0 }}>Sample</span>
+        <button onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+          style={{ flex: 1, textAlign: 'left', padding: '4px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer', border: `1px solid ${C.border}`, background: C.bgCard, color: layer.sampleName ? C.textPrimary : C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {layer.sampleName ?? 'Pick a sample…'}
+        </button>
+      </div>
+      {open && (
+        <div style={{ maxHeight: 160, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, border: `1px solid ${C.border}`, borderRadius: 4, padding: 4 }}>
+          {entries === null ? (
+            <span style={{ fontSize: 10, color: C.textMuted, padding: 4 }}>Loading…</span>
+          ) : entries.length === 0 ? (
+            <span style={{ fontSize: 10, color: C.textMuted, padding: 4, lineHeight: 1.4 }}>No samples in your library yet. Record or import one, then it&apos;ll show here.</span>
+          ) : entries.map(en => (
+            <button key={en.id}
+              onClick={e => { e.stopPropagation(); onPick({ sampleId: en.id, sampleName: en.name, sampleRoot: en.renderSpec?.midiNote ?? 60 }); onWarm(en.id); setOpen(false) }}
+              style={{ textAlign: 'left', padding: '3px 6px', borderRadius: 3, fontSize: 10, cursor: 'pointer', border: `1px solid ${layer.sampleId === en.id ? C.accent : 'transparent'}`, background: layer.sampleId === en.id ? `${C.accent}22` : 'transparent', color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {en.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Stacked oscillator editor: osc 1 + osc 2 + a sub…, each a waveform or a
+// pitched library sample, with its own octave / fine detune / level and a
+// unison count that fans a layer into up to 7 detuned voices (supersaw / Reese).
+function OscillatorStack({ layers, onChange, onWarm }: {
   layers: PolyOscLayer[]
   onChange: (next: PolyOscLayer[]) => void
+  onWarm: (id: string) => void
 }) {
   const update = (i: number, changes: Partial<PolyOscLayer>) =>
     onChange(layers.map((l, j) => (j === i ? { ...l, ...changes } : l)))
@@ -253,14 +296,16 @@ function OscillatorStack({ layers, onChange }: {
             <span style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.05em' }}>OSC {i + 1}</span>
             <div style={{ display: 'flex', gap: 3, marginLeft: 4 }}>
               <button onClick={e => { e.stopPropagation(); update(i, { source: 'wave' }) }} style={srcBtn(l.source === 'wave')}>Wave</button>
-              <button disabled title="Sample oscillators — coming soon" onClick={e => e.stopPropagation()} style={{ ...srcBtn(false), opacity: 0.4, cursor: 'not-allowed' }}>Sample</button>
+              <button onClick={e => { e.stopPropagation(); update(i, { source: 'sample' }) }} style={srcBtn(l.source === 'sample')}>Sample</button>
             </div>
             {layers.length > 1 && (
               <button onClick={e => { e.stopPropagation(); remove(i) }} title="Remove oscillator"
                 style={{ marginLeft: 'auto', border: 'none', background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
             )}
           </div>
-          <WaveRow label="Wave" value={l.waveform} onChange={w => update(i, { waveform: w })} />
+          {l.source === 'sample'
+            ? <SamplePicker layer={l} onPick={patch => update(i, patch)} onWarm={onWarm} />
+            : <WaveRow label="Wave" value={l.waveform} onChange={w => update(i, { waveform: w })} />}
           <SliderRow label="Octave" value={l.octave} min={-2} max={2} step={1} fmt={octaveLabel} onChange={v => update(i, { octave: Math.round(v) })} />
           <SliderRow label="Detune" value={l.detune} min={-100} max={100} step={1} fmt={v => `${v}¢`} onChange={v => update(i, { detune: v })} />
           <SliderRow label="Voices" value={l.unison} min={1} max={7} step={1} fmt={v => `${v}`} onChange={v => update(i, { unison: Math.round(v) })} />
@@ -286,6 +331,14 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
   const p = instrument.params as PolyInstrumentParams
   const FILTER_TYPES: BiquadFilterType[] = ['lowpass', 'highpass', 'bandpass', 'notch']
 
+  // Warm any sample-oscillator buffers so preview/playback isn't silent while
+  // they decode. Keyed on the set of sample ids, so it only fires when it changes.
+  const sampleIds = polyOscLayers(p).filter(l => l.source === 'sample' && l.sampleId).map(l => l.sampleId!).join(',')
+  useEffect(() => {
+    if (!sampleIds) return
+    for (const id of sampleIds.split(',')) void ensurePolySample(engine.ctx, id)
+  }, [sampleIds, engine])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <Section title="Preset">
@@ -301,7 +354,7 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
         </div>
       </Section>
 
-      <OscillatorStack layers={polyOscLayers(p)} onChange={next => onSet({ oscillators: next })} />
+      <OscillatorStack layers={polyOscLayers(p)} onChange={next => onSet({ oscillators: next })} onWarm={id => void ensurePolySample(engine.ctx, id)} />
 
       <Section title="Filter">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
