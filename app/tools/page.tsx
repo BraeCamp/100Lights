@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Guitar, Gauge, Piano, ArrowRight, Sparkles } from 'lucide-react'
+import { Guitar, Gauge, Piano, ArrowRight } from 'lucide-react'
 
 export const metadata: Metadata = {
   title: 'Free Music Tools — Tuner, Metronome, Chord Teacher',
@@ -50,23 +50,10 @@ export default function ToolsIndex() {
           <Link href="/" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>← 100Lights</Link>
         </nav>
 
-        <header style={{ textAlign: 'center', marginBottom: 44 }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16,
-            fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 99,
-            color: 'var(--accent-light)', background: 'var(--accent-subtle)', border: '1px solid rgba(139,92,246,0.25)',
-          }}>
-            <Sparkles size={12} /> Free · no sign-up · in your browser
-          </div>
-          <h1 style={{ fontSize: 42, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 14px', letterSpacing: '-0.03em', lineHeight: 1.05 }}>
-            Little tools that{' '}
-            <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              pull their weight
-            </span>
+        <header style={{ marginBottom: 32 }}>
+          <h1 style={{ fontSize: 38, fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
+            100Lights Tools
           </h1>
-          <p style={{ fontSize: 16, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 auto', maxWidth: 520 }}>
-            Each one does a single thing well — and each is a genuine piece of the full 100Lights studio, not a demo.
-          </p>
         </header>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
