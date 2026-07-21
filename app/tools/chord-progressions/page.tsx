@@ -6,8 +6,8 @@ import ToolShell from '@/components/tools/ToolShell'
 const ChordTeacher = dynamic(() => import('@/components/tools/ChordTeacher'))
 
 export const metadata: Metadata = {
-  title: 'Chord Teacher — Chord Progressions & Every Chord in Any Key',
-  description: 'A free chord teacher: hear the progressions behind a thousand songs, browse every chord on any root note, transpose to any key, and download the MIDI.',
+  title: 'Chord Teacher — Chord Progressions, Chord Finder & Identifier',
+  description: 'A free chord tool: hear the progressions behind a thousand songs, browse every chord on any root, identify a chord from the notes, transpose to any key, and download MIDI.',
   alternates: { canonical: 'https://100lights.com/tools/chord-progressions' },
   openGraph: {
     title: 'Chord Teacher — 100Lights',
@@ -34,6 +34,9 @@ export default function ChordTeacherPage() {
         </p>
         <p style={{ margin: '0 0 10px' }}>
           Open <strong>All chords</strong>, pick a root note, and you&rsquo;ll see every common chord built on it — triads, sevenths, and extensions, laid out by row. Tap any one to hear it on the piano and see its notes light up. It&rsquo;s the fastest way to find, say, what a Dm7♭5 actually sounds like.
+        </p>
+        <p style={{ margin: '0 0 10px' }}>
+          And <strong>Identify a chord</strong> does the reverse: click the notes on the piano and it names the chord — inversions and extensions included. So the same tool works both directions, from a name to the notes and from the notes back to a name.
         </p>
         <p style={{ margin: 0 }}>
           Want to know <em>why</em> these progressions work? The <Link href="/learn/five-chord-progressions-every-producer-should-know" style={{ color: '#a78bfa', textDecoration: 'underline', textUnderlineOffset: 3 }}>five progressions behind most records</Link> breaks down the ones you&rsquo;ll keep coming back to.

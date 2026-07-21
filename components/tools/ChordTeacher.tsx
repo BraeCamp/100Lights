@@ -13,6 +13,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import ArticleProgression, { type ProgressionData } from '@/components/ArticleProgression'
+import ChordIdentifier from '@/components/tools/ChordIdentifier'
 import { getBuiltInChordRecipes, RECIPE_GENRE_ORDER } from '@/lib/practice-recipes'
 import { groupIntoChords, type Chord } from '@/lib/chord-analysis'
 
@@ -40,7 +41,7 @@ function buildChord(rootPc: number, type: string): Chord {
 
 interface Selection { id: string; data: ProgressionData; autoPlay: boolean }
 
-export default function ChordTeacher() {
+export default function ChordTeacher({ defaultSection }: { defaultSection?: 'progressions' | 'chords' | 'identify' }) {
   const progressions = useMemo(() => (
     getBuiltInChordRecipes()
       .filter(r => !r.id.startsWith('snd-'))
@@ -55,8 +56,9 @@ export default function ChordTeacher() {
 
   const [genre, setGenre] = useState('All')
   const [rootPc, setRootPc] = useState(0)
-  const [progOpen, setProgOpen] = useState(false)
-  const [chordsOpen, setChordsOpen] = useState(false)
+  const [progOpen, setProgOpen] = useState(defaultSection === 'progressions')
+  const [chordsOpen, setChordsOpen] = useState(defaultSection === 'chords')
+  const [identifyOpen, setIdentifyOpen] = useState(defaultSection === 'identify')
   const nonce = useRef(0)
 
   const first = progressions[0]
@@ -143,6 +145,11 @@ export default function ChordTeacher() {
         <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 12, marginBottom: 0 }}>
           Tap any chord to hear it on the piano above. Change the root to move the whole set to another note.
         </p>
+      </Section>
+
+      {/* Identify — the reverse: notes in, name out */}
+      <Section title="Identify a chord" subtitle="click notes and it names them" open={identifyOpen} onToggle={() => setIdentifyOpen(o => !o)}>
+        <ChordIdentifier />
       </Section>
     </div>
   )
