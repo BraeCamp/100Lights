@@ -36,8 +36,6 @@ You will hunt. It'll take you six or seven tries the first time and you'll feel 
 
 @ear Try this on "Billie Jean." Hum the note the bassline keeps circling back to, then find it on the keyboard. You should land on F-sharp. Now try "Smells Like Teen Spirit" — that one's F. If you're off by a large jump but the note still feels right, you found the correct pitch in the wrong octave. That counts.
 
-@video Screen recording of hunting for the tonic of a familiar song on the piano roll — including the wrong guesses
-
 ## Major or minor: the second question
 
 You have the note. The key is either that note's major or that note's minor, and there's exactly one way to tell that doesn't involve counting anything.

@@ -54,8 +54,6 @@ When you monitor your own voice completely dry — raw, naked, no processing —
 
 Every professional vocal booth has done this since the 1960s. It is not cheating. It is how you get a singer to sing.
 
-@video Setting up a vocal track: arming input, adding reverb and compressor, enabling input monitoring with effects, then a live take with the waveform drawing in real time
-
 ## Loop takes, and the third one
 
 Set a loop over the section and let it record around and around. You get take after take stacked without touching a single button between them, which matters more psychologically than technically — the moment you stop and evaluate, you start protecting yourself.

@@ -34,8 +34,6 @@ Arm a track in [100Lights](https://100lights.com), set a count-in, and record it
 
 Your phone mic is fine. Your laptop mic is fine. The recording will be quiet, roomy, and a little hissy, and every one of those flaws is a fingerprint nobody else has.
 
-@video Recording twelve strikes of a ceramic mug into a single track, then slicing them into a usable hi-hat layer
-
 Then mangle it. Pitch it down four octaves and a stapler becomes a kick with a wooden knock in its tail that no drum machine makes. Reverse it. Put it through a short delay and only keep the delay. Compress it until the room noise swells up between hits and becomes part of the groove. Run it through the EQ, hard high-pass at first so all you have is the click, then decide what you actually want back.
 
 The word for this is not *sound design*. It's just *deciding*. Every one of those choices is a decision a pack author made for you and charged you nothing for, which should have been your first clue.

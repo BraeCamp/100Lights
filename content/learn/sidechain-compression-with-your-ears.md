@@ -46,8 +46,6 @@ That's it. That's the entire idea. Every explanation you've bounced off before w
 
 That accident is the reason a genre exists. Pump the pads hard enough and the ducking stops being invisible — it becomes the hook. French house did that on purpose in 1997 and everyone has been copying it since.
 
-@video Side-by-side playback of a four-bar loop with the bass ducking under the kick versus the same loop flat, switching every two bars
-
 ## The version you can build right now
 
 You don't need a sidechain input to get most of this, and I'd argue you shouldn't start with one anyway, because the routing hides what's actually happening.

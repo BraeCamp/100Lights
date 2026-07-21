@@ -20,8 +20,6 @@ That's not laziness. It's the thing nobody tells you when they hand you a scale 
 
 Every progression here exists as a drag-and-drop recipe in the [100Lights](https://100lights.com) library, so you can hear each one inside a real project and pull the notes apart yourself.
 
-@video Auditioning each of the five progressions back to back in the studio
-
 ## 1. The one you've already heard ten thousand times
 
 Play this before you read what it is.
@@ -85,8 +83,6 @@ This is the **Andalusian cadence**, and it's doing something sneaky at the end.
 @theory The final chord is major in a minor world. That single borrowed note is out of key on purpose, and it's the reason this reads as flamenco rather than as a sad pop loop. Take it away and you have a perfectly nice progression that sounds like nothing in particular.
 
 *Hit the Road Jack*. The intro to *Sultans of Swing*. *Stray Cat Strut*. Drama and momentum without needing a chorus lift.
-
-@video Loading the Andalusian recipe and switching the E between major and minor
 
 ## What to do with this
 

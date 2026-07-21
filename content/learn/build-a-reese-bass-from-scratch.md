@@ -20,8 +20,6 @@ Kevin Saunderson — one third of the Belleville Three, the Detroit producers wh
 
 Jungle took that sound, pitched it down, ran it through everything they had, and made it the *lead instrument*. That's the part people miss. In drum and bass the Reese is not the bass — the sub is the bass. The Reese is the melody, the texture, the thing carrying the emotional weight of the track, living in the mid-range where a guitar would sit. Once you know that, you stop trying to make it deep and start trying to make it *mean* something.
 
-@video Playing the same two-note figure with detune at zero, then at nine cents, then at forty — same notes, three completely different instruments
-
 ## Building it in the poly synth
 
 Everything below works in the free browser studio at [100Lights](https://100lights.com) — no plugin, no download. Open a project, add a track, and pull up the **Reese Bass** sound recipe from the library if you want the finished patch in front of you while you read. Then wreck it and rebuild it. That's the only way any of this sticks.

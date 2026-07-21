@@ -24,8 +24,6 @@ The fix isn't a better convention. It's removing the file from the middle. A sha
 
 This sounds like a convenience feature. It's not. It's the thing that decides whether the collaboration survives week three.
 
-@video Two producers in one session — one editing drums in the piano roll while the other adjusts the mixer, both moving at once
-
 ## The ownership problem, which is worse
 
 Now the part actually nobody documents.

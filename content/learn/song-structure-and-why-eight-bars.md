@@ -36,8 +36,6 @@ Let's use records where the count is unambiguous.
 
 Now the counterexample, because there always is one: "Bohemian Rhapsody" doesn't do this, and neither do most of the sections in "Paranoid Android." Both are famous specifically for not doing it. That should tell you something about how strong the default is — you get a reputation for breaking it.
 
-@video Counting bars out loud over a familiar record while the timeline playhead moves, showing every change landing on a multiple of four
-
 ## Now the answer
 
 You've done the counting. Here's why the number keeps coming out the same.

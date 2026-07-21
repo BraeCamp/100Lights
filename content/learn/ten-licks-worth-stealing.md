@@ -16,8 +16,6 @@ What follows is ten of them. Each one is short — most fit in two bars — and 
 
 Every one of these can be played into a piano roll in the free browser studio at [100Lights](https://100lights.com) in under a minute. That's the whole assignment: play them badly, then play them wrong on purpose.
 
-@video Each of the ten licks played back to back on the same piano sound, eight seconds apiece
-
 ## 1. The gospel amen turn
 
 Move to the fourth chord and fall back home. That's it — in C, an F to a C, with the top voice stepping down. It's the "a-men" at the end of every hymn you were made to sing, and it's why "Let It Be" can end without a proper cadence and still feel finished.

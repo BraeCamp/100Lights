@@ -40,8 +40,6 @@ Nearly everyone can hear that *something* happened. Far fewer can name the direc
 
 @math If you want the region by number: the mud people complain about lives roughly between 200 and 500 Hz, and the presence people reach for lives around 3 kHz. Ignore both numbers if they don't help — the frequency label is a filing system, not the thing you're listening to.
 
-@video A blind EQ drill: two saved mixer states, shuffled, six seconds each, guess before the reveal
-
 ## Test three: how long is that reverb?
 
 Send a snare — just the snare, soloed — to a reverb. Set a short decay. Under a second. Listen to eight hits. Now set a long decay, three seconds or more. Listen to eight hits.
@@ -71,8 +69,6 @@ Now try three decibels. Most people hear three. The gap between "can't hear one"
 Run these drills on records you already know inside out. Take something with an unmistakable mix — *Bad Guy*, or *Seven Nation Army*, or any Steely Dan — and try to describe what the snare's reverb is doing before you try it on your own track. Known material is a better teacher than your own work, because with your own work you can't tell the difference between "this sounds right" and "this sounds familiar."
 
 All five drills run start to finish in the free studio at [100Lights](https://100lights.com) — you need a loop, a mixer, and the bypass button, and that's it. Sends and returns make the reverb test easier to set up: one reverb on a return, two saved decay settings, flip between them.
-
-@video Setting up a level-matched compressor A/B on a return so the bypass doesn't change loudness
 
 Then go argue with someone. Post a loop to the [community](https://100lights.com/community) with two versions and let people guess which is which — you'll learn more from the people who guess wrong than from the ones who guess right, because their wrong answers will name things you weren't listening for.
 

@@ -38,8 +38,6 @@ If you need help getting there, the crudest arrangement that works is this: intr
 
 Taking away is the whole job. In [100Lights](https://100lights.com) you can select across every track at once and tile a section, so building the skeleton takes about ninety seconds. The remaining hour and fifty-eight minutes is muting things and listening.
 
-@video Tiling an eight-bar loop six times across the timeline, then muting elements to carve out an intro and a breakdown
-
 ## Rule two: bounce it while it's ugly
 
 Export a WAV the moment you have two minutes of anything. Not when it's good. When it exists.

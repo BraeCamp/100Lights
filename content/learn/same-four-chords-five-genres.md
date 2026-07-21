@@ -58,8 +58,6 @@ Bass plays quarter notes, one per beat, walking from each chord's root toward th
 
 @ear Play this version and then immediately play the pop version. The pop version will suddenly sound polite. That's not a criticism — it's the point. You didn't change the harmony. You changed whether the parts arrive on time.
 
-@video The same four-chord clip on five tracks, soloed one at a time — pop, neo-soul, cinematic, blues, electronic — with the piano roll visible to show identical chord placement
-
 ## Five: electronic
 
 Take only the top note of each chord and turn it into a sixteenth-note arpeggio: cycle up through the chord's three notes, fast and even, for the whole bar. Use a short plucky sound with almost no sustain, so each note is a tick rather than a tone.

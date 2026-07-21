@@ -30,8 +30,6 @@ Does this bass work under those chords? Does it still work if the drums drop out
 
 You build a column per rough section, then you deliberately break the columns. Fire the drums from row 1 against the pad from row 4. Most combinations will be bad. Two will be interesting. One will be the thing you'd never have written on purpose, and that one is why you're here.
 
-@video Launching clips across rows in session view — deliberately mismatching a verse bass with a chorus pad and finding the better combination
-
 The producers who work this way tend to end up with more parts than they use. That's correct. You should be throwing away a third of what you make. A timeline discourages that, because deleting from a timeline leaves a hole you feel obligated to fill, whereas an unused clip in a grid is just an unused clip.
 
 ## The exact moment to switch

@@ -16,8 +16,6 @@ You need three sounds and about fifteen minutes. Not because I'm simplifying for
 
 Open [100Lights](https://100lights.com) in the tab you're already in. Nothing to install, and you'll have a looping groove before you'd have finished downloading anything else.
 
-@video A 60-second timelapse of this whole guide: empty project to finished loop
-
 ## The drums are not where you get creative
 
 Add a track, open the piano roll, and switch to the **STEP** view — a row per drum sound, a column per sixteenth note. Click a cell to place a hit.
@@ -37,8 +35,6 @@ That's a beat. Not a beginner's beat — *a* beat. Four-on-the-floor has been ca
 The instinct right now is to add a clap, a shaker, a second snare, a fill. Don't. The producers whose drums you admire aren't adding — they're deciding what to leave out, and they've been deciding since the first bar.
 
 @ear Turn the hi-hats off entirely and let the kick and snare loop alone for thirty seconds. Most people find they don't miss them. Trust that reaction more than any tutorial.
-
-@video Placing the kick/snare/hat pattern in the step grid, then nudging velocities
 
 One thing that *is* worth doing: drag the snare's velocity down. Beginners hit everything at full strength, which is exactly why beginner drums sound like a machine gun and yours are about to not.
 

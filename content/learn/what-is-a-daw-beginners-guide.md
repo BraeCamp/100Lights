@@ -38,8 +38,6 @@ That's it. That is the entire notation system, and it took the music world four 
 
 For drums, the same panel switches into a STEP grid: a row per drum sound, a column per sixteenth note, click to place a hit. Kick on the beats, snare on 2 and 4, hats on the offbeats. You can write a decent drum pattern before you've learned a single term.
 
-@video A single note in the piano roll being dragged upward one step at a time, with the sound audible on each move
-
 ## Thing three: a mixer
 
 Every track feeds into a mixer. A mixer does two things you care about and about nine you don't.

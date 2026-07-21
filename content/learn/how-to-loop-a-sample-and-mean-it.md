@@ -38,8 +38,6 @@ Then find the same drum one bar later and do the same thing. Your loop is now on
 
 If the sample was played to a click and the transient sits basically on the line, congratulations — you've lost twenty seconds and learned that this particular sample is honest. Most aren't. Anything sampled off a record made before about 1985 definitely isn't.
 
-@video Zooming from bar view to sample view on a drum break, then dragging the loop start from the grid line to just before the kick transient
-
 ## Why beginner loops click
 
 The click is not a bug in your studio. It's arithmetic, and it happens for one reason: your loop starts and ends at different points on the waveform's vertical axis.
@@ -61,8 +59,6 @@ So you let it bleed. Take a slightly longer tail than you need — a few hundred
 This is why sampled records feel warm and your programmed loop feels stapled together. Not the gear. The overlap.
 
 Practically: duplicate your clip, trim the copy down to just that ringing tail, drop it on a second track at the top of the next repeat, and pull the fader down until you'd miss it if it vanished but can't quite point at it. A short reverb send from the mixer gets you partway there too, but the bleed is better, because it's the actual sound of the actual room rather than a guess at one.
-
-@video A/B of a hard-cut four-bar loop versus the same loop with a decaying tail layered over bar 1
 
 ## Where this leaves you
 

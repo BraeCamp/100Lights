@@ -28,8 +28,6 @@ Give each chord a strummed rhythm instead of a held block — short, on the beat
 
 Staircase. Every time. It only goes down, one step at a time, and it never turns around.
 
-@video Playing the same four-chord clip twice — first as held blocks, then re-voiced and strummed as flamenco — with no note pitches changed
-
 ## Now play it as surf rock
 
 Delete the strum. Give every chord exactly eight even eighth notes, machine-steady. Drop the whole thing an octave. Swap the preset to something bright and thin with a fast attack. Add reverb on the track — a lot of it, more than feels tasteful, because tasteful is not what 1962 was doing.
@@ -85,8 +83,6 @@ Then break it on purpose:
 - Reverse it — E, F, G, Am — and hear a climb instead of a fall. Same chords, opposite emotion.
 - Hold the third chord for two bars instead of one and let the arrival at the fourth land harder.
 - Keep the descending bass but replace the chords above it with something else entirely. The staircase will still read.
-
-@video A four-track project with the same Andalusian clip on every track, soloing between flamenco, surf, metal, and pop versions
 
 All of it runs in the browser for free — no plugins, no install — and when you land on a version worth keeping, export the stems or publish the recipe to the [community](https://100lights.com/community) so someone else can take your four chords and make a fifth genre out of them.
 

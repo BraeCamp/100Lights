@@ -44,8 +44,6 @@ Not opinions. Order of magnitude.
 
 @theory The reason an upgraded mic changes so little is that a recording's character is dominated by the room it happened in and the distance you sat from the capsule. Reflections arriving a few milliseconds after the direct sound get heard as "cheap" or "boxy," and that arrives identically through a budget capsule and an expensive one. You are not hearing the microphone. You are hearing the wall behind you.
 
-@video A vocal recorded on the same mic twice — once in an open room, once with a duvet hung behind the singer — with nothing else changed
-
 ## Test it before you believe me
 
 @ear Take your last track. Pull every fader down to nothing, then bring up only the loudest element until it's comfortable. Add the next element and stop the moment you can hear it clearly — not when it feels good, when it's merely audible. Continue through every track. Do not touch an EQ. Play the result against the original.

@@ -50,8 +50,6 @@ Now select only the second copy and drag the whole thing up two rows, keeping it
 
 That version is doing something the first wasn't. The pattern is recognizable, so your ear isn't lost, but it isn't identical, so your ear isn't bored. Almost every hook you can hum is built on this move — the "Seven Nation Army" riff is the same shape, moved.
 
-@video Selecting the second half of an eight-note phrase in the piano roll and dragging it up as a block, with playback before and after
-
 ## Experiment four: break one note
 
 Keep that eight-note phrase. Take the very last note and drag it upward a long way — six or seven rows above everything else. Play it.

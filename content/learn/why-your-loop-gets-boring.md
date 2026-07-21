@@ -20,8 +20,6 @@ Boredom in a loop isn't a shortage of information. It's a shortage of change. Af
 
 The producers you're copying know this. Go listen to the first minute of anything by Fred again.. or the opening of *Nuthin' but a "G" Thang*. The elements are almost embarrassingly few. What moves is which of them are switched on.
 
-@video Two versions of the same four-bar loop played back to back — one with everything on for 32 bars, one with three subtractions
-
 ## Technique one: the turnaround
 
 The oldest fix and the cheapest. Loop your four bars four times, then go to the fourth bar of the fourth repeat — the last bar before the section changes — and do something small to *just that bar*.

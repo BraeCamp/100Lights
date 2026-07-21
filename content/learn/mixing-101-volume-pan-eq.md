@@ -49,8 +49,6 @@ Everything else: move it. Hard. If you have two guitars or two synth layers doin
 
 Hi-hats slightly off-center. Percussion off to one side with its answer on the other. Two background vocal stacks pinned to the edges. The moment you spread things out, the EQ problems you were about to fix stop being problems, which is the point of doing this before you touch an EQ.
 
-@video Muting the effect chain on a busy eight-track project and rebuilding balance and panning from scratch in real time
-
 ## Step three: cut, don't boost
 
 Now EQ — and only subtractive EQ. You're removing what's in the way, not adding what's missing.
