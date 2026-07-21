@@ -14,6 +14,12 @@ You have heard this sound thousands of times. Every jungle record from 1993 onwa
 
 That's the trade secret. The growl is a bug. It's phase cancellation, and someone decided not to fix it.
 
+Here's where you start and where you're going. Same notes, same riff — the only thing that changes is going from one sawtooth to two slightly out of tune.
+
+@audio(/learn-audio/reese-before.mp3) Before: one plain sawtooth. A bass note, and not much else. This is the raw material.
+
+@audio(/learn-audio/reese-after.mp3) After: two sawtooths nine cents apart through a dark filter. Nothing is modulating — that restless growl is the second oscillator alone.
+
 ## Where the name comes from
 
 Kevin Saunderson — one third of the Belleville Three, the Detroit producers who invented techno — released a track called "Just Want Another Chance" in 1988 under the alias Reese. The bass on it was two detuned saws on a Casio CZ-5000, played low and left alone. Detroit heard a bassline. British producers, five years later, heard raw material.
@@ -23,6 +29,10 @@ Jungle took that sound, pitched it down, ran it through everything they had, and
 ## Building it in the poly synth
 
 Everything below works in the free browser studio at [100Lights](https://100lights.com) — no plugin, no download. Open a project, add a track, and pull up the **Reese Bass** sound recipe from the library if you want the finished patch in front of you while you read. Then wreck it and rebuild it. That's the only way any of this sticks.
+
+But you don't have to leave this page to build it. Here's the whole patch, live. Hit **Guide me** and it'll walk you through it one control at a time, highlighting each knob as you go — or hit **Hold a note** and drag the controls yourself as you read the sections below.
+
+@synth(%7B%22note%22%3A28%2C%22detune%22%3A9%2C%22cutoff%22%3A620%2C%22resonance%22%3A6%2C%22voices%22%3A2%7D) The stock Reese, running in your browser. One saw is a plain bass note; add the second and detune it, and the growl appears with nothing modulating it.
 
 **Waveform: sawtooth.** Not square, not sine. A saw contains every harmonic above its root, which means there's material at every frequency for the filter to chew on later. A square wave skips half of them and always sounds slightly hollow — great for an arp, wrong for this.
 

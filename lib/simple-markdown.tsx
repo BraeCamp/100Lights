@@ -12,6 +12,7 @@ import LazyArticleWidget from '@/components/LazyArticleWidget'
 import type { ProgressionData } from '@/components/ArticleProgression'
 import type { GridSpec } from '@/components/ArticleGrid'
 import type { ABSpec } from '@/components/ArticleAB'
+import type { SynthConfig } from '@/components/SynthPlayground'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
@@ -205,6 +206,25 @@ function ABFallback({ spec }: { spec: ABSpec }) {
   )
 }
 
+/** Server-rendered stand-in for the synth playground — the patch as readable
+ *  text, so the recipe survives with no JS and crawlers get the numbers. */
+function SynthFallback({ config }: { config: SynthConfig }) {
+  const voices = config.voices ?? 2
+  return (
+    <figure style={{ margin: '24px 0', padding: '16px 18px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Reese bass patch</p>
+      <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+        <li>{voices} sawtooth oscillator{voices > 1 ? 's' : ''}{voices > 1 ? `, detuned ${config.detune ?? 9} cents apart` : ''}</li>
+        <li>Low-pass filter at {config.cutoff ?? 620} Hz, resonance Q {config.resonance ?? 6}</li>
+        <li>Fast attack, high sustain envelope</li>
+      </ul>
+      {config.caption && (
+        <figcaption style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.6 }}>{config.caption}</figcaption>
+      )}
+    </figure>
+  )
+}
+
 /** GitHub-style pipe table. Added because the one published article uses one
  *  and it was rendering as literal pipe characters on the live site. */
 function Table({ rows, keyBase }: { rows: string[][]; keyBase: string }) {
@@ -325,6 +345,23 @@ export function renderMarkdown(md: string): React.ReactNode {
               </LazyArticleWidget>
             )
           }
+        } catch { /* malformed payload — skip */ }
+      }
+      return
+    }
+    // @synth(<uri-encoded json>) caption — playable subtractive synth; the
+    // reader builds the sound by dragging detune / cutoff / resonance live
+    if (b.startsWith('@synth')) {
+      const m = b.match(/^@synth\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) {
+        try {
+          const config = JSON.parse(decodeURIComponent(m[1])) as SynthConfig
+          if (m[2]?.trim()) config.caption = m[2].trim()
+          out.push(
+            <LazyArticleWidget key={key} kind="synth" props={{ config }}>
+              <SynthFallback config={config} />
+            </LazyArticleWidget>
+          )
         } catch { /* malformed payload — skip */ }
       }
       return

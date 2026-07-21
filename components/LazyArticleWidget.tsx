@@ -19,6 +19,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import type { ProgressionData } from '@/components/ArticleProgression'
 import type { GridSpec } from '@/components/ArticleGrid'
 import type { ABSpec } from '@/components/ArticleAB'
+import type { SynthConfig } from '@/components/SynthPlayground'
 
 // Static map, not a computed specifier — the bundler needs literals to split
 // these into their own chunks.
@@ -28,6 +29,7 @@ const LOADERS = {
   audio: () => import('@/components/ArticleAudio'),
   grid: () => import('@/components/ArticleGrid'),
   ab: () => import('@/components/ArticleAB'),
+  synth: () => import('@/components/SynthPlayground'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -39,6 +41,7 @@ type WidgetSpec =
   | { kind: 'audio'; props: { src: string; caption: string } }
   | { kind: 'grid'; props: { spec: GridSpec } }
   | { kind: 'ab'; props: { spec: ABSpec } }
+  | { kind: 'synth'; props: { config: SynthConfig } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 
