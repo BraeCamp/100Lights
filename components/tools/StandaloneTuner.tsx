@@ -75,9 +75,14 @@ export default function StandaloneTuner() {
     setListening(false); setResult(null)
   }
 
+  // The input list collapses to a single button once a source is chosen;
+  // opening it shows the options again.
+  const [inputOpen, setInputOpen] = useState(false)
+
   // Switching input mid-session restarts the detector on the new stream.
   function chooseInput(source: string) {
     setInputSource(source)
+    setInputOpen(false)
     if (listening) void startListening(source)
   }
 
@@ -188,10 +193,13 @@ export default function StandaloneTuner() {
             {locked && <text x={CX} y={CY + 22} textAnchor="middle" fontSize="10" fontWeight="700" fill={C.green} letterSpacing="0.08em">IN TUNE</text>}
           </svg>
 
-          {/* Input picker — always visible, so it can be changed mid-session */}
+          {/* Input picker — collapses to a single button once chosen; the
+              button re-opens the list so the source can be changed anytime. */}
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: 2 }}>Input {listening && '· switch anytime'}</div>
-            {loadingDevs ? <div style={{ fontSize: 11, color: C.muted, opacity: 0.5 }}>Loading devices…</div> : (
+            <div style={{ fontSize: 9, color: C.muted, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: 2 }}>Input</div>
+            {loadingDevs ? (
+              <div style={{ fontSize: 11, color: C.muted, opacity: 0.5 }}>Loading devices…</div>
+            ) : inputOpen ? (
               allSources.map(src => (
                 <button key={src.id} onClick={() => chooseInput(src.id)} style={{
                   display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', textAlign: 'left',
@@ -203,6 +211,15 @@ export default function StandaloneTuner() {
                   <span style={{ fontSize: 12, fontWeight: inputSource === src.id ? 600 : 400 }}>{src.label}</span>
                 </button>
               ))
+            ) : (
+              <button onClick={() => setInputOpen(true)} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', textAlign: 'left',
+                border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)',
+              }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: 'var(--accent)' }} />
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{allSources.find(s => s.id === inputSource)?.label ?? 'Microphone'}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: C.muted }}>change ▾</span>
+              </button>
             )}
           </div>
 
