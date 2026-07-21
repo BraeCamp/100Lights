@@ -18,6 +18,8 @@ export interface LearnArticle {
   date: string          // ISO yyyy-mm-dd
   updated?: string
   tags: string[]
+  /** Editorial voice/column this piece is written in (byline persona). */
+  voice?: string
   /** EFFECTIVE draft state: false once a scheduled time has passed. */
   draft: boolean
   /** Set only while an article is still waiting for its slot (ISO datetime). */
@@ -80,6 +82,7 @@ function fromRepo(now: number): LearnArticle[] {
       date: meta.date ?? '2026-01-01',
       updated: meta.updated,
       tags: parseTags(meta.tags ?? ''),
+      voice: meta.voice || undefined,
       ...resolvePublication(meta.draft !== 'false', meta.publishAt, now),
       minutes: minutes(body),
       body,

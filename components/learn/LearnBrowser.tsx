@@ -7,7 +7,7 @@
  * is in the server HTML for crawlers and the filtering is pure enhancement.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Clock, ArrowRight, Search } from 'lucide-react'
 
@@ -30,6 +30,14 @@ function topicsByFrequency(articles: CardArticle[]): string[] {
 export default function LearnBrowser({ articles }: { articles: CardArticle[] }) {
   const [topic, setTopic] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+
+  // Pre-select a topic from ?topic= (article tag chips link here). Read from
+  // window.location in an effect rather than useSearchParams, so the page stays
+  // statically rendered — the same reason PostHog was moved off useSearchParams.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('topic')
+    if (t) setTopic(t)
+  }, [])
 
   const topics = useMemo(() => topicsByFrequency(articles), [articles])
 

@@ -24,6 +24,14 @@ export async function ensureLearnSchema() {
   // only to hide a committed content/learn/*.md file.
   await sql`ALTER TABLE learn_articles ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`
   await sql`ALTER TABLE learn_articles ADD COLUMN IF NOT EXISTS repo_shadow BOOLEAN NOT NULL DEFAULT false`
+  // "Was this helpful?" tallies, one row per article slug.
+  await sql`
+    CREATE TABLE IF NOT EXISTS learn_reactions (
+      slug TEXT PRIMARY KEY,
+      yes  INTEGER NOT NULL DEFAULT 0,
+      no   INTEGER NOT NULL DEFAULT 0
+    )
+  `
   ready = true
 }
 

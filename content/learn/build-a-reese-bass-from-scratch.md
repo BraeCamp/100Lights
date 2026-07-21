@@ -3,16 +3,22 @@ title: Build a Reese Bass From Scratch
 description: The growl in every jungle and drum-and-bass record is two sawtooth waves cancelling each other out. Here is how to build one in a browser synth.
 date: 2026-07-20
 tags: sound-design, bass, synthesis
+voice: insider
 draft: true
 ---
 
 # Build a Reese Bass From Scratch
 
+@tldr
+- A Reese is two detuned sawtooth oscillators — the "growl" is them drifting in and out of phase, not an LFO
+- Stock patch: sawtooth, 2 voices ~9¢ apart, low-pass at 620 Hz with resonance 6, fast attack / high sustain
+- Build it free in the browser synth below; layer a plain sine sub underneath for the low end
+
 Nobody who makes drum and bass for a living will tell you this, because it sounds like an insult to the craft: the Reese bass is two sawtooth waves slightly out of tune with each other. That's it. That's the whole patch. Everything else — the filter, the distortion, the eight layers, the mid-range screaming — is decoration bolted onto a two-oscillator idea that took about four minutes to discover in 1988.
 
 You have heard this sound thousands of times. Every jungle record from 1993 onward. The low churning thing under Photek. The bass in "Pulp Fiction" by Alex Reece. That restless, seasick growl that never quite sits still. What you probably never noticed is *why* it moves. Most people assume it's an LFO — something wobbling the filter on a timer. It isn't. There's no modulation in a real Reese at all. The movement is the two oscillators drifting in and out of phase with each other, forever, and never repeating in a way your ear can predict.
 
-That's the trade secret. The growl is a bug. It's phase cancellation, and someone decided not to fix it.
+That's the trade secret. The growl is a bug. It's {phase cancellation|two waves at nearly the same pitch alternately reinforcing and erasing each other, which your ear reads as slow movement}, and someone decided not to fix it.
 
 Here's where you start and where you're going. Same notes, same riff — the only thing that changes is going from one sawtooth to two slightly out of tune.
 
@@ -59,6 +65,8 @@ Two things to do the moment you have it looping:
 - **Lock it to the kick.** Reese lines and kick drums share territory. If they're fighting, shorten the bass notes rather than turning them down — a gap is more effective than an EQ cut.
 - **Layer a clean sine underneath.** The classic setup is a Reese carrying the mid-range and a plain sine sub carrying the actual low end, playing the same root. The **808 Sub Bass** recipe is already a pure sine with a long tail; put it on a second track, play only the roots, and let the Reese do the talking above it.
 
+@tip In the browser synth you don't even need a second track for the sub — add a third oscillator to the same patch, set it to a sine an octave down, and you have the Reese and its sub in one instrument. The **+ Sub** button does exactly this.
+
 ## What to do next
 
 Add a delay and a touch of distortion on the track's effect chain. Distortion in particular is the step most tutorials skip and every real record includes — driving a Reese generates new harmonics above the cutoff you just spent so much effort removing, which sounds contradictory and is exactly why it works.
@@ -66,3 +74,13 @@ Add a delay and a touch of distortion on the track's effect chain. Distortion in
 Then automate the cutoff by hand across sixteen bars. Not with an LFO. Draw it. A Reese that opens up by four hundred hertz over a chorus does more arrangement work than any riser you could paste on top.
 
 When you land on one you like, save it as a preset and put it on the [community](https://100lights.com/community) page. Reese patches are folk knowledge — they've been passed hand to hand for thirty-five years, and every producer's version is slightly wrong in a way that turns out to be the good part.
+
+@studio(/new?modules=audio) Open the studio and build your own
+
+## Questions
+
+@faq Why does my Reese sound static instead of growling? :: You almost certainly have one oscillator, not two. A single sawtooth has nothing to beat against — the growl only appears once there are two of them slightly detuned. Set the oscillator's Voices to 2 (or add a second oscillator) and spread them a few cents apart.
+
+@faq How much detune should I use? :: Start around 9 cents. Below that it barely moves; past ~30 it gets blurry, and past 50 it stops sounding like one instrument and starts sounding like two out-of-tune ones. Nine cents is barely audible as pitch and completely audible as motion.
+
+@faq Is the Reese the bass or the lead? :: In drum and bass it's the lead — the melody and texture living in the mid-range. The actual low end is a separate clean sine sub playing the same root. Trying to make the Reese itself deep is the most common mistake.

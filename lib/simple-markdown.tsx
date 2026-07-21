@@ -16,8 +16,8 @@ import type { SynthConfig } from '@/components/SynthPlayground'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
-  // tokens: `code`, **bold**, *italic*, [text](url), ![alt](src)
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(!\[[^\]]*\]\([^)]+\))|(\[[^\]]+\]\([^)]+\))/g
+  // tokens: `code`, **bold**, *italic*, [text](url), ![alt](src), {term|definition}
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(!\[[^\]]*\]\([^)]+\))|(\[[^\]]+\]\([^)]+\))|(\{[^}|]+\|[^}]+\})/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
@@ -33,7 +33,13 @@ function inline(text: string, keyBase: string): React.ReactNode[] {
       // eslint-disable-next-line @next/next/no-img-element
       out.push(<img key={key} src={src} alt={alt} loading="lazy" style={{ maxWidth: '100%', borderRadius: 10, border: '1px solid var(--border)' }} />)
     } else if (tok.startsWith('*')) out.push(<em key={key}>{tok.slice(1, -1)}</em>)
-    else {
+    else if (tok.startsWith('{')) {
+      // Glossary term: {term|definition} → hover for the definition.
+      const bar = tok.indexOf('|')
+      const term = tok.slice(1, bar)
+      const def = tok.slice(bar + 1, -1)
+      out.push(<abbr key={key} title={def} style={{ textDecoration: 'underline dotted', textUnderlineOffset: 3, cursor: 'help', textDecorationColor: 'var(--accent-light)' }}>{term}</abbr>)
+    } else {
       const label = tok.slice(1, tok.indexOf(']'))
       const href = tok.slice(tok.indexOf('(') + 1, -1)
       const external = /^https?:\/\//.test(href) && !href.startsWith('https://100lights.com')
@@ -123,9 +129,13 @@ function SoundFallback({ caption }: { caption: string }) {
  * making them different shapes on the page is what enforces it.
  */
 const CALLOUTS = {
-  theory: { label: 'Theory', accent: '#a78bfa', tint: 'rgba(167,139,250,0.09)', mono: false, note: '' },
-  math:   { label: 'Math',   accent: '#38bdf8', tint: 'rgba(56,189,248,0.08)',  mono: true,  note: 'optional — skip it and nothing breaks' },
-  ear:    { label: 'Ear',    accent: '#34d399', tint: 'rgba(52,211,153,0.08)',  mono: false, note: 'go listen' },
+  theory:  { label: 'Theory',    accent: '#a78bfa', tint: 'rgba(167,139,250,0.09)', mono: false, note: '' },
+  math:    { label: 'Math',      accent: '#38bdf8', tint: 'rgba(56,189,248,0.08)',  mono: true,  note: 'optional — skip it and nothing breaks' },
+  ear:     { label: 'Ear',       accent: '#34d399', tint: 'rgba(52,211,153,0.08)',  mono: false, note: 'go listen' },
+  try:     { label: 'Try it',    accent: '#f59e0b', tint: 'rgba(245,158,11,0.10)',  mono: false, note: 'do this now' },
+  warning: { label: 'Watch out', accent: '#ef4444', tint: 'rgba(239,68,68,0.09)',   mono: false, note: '' },
+  tip:     { label: 'Pro tip',   accent: '#22d3ee', tint: 'rgba(34,211,238,0.09)',  mono: false, note: '' },
+  history: { label: 'History',   accent: '#c084fc', tint: 'rgba(192,132,252,0.08)', mono: false, note: '' },
 } as const
 
 type CalloutKind = keyof typeof CALLOUTS
@@ -161,6 +171,42 @@ function Callout({ kind, text, keyBase }: { kind: CalloutKind; text: string; key
         {inline(text, keyBase)}
       </div>
     </aside>
+  )
+}
+
+/** "The short version" — key takeaways at the top of a piece. */
+function Tldr({ bullets, keyBase }: { bullets: string[]; keyBase: string }) {
+  return (
+    <aside style={{ margin: '20px 0 26px', padding: '16px 20px', borderRadius: 12, background: 'rgba(124,58,237,0.07)', border: '1px solid rgba(139,92,246,0.28)' }}>
+      <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--accent-light)' }}>The short version</p>
+      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {bullets.map((b, i) => (
+          <li key={`${keyBase}-${i}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>{inline(b, `${keyBase}-${i}`)}</li>
+        ))}
+      </ul>
+    </aside>
+  )
+}
+
+/** One FAQ item — a native <details> disclosure (works with JS off). */
+function Faq({ q, a, keyBase }: { q: string; a: string; keyBase: string }) {
+  return (
+    <details style={{ margin: '10px 0', borderRadius: 10, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)', padding: '2px 14px' }}>
+      <summary style={{ cursor: 'pointer', padding: '10px 0', fontSize: 15, fontWeight: 650, color: 'var(--text-primary)', listStyle: 'revert' }}>{q}</summary>
+      <div style={{ fontSize: 14.5, lineHeight: 1.7, color: 'var(--text-secondary)', padding: '0 0 12px' }}>{inline(a, keyBase)}</div>
+    </details>
+  )
+}
+
+/** A prominent "do this in the studio" button embedded mid-article. */
+function StudioCta({ href, label }: { href: string; label: string }) {
+  return (
+    <div style={{ margin: '22px 0' }}>
+      <a href={href} style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 20px', borderRadius: 11,
+        background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
+      }}>▶ {label}</a>
+    </div>
   )
 }
 
@@ -283,12 +329,38 @@ export function renderMarkdown(md: string): React.ReactNode {
     // @theory / @math / @ear — see CALLOUTS. Checked before @video so the
     // prefix match can't be shadowed.
     {
-      const m = b.match(/^@(theory|math|ear)\b\s*([\s\S]*)$/)
+      const m = b.match(/^@(theory|math|ear|try|warning|tip|history)\b\s*([\s\S]*)$/)
       if (m) {
         const text = m[2].trim()
         if (text) out.push(<Callout key={key} kind={m[1] as CalloutKind} text={text} keyBase={key} />)
         return
       }
+    }
+    // @tldr — key-takeaways box. First line is the marker; the rest are bullets.
+    if (b.startsWith('@tldr')) {
+      const bullets = b.replace(/^@tldr\b/, '').split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
+      if (bullets.length) out.push(<Tldr key={key} bullets={bullets} keyBase={key} />)
+      return
+    }
+    // @faq Question :: Answer — one Q&A disclosure (also feeds FAQPage schema).
+    if (b.startsWith('@faq')) {
+      const rest = b.slice(4).trim()
+      const i = rest.indexOf('::')
+      if (i !== -1) {
+        const q = rest.slice(0, i).trim(), ans = rest.slice(i + 2).trim()
+        if (q && ans) out.push(<Faq key={key} q={q} a={ans} keyBase={key} />)
+      }
+      return
+    }
+    // @studio(href) Label — a prominent "do it in the studio" call to action.
+    if (b.startsWith('@studio')) {
+      const m2 = b.match(/^@studio\(([^)]*)\)\s*([\s\S]*)$/)
+      if (m2) {
+        const href = m2[1].trim() || '/new?modules=audio'
+        const label = m2[2].trim() || 'Open in the studio'
+        out.push(<StudioCta key={key} href={href} label={label} />)
+      }
+      return
     }
     if (b.startsWith('@video')) {
       const m = b.match(/^@video(?:\(([^)]+)\))?\s*([\s\S]*)$/)
