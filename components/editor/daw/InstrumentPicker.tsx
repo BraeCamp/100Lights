@@ -5,11 +5,11 @@ import { useDaw } from '@/lib/daw-state'
 import { useState } from 'react'
 import type {
   TrackInstrument, InstrumentType,
-  FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, DrumPadSettings,
+  FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, PolyOscLayer, DrumPadSettings,
   Fm4OpInstrumentParams, Fm4OpOperator, Fm4OpAlgorithm,
   WavetableInstrumentParams,
 } from '@/lib/daw-types'
-import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument, defaultFm4opInstrument, defaultWavetableInstrument, POLY_PRESETS } from '@/lib/daw-types'
+import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument, defaultFm4opInstrument, defaultWavetableInstrument, POLY_PRESETS, defaultOscLayer, polyOscLayers } from '@/lib/daw-types'
 import { previewNote } from '@/lib/daw-instruments'
 import { FM_ALGORITHMS, FM_PRESETS } from '@/lib/fm-synth'
 import { WAVETABLE_PRESETS } from '@/lib/wavetable-synth'
@@ -216,6 +216,68 @@ const LFO_TARGETS: { label: string; value: PolyInstrumentParams['lfoTarget'] }[]
   { label: 'Amp',    value: 'amp'    },
 ]
 
+function srcBtn(active: boolean): React.CSSProperties {
+  return {
+    padding: '2px 8px', borderRadius: 3, fontSize: 9, cursor: 'pointer',
+    border: `1px solid ${active ? C.accent : C.border}`,
+    background: active ? `${C.accent}22` : C.bgCard, color: active ? C.accent : C.textMuted,
+  }
+}
+const addOscBtn: React.CSSProperties = {
+  flex: 1, padding: '4px 0', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+  border: `1px dashed ${C.border}`, background: C.bgCard, color: C.textMuted,
+}
+const octaveLabel = (v: number) => (v === 0 ? '0' : `${v > 0 ? '+' : ''}${v}`)
+
+// Stacked oscillator editor: osc 1 + osc 2 + a sub…, each with its own
+// waveform / octave / fine detune, and a unison count that fans a layer into
+// up to 7 detuned voices (the supersaw / Reese growl).
+function OscillatorStack({ layers, onChange }: {
+  layers: PolyOscLayer[]
+  onChange: (next: PolyOscLayer[]) => void
+}) {
+  const update = (i: number, changes: Partial<PolyOscLayer>) =>
+    onChange(layers.map((l, j) => (j === i ? { ...l, ...changes } : l)))
+  const remove = (i: number) => {
+    const next = layers.filter((_, j) => j !== i)
+    onChange(next.length ? next : [defaultOscLayer()])
+  }
+  const addOsc = () => onChange([...layers, defaultOscLayer({ waveform: 'sawtooth', detune: 6 })])
+  const addSub = () => onChange([...layers, defaultOscLayer({ waveform: 'sine', octave: -1, level: 0.6 })])
+
+  return (
+    <Section title="Oscillators">
+      {layers.map((l, i) => (
+        <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 4, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.05em' }}>OSC {i + 1}</span>
+            <div style={{ display: 'flex', gap: 3, marginLeft: 4 }}>
+              <button onClick={e => { e.stopPropagation(); update(i, { source: 'wave' }) }} style={srcBtn(l.source === 'wave')}>Wave</button>
+              <button disabled title="Sample oscillators — coming soon" onClick={e => e.stopPropagation()} style={{ ...srcBtn(false), opacity: 0.4, cursor: 'not-allowed' }}>Sample</button>
+            </div>
+            {layers.length > 1 && (
+              <button onClick={e => { e.stopPropagation(); remove(i) }} title="Remove oscillator"
+                style={{ marginLeft: 'auto', border: 'none', background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+            )}
+          </div>
+          <WaveRow label="Wave" value={l.waveform} onChange={w => update(i, { waveform: w })} />
+          <SliderRow label="Octave" value={l.octave} min={-2} max={2} step={1} fmt={octaveLabel} onChange={v => update(i, { octave: Math.round(v) })} />
+          <SliderRow label="Detune" value={l.detune} min={-100} max={100} step={1} fmt={v => `${v}¢`} onChange={v => update(i, { detune: v })} />
+          <SliderRow label="Voices" value={l.unison} min={1} max={7} step={1} fmt={v => `${v}`} onChange={v => update(i, { unison: Math.round(v) })} />
+          {l.unison > 1 && (
+            <SliderRow label="Spread" value={l.spread} min={0} max={50} step={1} fmt={v => `${v}¢`} onChange={v => update(i, { spread: v })} />
+          )}
+          <SliderRow label="Level" value={l.level} min={0} max={1} step={0.01} fmt={v => v.toFixed(2)} onChange={v => update(i, { level: v })} />
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button onClick={e => { e.stopPropagation(); addOsc() }} style={addOscBtn}>+ Oscillator</button>
+        <button onClick={e => { e.stopPropagation(); addSub() }} style={addOscBtn}>+ Sub</button>
+      </div>
+    </Section>
+  )
+}
+
 const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
   instrument: TrackInstrument
   onSet: (changes: Partial<PolyInstrumentParams>) => void
@@ -239,10 +301,7 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
         </div>
       </Section>
 
-      <Section title="Oscillator">
-        <WaveRow label="Wave" value={p.waveform} onChange={w => onSet({ waveform: w })} />
-        <SliderRow label="Detune" value={p.detune} min={-100} max={100} step={1} fmt={v => `${v}¢`} onChange={v => onSet({ detune: v })} />
-      </Section>
+      <OscillatorStack layers={polyOscLayers(p)} onChange={next => onSet({ oscillators: next })} />
 
       <Section title="Filter">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

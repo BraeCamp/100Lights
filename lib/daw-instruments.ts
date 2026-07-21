@@ -1,6 +1,7 @@
 'use client'
 
 import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, Fm4OpInstrumentParams, WavetableInstrumentParams } from './daw-types'
+import { polyOscLayers } from './daw-types'
 import { playDrumHit } from './drum-samples'
 import type { BeatType } from './beat-analyzer'
 import { playFMNote } from './fm-synth'
@@ -103,17 +104,46 @@ function playPolyVoice(
   const freq = pitchToHz(pitch)
   const vel  = velocity / 127
 
-  const osc    = ctx.createOscillator()
   const filter = ctx.createBiquadFilter()
   const env    = ctx.createGain()
-
-  osc.type            = params.waveform
-  osc.frequency.value = freq
-  osc.detune.value    = params.detune
+  const mix    = ctx.createGain()   // sums the oscillator stack before the filter
 
   filter.type            = params.filterType
   filter.frequency.value = params.filterCutoff
   filter.Q.value         = params.filterResonance
+
+  // Oscillator stack: osc 1 + osc 2 + a sub…, each layer optionally fanned out
+  // into `unison` detuned copies. Every voice sums into `mix`, scaled by the
+  // total voice count so stacking more oscillators never clips.
+  const layers = polyOscLayers(params)
+  let totalVoices = 0
+  for (const l of layers) if (l.source === 'wave') totalVoices += Math.max(1, Math.min(7, Math.round(l.unison)))
+  const oscs: OscillatorNode[] = []
+  const oscGains: GainNode[] = []
+  for (const layer of layers) {
+    if (layer.source !== 'wave') continue   // 'sample' layers are a reserved hook, not rendered yet
+    const u = Math.max(1, Math.min(7, Math.round(layer.unison)))
+    for (let i = 0; i < u; i++) {
+      const o = ctx.createOscillator()
+      o.type = layer.waveform
+      o.frequency.value = freq
+      // Spread the unison voices symmetrically across `spread` cents.
+      const uni = u > 1 ? layer.spread * (i / (u - 1) - 0.5) : 0
+      o.detune.value = layer.octave * 1200 + layer.detune + uni
+      const g = ctx.createGain()
+      g.gain.value = (layer.level ?? 1) / (totalVoices || 1)
+      o.connect(g); g.connect(mix)
+      oscs.push(o); oscGains.push(g)
+    }
+  }
+  // A patch whose only layers are (unrendered) samples still needs to sound.
+  if (oscs.length === 0) {
+    const o = ctx.createOscillator()
+    o.type = params.waveform; o.frequency.value = freq; o.detune.value = params.detune
+    const g = ctx.createGain(); g.gain.value = 1
+    o.connect(g); g.connect(mix)
+    oscs.push(o); oscGains.push(g)
+  }
 
   const attackEnd  = when + params.attack
   const decayEnd   = attackEnd + params.decay
@@ -126,7 +156,7 @@ function playPolyVoice(
   env.gain.setValueAtTime(vel * params.sustain, releaseAt)
   env.gain.linearRampToValueAtTime(0, endAt)
 
-  osc.connect(filter)
+  mix.connect(filter)
   filter.connect(env)
 
   // LFO — set up before final routing so amp target can intercept the signal path
@@ -144,7 +174,7 @@ function playPolyVoice(
 
     if (params.lfoTarget === 'pitch') {
       lfoGain.gain.value = params.lfoDepth * 200  // ±200 cents at full depth (1.67 semitones)
-      lfoGain.connect(osc.detune)
+      for (const o of oscs) lfoGain.connect(o.detune)
     } else if (params.lfoTarget === 'filter') {
       lfoGain.gain.value = params.lfoDepth * params.filterCutoff * 0.8
       lfoGain.connect(filter.frequency)
@@ -171,11 +201,13 @@ function playPolyVoice(
   const outputNode: AudioNode = tremoloGain ?? env
   outputNode.connect(dest)
 
-  osc.start(when)
-  osc.stop(endAt + 0.01)
+  for (const o of oscs) { o.start(when); o.stop(endAt + 0.01) }
 
-  osc.onended = () => {
-    osc.disconnect(); filter.disconnect(); env.disconnect()
+  // All voices stop together, so one onended cleans up the whole graph.
+  oscs[0].onended = () => {
+    for (const o of oscs) o.disconnect()
+    for (const g of oscGains) g.disconnect()
+    mix.disconnect(); filter.disconnect(); env.disconnect()
     lfo?.disconnect(); lfoGain?.disconnect()
     dc?.disconnect(); tremoloGain?.disconnect()
   }

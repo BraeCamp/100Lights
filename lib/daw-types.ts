@@ -276,6 +276,23 @@ export interface FmInstrumentParams {
   modDepth: number  // FM mod index
 }
 
+/**
+ * One oscillator layer in a poly voice. Layers stack (osc 1 + osc 2 + a sub…),
+ * and each layer can fan out into `unison` detuned copies for supersaw-style
+ * width. `source` is a forward hook: 'sample' is reserved for a future
+ * sample-based layer and is not yet rendered by the engine.
+ */
+export interface PolyOscLayer {
+  source: 'wave' | 'sample'
+  waveform: OscillatorType
+  octave: number   // octave offset, -2..+2 (a sub is -1 or -2)
+  detune: number   // fine offset in cents, -100..+100
+  unison: number   // stacked detuned voices, 1..7
+  spread: number   // total unison detune spread in cents
+  level: number    // layer mix, 0..1
+  sampleId?: string // reserved for source === 'sample'
+}
+
 export interface PolyInstrumentParams {
   waveform: OscillatorType
   attack: number
@@ -283,6 +300,12 @@ export interface PolyInstrumentParams {
   sustain: number
   release: number
   detune: number
+  /**
+   * Multi-oscillator stack. Optional: when absent (older patches/projects) the
+   * engine falls back to a single oscillator from `waveform`/`detune`, so
+   * nothing that was saved before this existed changes how it sounds.
+   */
+  oscillators?: PolyOscLayer[]
   filterType: BiquadFilterType
   filterCutoff: number    // Hz 20–20000
   filterResonance: number // Q 0.1–20
@@ -291,6 +314,20 @@ export interface PolyInstrumentParams {
   lfoDepth: number        // 0–1
   lfoTarget: 'pitch' | 'filter' | 'amp'
   lfoWaveform: OscillatorType
+}
+
+export function defaultOscLayer(over: Partial<PolyOscLayer> = {}): PolyOscLayer {
+  return { source: 'wave', waveform: 'sawtooth', octave: 0, detune: 0, unison: 1, spread: 0, level: 1, ...over }
+}
+
+/**
+ * The oscillator layers a poly voice should actually play: the explicit list
+ * when set, otherwise a single legacy layer synthesised from waveform/detune —
+ * so patches saved before multi-oscillator existed keep playing unchanged.
+ */
+export function polyOscLayers(p: PolyInstrumentParams): PolyOscLayer[] {
+  if (p.oscillators && p.oscillators.length > 0) return p.oscillators
+  return [defaultOscLayer({ waveform: p.waveform, detune: p.detune })]
 }
 
 export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | PolyInstrumentParams | Fm4OpInstrumentParams | WavetableInstrumentParams | Record<string, never>
@@ -326,7 +363,10 @@ export const POLY_PRESETS: Record<string, PolyInstrumentParams> = {
   'Darkwave Lead':   { waveform: 'square',   attack: 0.01,  decay: 0.2,  sustain: 0.55, release: 0.4,  detune: 7,   filterType: 'lowpass', filterCutoff: 1500, filterResonance: 3,   lfoEnabled: true,  lfoRate: 5,    lfoDepth: 0.12, lfoTarget: 'pitch',  lfoWaveform: 'sine' },
   'Cold Pad':        { waveform: 'sawtooth', attack: 1.1,   decay: 0.6,  sustain: 0.7,  release: 0.9,  detune: -12, filterType: 'lowpass', filterCutoff: 1000, filterResonance: 2.2, lfoEnabled: true,  lfoRate: 0.22, lfoDepth: 0.25, lfoTarget: 'filter', lfoWaveform: 'sine' },
   'Sequencer Arp':   { waveform: 'square',   attack: 0.002, decay: 0.18, sustain: 0.0,  release: 0.16, detune: 12,  filterType: 'lowpass', filterCutoff: 2200, filterResonance: 3.2, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0,    lfoTarget: 'filter', lfoWaveform: 'sine' },
-  'Reese Bass':      { waveform: 'sawtooth', attack: 0.006, decay: 0.12, sustain: 0.75, release: 0.2,  detune: 9,   filterType: 'lowpass', filterCutoff: 620,  filterResonance: 6,   lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
+  // Two saws ~9¢ apart — the phase-cancellation growl needs the second
+  // oscillator, so this preset carries a 2-voice unison layer (a single
+  // detuned oscillator can't beat against anything).
+  'Reese Bass':      { waveform: 'sawtooth', attack: 0.006, decay: 0.12, sustain: 0.75, release: 0.2,  detune: 0,   oscillators: [defaultOscLayer({ waveform: 'sawtooth', unison: 2, spread: 9 })], filterType: 'lowpass', filterCutoff: 620,  filterResonance: 6,   lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
   '808 Sub':         { waveform: 'sine',     attack: 0.006, decay: 0.2,  sustain: 0.92, release: 0.4,  detune: 0,   filterType: 'lowpass', filterCutoff: 3000, filterResonance: 1,   lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
   'Aggro Lead':      { waveform: 'sawtooth', attack: 0.005, decay: 0.14, sustain: 0.6,  release: 0.28, detune: 10,  filterType: 'lowpass', filterCutoff: 2400, filterResonance: 4,   lfoEnabled: true,  lfoRate: 5.5,  lfoDepth: 0.12, lfoTarget: 'pitch',  lfoWaveform: 'sine' },
   'Industrial Bass': { waveform: 'sawtooth', attack: 0.004, decay: 0.1,  sustain: 0.75, release: 0.16, detune: 16,  filterType: 'lowpass', filterCutoff: 900,  filterResonance: 6.5, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0.3,  lfoTarget: 'filter', lfoWaveform: 'sine' },
