@@ -20,6 +20,8 @@ You probably described that as "the groove." Most people do. It feels like rhyth
 
 Something is, though. Automatically. Four times a bar, on schedule, for the entire song.
 
+@grid(%7B%22lanes%22%3A%5B%7B%22name%22%3A%22Kick%22%2C%22sound%22%3A%22kick%22%7D%2C%7B%22name%22%3A%22Snare%22%2C%22sound%22%3A%22snare%22%7D%2C%7B%22name%22%3A%22Hat%22%2C%22sound%22%3A%22hat%22%7D%2C%7B%22name%22%3A%22Clap%22%2C%22sound%22%3A%22clap%22%7D%5D%2C%22steps%22%3A16%2C%22bpm%22%3A120%2C%22pattern%22%3A%5B%5B0%2C4%2C8%2C12%5D%2C%5B%5D%2C%5B%5D%2C%5B%5D%5D%7D) The kick, four times a bar — the trigger everything else ducks away from.
+
 ## Now check the songs you thought were clean
 
 Before I name it, gather more evidence. This effect is not a dance music thing, whatever you've been told.
@@ -55,6 +57,8 @@ Start in the piano roll. Open your bass part and look at where the notes fall re
 That's a sidechain. A manual one, with infinite precision and no processor. Half the basslines you love were written this way before the plugin existed, by bass players who simply didn't play through the kick.
 
 @ear Loop one bar. Version A: bass note held straight through the kick. Version B: same note, cut to end a sixteenth before each kick and restart after. Listen for the kick's low end — in B it has room, and it thumps rather than thuds. Nothing was compressed. You just moved out of the way.
+
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fduck-off.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fduck-on.mp3%22%2C%22question%22%3A%22Same%20kick%2C%20same%20bass%20note.%20In%20which%20version%20can%20you%20hear%20the%20kick%20punch%20through%3F%22%2C%22explanation%22%3A%22Nothing%20was%20compressed%20%E2%80%94%20in%20the%20other%20version%20the%20bass%20simply%20moves%20out%20of%20the%20way%20under%20each%20kick%2C%20so%20the%20two%20low%20sounds%20take%20turns%20instead%20of%20fighting.%22%7D)
 
 Once you can hear it, the mixer version is easy to reach for. Put a compressor on the bass channel from the effect chain, set it hard and fast, and you get the automatic version of the same idea — the machine does the ducking that you were writing by hand, on every kick, forever.
 

@@ -10,6 +10,8 @@ draft: true
 
 Load a drum loop. Any drum loop — one of your own, or something from the sound library. Play it once at a volume where you can hear the room around it. Don't touch anything yet.
 
+@grid(%7B%22lanes%22%3A%5B%7B%22name%22%3A%22Kick%22%2C%22sound%22%3A%22kick%22%7D%2C%7B%22name%22%3A%22Snare%22%2C%22sound%22%3A%22snare%22%7D%2C%7B%22name%22%3A%22Hat%22%2C%22sound%22%3A%22hat%22%7D%2C%7B%22name%22%3A%22Clap%22%2C%22sound%22%3A%22clap%22%7D%5D%2C%22steps%22%3A16%2C%22bpm%22%3A120%2C%22pattern%22%3A%5B%5B0%2C4%2C8%2C12%5D%2C%5B4%2C12%5D%2C%5B0%2C2%2C4%2C6%2C8%2C10%2C12%2C14%5D%2C%5B%5D%5D%7D) A four-on-the-floor loop to run these tests on. Play it — then use the blind A/B players below and commit to an answer before you look.
+
 Now I'm going to change one thing, and you're going to tell me what changed. You have to say it out loud, or write it down, before you look. That rule is the whole article. A guess you keep in your head isn't a guess, it's a memory you'll edit after the fact, and you will absolutely edit it.
 
 Here's the part nobody says first: you will probably fail some of these. Not because you have bad ears. Because nobody has ever asked your ears to do this specific job before, and they've had no reason to get good at it. Hearing is the one part of your studio you cannot buy, and it's the only part that reliably improves.
@@ -19,6 +21,8 @@ Here's the part nobody says first: you will probably fail some of these. Not bec
 Take that drum loop. Put a compressor on the track. Set the threshold so the loudest hits are being caught — you'll see the meter move — and leave the ratio moderate. Now bypass it.
 
 @ear Play four bars with the compressor bypassed, then four bars with it engaged, without touching the output volume. Loop that A/B six times. Then say which one is compressed before you look at the button.
+
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-comp-off.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-comp-on.mp3%22%2C%22question%22%3A%22One%20of%20these%20has%20a%20compressor%20on%20it%2C%20output%20gain%20matched%20so%20both%20hit%20the%20same%20loudness.%20Which%20is%20compressed%3F%22%2C%22explanation%22%3A%22Compression%20lifts%20the%20quiet%20material%2C%20not%20the%20hits%20%E2%80%94%20listen%20for%20the%20snare%20tail%20and%20the%20hats%20ticking%20under%20the%20kick%2C%20not%20the%20peaks.%22%7D)
 
 Most people get this wrong the first time, and they get it wrong in a specific direction: they pick the *louder* one as the compressed one, which is backwards from what the compressor is doing to the peaks. If you got it right by picking "louder," you got it right for the wrong reason, and that reason will fail you the moment someone matches the levels.
 
@@ -34,6 +38,8 @@ Same loop. Put an EQ on it. Make one move around the low-mid region — the mudd
 
 @ear Listen to the EQ'd version alone, with no reference, for eight bars. Decide: was that a cut or a boost? Then check.
 
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-eq-flat.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-eq-cut.mp3%22%2C%22question%22%3A%22Something%20was%20done%20to%20the%20low-mids.%20Was%20it%20a%20cut%20or%20a%20boost%3F%22%2C%22explanation%22%3A%22Boosts%20announce%20themselves%20as%20a%20new%20thing%20arriving%3B%20cuts%20read%20as%20clarity%2C%20which%20is%20why%20cutting%20sounds%20like%20doing%20nothing%20and%20usually%20wins.%22%7D)
+
 Nearly everyone can hear that *something* happened. Far fewer can name the direction blind, and that's the skill that actually matters, because in a real mix you don't get an A/B — you get a track that sounds slightly wrong and forty minutes to figure out why.
 
 @theory Boosts and cuts are not mirror images to the ear, even at the same amount. A boost draws attention to itself; you hear the frequency arrive as a new thing in the mix. A cut mostly makes other things audible, so it registers as clarity rather than as a change — which is why engineers who cut sound like they're doing nothing and engineers who boost sound like they're doing a lot. Cutting is quieter work and it usually wins.
@@ -48,6 +54,8 @@ That one's easy. Everyone hears it. So let's make it fair.
 
 @ear Set two reverbs a little apart — say one at 0.8 seconds and one at 1.4 — and A/B them under a *full* loop, not a soloed snare. Kick, snare, hats, bass, all playing. Now tell me which is longer.
 
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-verb-08.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-verb-14.mp3%22%2C%22question%22%3A%22Both%20have%20snare%20reverb%20under%20a%20full%20loop.%20Which%20reverb%20is%20longer%3F%22%2C%22explanation%22%3A%22Reverb%20length%20lives%20in%20the%20gaps%3B%20under%20a%20busy%20loop%20a%20long%20tail%20gets%20buried%20under%20the%20next%20hit%2C%20which%20is%20why%20solo%20reverb%20judgments%20lie.%22%7D)
+
 This is where a lot of people discover that their reverb judgments have been made in solo, and solo is a lie. In a busy mix the tail gets buried under the next hit, so a reverb that sounded gorgeous alone contributes nothing but a haze you'll later describe as "the mix sounds cloudy."
 
 @theory Reverb length is heard almost entirely in the gaps. If the arrangement never leaves a gap, the reverb has nowhere to be audible, and all it does is smear the attack of whatever comes next. This is why sparse records can carry enormous reverbs and dense records usually can't — it isn't taste, it's arithmetic of silence.
@@ -57,6 +65,8 @@ This is where a lot of people discover that their reverb judgments have been mad
 Here's the one that humbles people. Take any single element — the hi-hats will do — and change its fader by exactly one decibel.
 
 @ear A/B the mix with the hats at their original level and one decibel higher. Four bars each. Six passes. Commit to an answer.
+
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-hats-0.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-hats-plus1.mp3%22%2C%22question%22%3A%22One%20version%20has%20the%20hi-hats%20exactly%201%20dB%20louder.%20Which%3F%22%2C%22explanation%22%3A%22Hearing%20nothing%20here%20is%20the%20honest%2C%20normal%20result.%20Three%20dB%20is%20where%20most%20people%20reliably%20cross%20over.%22%7D)
 
 You may hear nothing at all. That's the honest, normal result, and it's worth knowing about yourself, because it means every time you've nudged a fader by a decibel and thought "yes, better," you were hearing your own hand move.
 

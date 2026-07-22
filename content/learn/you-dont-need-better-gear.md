@@ -50,6 +50,8 @@ Not opinions. Order of magnitude.
 
 Most people find the new one sounds bigger. Not because anything got louder — because things stopped competing. If that just happened to you, you now have direct evidence that your problem was never the signal chain.
 
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fgear-competing.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fgear-rebalanced.mp3%22%2C%22question%22%3A%22Same%20sounds.%20One%20has%20elements%20fighting%20at%20the%20same%20level%3B%20the%20other%20was%20rebuilt%20into%20a%20clear%20hierarchy.%20Which%20sounds%20bigger%3F%22%2C%22explanation%22%3A%22Nothing%20got%20louder%20%E2%80%94%20things%20stopped%20competing.%20Direct%20evidence%20the%20problem%20was%20never%20the%20mic%20or%20the%20signal%20chain.%22%7D)
+
 ## What genuinely is worth money, eventually
 
 Eventually. After you've finished a handful of songs and you can hear specific things you can't fix. In this order.

@@ -20,6 +20,8 @@ Every one of these can be played into a piano roll in the free browser studio at
 
 Move to the fourth chord and fall back home. That's it — in C, an F to a C, with the top voice stepping down. It's the "a-men" at the end of every hymn you were made to sing, and it's why "Let It Be" can end without a proper cadence and still feel finished.
 
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22F%22%2C%22pitches%22%3A%5B53%2C57%2C60%2C65%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B48%2C55%2C60%2C64%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A0%7D) The amen turn — F to C, the top voice stepping down F to E. Change the key to move it.
+
 Use it when a section needs to conclude without drama. It settles instead of arriving.
 
 @theory This turn sounds like relief rather than resolution because the chord it comes from doesn't contain the restless note that normally pulls you home. Nothing is straining. It's the difference between a door closing and a door being pushed shut, and it's why it reads as devotional rather than triumphant.
@@ -37,6 +39,8 @@ Hold one bass note. Change the chords above it. Do not move the bass. Composers 
 The reason to steal this one: it lets you introduce chords that would sound unrelated over a moving bass. The drone glues them together.
 
 @ear Play a low A and hold it for eight bars. Over the top, play Am, then F, then G, then E — deliberately more motion than the section wants. Then play the same four chords with the bass following the roots. The second version is fine. The first version sounds like a film.
+
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fpedal-roots.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fpedal-drone.mp3%22%2C%22question%22%3A%22Same%20four%20chords%20%E2%80%94%20Am%2C%20F%2C%20G%2C%20E.%20One%20holds%20a%20low%20A%20drone%20underneath%3B%20one%20lets%20the%20bass%20follow%20the%20roots.%20Which%20sounds%20like%20a%20film%3F%22%2C%22explanation%22%3A%22The%20drone%20glues%20together%20chords%20that%20would%20sound%20unrelated%20over%20a%20moving%20bass%20%E2%80%94%20so%20you%20can%20use%20more%20harmonic%20motion%20than%20the%20section%20wants%20and%20still%20cohere.%22%7D)
 
 ## 4. The bossa comp
 
@@ -57,6 +61,8 @@ Stack notes a fourth apart instead of a third. Three of them, climbing. McCoy Ty
 Fourths are the cheapest way to make a chord sound like it belongs to no particular key. Use them when a progression is getting too obedient.
 
 @math A major third spans four semitones; a perfect fourth spans five. Stack three fourths from D and you land on D, G, C, F — every note of D minor eleven, with no third anywhere to tell you whether you're happy or sad. That missing third is the whole effect.
+
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22Dm11%20quartal%22%2C%22pitches%22%3A%5B50%2C55%2C60%2C65%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A2%7D) A quartal voicing — D, G, C, F stacked in fourths, no third at all.
 
 ## 7. The blues turnaround
 

@@ -16,6 +16,8 @@ I'm not going to tell you what makes a melody work. You're going to find out, an
 
 Draw a single note. Any pitch, roughly in the middle of the vertical range. Make it one beat long. Copy it four more times so you have five identical notes in a row, one per beat, filling a bar and a quarter.
 
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22%22%2C%22pitches%22%3A%5B60%5D%2C%22beat%22%3A0%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22%22%2C%22pitches%22%3A%5B60%5D%2C%22beat%22%3A1%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22%22%2C%22pitches%22%3A%5B60%5D%2C%22beat%22%3A2%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22%22%2C%22pitches%22%3A%5B60%5D%2C%22beat%22%3A3%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22%22%2C%22pitches%22%3A%5B60%5D%2C%22beat%22%3A4%2C%22dur%22%3A1%7D%5D%2C%22originalKey%22%3A0%7D) Five identical notes, one per beat. Play it — then in the studio drag one and hear what a single move does.
+
 @ear Play the five notes. Then play them again and stay with them long enough to get uncomfortable. Ask yourself one question: does this want to go up, or does it want to go down? Don't reason about it. Just notice which direction your body expects.
 
 Most people feel a pull. Some feel it upward, some down, and if you feel nothing at all, that's information too — the note is sitting there refusing to be a melody, and you're about to learn why.
@@ -49,6 +51,8 @@ Now copy that whole four-note group and paste it directly after itself, so it pl
 Now select only the second copy and drag the whole thing up two rows, keeping its internal shape identical. Play it again.
 
 That version is doing something the first wasn't. The pattern is recognizable, so your ear isn't lost, but it isn't identical, so your ear isn't bored. Almost every hook you can hum is built on this move — the "Seven Nation Army" riff is the same shape, moved.
+
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhook-identical.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhook-moved.mp3%22%2C%22question%22%3A%22A%20four-note%20phrase%20played%20twice.%20In%20one%20the%20repeat%20is%20identical%3B%20in%20the%20other%20it%20is%20shifted%20up%20two%20semitones.%20Which%20stops%20feeling%20dumb%20on%20the%20second%20pass%3F%22%2C%22explanation%22%3A%22Recognisable%20but%20not%20identical%20%E2%80%94%20the%20ear%20is%20not%20lost%20and%20not%20bored.%20This%20is%20the%20Seven%20Nation%20Army%20move%3A%20the%20same%20shape%2C%20moved.%22%7D)
 
 ## Experiment four: break one note
 
