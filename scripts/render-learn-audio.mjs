@@ -97,12 +97,17 @@ function renderMix(bars, opts = {}) {
     let busL = dry + sideL, busR = dry + sideR
 
     if (comp) {
+      // Moderate compression, unity makeup so the tanh never saturates into
+      // harshness. matchPair equalises RMS afterward; a small perceptual trim
+      // (see writePair) then offsets the density-loudness so the compressed
+      // clip is audible as *character* but never as *louder* — the point of
+      // the test being to hear compression when it isn't giving itself away.
       const level = Math.max(Math.abs(busL), Math.abs(busR))
-      compEnv += (level - compEnv) * (level > compEnv ? 0.3 : 0.002)
+      compEnv += (level - compEnv) * (level > compEnv ? 0.3 : 0.003)
       let gr = 1
-      const thresh = 0.18
-      if (compEnv > thresh) gr = Math.pow(thresh / compEnv, 0.6) // ~2.5:1
-      busL *= gr * 1.9; busR *= gr * 1.9
+      const thresh = 0.2
+      if (compEnv > thresh) gr = Math.pow(thresh / compEnv, 0.5) // ~2:1
+      busL *= gr * 1.3; busR *= gr * 1.3 // modest makeup lifts the quiet material
     }
 
     if (reverbDecay > 0) {
@@ -195,7 +200,10 @@ function renderLoopClick(clean) {
 }
 
 // Loudness-match a stereo pair: equal RMS, then a shared peak ceiling.
-function matchPair(a, b) {
+// trimBdb (optional) shaves the SECOND clip by N dB after matching — used only
+// for the compression pair, where a compressed signal reads a touch louder at
+// equal RMS (density), so a small trim keeps it from giving itself away.
+function matchPair(a, b, trimBdb = 0) {
   const rms = ({ L, R }) => { let s = 0; for (let i = 0; i < L.length; i++) s += L[i] * L[i] + R[i] * R[i]; return Math.sqrt(s / (L.length * 2)) }
   const ra = rms(a), rb = rms(b), target = Math.min(ra, rb)
   const scale = (x, r) => { const g = target / (r || 1); for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g } }
@@ -204,13 +212,14 @@ function matchPair(a, b) {
   for (const x of [a, b]) for (let i = 0; i < x.L.length; i++) peak = Math.max(peak, Math.abs(x.L[i]), Math.abs(x.R[i]))
   const g = 0.89 / (peak || 1)
   for (const x of [a, b]) for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g }
+  if (trimBdb) { const t = Math.pow(10, -trimBdb / 20); for (let i = 0; i < b.L.length; i++) { b.L[i] *= t; b.R[i] *= t } }
 }
 
-function writePair(n1, n2, a, b) { matchPair(a, b); writeMp3Stereo(`${OUT}/${n1}.mp3`, a.L, a.R); writeMp3Stereo(`${OUT}/${n2}.mp3`, b.L, b.R); console.log(`${n1} / ${n2}`) }
+function writePair(n1, n2, a, b, trimBdb = 0) { matchPair(a, b, trimBdb); writeMp3Stereo(`${OUT}/${n1}.mp3`, a.L, a.R); writeMp3Stereo(`${OUT}/${n2}.mp3`, b.L, b.R); console.log(`${n1} / ${n2}`) }
 function writeOne(name, x) { writeMp3Stereo(`${OUT}/${name}.mp3`, x.L, x.R); console.log(name) }
 
 // ── Render everything ──────────────────────────────────────────────────────
-writePair('hear-comp-off', 'hear-comp-on', renderMix(4, {}), renderMix(4, { comp: true }))
+writePair('hear-comp-off', 'hear-comp-on', renderMix(4, {}), renderMix(4, { comp: true }), 1.5)
 writePair('hear-eq-flat', 'hear-eq-cut', renderMix(4, { pad: true }), renderMix(4, { pad: true, eqCut: true }))
 writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbDecay: 0.8 }), renderMix(4, { reverbDecay: 1.4 }))
 writePair('hear-hats-0', 'hear-hats-plus1', renderMix(4, { pad: true }), renderMix(4, { pad: true, hatGainDb: 1 }))
