@@ -11,6 +11,7 @@ import { Settings2 } from 'lucide-react'
 import type { MidiClip, RollFx } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { fxHasAudibleField } from '@/lib/roll-fx'
+import { copySound, getCopiedSound, countSetFields, SOUND_CLIPBOARD_EVENT } from '@/lib/fx-clipboard'
 import FxControls, { cleanFx } from './FxControls'
 import { clampToViewport } from './menu-clamp'
 
@@ -81,17 +82,6 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
 
-  const rfx = clip.rollFx
-  const [sustain, setSustain] = useState(rfx?.sustain ?? 0)
-
-  // Different clip opened → mirror its stored settings
-  useEffect(() => {
-    const t = setTimeout(() => {  // async boundary — no sync setState in the effect
-      setSustain(clip.rollFx?.sustain ?? 0)
-    }, 0)
-    return () => clearTimeout(t)
-  }, [clip.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
   useLayoutEffect(() => {
     clampToViewport(panelRef.current, anchor)
     // focus the panel so Escape works regardless of what else listens on document
@@ -115,23 +105,34 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
     }
   }, [onClose, ignoreOutside])
 
-  // Commit a new FX bag (from FxControls) while preserving the separate sustain.
   function commitFx(fxBag: RollFx | undefined) {
-    const next: RollFx = { ...(fxBag ?? {}) }
-    if (sustain > 0) next.sustain = Math.round(sustain * 100) / 100
-    else delete next.sustain
-    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rollFx: Object.keys(next).length ? next : undefined } })
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rollFx: fxBag } })
   }
-  function commitSustain(s: number) {
-    const next: RollFx = { ...(clip.rollFx ?? {}) }
-    if (s > 0) next.sustain = Math.round(s * 100) / 100
-    else delete next.sustain
-    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rollFx: Object.keys(next).length ? next : undefined } })
+
+  // Sound clipboard — copy this clip's settings, paste onto another clip.
+  const [copied, setCopied] = useState<RollFx | null>(null)
+  const [flash, setFlash] = useState(false)
+  useEffect(() => {
+    const sync = () => setCopied(getCopiedSound())
+    sync()
+    window.addEventListener(SOUND_CLIPBOARD_EVENT, sync)
+    return () => window.removeEventListener(SOUND_CLIPBOARD_EVENT, sync)
+  }, [])
+  const hereCount = countSetFields(clip.rollFx)
+  const clipCount = countSetFields(copied)
+  function doCopy() {
+    copySound(clip.rollFx)
+    setFlash(true); setTimeout(() => setFlash(false), 1100)
   }
 
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px' }
   const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 70, flexShrink: 0 }
-  const value: React.CSSProperties = { fontSize: 9.5, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
+  const clipBtn = (enabled: boolean): React.CSSProperties => ({
+    fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 4, flexShrink: 0,
+    border: '1px solid var(--border-light)', background: 'var(--bg-card)',
+    color: enabled ? 'var(--text-secondary)' : 'var(--text-muted)',
+    cursor: enabled ? 'pointer' : 'default', opacity: enabled ? 1 : 0.5,
+  })
 
   if (typeof document === 'undefined') return null
   return createPortal(
@@ -161,19 +162,24 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
         )}
       </div>
 
-      {/* Sustain — kept as its own control (not graphable, applies to the envelope) */}
-      <div style={row}>
-        <span style={label}>Sustain</span>
-        <input type="range" min={0} max={4} step={0.05} value={sustain} style={{ flex: 1, accentColor: CYAN, minWidth: 0 }}
-          onChange={e => setSustain(Number(e.target.value))}
-          onPointerUp={() => commitSustain(sustain)} onKeyUp={() => commitSustain(sustain)} />
-        <span style={value}>{sustain > 0 ? `${sustain.toFixed(2)}s` : 'Off'}</span>
-      </div>
-      <div style={{ padding: '0 12px 4px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-        Ring past each note’s end, like a pedal.
+      {/* Copy / paste the sound settings between clips */}
+      <div style={{ ...row, paddingTop: 2, paddingBottom: 6 }}>
+        <span style={label}>Settings</span>
+        <button
+          onClick={doCopy} disabled={hereCount === 0}
+          title={hereCount ? 'Copy this clip’s sound settings' : 'No settings to copy yet'}
+          style={clipBtn(hereCount > 0)}
+        >{flash ? 'Copied ✓' : `⧉ Copy${hereCount ? ` (${hereCount})` : ''}`}</button>
+        <button
+          onClick={() => commitFx(copied ?? undefined)} disabled={!copied}
+          title={copied ? `Paste ${clipCount} copied setting${clipCount === 1 ? '' : 's'} onto this clip` : 'Nothing copied yet'}
+          style={clipBtn(!!copied)}
+        >Paste{copied ? ` (${clipCount})` : ''}</button>
+        <span style={{ flex: 1 }} />
       </div>
 
-      {/* Everything else, shared with the preset & per-note editors */}
+      {/* Top-5 essentials + collapsible categories, shared with the preset &
+          per-note editors */}
       <FxControls value={clip.rollFx} onCommit={commitFx} />
 
       <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>

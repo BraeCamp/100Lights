@@ -577,29 +577,57 @@ export interface AudioClip {
 // Every field is optional; an absent field means "inherit". The engine builds a
 // per-note chain from the resolved bag (see lib/roll-fx.ts + daw-engine).
 export interface RollFx {
-  sustain?: number       // seconds — release ramp past each note's end (a pedal)
+  // Envelope (amplitude, per note)
+  attack?: number        // seconds 0–2 — fade in
+  decay?: number         // seconds 0–2 — fall to sustain level after attack
+  sustainLevel?: number  // 0–1 — level held after decay (1 = no dip)
+  sustain?: number       // seconds 0–4 — release ramp past each note's end (a pedal)
+  // Level & stereo
   gain?: number          // 0–2 output level (1 = unity)
   pan?: number           // -1..1
-  filterHz?: number      // lowpass cutoff Hz; undefined or ≥17500 = off
-  filterQ?: number       // lowpass resonance 0.1–18
+  width?: number         // 0–2 stereo width (1 = normal)
+  tremoloDepth?: number  // 0–1 amplitude LFO
+  tremoloRate?: number   // Hz 0.1–12
+  autopanDepth?: number  // 0–1 pan LFO
+  autopanRate?: number   // Hz 0.1–8
+  // Filter
   highpassHz?: number    // highpass cutoff Hz; undefined or ≤20 = off
+  filterHz?: number      // lowpass cutoff Hz; undefined or ≥17500 = off
+  filterQ?: number       // lowpass resonance 0.1–12
+  filterEnv?: number     // -1..1 — cutoff sweep over the attack (+ opens, − closes)
+  filterLfoDepth?: number// 0–1 auto-wah depth
+  filterLfoRate?: number // Hz 0.1–12
+  // Drive & crush
   drive?: number         // 0–1 soft saturation
   distortion?: number    // 0–1 hard waveshape
+  bitcrush?: number      // 0–1 bit-depth reduction
+  // Pitch (applied to the source; sample-preset clips only)
+  detune?: number        // cents -100..100
+  vibratoDepth?: number  // 0–1 (→ ±cents)
+  vibratoRate?: number   // Hz 0.1–12
+  pitchEnv?: number      // semitones -24..24 — start offset that glides to target
+  pitchEnvTime?: number  // seconds 0.01–1 — glide time
+  // Space
   reverbWet?: number     // 0–1
+  reverbSize?: number    // 0–1 decay length
+  reverbPredelay?: number// seconds 0–0.2
   delayWet?: number      // 0–1
   delayTime?: number     // seconds 0.02–1
   delayFeedback?: number // 0–0.9
+  delayPingpong?: number // 0–1 stereo spread
   chorusDepth?: number   // 0–1
-  tremoloRate?: number   // Hz 0.1–12
-  tremoloDepth?: number  // 0–1
-  sub?: number; bass?: number; mid?: number; treble?: number  // 4-band tone EQ, dB
+  flanger?: number       // 0–1
+  phaser?: number        // 0–1
+  // Tone EQ (4-band, dB)
+  sub?: number; bass?: number; mid?: number; treble?: number
 }
 
-// Parameters a pitch graph can drive. Excludes sustain/time-base params.
+// Parameters a pitch graph can drive (excludes rates/times & the pure release).
 export type PitchGraphTarget =
-  | 'gain' | 'pan' | 'filterHz' | 'filterQ' | 'highpassHz'
-  | 'drive' | 'distortion' | 'reverbWet' | 'delayWet' | 'chorusDepth' | 'tremoloDepth'
-  | 'sub' | 'bass' | 'mid' | 'treble'
+  | 'gain' | 'pan' | 'width' | 'filterHz' | 'filterQ' | 'highpassHz' | 'filterEnv'
+  | 'drive' | 'distortion' | 'bitcrush' | 'reverbWet' | 'delayWet' | 'delayPingpong'
+  | 'chorusDepth' | 'flanger' | 'phaser' | 'tremoloDepth' | 'autopanDepth'
+  | 'detune' | 'vibratoDepth' | 'sub' | 'bass' | 'mid' | 'treble'
 
 export interface PitchGraphPoint { pitch: number; amount: number } // pitch 0–127, amount 0–1
 

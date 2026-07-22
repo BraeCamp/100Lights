@@ -2,7 +2,7 @@
 
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
-import { resolveNoteFx, fxHasAudibleField } from './roll-fx'
+import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod } from './roll-fx'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -1065,7 +1065,7 @@ export class DawEngine extends EventTarget {
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
         if (this._rollFxActive(rfx)) {
-          const chain = this._buildRollFxChain(rfx, noteDest)
+          const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur)
           noteDest = chain.input
           const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
           setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
@@ -1085,6 +1085,7 @@ export class DawEngine extends EventTarget {
             velGain.gain.linearRampToValueAtTime(target, noteStartAt + 0.003)
             const src = this.ctx.createBufferSource(); src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
+            const vibLfo = fxHasPitchMod(rfx) ? this._applyNotePitchMods(src, rfx, noteStartAt, noteStartAt + noteDur + sustainSec + 0.2) : null
             src.connect(velGain); velGain.connect(noteDest)
             this._registerMidiVoice(src, velGain)
             src.start(noteStartAt)
@@ -1102,7 +1103,7 @@ export class DawEngine extends EventTarget {
               velGain.gain.linearRampToValueAtTime(0.0001, noteStartAt + noteDur)
               src.stop(noteStartAt + noteDur + 0.01)
             }
-            src.onended = () => { src.disconnect(); velGain.disconnect() }
+            src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
           }
         } else {
           playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
@@ -1358,7 +1359,7 @@ export class DawEngine extends EventTarget {
 
         // Resolved clip/preset/note sound wraps this note only
         if (this._rollFxActive(rfx)) {
-          const chain = this._buildRollFxChain(rfx, noteDest)
+          const chain = this._buildRollFxChain(rfx, noteDest, startAt, remaining)
           noteDest = chain.input
           const ttlMs = (startAt - contextNow + remaining + sustainSec + chain.tailSec + 1.5) * 1000
           setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
@@ -1393,6 +1394,7 @@ export class DawEngine extends EventTarget {
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
+            const vibLfo = fxHasPitchMod(rfx) ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2) : null
             src.connect(velGain)
             velGain.connect(noteDest)
             this._registerMidiVoice(src, velGain)
@@ -1416,7 +1418,7 @@ export class DawEngine extends EventTarget {
                 src.stop(startAt + remaining + 0.01)
               }
             }
-            src.onended = () => { src.disconnect(); velGain.disconnect() }
+            src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
           }
         } else {
           playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, remaining + sustainSec)
@@ -1864,21 +1866,24 @@ export class DawEngine extends EventTarget {
   // Per-note chains, torn down after each note — persistent chains would pin
   // the swapped-on-stop midiInput bus (the stale-bus class).
 
-  private _reverbIR: AudioBuffer | null = null
+  private _reverbIRs = new Map<number, AudioBuffer>()
   private _distCurves = new Map<number, Float32Array>()
 
-  private _getReverbIR(): AudioBuffer {
-    if (!this._reverbIR) {
+  /** Impulse response cached by decay length (seconds) so reverb "size" works. */
+  private _getReverbIR(decaySec = 2.2): AudioBuffer {
+    const key = Math.round(decaySec * 10) / 10
+    let ir = this._reverbIRs.get(key)
+    if (!ir) {
       const sr = this.ctx.sampleRate
-      const len = Math.floor(sr * 2.2)
-      const ir = this.ctx.createBuffer(2, len, sr)
+      const len = Math.max(1, Math.floor(sr * key))
+      ir = this.ctx.createBuffer(2, len, sr)
       for (let ch = 0; ch < 2; ch++) {
         const d = ir.getChannelData(ch)
         for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6)
       }
-      this._reverbIR = ir
+      this._reverbIRs.set(key, ir)
     }
-    return this._reverbIR
+    return ir
   }
 
   private _getDistCurve(drive: number): Float32Array {
@@ -1904,6 +1909,27 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope
+   *  glide, and vibrato. Returns the vibrato LFO (to disconnect) or null. */
+  private _applyNotePitchMods(src: AudioBufferSourceNode, rfx: RollFx, startAt: number, stopAt: number): OscillatorNode | null {
+    const base = rfx.detune ?? 0
+    if (base !== 0) src.detune.value = base
+    if ((rfx.pitchEnv ?? 0) !== 0) {
+      const t = rfx.pitchEnvTime ?? 0.08
+      src.detune.setValueAtTime(base + rfx.pitchEnv! * 100, startAt)
+      src.detune.linearRampToValueAtTime(base, startAt + t)
+    }
+    if ((rfx.vibratoDepth ?? 0) > 0) {
+      const lfo = this.ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.vibratoRate ?? 5
+      const lg = this.ctx.createGain(); lg.gain.value = rfx.vibratoDepth! * 100  // ±cents
+      lfo.connect(lg); lg.connect(src.detune)
+      lfo.start(startAt)
+      try { lfo.stop(Math.max(startAt + 0.05, stopAt)) } catch { /* ok */ }
+      return lfo
+    }
+    return null
+  }
+
   /** The effective per-note sound: preset sound → clip rollFx → note override,
    *  with the preset's pitch graphs modulating by the note's pitch. */
   private _resolveNoteFx(clip: MidiClip, note: MidiNote): RollFx {
@@ -1923,103 +1949,210 @@ export class DawEngine extends EventTarget {
     return fxHasAudibleField(rfx)
   }
 
-  /** Per-note chain from a resolved RollFx bag:
-   *  input → highpass → lowpass(Q) → drive → distortion → tone EQ → chorus →
-   *  tremolo → gain → pan → (reverb + delay mix) → dest. Returns entry node. */
-  private _buildRollFxChain(rfx: RollFx, dest: AudioNode): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
+  /** Per-note chain from a resolved RollFx bag. `startAt`/`dur` enable the
+   *  time-scheduled parts (amplitude envelope, filter envelope). */
+  private _buildRollFxChain(rfx: RollFx, dest: AudioNode, startAt?: number, dur?: number): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
+    const ctx = this.ctx
     const nodes: AudioNode[] = []
-    const input = this.ctx.createGain()
+    const input = ctx.createGain()
     nodes.push(input)
     let last: AudioNode = input
     let tail = 0
+    const gain = (v: number) => { const g = ctx.createGain(); g.gain.value = v; nodes.push(g); return g }
+
+    // Amplitude envelope (attack / decay / sustain level). Release stays on the
+    // source's own gain (handled in the note scheduler).
+    const atk = rfx.attack ?? 0, dec = rfx.decay ?? 0, susL = rfx.sustainLevel ?? 1
+    if (startAt !== undefined && (atk > 0 || dec > 0 || susL < 1)) {
+      const eg = gain(1)
+      eg.gain.setValueAtTime(atk > 0 ? 0.0001 : 1, startAt)
+      const t1 = startAt + Math.max(0.001, atk)
+      eg.gain.linearRampToValueAtTime(1, t1)
+      if (dec > 0) eg.gain.linearRampToValueAtTime(susL, t1 + dec)
+      else if (susL < 1) eg.gain.setValueAtTime(susL, t1)
+      last.connect(eg); last = eg
+    }
 
     if (rfx.highpassHz !== undefined && rfx.highpassHz > 22) {
-      const f = this.ctx.createBiquadFilter()
+      const f = ctx.createBiquadFilter()
       f.type = 'highpass'; f.frequency.value = rfx.highpassHz; f.Q.value = 0.7
       last.connect(f); last = f; nodes.push(f)
     }
-    if (rfx.filterHz !== undefined && rfx.filterHz < 17500) {
-      const f = this.ctx.createBiquadFilter()
-      f.type = 'lowpass'; f.frequency.value = rfx.filterHz
-      f.Q.value = rfx.filterQ ?? 0.8
+    // Low-pass, with optional envelope sweep and auto-wah LFO.
+    const wantLp = (rfx.filterHz !== undefined && rfx.filterHz < 17500) || (rfx.filterEnv ?? 0) !== 0 || (rfx.filterLfoDepth ?? 0) > 0
+    if (wantLp) {
+      const base = (rfx.filterHz !== undefined && rfx.filterHz < 17500) ? rfx.filterHz : 2000
+      const f = ctx.createBiquadFilter()
+      f.type = 'lowpass'; f.frequency.value = base; f.Q.value = rfx.filterQ ?? 0.8
       last.connect(f); last = f; nodes.push(f)
+      if ((rfx.filterEnv ?? 0) !== 0 && startAt !== undefined) {
+        const startFreq = Math.max(30, Math.min(20000, base * Math.pow(2, -3 * rfx.filterEnv!)))
+        const envTime = atk > 0 ? atk : 0.2
+        f.frequency.setValueAtTime(startFreq, startAt)
+        f.frequency.exponentialRampToValueAtTime(Math.max(30, base), startAt + envTime)
+      }
+      if ((rfx.filterLfoDepth ?? 0) > 0) {
+        const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.filterLfoRate ?? 5
+        const lg = gain(rfx.filterLfoDepth! * base * 0.6)
+        lfo.connect(lg); lg.connect(f.frequency); lfo.start()
+        nodes.push(lfo as unknown as AudioNode)
+      }
     }
     // Drive — gentle soft-clip, distinct from the harder distortion below.
     if ((rfx.drive ?? 0) > 0) {
-      const ws = this.ctx.createWaveShaper()
+      const ws = ctx.createWaveShaper()
       ws.curve = this._getDistCurve(0.15 + rfx.drive! * 0.55) as Float32Array<ArrayBuffer>
       ws.oversample = '2x'
-      const pg = this.ctx.createGain(); pg.gain.value = 1 - rfx.drive! * 0.25
-      last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws, pg)
+      const pg = gain(1 - rfx.drive! * 0.25)
+      last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws)
     }
     if ((rfx.distortion ?? 0) > 0) {
-      const ws = this.ctx.createWaveShaper()
+      const ws = ctx.createWaveShaper()
       ws.curve = this._getDistCurve(rfx.distortion!) as Float32Array<ArrayBuffer>
       ws.oversample = '2x'
-      const pg = this.ctx.createGain()
-      pg.gain.value = 1 - rfx.distortion! * 0.4  // tame the level lift saturation adds
-      last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws, pg)
+      const pg = gain(1 - rfx.distortion! * 0.4)  // tame the level lift saturation adds
+      last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws)
+    }
+    // Bitcrush — quantise sample amplitude to fewer levels.
+    if ((rfx.bitcrush ?? 0) > 0) {
+      const bits = Math.max(1.5, 16 - rfx.bitcrush! * 14.5)
+      const levels = Math.pow(2, bits)
+      const curve = new Float32Array(1024)
+      for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; curve[i] = Math.round(x * levels) / levels }
+      const ws = ctx.createWaveShaper(); ws.curve = curve as Float32Array<ArrayBuffer>
+      last.connect(ws); last = ws; nodes.push(ws)
     }
     // 4-band tone EQ
     if ((rfx.sub ?? 0) !== 0 || (rfx.bass ?? 0) !== 0 || (rfx.mid ?? 0) !== 0 || (rfx.treble ?? 0) !== 0) {
-      const sub = this.ctx.createBiquadFilter(); sub.type = 'lowshelf';  sub.frequency.value = 70;   sub.gain.value = rfx.sub ?? 0
-      const bs  = this.ctx.createBiquadFilter(); bs.type = 'lowshelf';   bs.frequency.value = 200;   bs.gain.value = rfx.bass ?? 0
-      const md  = this.ctx.createBiquadFilter(); md.type = 'peaking';    md.frequency.value = 1000; md.Q.value = 1; md.gain.value = rfx.mid ?? 0
-      const tr  = this.ctx.createBiquadFilter(); tr.type = 'highshelf';  tr.frequency.value = 8000;  tr.gain.value = rfx.treble ?? 0
+      const sub = ctx.createBiquadFilter(); sub.type = 'lowshelf';  sub.frequency.value = 70;   sub.gain.value = rfx.sub ?? 0
+      const bs  = ctx.createBiquadFilter(); bs.type = 'lowshelf';   bs.frequency.value = 200;   bs.gain.value = rfx.bass ?? 0
+      const md  = ctx.createBiquadFilter(); md.type = 'peaking';    md.frequency.value = 1000; md.Q.value = 1; md.gain.value = rfx.mid ?? 0
+      const tr  = ctx.createBiquadFilter(); tr.type = 'highshelf';  tr.frequency.value = 8000;  tr.gain.value = rfx.treble ?? 0
       last.connect(sub); sub.connect(bs); bs.connect(md); md.connect(tr); last = tr
       nodes.push(sub, bs, md, tr)
     }
     // Chorus — a short modulated delay blended back in.
     if ((rfx.chorusDepth ?? 0) > 0) {
       const d = rfx.chorusDepth!
-      const dry = this.ctx.createGain(); dry.gain.value = 1
-      const wet = this.ctx.createGain(); wet.gain.value = 0.5 * d
-      const dl = this.ctx.createDelay(0.05); dl.delayTime.value = 0.02
-      const lfo = this.ctx.createOscillator(); lfo.frequency.value = 0.8
-      const lfoGain = this.ctx.createGain(); lfoGain.gain.value = 0.006
-      lfo.connect(lfoGain); lfoGain.connect(dl.delayTime); lfo.start()
-      const sum = this.ctx.createGain()
+      const dry = gain(1), wet = gain(0.5 * d), sum = gain(1)
+      const dl = ctx.createDelay(0.05); dl.delayTime.value = 0.02
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.8
+      const lg = gain(0.006)
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start()
       last.connect(dry); dry.connect(sum)
       last.connect(dl); dl.connect(wet); wet.connect(sum)
-      last = sum; nodes.push(dry, wet, dl, lfoGain, sum, lfo as unknown as AudioNode)
+      last = sum; nodes.push(dl, lfo as unknown as AudioNode)
+    }
+    // Flanger — chorus with feedback and a shorter, deeper sweep.
+    if ((rfx.flanger ?? 0) > 0) {
+      const a = rfx.flanger!
+      const dry = gain(1), wet = gain(a), sum = gain(1)
+      const dl = ctx.createDelay(0.02); dl.delayTime.value = 0.003
+      const fb = gain(0.6 * a)
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.3
+      const lg = gain(0.002 * a)
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start()
+      last.connect(dry); dry.connect(sum)
+      last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(sum)
+      last = sum; nodes.push(dl, fb, lfo as unknown as AudioNode)
+    }
+    // Phaser — cascaded all-pass filters swept by an LFO.
+    if ((rfx.phaser ?? 0) > 0) {
+      const a = rfx.phaser!
+      const dry = gain(1), wet = gain(a), sum = gain(1)
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.4
+      const lg = gain(700 * a)
+      let apLast: AudioNode = last
+      for (let i = 0; i < 4; i++) {
+        const ap = ctx.createBiquadFilter(); ap.type = 'allpass'; ap.frequency.value = 400 + i * 350; ap.Q.value = 0.6
+        lg.connect(ap.frequency)
+        apLast.connect(ap); apLast = ap; nodes.push(ap)
+      }
+      lfo.connect(lg); lfo.start()
+      last.connect(dry); dry.connect(sum)
+      apLast.connect(wet); wet.connect(sum)
+      last = sum; nodes.push(lfo as unknown as AudioNode)
     }
     // Tremolo — amplitude LFO.
     if ((rfx.tremoloDepth ?? 0) > 0) {
       const depth = rfx.tremoloDepth!
-      const amp = this.ctx.createGain(); amp.gain.value = 1 - depth * 0.5
-      const lfo = this.ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.tremoloRate ?? 5
-      const lg = this.ctx.createGain(); lg.gain.value = depth * 0.5
+      const amp = gain(1 - depth * 0.5)
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.tremoloRate ?? 5
+      const lg = gain(depth * 0.5)
       lfo.connect(lg); lg.connect(amp.gain); lfo.start()
-      last.connect(amp); last = amp; nodes.push(amp, lg, lfo as unknown as AudioNode)
+      last.connect(amp); last = amp; nodes.push(lfo as unknown as AudioNode)
+    }
+    // Auto-pan — pan position LFO.
+    if ((rfx.autopanDepth ?? 0) > 0) {
+      const p = ctx.createStereoPanner()
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.autopanRate ?? 2
+      const lg = gain(Math.min(1, rfx.autopanDepth!))
+      lfo.connect(lg); lg.connect(p.pan); lfo.start()
+      last.connect(p); last = p; nodes.push(p, lfo as unknown as AudioNode)
+    }
+    // Stereo width (mid/side)
+    if (rfx.width !== undefined && Math.abs(rfx.width - 1) > 1e-4) {
+      const w = Math.max(0, Math.min(2, rfx.width))
+      const split = ctx.createChannelSplitter(2)
+      const merge = ctx.createChannelMerger(2)
+      const mid = gain(0.5)
+      const sideL = gain(0.5 * w), sideR = gain(-0.5 * w), side = gain(1)
+      const outL = gain(1), outR = gain(1), negSide = gain(-1)
+      last.connect(split)
+      split.connect(mid, 0); split.connect(mid, 1)
+      split.connect(sideL, 0); split.connect(sideR, 1)
+      sideL.connect(side); sideR.connect(side)
+      mid.connect(outL); side.connect(outL)
+      side.connect(negSide); mid.connect(outR); negSide.connect(outR)
+      outL.connect(merge, 0, 0); outR.connect(merge, 0, 1)
+      last = merge; nodes.push(split, merge)
     }
     if (rfx.gain !== undefined && Math.abs(rfx.gain - 1) > 1e-4) {
-      const g = this.ctx.createGain(); g.gain.value = Math.max(0, rfx.gain)
-      last.connect(g); last = g; nodes.push(g)
+      const g = gain(Math.max(0, rfx.gain)); last.connect(g); last = g
     }
     if (rfx.pan !== undefined && Math.abs(rfx.pan) > 0.02) {
-      const p = this.ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, rfx.pan))
+      const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, rfx.pan))
       last.connect(p); last = p; nodes.push(p)
     }
     // Wet sends (reverb + delay) sum in parallel at the end.
     const wantReverb = (rfx.reverbWet ?? 0) > 0
     const wantDelay  = (rfx.delayWet ?? 0) > 0
     if (wantReverb || wantDelay) {
-      const sum = this.ctx.createGain()
-      const dry = this.ctx.createGain()
-      dry.gain.value = 1 - (rfx.reverbWet ?? 0) * 0.5
-      last.connect(dry); dry.connect(sum); nodes.push(dry, sum)
+      const sum = gain(1)
+      const dry = gain(1 - (rfx.reverbWet ?? 0) * 0.5)
+      last.connect(dry); dry.connect(sum)
       if (wantReverb) {
-        const conv = this.ctx.createConvolver(); conv.buffer = this._getReverbIR()
-        const wet = this.ctx.createGain(); wet.gain.value = rfx.reverbWet!
-        last.connect(conv); conv.connect(wet); wet.connect(sum)
-        nodes.push(conv, wet); tail = Math.max(tail, 2.4)
+        const decay = 0.6 + (rfx.reverbSize ?? 0.4) * 3.4
+        const pre = ctx.createDelay(0.3); pre.delayTime.value = Math.min(0.2, rfx.reverbPredelay ?? 0)
+        const conv = ctx.createConvolver(); conv.buffer = this._getReverbIR(decay)
+        const wet = gain(rfx.reverbWet!)
+        last.connect(pre); pre.connect(conv); conv.connect(wet); wet.connect(sum)
+        nodes.push(pre, conv); tail = Math.max(tail, decay + 0.4)
       }
       if (wantDelay) {
-        const dl = this.ctx.createDelay(1.2); dl.delayTime.value = rfx.delayTime ?? 0.25
-        const fb = this.ctx.createGain(); fb.gain.value = Math.min(0.9, rfx.delayFeedback ?? 0.3)
-        const wet = this.ctx.createGain(); wet.gain.value = rfx.delayWet!
-        last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(sum)
-        nodes.push(dl, fb, wet); tail = Math.max(tail, (rfx.delayTime ?? 0.25) * 6 + 1)
+        const t = rfx.delayTime ?? 0.25
+        const fbAmt = Math.min(0.9, rfx.delayFeedback ?? 0.3)
+        const wetAmt = rfx.delayWet!
+        const pp = rfx.delayPingpong ?? 0
+        if (pp > 0.02) {
+          const dL = ctx.createDelay(1.5); dL.delayTime.value = t
+          const dR = ctx.createDelay(1.5); dR.delayTime.value = t
+          const fbL = gain(fbAmt), fbR = gain(fbAmt)
+          const panL = ctx.createStereoPanner(); panL.pan.value = -pp
+          const panR = ctx.createStereoPanner(); panR.pan.value = pp
+          const wet = gain(wetAmt)
+          last.connect(dL)
+          dL.connect(fbL); fbL.connect(dR); dR.connect(fbR); fbR.connect(dL)  // cross-feedback
+          dL.connect(panL); dR.connect(panR); panL.connect(wet); panR.connect(wet); wet.connect(sum)
+          nodes.push(dL, dR, panL, panR)
+        } else {
+          const dl = ctx.createDelay(1.2); dl.delayTime.value = t
+          const fb = gain(fbAmt)
+          const wet = gain(wetAmt)
+          last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(sum)
+          nodes.push(dl)
+        }
+        tail = Math.max(tail, t * 8 + 1)
       }
       last = sum
     }

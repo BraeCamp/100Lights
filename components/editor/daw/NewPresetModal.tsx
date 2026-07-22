@@ -20,7 +20,6 @@ export default function NewPresetModal(props: {
   sfText: string | null
   onSoundfontFile: (e: React.ChangeEvent<HTMLInputElement>) => void
   sound: RollFx | undefined; setSound: (fx: RollFx | undefined) => void
-  sustain: number; setSustain: (n: number) => void
   graphs: PitchGraph[]; setGraphs: (g: PitchGraph[]) => void
   share: boolean; setShare: (b: boolean) => void
   desc: string; setDesc: (s: string) => void
@@ -29,21 +28,8 @@ export default function NewPresetModal(props: {
   onCancel: () => void
 }) {
   const { name, setName, folder, setFolder, lo, setLo, hi, setHi, sfText, onSoundfontFile,
-    sound, setSound, sustain, setSustain, graphs, setGraphs, share, setShare, desc, setDesc,
+    sound, setSound, graphs, setGraphs, share, setShare, desc, setDesc,
     loading, onCreate, onCancel } = props
-
-  // Sustain lives inside the RollFx bag but is edited with its own slider.
-  function commitFx(fx: RollFx | undefined) {
-    const next: RollFx = { ...(fx ?? {}) }
-    if (sustain > 0) next.sustain = Math.round(sustain * 100) / 100
-    setSound(Object.keys(next).length ? next : undefined)
-  }
-  function onSustain(s: number) {
-    setSustain(s)
-    const next: RollFx = { ...(sound ?? {}) }
-    if (s > 0) next.sustain = Math.round(s * 100) / 100; else delete next.sustain
-    setSound(Object.keys(next).length ? next : undefined)
-  }
 
   const inp: React.CSSProperties = { width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-primary)', fontSize: 12, padding: '6px 8px', boxSizing: 'border-box' }
   const sectionLabel: React.CSSProperties = { fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-muted)', margin: '2px 0 6px' }
@@ -90,14 +76,8 @@ export default function NewPresetModal(props: {
           {/* Sound */}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
             <div style={sectionLabel}>SOUND</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0 6px' }}>
-              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 70 }}>Sustain</span>
-              <input type="range" min={0} max={4} step={0.05} value={sustain} onChange={e => onSustain(Number(e.target.value))}
-                style={{ flex: 1, accentColor: 'var(--accent-light)' }} />
-              <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 48, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sustain > 0 ? `${sustain.toFixed(2)}s` : 'Off'}</span>
-            </div>
             <div style={{ margin: '0 -16px' }}>
-              <FxControls value={sound} onCommit={commitFx} />
+              <FxControls value={sound} onCommit={setSound} />
             </div>
           </div>
 

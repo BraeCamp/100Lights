@@ -106,7 +106,7 @@ function NoteFxPanel({ basis, count, onApply, onClose, anchor, ignoreOutside }: 
         <span>NOTE SOUND — {count} selected</span>
         <button onClick={() => onApply(undefined)} title="Clear per-note overrides" style={{ fontSize: 8.5, fontWeight: 600, color: 'var(--text-secondary)', background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>Clear</button>
       </div>
-      <FxControls value={basis} onCommit={onApply} exclude={['time']} />
+      <FxControls value={basis} onCommit={onApply} />
       <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         Overrides the clip’s Sound panel and the preset for these notes only.
       </div>

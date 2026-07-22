@@ -498,7 +498,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [npLoading, setNpLoading] = useState(false)
   const [npSfText,  setNpSfText]  = useState<string | null>(null)
   const [npSound,   setNpSound]   = useState<RollFx | undefined>(undefined)
-  const [npSustain, setNpSustain] = useState(0)
   const [npGraphs,  setNpGraphs]  = useState<PitchGraph[]>([])
   const [npShare,   setNpShare]   = useState(false)
   const [npDesc,    setNpDesc]    = useState('')
@@ -1350,13 +1349,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             lo={npLo} setLo={setNpLo} hi={npHi} setHi={setNpHi}
             sfText={npSfText} onSoundfontFile={handleSoundfontFile}
             sound={npSound} setSound={setNpSound}
-            sustain={npSustain} setSustain={setNpSustain}
             graphs={npGraphs} setGraphs={setNpGraphs}
             share={npShare} setShare={setNpShare}
             desc={npDesc} setDesc={setNpDesc}
             loading={npLoading}
             onCreate={handleCreatePreset}
-            onCancel={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null); setNpSound(undefined); setNpSustain(0); setNpGraphs([]); setNpShare(false); setNpDesc('') }}
+            onCancel={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null); setNpSound(undefined); setNpGraphs([]); setNpShare(false); setNpDesc('') }}
           />
         )}
 
