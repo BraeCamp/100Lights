@@ -34,6 +34,7 @@ function renderMix(bars, opts = {}) {
   const L = new Float32Array(N), R = new Float32Array(N)
 
   const hpBass = biquad('highpass', 90, 0.7)
+  const lpBass = biquad('lowpass', 600, 0.8) // tame the raw-sawtooth buzz into a bass tone
   const hpPad = biquad('highpass', 260, 0.7)
   const hpLead = biquad('highpass', 320, 0.7)
   const cutPad = biquad('peaking', 300, 1.0, -6)
@@ -69,7 +70,7 @@ function renderMix(bars, opts = {}) {
 
     if (bass) {
       bassPh.p += mtof(BASSROOT[bar] + 12) / SR
-      dry += hpBass(osc('sawtooth', bassPh.p) * 0.5) * duckGain
+      dry += lpBass(hpBass(osc('sawtooth', bassPh.p))) * 0.34 * duckGain
     }
 
     if (pad) {
@@ -89,7 +90,7 @@ function renderMix(bars, opts = {}) {
     if (lead) {
       const arpNote = CHORDS[bar][stepInBar % CHORDS[bar].length] + 24
       leadPh.p += mtof(arpNote) / SR
-      let l = osc('square', leadPh.p) * ar(t, Math.floor(t / STEP) * STEP, STEP * 0.5) * 0.16
+      let l = osc('square', leadPh.p) * ar(t, Math.floor(t / STEP) * STEP, STEP * 0.5) * 0.11
       if (highpass) l = hpLead(l)
       if (pan) { sideR += l * 0.92; sideL += l * 0.18 } else dry += l
     }
@@ -269,6 +270,21 @@ function matchPair(a, b, trimBdb = 0, preserve = false) {
 
 function writePair(n1, n2, a, b, trimBdb = 0, preserve = false) { matchPair(a, b, trimBdb, preserve); writeMp3Stereo(`${OUT}/${n1}.mp3`, a.L, a.R); writeMp3Stereo(`${OUT}/${n2}.mp3`, b.L, b.R); console.log(`${n1} / ${n2}`) }
 function writeOne(name, x) { writeMp3Stereo(`${OUT}/${name}.mp3`, x.L, x.R); console.log(name) }
+
+// ── Stem-balance diagnostic (node render-learn-audio.mjs --diag) ────────────
+if (process.argv.includes('--diag')) {
+  const solo = opts => {
+    const { L } = renderMix(4, { drums: false, bass: false, pad: false, lead: false, ...opts })
+    let s = 0, p = 0
+    for (let i = 0; i < L.length; i++) { s += L[i] * L[i]; p = Math.max(p, Math.abs(L[i])) }
+    return { rms: +(20 * Math.log10(Math.sqrt(s / L.length) + 1e-9)).toFixed(1), peak: +(20 * Math.log10(p + 1e-9)).toFixed(1), kloud: +(20 * Math.log10(kloud(L, L) + 1e-9)).toFixed(1) }
+  }
+  console.log('drums:', JSON.stringify(solo({ drums: true })))
+  console.log('bass :', JSON.stringify(solo({ bass: true })))
+  console.log('pad  :', JSON.stringify(solo({ pad: true })))
+  console.log('lead :', JSON.stringify(solo({ lead: true })))
+  process.exit(0)
+}
 
 // ── Render everything ──────────────────────────────────────────────────────
 // Compression: a clean drums-only loop, dry vs compressed. matchPair now
