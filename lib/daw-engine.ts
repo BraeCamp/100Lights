@@ -1453,7 +1453,11 @@ export class DawEngine extends EventTarget {
             src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, remaining + sustainSec)
+          // Pass the FULL note length + how far in we are, so a poly voice that
+          // uses a sample resumes at the right phase instead of restarting when
+          // the playhead enters mid-note.
+          const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
+          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, this.beatsToSeconds(maxDur) + sustainSec, noteOffsetSec)
         }
 
         this._scheduledNoteKeys.add(noteKey)

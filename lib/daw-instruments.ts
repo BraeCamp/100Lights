@@ -101,9 +101,14 @@ function playPolyVoice(
   velocity: number,
   when: number,
   duration: number,
+  offset = 0,   // seconds already elapsed into the note (playhead entered mid-note)
 ) {
   const freq = pitchToHz(pitch)
   const vel  = velocity / 127
+  // The note's virtual start — may be in the past when we enter mid-note. The
+  // envelope and each sample's buffer position are computed relative to it so
+  // the voice resumes where it should instead of re-attacking from zero.
+  const vStart = when - offset
 
   const filter = ctx.createBiquadFilter()
   const env    = ctx.createGain()
@@ -128,6 +133,7 @@ function playPolyVoice(
 
   const oscs: OscillatorNode[] = []          // wave voices (also the pitch-LFO targets)
   const sampleSrcs: AudioBufferSourceNode[] = []
+  const sampleOffsets: number[] = []         // per-sample buffer start position (mid-note resume)
   const oscGains: GainNode[] = []
   for (const layer of layers) {
     const u = clampU(layer.unison)
@@ -141,11 +147,17 @@ function playPolyVoice(
         const src = ctx.createBufferSource()
         src.buffer = buf
         src.loop = true
-        src.playbackRate.value = Math.pow(2, semis / 12)
+        const rate = Math.pow(2, semis / 12)
+        src.playbackRate.value = rate
         const g = ctx.createGain()
         g.gain.value = (layer.level ?? 1) / denom
         src.connect(g); g.connect(mix)
-        sampleSrcs.push(src); oscGains.push(g)
+        // Resume the (looping) sample at the phase it would be at `offset`
+        // seconds in, so entering mid-note doesn't restart the sample.
+        const bufOff = (offset > 0 && buf.duration > 0)
+          ? (((offset * rate) % buf.duration) + buf.duration) % buf.duration
+          : 0
+        sampleSrcs.push(src); sampleOffsets.push(bufOff); oscGains.push(g)
       }
       continue
     }
@@ -174,16 +186,26 @@ function playPolyVoice(
   }
   const allSources: AudioScheduledSourceNode[] = [...oscs, ...sampleSrcs]
 
-  const attackEnd  = when + params.attack
-  const decayEnd   = attackEnd + params.decay
-  const releaseAt  = when + Math.max(params.attack + params.decay, duration - params.release)
-  const endAt      = releaseAt + params.release
-
-  env.gain.setValueAtTime(0, when)
-  env.gain.linearRampToValueAtTime(vel, attackEnd)
-  env.gain.linearRampToValueAtTime(vel * params.sustain, decayEnd)
-  env.gain.setValueAtTime(vel * params.sustain, releaseAt)
-  env.gain.linearRampToValueAtTime(0, endAt)
+  // ADSR relative to the virtual note start, so a mid-note entry continues the
+  // envelope from its current value instead of re-triggering the attack.
+  const A = params.attack, D = params.decay, S = params.sustain, R = params.release
+  const attackEnd  = vStart + A
+  const decayEnd   = attackEnd + D
+  const releaseAt  = vStart + Math.max(A + D, duration - R)
+  const endAt      = releaseAt + R
+  const envAt = (t: number) => {
+    if (t <= vStart) return 0
+    if (t < attackEnd) return vel * (t - vStart) / Math.max(1e-5, A)
+    if (t < decayEnd)  return vel * (1 - (1 - S) * (t - attackEnd) / Math.max(1e-5, D))
+    if (t < releaseAt) return vel * S
+    if (t < endAt)     return vel * S * (1 - (t - releaseAt) / Math.max(1e-5, R))
+    return 0
+  }
+  env.gain.setValueAtTime(envAt(when), when)          // current level (0 for a fresh note)
+  if (attackEnd  > when) env.gain.linearRampToValueAtTime(vel, attackEnd)
+  if (decayEnd   > when) env.gain.linearRampToValueAtTime(vel * S, decayEnd)
+  if (releaseAt  > when) env.gain.setValueAtTime(vel * S, releaseAt)
+  env.gain.linearRampToValueAtTime(0, Math.max(endAt, when + 1e-3))
 
   mix.connect(filter)
   filter.connect(env)
@@ -230,7 +252,11 @@ function playPolyVoice(
   const outputNode: AudioNode = tremoloGain ?? env
   outputNode.connect(dest)
 
-  for (const s of allSources) { s.start(when); s.stop(endAt + 0.01) }
+  for (const o of oscs) { o.start(when); o.stop(endAt + 0.01) }
+  for (let i = 0; i < sampleSrcs.length; i++) {
+    sampleSrcs[i].start(when, sampleOffsets[i])   // resume looping sample at the right phase
+    sampleSrcs[i].stop(endAt + 0.01)
+  }
 
   // All voices stop together, so one onended cleans up the whole graph.
   allSources[0].onended = () => {
@@ -252,6 +278,9 @@ export function playInstrumentNote(
   velocity: number,
   when: number,
   duration: number,
+  /** Seconds already elapsed into the note (>0 when the playhead enters mid-note).
+   *  `duration` is the FULL note length; poly sample layers resume at this phase. */
+  offset = 0,
 ) {
   if (instrument.type === 'none') return
 
@@ -281,7 +310,7 @@ export function playInstrumentNote(
   }
 
   if (instrument.type === 'poly') {
-    playPolyVoice(ctx, dest, instrument.params as PolyInstrumentParams, pitch, velocity, when, duration)
+    playPolyVoice(ctx, dest, instrument.params as PolyInstrumentParams, pitch, velocity, when, duration, offset)
     return
   }
 
