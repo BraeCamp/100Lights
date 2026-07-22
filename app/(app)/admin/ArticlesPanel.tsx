@@ -302,6 +302,29 @@ export default function ArticlesPanel() {
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Upload failed') } finally { setBusy(null) }
   }
 
+  // Upload a screenshot/image or a screen recording, host it on R2, and insert
+  // the matching marker — ![name](url) for an image, @video(url) for a video.
+  async function uploadMedia(file: File) {
+    setBusy('media'); setMsg('')
+    try {
+      const isVideo = /^video\//.test(file.type)
+      const name = file.name.replace(/\.[^.]+$/, '')
+      let r: Response
+      try {
+        r = await fetch(`/api/admin/articles/media?name=${encodeURIComponent(name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || (isVideo ? 'video/mp4' : 'image/png') },
+          body: file,
+        })
+      } catch { throw new Error('Could not reach the server. Check your connection and try again.') }
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error ?? `Upload failed (${r.status})`)
+      if (d.kind === 'video') appendToBody(`@video(${d.url}) ${name}`)
+      else appendToBody(`![${name}](${d.url})`)
+      setMsg(`${d.kind === 'video' ? 'Video' : 'Image'} uploaded & inserted ✓`)
+    } catch (e) { setMsg(e instanceof Error ? e.message : 'Upload failed') } finally { setBusy(null) }
+  }
+
   /** Unscheduled drafts, oldest first — the order they'll be published in. */
   const queue = (rows ?? []).filter(r => r.draft && !r.scheduledFor)
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -421,6 +444,10 @@ export default function ArticlesPanel() {
               <label style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                 {busy === 'upload' ? 'Uploading…' : '⬆ Upload audio file'}
                 <input type="file" accept="audio/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) void uploadAudio(f); e.target.value = '' }} />
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(167,139,250,0.5)', color: '#a78bfa', cursor: 'pointer' }}>
+                {busy === 'media' ? 'Uploading…' : '🖼 Upload image / video'}
+                <input type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) void uploadMedia(f); e.target.value = '' }} />
               </label>
               <button
                 onClick={() => void openLibraryPicker()}
