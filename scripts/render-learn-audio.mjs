@@ -26,7 +26,7 @@ const KICK_TIMES = KICK.map(k => k * STEP)
 function renderMix(bars, opts = {}) {
   const {
     drums = true, bass = true, pad = false, lead = false,
-    comp = false, highpass = false, eqCut = false, reverbDecay = 0, hatGainDb = 0,
+    highpass = false, eqCut = false, reverbFb = 0, hatGainDb = 0,
     pan = false, duck = false, dropBar = -1,
   } = opts
   const N = Math.round(bars * BAR * SR) + Math.round(0.4 * SR)
@@ -35,13 +35,13 @@ function renderMix(bars, opts = {}) {
 
   const hpBass = biquad('highpass', 90, 0.7)
   const lpBass = biquad('lowpass', 600, 0.8) // tame the raw-sawtooth buzz into a bass tone
-  const hpPad = biquad('highpass', 260, 0.7)
-  const hpLead = biquad('highpass', 320, 0.7)
-  const cutPad = biquad('peaking', 300, 1.0, -6)
+  const hpPad = biquad('highpass', 420, 0.7) // deeper high-pass so mud-vs-clear is obvious
+  const hpLead = biquad('highpass', 480, 0.7)
+  const busEqL = biquad('peaking', 350, 0.9, -14) // big low-mid scoop for the cut-or-boost test
+  const busEqR = biquad('peaking', 350, 0.9, -14)
   const padLP = biquad('lowpass', 1600, 0.9)
-  const verbL = makeReverb(), verbR = makeReverb()
+  const verbL = makeReverb(reverbFb || 0.8), verbR = makeReverb(reverbFb || 0.8)
   const padPh = new Float64Array(12), leadPh = { p: 0 }, bassPh = { p: 0 }
-  let compEnv = 0
 
   for (let n = 0; n < N; n++) {
     const t = n / SR
@@ -56,7 +56,7 @@ function renderMix(bars, opts = {}) {
       const posInBar = t % BAR
       let lastKick = KICK_TIMES[KICK_TIMES.length - 1] - BAR
       for (const kt of KICK_TIMES) if (kt <= posInBar) lastKick = Math.max(lastKick, kt)
-      duckGain = 1 - 0.62 * Math.exp(-(posInBar - lastKick) * 6)
+      duckGain = 1 - 0.85 * Math.exp(-(posInBar - lastKick) * 7) // deep, obvious pump
     }
 
     let dry = 0, wet = 0, sideL = 0, sideR = 0
@@ -83,7 +83,6 @@ function renderMix(bars, opts = {}) {
       }
       p = padLP(p / (ch.length * 2)) * 0.5
       if (highpass) p = hpPad(p)
-      if (eqCut) p = cutPad(p)
       if (pan) { sideL += p * 0.92; sideR += p * 0.18 } else dry += p
     }
 
@@ -97,22 +96,11 @@ function renderMix(bars, opts = {}) {
 
     let busL = dry + sideL, busR = dry + sideR
 
-    if (comp) {
-      // Moderate compression, unity makeup so the tanh never saturates into
-      // harshness. matchPair equalises RMS afterward; a small perceptual trim
-      // (see writePair) then offsets the density-loudness so the compressed
-      // clip is audible as *character* but never as *louder* — the point of
-      // the test being to hear compression when it isn't giving itself away.
-      const level = Math.max(Math.abs(busL), Math.abs(busR))
-      compEnv += (level - compEnv) * (level > compEnv ? 0.3 : 0.003)
-      let gr = 1
-      const thresh = 0.2
-      if (compEnv > thresh) gr = Math.pow(thresh / compEnv, 0.5) // ~2:1
-      busL *= gr * 1.3; busR *= gr * 1.3 // modest makeup lifts the quiet material
-    }
+    // Big low-mid cut across the whole mix (the cut-or-boost test).
+    if (eqCut) { busL = busEqL(busL); busR = busEqR(busR) }
 
-    if (reverbDecay > 0) {
-      const send = 0.5 + reverbDecay * 0.28
+    if (reverbFb > 0) {
+      const send = 0.9 // strong send so the tail — and its length — is obvious
       busL += verbL(wet) * send
       busR += verbR(wet * 0.97) * send
     }
@@ -158,7 +146,7 @@ function renderDrumLoop() {
 // makeup. No waveshaping, so nothing to saturate. It measurably reduces the
 // medium-scale dynamics (the audible "glue"); the explicit RMS match at the
 // call site guarantees the result is never louder than the dry clip.
-function compress(dry, { thresh = -20, ratio = 3, attackMs = 10, releaseMs = 120, makeupDb = 4 } = {}) {
+function compress(dry, { thresh = -30, ratio = 8, attackMs = 4, releaseMs = 90, makeupDb = 10 } = {}) {
   const out = new Float32Array(dry.length)
   const aCoef = Math.exp(-1 / (attackMs / 1000 * SR))
   const rCoef = Math.exp(-1 / (releaseMs / 1000 * SR))
@@ -218,7 +206,7 @@ function renderSnareLayer(layered) {
     let s = 0
     for (const k of KICK) s += drumSample('kick', t - (barStart + k * STEP)) * 0.85
     for (const sn of SNARE) s += drumSample('snare', t - (barStart + sn * STEP)) * 0.6
-    if (layered) for (const sn of SNARE) s += drumSample('clap', t - (barStart + sn * STEP + 0.012)) * 0.4
+    if (layered) for (const sn of SNARE) s += drumSample('clap', t - (barStart + sn * STEP + 0.014)) * 0.7
     buf[n] = s
   }
   return stereo(finalize(buf))
@@ -242,7 +230,7 @@ function renderLoopClick(clean) {
   }
   const fade = Math.round(0.004 * SR)
   if (clean) { for (let i = 0; i < fade; i++) { bar[i] *= i / fade; bar[oneBar - 1 - i] *= i / fade } }
-  else bar[0] += 0.35 // discontinuity at the seam → audible tick each loop
+  else bar[0] += 0.6 // discontinuity at the seam → obvious tick each loop
   for (let r = 0; r < reps; r++) buf.set(bar, r * oneBar)
   return stereo(finalize(buf))
 }
@@ -292,7 +280,7 @@ if (process.argv.includes('--diag')) {
 // quieter, never louder).
 { const dry = renderDrumLoop(); writePair('hear-comp-off', 'hear-comp-on', stereo(dry.slice()), stereo(compress(dry)), 0.3) }
 writePair('hear-eq-flat', 'hear-eq-cut', renderMix(4, { pad: true }), renderMix(4, { pad: true, eqCut: true }))
-writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbDecay: 0.8 }), renderMix(4, { reverbDecay: 1.4 }))
+writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbFb: 0.5 }), renderMix(4, { reverbFb: 0.92 }))
 // preserve=true: the whole test IS the +1 dB on the hats, so don't loudness-match it away.
 writePair('hear-hats-0', 'hear-hats-plus1', renderMix(4, { pad: true }), renderMix(4, { pad: true, hatGainDb: 1 }), 0, true)
 writePair('duck-off', 'duck-on', renderMix(4, {}), renderMix(4, { duck: true }))

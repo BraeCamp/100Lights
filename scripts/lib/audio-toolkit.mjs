@@ -79,8 +79,8 @@ export function drumSample(kind, age) {
 }
 
 // ── Schroeder reverb ───────────────────────────────────────────────────────
-export function makeReverb() {
-  const combs = [1557, 1617, 1491, 1422].map(n => ({ buf: new Float32Array(n), i: 0, fb: 0.8 }))
+export function makeReverb(fb = 0.8) {
+  const combs = [1557, 1617, 1491, 1422].map(n => ({ buf: new Float32Array(n), i: 0, fb }))
   const aps = [225, 556].map(n => ({ buf: new Float32Array(n), i: 0, g: 0.5 }))
   return x => {
     let y = 0
