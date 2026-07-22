@@ -52,7 +52,7 @@ Now select only the second copy and drag the whole thing up two rows, keeping it
 
 That version is doing something the first wasn't. The pattern is recognizable, so your ear isn't lost, but it isn't identical, so your ear isn't bored. Almost every hook you can hum is built on this move — the "Seven Nation Army" riff is the same shape, moved.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhook-identical.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhook-moved.mp3%22%2C%22question%22%3A%22A%20four-note%20phrase%20played%20twice.%20In%20one%20the%20repeat%20is%20identical%3B%20in%20the%20other%20it%20is%20shifted%20up%20two%20semitones.%20Which%20stops%20feeling%20dumb%20on%20the%20second%20pass%3F%22%2C%22explanation%22%3A%22Recognisable%20but%20not%20identical%20%E2%80%94%20the%20ear%20is%20not%20lost%20and%20not%20bored.%20This%20is%20the%20Seven%20Nation%20Army%20move%3A%20the%20same%20shape%2C%20moved.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhook-identical%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhook-moved%22%2C%22question%22%3A%22A%20four-note%20phrase%20played%20twice.%20In%20one%20the%20repeat%20is%20identical%3B%20in%20the%20other%20it%20is%20shifted%20up%20two%20semitones.%20Which%20stops%20feeling%20dumb%20on%20the%20second%20pass%3F%22%2C%22explanation%22%3A%22Recognisable%20but%20not%20identical%20%E2%80%94%20the%20ear%20is%20not%20lost%20and%20not%20bored.%20This%20is%20the%20Seven%20Nation%20Army%20move%3A%20the%20same%20shape%2C%20moved.%22%7D)
 
 ## Experiment four: break one note
 

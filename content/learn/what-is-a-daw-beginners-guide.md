@@ -24,7 +24,7 @@ If you've ever dragged a clip in a video editor, you already know how to use it.
 
 @ear Take any four-bar loop you have. Copy it out to sixteen bars so it just repeats four times. Play the whole thing and pay attention to exactly where you get bored. Note the bar number. Almost everyone lands somewhere between bar 8 and bar 12 — and that number, not any software feature, is the actual thing you're learning.
 
-@audio(/learn-audio/daw-loop.mp3) A four-bar loop repeated out to sixteen. Somewhere near bar eight your attention starts asking what happens next.
+@audio(/api/demo-audio/daw-loop) A four-bar loop repeated out to sixteen. Somewhere near bar eight your attention starts asking what happens next.
 
 Most DAWs, including [100Lights](https://100lights.com), also give you a second way to look at the same material: a Session view, which is a grid of loops you trigger live instead of a timeline you build left to right. It's excellent, it's how a lot of electronic music gets sketched, and you can ignore it entirely until the timeline stops being enough. It'll still be there.
 

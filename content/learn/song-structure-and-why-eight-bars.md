@@ -26,7 +26,7 @@ If the answer is "it never changes, it's a loop," that's the whole diagnosis, an
 
 @ear Take any loop of yours and, at bar 8, mute one element for a single bar. Just one — drop the hats, or kill the bass. Play it. That absence will feel like an *event*, even though you added nothing.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Feight-static.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Feight-developed.mp3%22%2C%22question%22%3A%22Two%2016-bar%20clips%20of%20the%20same%20loop.%20One%20never%20changes%3B%20one%20drops%20an%20element%20for%20a%20single%20bar%20at%20bar%208.%20Which%20one%20has%20an%20event%3F%22%2C%22explanation%22%3A%22You%20added%20nothing%20%E2%80%94%20you%20removed%20something%20%E2%80%94%20and%20the%20listener%20experiences%20the%20absence%20as%20arrival.%20That%20is%20what%20bar%208%20is%20for.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Feight-static%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Feight-developed%22%2C%22question%22%3A%22Two%2016-bar%20clips%20of%20the%20same%20loop.%20One%20never%20changes%3B%20one%20drops%20an%20element%20for%20a%20single%20bar%20at%20bar%208.%20Which%20one%20has%20an%20event%3F%22%2C%22explanation%22%3A%22You%20added%20nothing%20%E2%80%94%20you%20removed%20something%20%E2%80%94%20and%20the%20listener%20experiences%20the%20absence%20as%20arrival.%20That%20is%20what%20bar%208%20is%20for.%22%7D)
 
 Interesting that it feels like an event, isn't it. You removed something. The listener experienced it as arrival.
 

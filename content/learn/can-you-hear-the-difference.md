@@ -22,7 +22,7 @@ Take that drum loop. Put a compressor on the track. Set the threshold so the lou
 
 @ear Play four bars with the compressor bypassed, then four bars with it engaged, without touching the output volume. Loop that A/B six times. Then say which one is compressed before you look at the button.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-comp-off.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-comp-on.mp3%22%2C%22question%22%3A%22One%20of%20these%20has%20a%20compressor%20on%20it%2C%20output%20gain%20matched%20so%20both%20hit%20the%20same%20loudness.%20Which%20is%20compressed%3F%22%2C%22explanation%22%3A%22Compression%20lifts%20the%20quiet%20material%2C%20not%20the%20hits%20%E2%80%94%20listen%20for%20the%20snare%20tail%20and%20the%20hats%20ticking%20under%20the%20kick%2C%20not%20the%20peaks.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-comp-off%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-comp-on%22%2C%22question%22%3A%22One%20of%20these%20has%20a%20compressor%20on%20it%2C%20output%20gain%20matched%20so%20both%20hit%20the%20same%20loudness.%20Which%20is%20compressed%3F%22%2C%22explanation%22%3A%22Compression%20lifts%20the%20quiet%20material%2C%20not%20the%20hits%20%E2%80%94%20listen%20for%20the%20snare%20tail%20and%20the%20hats%20ticking%20under%20the%20kick%2C%20not%20the%20peaks.%22%7D)
 
 Most people get this wrong the first time, and they get it wrong in a specific direction: they pick the *louder* one as the compressed one, which is backwards from what the compressor is doing to the peaks. If you got it right by picking "louder," you got it right for the wrong reason, and that reason will fail you the moment someone matches the levels.
 
@@ -38,7 +38,7 @@ Same loop. Put an EQ on it. Make one move around the low-mid region — the mudd
 
 @ear Listen to the EQ'd version alone, with no reference, for eight bars. Decide: was that a cut or a boost? Then check.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-eq-cut.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-eq-boost.mp3%22%2C%22question%22%3A%22One%20clip%20has%20the%20low-mids%20scooped%20out%3B%20the%20other%20has%20them%20pushed%20up%20loud.%20Which%20one%20is%20the%20cut%3F%22%2C%22explanation%22%3A%22Boosts%20announce%20themselves%20as%20a%20new%20thing%20arriving%3B%20cuts%20read%20as%20clarity%20%E2%80%94%20which%20is%20why%20cutting%20sounds%20like%20doing%20nothing%20and%20usually%20wins.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-eq-cut%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-eq-boost%22%2C%22question%22%3A%22One%20clip%20has%20the%20low-mids%20scooped%20out%3B%20the%20other%20has%20them%20pushed%20up%20loud.%20Which%20one%20is%20the%20cut%3F%22%2C%22explanation%22%3A%22Boosts%20announce%20themselves%20as%20a%20new%20thing%20arriving%3B%20cuts%20read%20as%20clarity%20%E2%80%94%20which%20is%20why%20cutting%20sounds%20like%20doing%20nothing%20and%20usually%20wins.%22%7D)
 
 Nearly everyone can hear that *something* happened. Far fewer can name the direction blind, and that's the skill that actually matters, because in a real mix you don't get an A/B — you get a track that sounds slightly wrong and forty minutes to figure out why.
 
@@ -54,7 +54,7 @@ That one's easy. Everyone hears it. So let's make it fair.
 
 @ear Set two reverbs a little apart — say one at 0.8 seconds and one at 1.4 — and A/B them under a *full* loop, not a soloed snare. Kick, snare, hats, bass, all playing. Now tell me which is longer.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-verb-08.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-verb-14.mp3%22%2C%22question%22%3A%22Both%20have%20snare%20reverb%20under%20a%20full%20loop.%20Which%20reverb%20is%20longer%3F%22%2C%22explanation%22%3A%22Reverb%20length%20lives%20in%20the%20gaps%3B%20under%20a%20busy%20loop%20a%20long%20tail%20gets%20buried%20under%20the%20next%20hit%2C%20which%20is%20why%20solo%20reverb%20judgments%20lie.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-verb-08%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-verb-14%22%2C%22question%22%3A%22Both%20have%20snare%20reverb%20under%20a%20full%20loop.%20Which%20reverb%20is%20longer%3F%22%2C%22explanation%22%3A%22Reverb%20length%20lives%20in%20the%20gaps%3B%20under%20a%20busy%20loop%20a%20long%20tail%20gets%20buried%20under%20the%20next%20hit%2C%20which%20is%20why%20solo%20reverb%20judgments%20lie.%22%7D)
 
 This is where a lot of people discover that their reverb judgments have been made in solo, and solo is a lie. In a busy mix the tail gets buried under the next hit, so a reverb that sounded gorgeous alone contributes nothing but a haze you'll later describe as "the mix sounds cloudy."
 
@@ -66,7 +66,7 @@ Here's the one that humbles people. Take any single element — the hi-hats will
 
 @ear A/B the mix with the hats at their original level and a few decibels higher. Four bars each. Six passes. Commit to an answer.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-hats-0.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-hats-plus1.mp3%22%2C%22question%22%3A%22The%20hi-hats%20are%20a%20few%20decibels%20louder%20in%20one%20of%20these.%20Which%20one%3F%22%2C%22explanation%22%3A%22This%20one%20most%20people%20can%20get.%20Try%20the%20same%20test%20at%20one%20decibel%20and%20you%20almost%20certainly%20cannot%20%E2%80%94%20which%20is%20why%20the%20tiny%20fader%20nudges%20you%20call%20%E2%80%9Cbetter%E2%80%9D%20are%20mostly%20your%20hand%20moving%2C%20not%20your%20ears.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-hats-0%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fhear-hats-plus1%22%2C%22question%22%3A%22The%20hi-hats%20are%20a%20few%20decibels%20louder%20in%20one%20of%20these.%20Which%20one%3F%22%2C%22explanation%22%3A%22This%20one%20most%20people%20can%20get.%20Try%20the%20same%20test%20at%20one%20decibel%20and%20you%20almost%20certainly%20cannot%20%E2%80%94%20which%20is%20why%20the%20tiny%20fader%20nudges%20you%20call%20%E2%80%9Cbetter%E2%80%9D%20are%20mostly%20your%20hand%20moving%2C%20not%20your%20ears.%22%7D)
 
 That one you can probably get. Now imagine it at a single decibel instead — the move you actually make when you nudge a fader and think "yes, better." At that size you're almost certainly hearing your own hand move, not the mix. A change big enough to hear is a change big enough to matter; anything smaller is a story you're telling yourself.
 

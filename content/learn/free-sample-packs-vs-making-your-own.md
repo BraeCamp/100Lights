@@ -50,7 +50,7 @@ The practical workflow that actually holds up: build the loop fast with library 
 
 @ear Load any library snare and loop a bar. Now layer one recording of you clapping once, badly, off-mic, at maybe 40% volume underneath it. Don't tune it. Don't time-align it perfectly. Play both. The snare stops sounding like a file and starts sounding like a thing that happened in a room — and the reason is the imperfection you were about to fix.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fsnare-clean.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fsnare-layered.mp3%22%2C%22question%22%3A%22One%20is%20a%20clean%20library%20snare%20looping%3B%20the%20other%20has%20a%20rough%20off-mic%20clap%20layered%20underneath.%20Which%20sounds%20like%20a%20thing%20that%20happened%20in%20a%20room%3F%22%2C%22explanation%22%3A%22The%20untuned%2C%20un-time-aligned%20imperfection%20you%20would%20normally%20fix%20is%20exactly%20what%20turns%20a%20file%20into%20an%20event.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fsnare-clean%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fsnare-layered%22%2C%22question%22%3A%22One%20is%20a%20clean%20library%20snare%20looping%3B%20the%20other%20has%20a%20rough%20off-mic%20clap%20layered%20underneath.%20Which%20sounds%20like%20a%20thing%20that%20happened%20in%20a%20room%3F%22%2C%22explanation%22%3A%22The%20untuned%2C%20un-time-aligned%20imperfection%20you%20would%20normally%20fix%20is%20exactly%20what%20turns%20a%20file%20into%20an%20event.%22%7D)
 
 ## The counter-argument, which is real
 

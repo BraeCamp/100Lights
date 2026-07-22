@@ -40,7 +40,7 @@ The reason to steal this one: it lets you introduce chords that would sound unre
 
 @ear Play a low A and hold it for eight bars. Over the top, play Am, then F, then G, then E — deliberately more motion than the section wants. Then play the same four chords with the bass following the roots. The second version is fine. The first version sounds like a film.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fpedal-roots.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fpedal-drone.mp3%22%2C%22question%22%3A%22Same%20four%20chords%20%E2%80%94%20Am%2C%20F%2C%20G%2C%20E.%20One%20holds%20a%20low%20A%20drone%20underneath%3B%20one%20lets%20the%20bass%20follow%20the%20roots.%20Which%20sounds%20like%20a%20film%3F%22%2C%22explanation%22%3A%22The%20drone%20glues%20together%20chords%20that%20would%20sound%20unrelated%20over%20a%20moving%20bass%20%E2%80%94%20so%20you%20can%20use%20more%20harmonic%20motion%20than%20the%20section%20wants%20and%20still%20cohere.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fpedal-roots%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fpedal-drone%22%2C%22question%22%3A%22Same%20four%20chords%20%E2%80%94%20Am%2C%20F%2C%20G%2C%20E.%20One%20holds%20a%20low%20A%20drone%20underneath%3B%20one%20lets%20the%20bass%20follow%20the%20roots.%20Which%20sounds%20like%20a%20film%3F%22%2C%22explanation%22%3A%22The%20drone%20glues%20together%20chords%20that%20would%20sound%20unrelated%20over%20a%20moving%20bass%20%E2%80%94%20so%20you%20can%20use%20more%20harmonic%20motion%20than%20the%20section%20wants%20and%20still%20cohere.%22%7D)
 
 ## 4. The bossa comp
 

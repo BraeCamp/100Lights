@@ -58,7 +58,7 @@ That's a sidechain. A manual one, with infinite precision and no processor. Half
 
 @ear Loop one bar. Version A: bass note held straight through the kick. Version B: same note, cut to end a sixteenth before each kick and restart after. Listen for the kick's low end — in B it has room, and it thumps rather than thuds. Nothing was compressed. You just moved out of the way.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fduck-off.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fduck-on.mp3%22%2C%22question%22%3A%22Same%20kick%2C%20same%20bass%20note.%20In%20which%20version%20can%20you%20hear%20the%20kick%20punch%20through%3F%22%2C%22explanation%22%3A%22Nothing%20was%20compressed%20%E2%80%94%20in%20the%20other%20version%20the%20bass%20simply%20moves%20out%20of%20the%20way%20under%20each%20kick%2C%20so%20the%20two%20low%20sounds%20take%20turns%20instead%20of%20fighting.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fduck-off%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fduck-on%22%2C%22question%22%3A%22Same%20kick%2C%20same%20bass%20note.%20In%20which%20version%20can%20you%20hear%20the%20kick%20punch%20through%3F%22%2C%22explanation%22%3A%22Nothing%20was%20compressed%20%E2%80%94%20in%20the%20other%20version%20the%20bass%20simply%20moves%20out%20of%20the%20way%20under%20each%20kick%2C%20so%20the%20two%20low%20sounds%20take%20turns%20instead%20of%20fighting.%22%7D)
 
 Once you can hear it, the mixer version is easy to reach for. Put a compressor on the bass channel from the effect chain, set it hard and fast, and you get the automatic version of the same idea — the machine does the ducking that you were writing by hand, on every kick, forever.
 
