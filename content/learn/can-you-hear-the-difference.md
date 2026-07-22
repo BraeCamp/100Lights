@@ -38,7 +38,7 @@ Same loop. Put an EQ on it. Make one move around the low-mid region — the mudd
 
 @ear Listen to the EQ'd version alone, with no reference, for eight bars. Decide: was that a cut or a boost? Then check.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-eq-flat.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-eq-cut.mp3%22%2C%22question%22%3A%22Something%20was%20done%20to%20the%20low-mids.%20Was%20it%20a%20cut%20or%20a%20boost%3F%22%2C%22explanation%22%3A%22Boosts%20announce%20themselves%20as%20a%20new%20thing%20arriving%3B%20cuts%20read%20as%20clarity%2C%20which%20is%20why%20cutting%20sounds%20like%20doing%20nothing%20and%20usually%20wins.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-eq-cut.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-eq-boost.mp3%22%2C%22question%22%3A%22One%20clip%20has%20the%20low-mids%20scooped%20out%3B%20the%20other%20has%20them%20pushed%20up%20loud.%20Which%20one%20is%20the%20cut%3F%22%2C%22explanation%22%3A%22Boosts%20announce%20themselves%20as%20a%20new%20thing%20arriving%3B%20cuts%20read%20as%20clarity%20%E2%80%94%20which%20is%20why%20cutting%20sounds%20like%20doing%20nothing%20and%20usually%20wins.%22%7D)
 
 Nearly everyone can hear that *something* happened. Far fewer can name the direction blind, and that's the skill that actually matters, because in a real mix you don't get an A/B — you get a track that sounds slightly wrong and forty minutes to figure out why.
 
@@ -60,15 +60,15 @@ This is where a lot of people discover that their reverb judgments have been mad
 
 @theory Reverb length is heard almost entirely in the gaps. If the arrangement never leaves a gap, the reverb has nowhere to be audible, and all it does is smear the attack of whatever comes next. This is why sparse records can carry enormous reverbs and dense records usually can't — it isn't taste, it's arithmetic of silence.
 
-## Test four: one decibel
+## Test four: how small a move can you hear?
 
-Here's the one that humbles people. Take any single element — the hi-hats will do — and change its fader by exactly one decibel.
+Here's the one that humbles people. Take any single element — the hi-hats will do — and push its fader up a few decibels. Enough that it's a real, deliberate move, not a nudge.
 
-@ear A/B the mix with the hats at their original level and one decibel higher. Four bars each. Six passes. Commit to an answer.
+@ear A/B the mix with the hats at their original level and a few decibels higher. Four bars each. Six passes. Commit to an answer.
 
-@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-hats-0.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-hats-plus1.mp3%22%2C%22question%22%3A%22One%20version%20has%20the%20hi-hats%20exactly%201%20dB%20louder.%20Which%3F%22%2C%22explanation%22%3A%22Hearing%20nothing%20here%20is%20the%20honest%2C%20normal%20result.%20Three%20dB%20is%20where%20most%20people%20reliably%20cross%20over.%22%7D)
+@ab(%7B%22plainSrc%22%3A%22%2Flearn-audio%2Fhear-hats-0.mp3%22%2C%22treatedSrc%22%3A%22%2Flearn-audio%2Fhear-hats-plus1.mp3%22%2C%22question%22%3A%22The%20hi-hats%20are%20a%20few%20decibels%20louder%20in%20one%20of%20these.%20Which%20one%3F%22%2C%22explanation%22%3A%22This%20one%20most%20people%20can%20get.%20Try%20the%20same%20test%20at%20one%20decibel%20and%20you%20almost%20certainly%20cannot%20%E2%80%94%20which%20is%20why%20the%20tiny%20fader%20nudges%20you%20call%20%E2%80%9Cbetter%E2%80%9D%20are%20mostly%20your%20hand%20moving%2C%20not%20your%20ears.%22%7D)
 
-You may hear nothing at all. That's the honest, normal result, and it's worth knowing about yourself, because it means every time you've nudged a fader by a decibel and thought "yes, better," you were hearing your own hand move.
+That one you can probably get. Now imagine it at a single decibel instead — the move you actually make when you nudge a fader and think "yes, better." At that size you're almost certainly hearing your own hand move, not the mix. A change big enough to hear is a change big enough to matter; anything smaller is a story you're telling yourself.
 
 Now try three decibels. Most people hear three. The gap between "can't hear one" and "can hear three" is where mixing actually lives, and it narrows with practice — genuinely, measurably, over months. Not weeks. I spent a year unable to hear a one-decibel change on anything but a lead vocal.
 

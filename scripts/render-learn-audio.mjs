@@ -26,7 +26,7 @@ const KICK_TIMES = KICK.map(k => k * STEP)
 function renderMix(bars, opts = {}) {
   const {
     drums = true, bass = true, pad = false, lead = false,
-    highpass = false, eqCut = false, reverbFb = 0, hatGainDb = 0,
+    highpass = false, eqCut = false, eqBoost = false, reverbFb = 0, hatGainDb = 0,
     pan = false, duck = false, dropBar = -1,
   } = opts
   const N = Math.round(bars * BAR * SR) + Math.round(0.4 * SR)
@@ -37,8 +37,9 @@ function renderMix(bars, opts = {}) {
   const lpBass = biquad('lowpass', 600, 0.8) // tame the raw-sawtooth buzz into a bass tone
   const hpPad = biquad('highpass', 420, 0.7) // deeper high-pass so mud-vs-clear is obvious
   const hpLead = biquad('highpass', 480, 0.7)
-  const busEqL = biquad('peaking', 350, 0.9, -14) // big low-mid scoop for the cut-or-boost test
-  const busEqR = biquad('peaking', 350, 0.9, -14)
+  const g = eqBoost ? 9 : -14 // low-mid boost or scoop (the cut-vs-boost test)
+  const busEqL = biquad('peaking', 350, 0.9, g)
+  const busEqR = biquad('peaking', 350, 0.9, g)
   const padLP = biquad('lowpass', 1600, 0.9)
   const verbL = makeReverb(reverbFb || 0.8), verbR = makeReverb(reverbFb || 0.8)
   const padPh = new Float64Array(12), leadPh = { p: 0 }, bassPh = { p: 0 }
@@ -96,11 +97,11 @@ function renderMix(bars, opts = {}) {
 
     let busL = dry + sideL, busR = dry + sideR
 
-    // Big low-mid cut across the whole mix (the cut-or-boost test).
-    if (eqCut) { busL = busEqL(busL); busR = busEqR(busR) }
+    // Big low-mid cut or boost across the whole mix (the cut-vs-boost test).
+    if (eqCut || eqBoost) { busL = busEqL(busL); busR = busEqR(busR) }
 
     if (reverbFb > 0) {
-      const send = 0.9 // strong send so the tail — and its length — is obvious
+      const send = 0.6 // audible tail without washing out the mix
       busL += verbL(wet) * send
       busR += verbR(wet * 0.97) * send
     }
@@ -146,7 +147,7 @@ function renderDrumLoop() {
 // makeup. No waveshaping, so nothing to saturate. It measurably reduces the
 // medium-scale dynamics (the audible "glue"); the explicit RMS match at the
 // call site guarantees the result is never louder than the dry clip.
-function compress(dry, { thresh = -30, ratio = 8, attackMs = 4, releaseMs = 90, makeupDb = 10 } = {}) {
+function compress(dry, { thresh = -28, ratio = 5, attackMs = 5, releaseMs = 110, makeupDb = 6 } = {}) {
   const out = new Float32Array(dry.length)
   const aCoef = Math.exp(-1 / (attackMs / 1000 * SR))
   const rCoef = Math.exp(-1 / (releaseMs / 1000 * SR))
@@ -279,10 +280,11 @@ if (process.argv.includes('--diag')) {
 // K-weight-matches the pair (trim 0.3 dB so the compressed clip is a hair
 // quieter, never louder).
 { const dry = renderDrumLoop(); writePair('hear-comp-off', 'hear-comp-on', stereo(dry.slice()), stereo(compress(dry)), 0.3) }
-writePair('hear-eq-flat', 'hear-eq-cut', renderMix(4, { pad: true }), renderMix(4, { pad: true, eqCut: true }))
-writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbFb: 0.5 }), renderMix(4, { reverbFb: 0.92 }))
-// preserve=true: the whole test IS the +1 dB on the hats, so don't loudness-match it away.
-writePair('hear-hats-0', 'hear-hats-plus1', renderMix(4, { pad: true }), renderMix(4, { pad: true, hatGainDb: 1 }), 0, true)
+writePair('hear-eq-cut', 'hear-eq-boost', renderMix(4, { pad: true, eqCut: true }), renderMix(4, { pad: true, eqBoost: true }))
+writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { pad: true, reverbFb: 0.5 }), renderMix(4, { pad: true, reverbFb: 0.92 }))
+// preserve=true: the whole test IS the level change on the hats, so don't
+// loudness-match it away. Bumped to +5 dB — 1 dB was inaudible under a full mix.
+writePair('hear-hats-0', 'hear-hats-plus1', renderMix(4, { pad: true }), renderMix(4, { pad: true, hatGainDb: 5 }), 0, true)
 writePair('duck-off', 'duck-on', renderMix(4, {}), renderMix(4, { duck: true }))
 writePair('mix-mud', 'mix-hp', renderMix(4, { pad: true, lead: true }), renderMix(4, { pad: true, lead: true, highpass: true }))
 writePair('mix-pan-center', 'mix-pan-wide', renderMix(4, { pad: true, lead: true }), renderMix(4, { pad: true, lead: true, pan: true }))
