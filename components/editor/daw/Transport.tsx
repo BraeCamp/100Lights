@@ -2,9 +2,10 @@
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx } from '@/lib/daw-engine'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2 } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown } from 'lucide-react'
+import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { useDaw, formatBeat, makeAudioClip } from '@/lib/daw-state'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
@@ -50,6 +51,9 @@ export default function Transport() {
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [showRecorder, setShowRecorder] = useState(false)
+  const [captureOpen, setCaptureOpen] = useState(false)
+  const [shotBusy, setShotBusy] = useState(false)
+  const captureRef = useRef<HTMLDivElement>(null)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
   const [micError, setMicError] = useState('')
@@ -68,6 +72,39 @@ export default function Transport() {
       document.head.appendChild(style)
     }
   }, [])
+
+  // Close the Capture menu on an outside click or Escape
+  useEffect(() => {
+    if (!captureOpen) return
+    function onDown(e: MouseEvent) {
+      if (captureRef.current && !captureRef.current.contains(e.target as Node)) setCaptureOpen(false)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setCaptureOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [captureOpen])
+
+  // Grab a still of the studio and download it as a PNG
+  async function takeScreenshot() {
+    setCaptureOpen(false)
+    if (shotBusy) return
+    setShotBusy(true)
+    try {
+      const blob = await captureScreenshot()
+      if (!blob) return
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `100lights-${(project.name || 'session').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } finally {
+      setShotBusy(false)
+    }
+  }
 
   // Keep isPlayingRef in sync for the RAF closure
   useEffect(() => { isPlayingRef.current = playing }, [playing])
@@ -943,23 +980,6 @@ export default function Transport() {
         ♩
       </button>
 
-      {/* Session recorder toggle */}
-      <button
-        onClick={() => setShowRecorder(v => !v)}
-        title="Record your screen and the studio's audio — for tutorials, demos, or sharing what you made"
-        data-help-id="screen-recorder"
-        style={{
-          ...base,
-          width: 'auto', padding: '0 9px',
-          fontSize: 11,
-          background: showRecorder ? '#dc2626' : '#1e1e1e',
-          border: showRecorder ? '1px solid #dc2626' : '1px solid var(--border)',
-          color: showRecorder ? '#fff' : 'var(--text-secondary)',
-        }}
-      >
-        ●REC
-      </button>
-
       {/* Masking detector toggle */}
       <button
         onClick={() => setShowMask(v => !v)}
@@ -977,9 +997,63 @@ export default function Transport() {
         MASK
       </button>
 
+      {/* Capture dropdown — screenshot + session recorder, grouped on the
+          right next to the invite/Share button. The auto margin lives here so
+          this pair floats to the far end of the transport row. */}
+      <div ref={captureRef} style={{ position: 'relative', marginLeft: 'auto', flexShrink: 0 }}>
+        <button
+          onClick={() => setCaptureOpen(v => !v)}
+          title="Capture the studio — take a screenshot or record a session"
+          data-help-id="capture"
+          aria-haspopup="menu"
+          aria-expanded={captureOpen}
+          style={{
+            ...base,
+            width: 'auto', padding: '0 9px', gap: 4,
+            fontSize: 11,
+            display: 'flex', alignItems: 'center',
+            background: (captureOpen || showRecorder) ? '#2a2a2a' : '#1e1e1e',
+            border: (captureOpen || showRecorder) ? '1px solid var(--text-muted)' : '1px solid var(--border)',
+            color: showRecorder ? '#dc2626' : 'var(--text-secondary)',
+          }}
+        >
+          <Camera size={13} />
+          Capture
+          <ChevronDown size={12} style={{ opacity: 0.7 }} />
+        </button>
+
+        {captureOpen && (
+          <div
+            role="menu"
+            style={{
+              position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60,
+              minWidth: 190, padding: 5,
+              background: '#161616', border: '1px solid var(--border)', borderRadius: 8,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+              display: 'flex', flexDirection: 'column', gap: 2,
+            }}
+          >
+            <CaptureItem
+              icon={<Camera size={14} />}
+              label={shotBusy ? 'Preparing…' : 'Screenshot'}
+              hint="Grab a still PNG"
+              disabled={shotBusy || !screenshotSupported()}
+              onClick={takeScreenshot}
+            />
+            <CaptureItem
+              icon={<Video size={14} />}
+              label="Record session"
+              hint="Screen + studio audio"
+              active={showRecorder}
+              onClick={() => { setCaptureOpen(false); setShowRecorder(true) }}
+            />
+          </div>
+        )}
+      </div>
+
       {/* Collab slot — CollabLayer portals the avatars + invite button here
           so they live in the transport row instead of their own bar */}
-      <div id="transport-collab-slot" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexShrink: 0 }} />
+      <div id="transport-collab-slot" style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }} />
 
       {showRecorder && typeof document !== 'undefined' && createPortal(
         <ScreenRecorderPanel onClose={() => setShowRecorder(false)} />,
@@ -1026,5 +1100,41 @@ export default function Transport() {
         document.body
       )}
     </div>
+  )
+}
+
+// One row in the Capture dropdown.
+function CaptureItem({ icon, label, hint, onClick, disabled, active }: {
+  icon: ReactNode
+  label: string
+  hint: string
+  onClick: () => void
+  disabled?: boolean
+  active?: boolean
+}) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      disabled={disabled}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9,
+        width: '100%', padding: '7px 9px',
+        background: hover && !disabled ? 'rgba(255,255,255,0.06)' : 'transparent',
+        border: 'none', borderRadius: 6,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        textAlign: 'left',
+      }}
+    >
+      <span style={{ display: 'flex', color: active ? '#dc2626' : 'var(--text-secondary)', flexShrink: 0 }}>{icon}</span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>{label}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.2 }}>{hint}</span>
+      </span>
+    </button>
   )
 }

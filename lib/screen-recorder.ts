@@ -177,3 +177,43 @@ export function screenRecordingSupported(): boolean {
     && !!navigator.mediaDevices?.getDisplayMedia
     && typeof MediaRecorder !== 'undefined'
 }
+
+/** Can we take a still screenshot? Just needs getDisplayMedia (no MediaRecorder). */
+export function screenshotSupported(): boolean {
+  return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
+}
+
+/**
+ * Grab a single frame of what's on screen as a PNG blob. Uses the same
+ * screen-share picker as recording (so it captures canvas/WebGL exactly),
+ * biased to the current tab where the browser supports it. Returns null if
+ * unsupported or the picker was cancelled.
+ */
+export async function captureScreenshot(): Promise<Blob | null> {
+  if (!screenshotSupported()) return null
+  let stream: MediaStream | null = null
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: false,
+      // Chrome-only hint: default the picker to this tab, so a screenshot of
+      // the studio is one confirm click. Ignored elsewhere.
+      ...({ preferCurrentTab: true } as Record<string, unknown>),
+    })
+    const video = document.createElement('video')
+    video.srcObject = stream
+    video.muted = true
+    await video.play()
+    if (!video.videoWidth) await new Promise<void>(r => { video.onloadedmetadata = () => r() })
+    await new Promise<void>(r => requestAnimationFrame(() => r()))
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d')?.drawImage(video, 0, 0)
+    return await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'))
+  } catch {
+    return null
+  } finally {
+    stream?.getTracks().forEach(t => t.stop())
+  }
+}
