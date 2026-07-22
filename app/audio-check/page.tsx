@@ -1,17 +1,17 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { isAdmin } from '@/lib/admin-auth'
-import AudioTuner from './AudioTuner'
+import AudioManager from './AudioManager'
 
-// Admin-only, never indexed. Lets Brae tune the learn-article demo clips by ear
-// — live browser playback — and save settings that drive the served clips.
+// Admin-only, never indexed. Lets Brae replace any demo clip's audio file with
+// his own corrected version (or revert to the generated one).
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = {
-  title: 'Audio tuner',
+  title: 'Fix demo clips',
   robots: { index: false, follow: false },
 }
 
 export default async function AudioCheckPage() {
   if (!await isAdmin()) notFound()
-  return <AudioTuner />
+  return <AudioManager />
 }
