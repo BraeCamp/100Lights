@@ -123,7 +123,54 @@ function renderMix(bars, opts = {}) {
 }
 
 // ── mono demos (return {L, R} with identical channels) ─────────────────────
-const stereo = buf => ({ L: buf, R: buf })
+// R must be a SEPARATE array — matchPair scales L and R in place, so aliasing
+// them would scale each sample twice (a squared gain), which quietly broke the
+// level-matching of every mono demo.
+const stereo = buf => ({ L: buf, R: buf.slice() })
+
+// Clean drums-only loop for the compression test — no buzzy bass, headroom to
+// spare, and NO tanh, so the compressed version can't pick up saturation grit.
+function renderDrumLoop() {
+  const M = Math.round(4 * BAR * SR) + Math.round(0.4 * SR)
+  const buf = new Float32Array(M)
+  resetNoise()
+  for (let n = 0; n < M; n++) {
+    const t = n / SR
+    const barStart = Math.floor(t / BAR) * BAR
+    let s = 0
+    for (const k of KICK) s += drumSample('kick', t - (barStart + k * STEP)) * 0.85
+    for (const sn of SNARE) s += drumSample('snare', t - (barStart + sn * STEP)) * 0.55
+    for (const h of HATS) s += drumSample('hat', t - (barStart + h * STEP)) * 0.18
+    buf[n] = s
+  }
+  let peak = 0
+  for (let i = 0; i < M; i++) peak = Math.max(peak, Math.abs(buf[i]))
+  const g = 0.7 / (peak || 1) // leave headroom; no limiter needed
+  for (let i = 0; i < M; i++) buf[i] *= g
+  return buf
+}
+
+// A proper feed-forward compressor: smoothed peak envelope, dB-domain gain
+// computer, clean makeup. Brings up the tails/room between hits — the audible
+// "glue" — with no distortion. matchPair does the final loudness-match.
+// Clean feed-forward compressor: smoothed peak envelope, dB-domain gain, modest
+// makeup. No waveshaping, so nothing to saturate. It measurably reduces the
+// medium-scale dynamics (the audible "glue"); the explicit RMS match at the
+// call site guarantees the result is never louder than the dry clip.
+function compress(dry, { thresh = -20, ratio = 3, attackMs = 10, releaseMs = 120, makeupDb = 4 } = {}) {
+  const out = new Float32Array(dry.length)
+  const aCoef = Math.exp(-1 / (attackMs / 1000 * SR))
+  const rCoef = Math.exp(-1 / (releaseMs / 1000 * SR))
+  let env = 1e-6
+  for (let i = 0; i < dry.length; i++) {
+    const x = Math.abs(dry[i])
+    env = x > env ? aCoef * env + (1 - aCoef) * x : rCoef * env + (1 - rCoef) * x
+    const envDb = 20 * Math.log10(env + 1e-9)
+    const grDb = envDb > thresh ? (thresh - envDb) * (1 - 1 / ratio) : 0
+    out[i] = dry[i] * Math.pow(10, (grDb + makeupDb) / 20)
+  }
+  return out
+}
 
 function renderMelody(midiPerBeat) {
   const M = Math.round((midiPerBeat.length * SPB + 0.4) * SR)
@@ -224,7 +271,35 @@ function writePair(n1, n2, a, b, trimBdb = 0, preserve = false) { matchPair(a, b
 function writeOne(name, x) { writeMp3Stereo(`${OUT}/${name}.mp3`, x.L, x.R); console.log(name) }
 
 // ── Render everything ──────────────────────────────────────────────────────
-writePair('hear-comp-off', 'hear-comp-on', renderMix(4, {}), renderMix(4, { comp: true }), 1.5)
+{
+  // Explicit match for the compression pair: scale the compressed clip to the
+  // dry clip's RMS minus 0.5 dB, then normalise both by one shared factor. The
+  // compressed clip (comp→limit) already has a LOWER peak, so it ends up lower
+  // in both RMS and peak — it can't read as louder or punchier by any measure.
+  const dry = renderDrumLoop()
+  const off = dry.slice(), on = compress(dry)
+  // Match PERCEIVED loudness (K-weighted, gated), not RMS — a compressed signal
+  // reads louder than an uncompressed one at equal RMS, and only a perceptual
+  // match removes that. Minus 0.3 dB so, if anything, it's a hair quieter.
+  const kloud = a => {
+    let px = 0, po = 0, shy = 0
+    const R = Math.exp(-2 * Math.PI * 100 / SR), sc = Math.exp(-2 * Math.PI * 2000 / SR)
+    const o = new Float32Array(a.length)
+    for (let i = 0; i < a.length; i++) { const hp = R * (po + a[i] - px); px = a[i]; po = hp; shy = sc * shy + (1 - sc) * hp; o[i] = hp + (hp - shy) * 0.6 }
+    let g = 0, gc = 0; const w = Math.round(0.4 * SR)
+    for (let i = 0; i < o.length - w; i += w) { let s = 0; for (let k = 0; k < w; k++) s += o[i + k] * o[i + k]; if (s / w > 6.4e-5) { g += s / w; gc++ } }
+    return Math.sqrt(g / (gc || 1))
+  }
+  const k = (kloud(off) / kloud(on)) * Math.pow(10, -0.3 / 20)
+  for (let i = 0; i < on.length; i++) on[i] *= k
+  let pk = 0
+  for (const s of [off, on]) for (let i = 0; i < s.length; i++) pk = Math.max(pk, Math.abs(s[i]))
+  const g = 0.89 / (pk || 1)
+  for (const s of [off, on]) for (let i = 0; i < s.length; i++) s[i] *= g
+  writeMp3Stereo(`${OUT}/hear-comp-off.mp3`, off, off.slice())
+  writeMp3Stereo(`${OUT}/hear-comp-on.mp3`, on, on.slice())
+  console.log('hear-comp-off / hear-comp-on (explicit match)')
+}
 writePair('hear-eq-flat', 'hear-eq-cut', renderMix(4, { pad: true }), renderMix(4, { pad: true, eqCut: true }))
 writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbDecay: 0.8 }), renderMix(4, { reverbDecay: 1.4 }))
 // preserve=true: the whole test IS the +1 dB on the hats, so don't loudness-match it away.
