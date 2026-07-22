@@ -1,10 +1,11 @@
 import { sql } from '@/lib/db'
 import { PLANS } from '@/lib/stripe'
+import { getCodeGrantUntil } from '@/lib/codes'
 
 export type Plan = 'free' | 'pro'
 
 export interface Subscription {
-  /** Effective plan — already accounts for any active admin gift */
+  /** Effective plan — already accounts for any active admin gift or redeemed code */
   plan: Plan
   status: string
   stripeCustomerId: string | null
@@ -12,31 +13,43 @@ export interface Subscription {
   currentPeriodEnd: Date | null
   giftPlan: Plan | null
   giftUntil: Date | null
+  /** End of Pro access granted by a redeemed code, or null if none active */
+  codeUntil: Date | null
 }
 
 export async function getSubscription(userId: string): Promise<Subscription> {
-  const rows = await sql`
-    SELECT plan, status, stripe_customer_id, stripe_sub_id, current_period_end,
-           gift_plan, gift_until
-    FROM subscriptions
-    WHERE user_id = ${userId}
-  `
+  // Run the code-grant lookup concurrently so it adds no latency; it is
+  // fault-tolerant (returns null if its table isn't provisioned yet).
+  const [rows, codeUntil] = await Promise.all([
+    sql`
+      SELECT plan, status, stripe_customer_id, stripe_sub_id, current_period_end,
+             gift_plan, gift_until
+      FROM subscriptions
+      WHERE user_id = ${userId}
+    `,
+    getCodeGrantUntil(userId),
+  ])
   if (rows.length === 0) {
-    return { plan: 'free', status: 'active', stripeCustomerId: null, stripeSubId: null,
-             currentPeriodEnd: null, giftPlan: null, giftUntil: null }
+    // No Stripe/subscription row yet — a redeemed code can still grant Pro.
+    return { plan: codeUntil ? 'pro' : 'free', status: 'active', stripeCustomerId: null,
+             stripeSubId: null, currentPeriodEnd: null, giftPlan: null, giftUntil: null, codeUntil }
   }
   const r = rows[0]
   const giftPlan = r.gift_plan ? (r.gift_plan as Plan) : null
   const giftUntil = r.gift_until ? new Date(r.gift_until as string) : null
   const hasActiveGift = giftPlan && (giftUntil === null || giftUntil > new Date())
+  // Precedence: an active admin gift, then an active redeemed code, then Stripe.
+  // Gift and code both grant 'pro'; getCodeGrantUntil already filters to future.
+  const plan: Plan = hasActiveGift ? giftPlan! : (codeUntil ? 'pro' : (r.plan as Plan))
   return {
-    plan: hasActiveGift ? giftPlan! : (r.plan as Plan),
+    plan,
     status: r.status as string,
     stripeCustomerId: r.stripe_customer_id as string | null,
     stripeSubId: r.stripe_sub_id as string | null,
     currentPeriodEnd: r.current_period_end ? new Date(r.current_period_end as string) : null,
     giftPlan,
     giftUntil,
+    codeUntil,
   }
 }
 

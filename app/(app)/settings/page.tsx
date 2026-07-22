@@ -5,11 +5,13 @@ import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn,
 import { useUser } from '@clerk/nextjs'
 import Link from 'next/link'
 import posthog from 'posthog-js'
+import RedeemCode from '@/components/RedeemCode'
 
 interface BillingInfo {
   plan: 'free' | 'pro'
   status: string
   currentPeriodEnd: string | null
+  codeUntil: string | null
 }
 
 export default function SettingsPage() {
@@ -282,6 +284,8 @@ export default function SettingsPage() {
                     <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                       {billing?.currentPeriodEnd
                         ? `Renews ${new Date(billing.currentPeriodEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        : billing?.codeUntil
+                        ? `Free access through ${new Date(billing.codeUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
                         : '$19 / month'}
                     </p>
                   </div>
@@ -333,6 +337,16 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+
+        {/* Redeem a code */}
+        {isSignedIn && !billingError && (
+          <div className="mb-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Redeem a code</h2>
+            <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <RedeemCode variant="promo" onRedeemed={loadBilling} />
+            </div>
+          </div>
+        )}
 
         <div
           className="flex items-start gap-4 p-5 rounded-xl border mt-4"

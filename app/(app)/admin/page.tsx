@@ -9,6 +9,7 @@ import PotentialSamplesPanel from './PotentialSamplesPanel'
 import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
+import CodesPanel from './CodesPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 
@@ -136,6 +137,19 @@ export default async function AdminPage() {
                 description="The editorial desk for 100lights.com/learn. Edit anything, publish instantly with the toggle, or generate a new draft — repo-based drafts (written by Claude in dev sessions) appear here too and become editable database copies when saved."
               />
               <ArticlesPanel />
+            </>
+          ),
+        },
+        {
+          id: 'codes',
+          label: 'Codes',
+          content: (
+            <>
+              <PanelIntro
+                title="Redemption Codes"
+                description="Codes that grant free Pro time. Promo codes can be redeemed by any user (each once) and stack; starter codes are for signup and each user can only ever use one. Cap a code's lifetime with an expiry, or its total redemptions with a usage limit — handy for time-boxed campaigns and sponsoring a fixed number of people."
+              />
+              <CodesPanel />
             </>
           ),
         },

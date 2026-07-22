@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
+import StarterCodeBanner from '@/components/StarterCodeBanner'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
@@ -214,6 +215,8 @@ export default function DashboardPage() {
     <main className="flex-1 overflow-y-auto">
       <div style={{ padding: '40px 40px 60px', maxWidth: 1100 }}>
         <Suspense fallback={null}><UpgradeBanner /></Suspense>
+
+        <StarterCodeBanner />
 
         {/* Greeting */}
         <div style={{ marginBottom: 40 }}>

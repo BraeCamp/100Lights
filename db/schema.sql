@@ -46,3 +46,33 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 -- Migration: add gift columns to existing installs
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS gift_plan  TEXT;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS gift_until TIMESTAMPTZ;
+
+-- Redemption codes: self-service "gifts" that grant N days of Pro. Created and
+-- managed in Admin → Codes; also provisioned lazily by lib/codes.ts.
+--   kind='promo'   — a user may redeem any number of different active promo
+--                    codes (each once); grants stack.
+--   kind='starter' — entered at signup; a user may EVER redeem only one.
+CREATE TABLE IF NOT EXISTS redemption_codes (
+  code            TEXT        PRIMARY KEY,      -- stored uppercase, matched case-insensitively
+  kind            TEXT        NOT NULL DEFAULT 'promo',
+  grant_days      INTEGER     NOT NULL,         -- days of Pro a redemption grants
+  active          BOOLEAN     NOT NULL DEFAULT TRUE,
+  expires_at      TIMESTAMPTZ,                  -- code stops working after this; NULL = never
+  max_redemptions INTEGER,                      -- total-use cap; NULL = unlimited
+  redeemed_count  INTEGER     NOT NULL DEFAULT 0,
+  note            TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- One row per (code, user) — the PK enforces "each user uses any one code once".
+CREATE TABLE IF NOT EXISTS code_redemptions (
+  code        TEXT        NOT NULL,
+  user_id     TEXT        NOT NULL,
+  kind        TEXT        NOT NULL,             -- denormalised: "used a starter code ever?"
+  grant_days  INTEGER     NOT NULL,
+  grant_until TIMESTAMPTZ NOT NULL,             -- cumulative window end (grants stack)
+  redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (code, user_id)
+);
+CREATE INDEX IF NOT EXISTS code_redemptions_user_idx ON code_redemptions (user_id);
+CREATE INDEX IF NOT EXISTS code_redemptions_user_kind_idx ON code_redemptions (user_id, kind);

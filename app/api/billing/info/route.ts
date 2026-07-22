@@ -10,5 +10,7 @@ export async function GET() {
     plan: sub.plan,
     status: sub.status,
     currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
+    // Pro time from a redeemed code (distinct from a paid Stripe subscription).
+    codeUntil: sub.codeUntil?.toISOString() ?? null,
   })
 }

@@ -74,6 +74,9 @@ export async function POST(req: Request) {
       await sql`DELETE FROM upload_log WHERE user_id = ${userId}`
       await sql`DELETE FROM subscriptions WHERE user_id = ${userId}`
       try { await sql`DELETE FROM usage WHERE user_id = ${userId}` } catch { /* table optional */ }
+      // Redemption history (the codes themselves are global and stay). Optional
+      // table — a user may be deleted before the codes feature ever ran.
+      try { await sql`DELETE FROM code_redemptions WHERE user_id = ${userId}` } catch { /* table optional */ }
     } catch (err) {
       console.error('user.deleted cleanup failed:', err)
       return Response.json({ error: 'Cleanup failed' }, { status: 500 })  // Clerk retries
