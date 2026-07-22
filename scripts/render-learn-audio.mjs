@@ -203,26 +203,32 @@ function renderLoopClick(clean) {
 // trimBdb (optional) shaves the SECOND clip by N dB after matching — used only
 // for the compression pair, where a compressed signal reads a touch louder at
 // equal RMS (density), so a small trim keeps it from giving itself away.
-function matchPair(a, b, trimBdb = 0) {
+function matchPair(a, b, trimBdb = 0, preserve = false) {
   const rms = ({ L, R }) => { let s = 0; for (let i = 0; i < L.length; i++) s += L[i] * L[i] + R[i] * R[i]; return Math.sqrt(s / (L.length * 2)) }
-  const ra = rms(a), rb = rms(b), target = Math.min(ra, rb)
-  const scale = (x, r) => { const g = target / (r || 1); for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g } }
-  scale(a, ra); scale(b, rb)
+  // Equalise the two clips' RMS — UNLESS `preserve`, where the difference under
+  // test IS a small level change on one element (e.g. hats +1 dB). There we keep
+  // the pair's relative levels and only apply a shared normalisation to both.
+  if (!preserve) {
+    const ra = rms(a), rb = rms(b), target = Math.min(ra, rb)
+    const scale = (x, r) => { const g = target / (r || 1); for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g } }
+    scale(a, ra); scale(b, rb)
+  }
   let peak = 0
   for (const x of [a, b]) for (let i = 0; i < x.L.length; i++) peak = Math.max(peak, Math.abs(x.L[i]), Math.abs(x.R[i]))
-  const g = 0.89 / (peak || 1)
+  const g = 0.89 / (peak || 1) // same factor for both, so preserved differences survive
   for (const x of [a, b]) for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g }
   if (trimBdb) { const t = Math.pow(10, -trimBdb / 20); for (let i = 0; i < b.L.length; i++) { b.L[i] *= t; b.R[i] *= t } }
 }
 
-function writePair(n1, n2, a, b, trimBdb = 0) { matchPair(a, b, trimBdb); writeMp3Stereo(`${OUT}/${n1}.mp3`, a.L, a.R); writeMp3Stereo(`${OUT}/${n2}.mp3`, b.L, b.R); console.log(`${n1} / ${n2}`) }
+function writePair(n1, n2, a, b, trimBdb = 0, preserve = false) { matchPair(a, b, trimBdb, preserve); writeMp3Stereo(`${OUT}/${n1}.mp3`, a.L, a.R); writeMp3Stereo(`${OUT}/${n2}.mp3`, b.L, b.R); console.log(`${n1} / ${n2}`) }
 function writeOne(name, x) { writeMp3Stereo(`${OUT}/${name}.mp3`, x.L, x.R); console.log(name) }
 
 // ── Render everything ──────────────────────────────────────────────────────
 writePair('hear-comp-off', 'hear-comp-on', renderMix(4, {}), renderMix(4, { comp: true }), 1.5)
 writePair('hear-eq-flat', 'hear-eq-cut', renderMix(4, { pad: true }), renderMix(4, { pad: true, eqCut: true }))
 writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbDecay: 0.8 }), renderMix(4, { reverbDecay: 1.4 }))
-writePair('hear-hats-0', 'hear-hats-plus1', renderMix(4, { pad: true }), renderMix(4, { pad: true, hatGainDb: 1 }))
+// preserve=true: the whole test IS the +1 dB on the hats, so don't loudness-match it away.
+writePair('hear-hats-0', 'hear-hats-plus1', renderMix(4, { pad: true }), renderMix(4, { pad: true, hatGainDb: 1 }), 0, true)
 writePair('duck-off', 'duck-on', renderMix(4, {}), renderMix(4, { duck: true }))
 writePair('mix-mud', 'mix-hp', renderMix(4, { pad: true, lead: true }), renderMix(4, { pad: true, lead: true, highpass: true }))
 writePair('mix-pan-center', 'mix-pan-wide', renderMix(4, { pad: true, lead: true }), renderMix(4, { pad: true, lead: true, pan: true }))
