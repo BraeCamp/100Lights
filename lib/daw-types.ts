@@ -485,6 +485,10 @@ export interface DawTrack {
   id: string
   name: string
   type: TrackType
+  /** 'group' = a folder/bus: no clips of its own; its children route through it
+   *  so its volume/pan/mute/solo/effects apply to the whole group. Absent =
+   *  a normal audio track. */
+  kind?: 'group'
   color: string
   volume: number      // 0–1
   pan: number         // -1 to 1
@@ -494,6 +498,8 @@ export interface DawTrack {
   frozen?: boolean    // freeze: render to audio buffer, disable instrument
   inputSource?: string | null  // 'mic' | 'system' | null — audio input for recording
   height: number      // arrangement lane height in px
+  /** Collapsed = a thin row. On a group it also hides (folds) its children. */
+  collapsed?: boolean
   effects: TrackEffect[]
   midiEffects?: MidiEffect[]
   tone?: ToneParams   // per-track 4-band tone EQ (sub/bass/mid/treble)
@@ -789,6 +795,8 @@ export const TRACK_COLORS = [
 ]
 
 export const DEFAULT_TRACK_HEIGHT = 64
+export const COLLAPSED_TRACK_HEIGHT = 24
+export const GROUP_TRACK_HEIGHT = 34
 
 export function defaultTrackInstrument(_type?: TrackType): TrackInstrument {
   return { type: 'none', params: {} }

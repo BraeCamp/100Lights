@@ -699,26 +699,10 @@ export default function ArrangementView() {
   }
 
   function handleGroupTracks() {
-    if (selectedTrackIds.size < 2) return
-    const groupTrackId = crypto.randomUUID()
-    const orderedIds = project.tracks.map(t => t.id)
-    const selectedArr = [...selectedTrackIds]
-    const firstIdx = orderedIds.findIndex(id => selectedArr.includes(id))
-    if (firstIdx < 0) return
-
-    // Add the group track (will appear at end initially)
-    dispatch({ type: 'ADD_TRACK', id: groupTrackId, name: 'Group' })
-    // Reorder: insert group track before the first selected track
-    const newOrder = [
-      ...orderedIds.slice(0, firstIdx),
-      groupTrackId,
-      ...orderedIds.slice(firstIdx),
-    ]
-    dispatch({ type: 'REORDER_TRACKS', ids: newOrder })
-    // Set groupId on all selected tracks
-    for (const trackId of selectedTrackIds) {
-      dispatch({ type: 'UPDATE_TRACK', trackId, patch: { groupId: groupTrackId } })
-    }
+    // Don't nest existing groups; group the plain tracks in the selection.
+    const trackIds = [...selectedTrackIds].filter(id => project.tracks.find(t => t.id === id)?.kind !== 'group')
+    if (trackIds.length < 1) return
+    dispatch({ type: 'GROUP_TRACKS', trackIds, groupId: crypto.randomUUID() })
     setSelectedTrackIds(new Set())
   }
 
@@ -1132,11 +1116,38 @@ export default function ArrangementView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClipId, selectedClipIds, selectedEffectIds, project.arrangementClips, project.clipEffects, project.tracks, project.loopEnabled, project.timeSignatureNum, engine, dispatch, setSelectedClipIds, setSelectedClipId, setSelectedEffectIds, setPosition, setSnap, setRippleEdit])
 
-  // Visible tracks: filter out children of folded group parents
-  const visibleTracks = project.tracks.filter(track => {
-    if (!track.groupId) return true
-    return !foldedGroups.has(track.groupId)
-  })
+  // Visible tracks: hide children of a collapsed (folded) group.
+  const collapsedGroupIds = new Set(project.tracks.filter(t => t.kind === 'group' && t.collapsed).map(t => t.id))
+  const visibleTracks = project.tracks.filter(track => !(track.groupId && collapsedGroupIds.has(track.groupId)))
+
+  // Move a dragged track head relative to a target head (reorder / regroup).
+  function handleTrackDrop(draggedId: string, targetId: string, pos: 'before' | 'after') {
+    if (draggedId === targetId) return
+    const dragged = project.tracks.find(t => t.id === draggedId)
+    const target  = project.tracks.find(t => t.id === targetId)
+    if (!dragged || !target) return
+    // Don't drop a group into its own child.
+    if (dragged.kind === 'group' && target.groupId === dragged.id) return
+
+    let groupId: string | null
+    let beforeId: string | null
+    if (target.kind === 'group') {
+      if (pos === 'before') { groupId = null; beforeId = target.id }               // above the group
+      else {                                                                        // into the group (top)
+        groupId = dragged.kind === 'group' ? null : target.id
+        const firstChild = project.tracks.find(t => t.groupId === target.id)
+        beforeId = firstChild?.id ?? null
+      }
+    } else {
+      groupId = dragged.kind === 'group' ? null : (target.groupId ?? null)
+      if (pos === 'before') beforeId = target.id
+      else {
+        const idx = project.tracks.findIndex(t => t.id === target.id)
+        beforeId = project.tracks[idx + 1]?.id ?? null
+      }
+    }
+    dispatch({ type: 'MOVE_TRACK', trackId: draggedId, beforeId, groupId })
+  }
 
   return (
     <div
@@ -1446,6 +1457,7 @@ export default function ArrangementView() {
               return next
             })}
             onGroupTracks={handleGroupTracks}
+            onReorderDrop={handleTrackDrop}
             rippleEdit={rippleEdit}
             onCopyClips={handleCopyClips}
             getSelectionRegion={() => selectionRegionRef.current}

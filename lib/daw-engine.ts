@@ -40,6 +40,7 @@ interface TrackNodes {
   sendGains: Map<string, GainNode>     // returnTrackId → send gain (post-fader tap from analyser)
   preSendGains: Map<string, GainNode>  // returnTrackId → send gain (pre-fader tap from effectsOutput)
   sendModes: Map<string, 'pre' | 'post'>
+  mainDest: AudioNode                  // where analyser's main output goes (master, or a group bus input)
 }
 
 // Return track (FX bus) routing nodes
@@ -267,7 +268,7 @@ export class DawEngine extends EventTarget {
         sendModes.set(returnId, 'post')
       }
 
-      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, sendGains, preSendGains, sendModes })
+      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, sendGains, preSendGains, sendModes, mainDest: this.masterGain })
 
       // High-res analyser for masking detection — separate from VU meter analyser
       const maskingAnalyser = this.ctx.createAnalyser()
@@ -497,6 +498,30 @@ export class DawEngine extends EventTarget {
     this._baseVol.set(id, volume)
     const nodes = this.trackNodes.get(id)
     if (nodes) nodes.gain.gain.setTargetAtTime(volume * (this._localMix.get(id) ?? 1), this.ctx.currentTime, 0.01)
+  }
+
+  /** Point a track's main output at a new destination (a group bus, or master),
+   *  reconnecting only that edge so the return-send taps survive. */
+  private _routeTrackOutput(id: string, dest: AudioNode) {
+    const n = this.trackNodes.get(id)
+    if (!n || n.mainDest === dest) return
+    try { n.analyser.disconnect(n.mainDest) } catch { /* edge already gone */ }
+    try { n.analyser.connect(dest) } catch { /* dest gone */ }
+    n.mainDest = dest
+  }
+
+  /** Group-aware mute/solo: a track is silenced by its own mute, its group's
+   *  mute, or — while any solo is active — by not being on a solo path. A group
+   *  bus stays open if it or any of its children is soloed. */
+  private _trackSilenced(t: DawTrack, group: DawTrack | undefined, anySolo: boolean, tracks: DawTrack[]): boolean {
+    if (t.mute) return true
+    if (group && group.mute) return true
+    if (!anySolo) return false
+    if (t.kind === 'group') {
+      const childSoloed = tracks.some(c => c.groupId === t.id && c.solo)
+      return !(t.solo || childSoloed)
+    }
+    return !(t.solo || (group?.solo ?? false))
   }
 
   setTrackPan(id: string, pan: number) {
@@ -771,9 +796,16 @@ export class DawEngine extends EventTarget {
 
     const anySoloed     = project.tracks.some(t => t.solo)
     const returnTracks  = project.returnTracks ?? []
+    const byId          = new Map(project.tracks.map(t => [t.id, t]))
+    // Pass 1: make sure every node exists — so a group bus is ready before its
+    // children try to route into it.
+    for (const t of project.tracks) this.ensureTrack(t.id, t.effects)
+    // Pass 2: route each track to its group bus (or master) and set its params.
     for (const t of project.tracks) {
-      this.ensureTrack(t.id, t.effects)
-      const silenced = t.mute || (anySoloed && !t.solo)
+      const group      = t.groupId ? byId.get(t.groupId) : undefined
+      const groupNodes = group ? this.trackNodes.get(group.id) : undefined
+      this._routeTrackOutput(t.id, groupNodes ? groupNodes.effectsInput : this.masterGain)
+      const silenced = this._trackSilenced(t, group, anySoloed, project.tracks)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
       this.setTrackTone(t.id, t.tone)

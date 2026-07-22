@@ -1092,7 +1092,8 @@ export default function SessionView() {
           {/* Spacer — aligned with scene-name header row */}
           <div style={{ width: HDR_W, height: 28, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', flexShrink: 0 }} />
 
-          {project.tracks.map(t => <TrackHeader key={t.id} track={t} />)}
+          {/* Groups are buses — no session clips, so they're not columns here */}
+          {project.tracks.filter(t => t.kind !== 'group').map(t => <TrackHeader key={t.id} track={t} />)}
 
           {/* Stop clips label row */}
           <div style={{ width: HDR_W, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px', gap: 5, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', fontSize: 9, color: 'var(--text-muted)' }}>
@@ -1129,7 +1130,7 @@ export default function SessionView() {
           </div>
 
           {/* Track rows */}
-          {project.tracks.map(track => (
+          {project.tracks.filter(t => t.kind !== 'group').map(track => (
             <div key={track.id} style={{ display: 'flex', height: SLOT_H, flexShrink: 0 }}>
               {project.scenes.map((_scene, si) => (
                 <ClipSlot
@@ -1149,7 +1150,7 @@ export default function SessionView() {
 
           {/* Stop clips per-track row */}
           <div style={{ display: 'flex', height: 32, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
-            {project.tracks.map(track => (
+            {project.tracks.filter(t => t.kind !== 'group').map(track => (
               <button
                 key={track.id}
                 onClick={() => engine.stopSessionTrack(track.id)}

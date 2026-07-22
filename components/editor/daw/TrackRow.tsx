@@ -8,7 +8,7 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
-import { isAudioClip, isMidiClip, TRACK_COLORS } from '@/lib/daw-types'
+import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT } from '@/lib/daw-types'
 import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
 import { clampToViewport } from './menu-clamp'
 import TrackInputCard from './TrackInputCard'
@@ -276,7 +276,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, onReorderDrop, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -285,6 +285,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   foldedGroups?: Set<string>
   onToggleFold?: () => void
   onGroupTracks?: () => void
+  /** Drop a dragged track head relative to this one (reorder / regroup). */
+  onReorderDrop?: (draggedId: string, targetId: string, pos: 'before' | 'after') => void
   rippleEdit?: boolean
   onCopyClips?: (ids: Set<string>) => void
   onPasteClips?: () => void
@@ -389,11 +391,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const projectRef = useRef(project)
   useEffect(() => { projectRef.current = project }, [project])
 
-  // Check if this track is a group parent
-  const isGroupParent = project.tracks.some(t => t.groupId === track.id)
-  const isFolded = foldedGroups?.has(track.id) ?? false
+  // Group / collapse state
+  const isGroup = track.kind === 'group'
+  const collapsed = track.collapsed ?? false          // group: children folded; track: thin row
+  const isFolded = isGroup && collapsed
   const isMultiSelected = selectedTrackIds?.has(track.id) ?? false
   const isIndented = !!track.groupId
+  void foldedGroups
 
   // Escape exits crop mode
   useEffect(() => {
@@ -675,13 +679,139 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
   const isSelected = selectedTrackId === track.id
   const leftPad = isIndented ? 24 : 8  // 16px extra indent for grouped tracks
+  // Effective row height: groups + collapsed tracks are thin.
+  const rowH = isGroup ? GROUP_TRACK_HEIGHT : (collapsed ? COLLAPSED_TRACK_HEIGHT : track.height)
+  const childCount = isGroup ? project.tracks.filter(t => t.groupId === track.id).length : 0
+
+  // ── Drag-to-reorder (native HTML5 drag on the track head) ────────────────
+  const [dropPos, setDropPos] = useState<'before' | 'after' | null>(null)
+  const headDrag = onReorderDrop ? {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      // Let interactive controls (name, sliders, buttons) work normally.
+      if ((e.target as HTMLElement).closest('input,button,select')) { e.preventDefault(); return }
+      e.dataTransfer.setData('application/x-daw-track', track.id)
+      e.dataTransfer.effectAllowed = 'move'
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes('application/x-daw-track')) return
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move'
+      const r = e.currentTarget.getBoundingClientRect()
+      setDropPos(e.clientY < r.top + r.height / 2 ? 'before' : 'after')
+    },
+    onDragLeave: () => setDropPos(null),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      const id = e.dataTransfer.getData('application/x-daw-track')
+      const r = e.currentTarget.getBoundingClientRect()
+      const pos: 'before' | 'after' = e.clientY < r.top + r.height / 2 ? 'before' : 'after'
+      setDropPos(null)
+      if (id && id !== track.id) onReorderDrop!(id, track.id, pos)
+    },
+  } : {}
+  const dropLine = dropPos && (
+    <div style={{ position: 'absolute', left: 0, right: 0, [dropPos === 'before' ? 'top' : 'bottom']: -1, height: 2, background: 'var(--accent)', zIndex: 5, pointerEvents: 'none' }} />
+  )
+
+  // ── Group header row (a folder/bus — no clip lane of its own) ─────────────
+  if (isGroup) {
+    return (
+      <div style={{ position: 'relative', boxShadow: isSelected ? 'inset 2px 0 0 var(--accent)' : 'none' }}>
+        {dropLine}
+        <div style={{ display: 'flex', height: GROUP_TRACK_HEIGHT, flexShrink: 0 }}>
+          {/* Group head */}
+          <div
+            {...headDrag}
+            onClick={e => { if (!(e.target as HTMLElement).closest('button,input,select')) { setSelectedTrackId(track.id); onSelectTrack?.(e.ctrlKey || e.metaKey) } }}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
+            data-help-id="track-head" data-track-id={track.id} data-testid="group-head"
+            style={{
+              width: HDR_W, height: GROUP_TRACK_HEIGHT, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3, padding: '0 8px',
+              background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : `${track.color}22`,
+              borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+              borderLeft: `4px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'grab',
+            }}
+          >
+            <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) }}
+              title={isFolded ? 'Expand group' : 'Fold group'}
+              style={{ fontSize: 9, width: 14, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0 }}>
+              {isFolded ? '▸' : '▾'}
+            </button>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>▤</span>
+            {editing ? (
+              <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+                onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
+                onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
+                style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }} />
+            ) : (
+              <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                {track.name}
+              </span>
+            )}
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>{childCount}</span>
+            <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }) }}
+              style={{ fontSize: 8, width: 15, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>M</button>
+            <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) }}
+              style={{ fontSize: 8, width: 15, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>S</button>
+            <button onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id); setShowFx(v => !v) }}
+              title="Group effects — opens the device chain in the Devices tab"
+              style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: `1px solid ${track.effects.length ? 'var(--accent)' : 'var(--border)'}`, background: track.effects.length ? 'rgb(var(--accent-rgb) / 0.2)' : 'var(--bg-surface)', color: track.effects.length ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>FX</button>
+          </div>
+          {/* Group lane — a thin summary bar (no clips) */}
+          <div style={{ flex: 1, height: GROUP_TRACK_HEIGHT, borderBottom: '1px solid var(--border)', background: `linear-gradient(90deg, ${track.color}18, transparent 40%)`, display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
+            <input type="range" min={0} max={1} step={0.01} value={track.volume}
+              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
+              onClick={e => e.stopPropagation()} draggable={false}
+              className="cf-slider" style={{ width: 120, accentColor: track.color }} />
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 10 }}>{isFolded ? 'folded' : `${childCount} track${childCount === 1 ? '' : 's'}`}</span>
+          </div>
+        </div>
+        {trackCtxMenu && createPortal(
+          <div id={`tcm-${track.id}`} style={{
+            position: 'fixed', top: Math.min(trackCtxMenu.y, window.innerHeight - 260), left: Math.min(trackCtxMenu.x, window.innerWidth - 200),
+            zIndex: 9999, minWidth: 180, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.75)', padding: '4px 0', userSelect: 'none',
+          }}>
+            <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>{track.name}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1, textTransform: 'uppercase', letterSpacing: '0.07em' }}>group · {childCount} tracks</div>
+            </div>
+            {[
+              { label: 'Rename', action: () => { setEditing(true); setDraft(track.name) } },
+              { label: isFolded ? 'Expand group' : 'Fold group', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) },
+              { label: track.mute ? 'Unmute' : 'Mute', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }) },
+              { label: track.solo ? 'Unsolo' : 'Solo', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) },
+              { label: 'Ungroup (delete group, keep tracks)', action: () => dispatch({ type: 'REMOVE_TRACK', trackId: track.id }), danger: true },
+            ].map(({ label, action, danger }) => (
+              <button key={label} onClick={() => { action(); setTrackCtxMenu(null) }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: danger ? '#f87171' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.10)' : 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+              >{label}</button>
+            ))}
+            <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0', padding: '6px 12px' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 5, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Color</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {trackColors.map(c => (
+                  <button key={c} title={c} onClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { color: c } }); setTrackCtxMenu(null) }}
+                    style={{ width: 16, height: 16, borderRadius: '50%', background: c, border: track.color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', padding: 0, boxSizing: 'border-box' }} />
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+      </div>
+    )
+  }
 
   return (
-    <div style={{ boxShadow: isSelected ? `inset 2px 0 0 var(--accent)` : 'none' }}>
+    <div style={{ position: 'relative', boxShadow: isSelected ? `inset 2px 0 0 var(--accent)` : 'none' }}>
+      {dropLine}
       {/* Main track row */}
-      <div style={{ display: 'flex', height: track.height, flexShrink: 0 }}>
+      <div style={{ display: 'flex', height: rowH, flexShrink: 0 }}>
         {/* Header */}
         <div
+          {...headDrag}
           onClick={e => {
             if (!(e.target as HTMLElement).closest('button,input,select')) {
               setSelectedTrackId(track.id)
@@ -692,7 +822,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           data-help-id="track-head"
           data-track-id={track.id}
           style={{
-            width: HDR_W, height: track.height, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, padding: `4px ${isIndented ? 8 : 8}px`,
+            width: HDR_W, height: rowH, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: collapsed ? 0 : 4, padding: `${collapsed ? 2 : 4}px 8px`,
             paddingLeft: leftPad,
             background: isSelected ? 'rgb(var(--accent-rgb) / 0.10)' : isMultiSelected ? 'rgb(var(--accent-rgb) / 0.06)' : 'var(--bg-card)',
             borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
@@ -702,16 +832,14 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         >
           {/* Name row — identity + transport controls */}
           <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 2 }}>
-            {/* Group fold toggle */}
-            {isGroupParent && (
-              <button
-                onClick={e => { e.stopPropagation(); onToggleFold?.() }}
-                title={isFolded ? 'Expand group' : 'Fold group'}
-                style={{ fontSize: 8, width: 12, height: 12, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, lineHeight: 1 }}
-              >
-                {isFolded ? '▶' : '▼'}
-              </button>
-            )}
+            {/* Collapse toggle — thins this track's row */}
+            <button
+              onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) }}
+              title={collapsed ? 'Expand track' : 'Collapse track'}
+              style={{ fontSize: 8, width: 12, height: 12, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, lineHeight: 1 }}
+            >
+              {collapsed ? '▸' : '▾'}
+            </button>
             {frozen && <span title="Frozen" style={{ fontSize: 10, flexShrink: 0 }}>❄</span>}
             {collabPeers.filter(pr => pr.selectedTrackId === track.id).slice(0, 3).map(pr => (
               <span key={pr.connectionId} title={`${pr.name} is on this track`} style={{
@@ -760,8 +888,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               </button>
             )}
           </div>
-          {/* Tools row — routing + utilities */}
-          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          {/* Tools row — routing + utilities (hidden when the track is collapsed) */}
+          <div style={{ display: collapsed ? 'none' : 'flex', gap: 2, alignItems: 'center' }}>
             {track.instrument.type !== 'drum' && (<>
               {/* Input source — opens settings card */}
               <button
@@ -996,7 +1124,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           data-help-id="track-lane"
           data-track-id={track.id}
           data-track-type={track.type}
-          style={{ flex: 1, height: track.height, position: 'relative', background: isSelected ? 'rgb(var(--accent-rgb) / 0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
+          style={{ flex: 1, height: rowH, position: 'relative', background: isSelected ? 'rgb(var(--accent-rgb) / 0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
           onMouseDown={e => { if (!e.altKey) { setSelectedClipIds(new Set()); setSelectedClipId(null) }; setCroppingClipId(null) }}
           onContextMenu={e => {
             // Clips stop propagation for their own menu — this fires on empty lane
@@ -1039,7 +1167,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               </div>
             )}
             {recording && track.armed && !!track.inputSource && (
-              <RecordingGhost beatW={beatW} height={track.height} />
+              <RecordingGhost beatW={beatW} height={rowH} />
             )}
             {visibleClips.map(clip => {
               const isClipSelected      = selectedClipId === clip.id
@@ -1437,7 +1565,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       </div>
 
       {/* Take lane rows — shown when takes exist and expanded */}
-      {takesExpanded && takeLanes.map(lane => (
+      {!collapsed && takesExpanded && takeLanes.map(lane => (
         <div key={lane.id} style={{ display: 'flex', height: TAKE_H, flexShrink: 0 }}>
           {/* Take lane header */}
           <div style={{
@@ -1526,7 +1654,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       )}
 
       {/* Automation lane rows */}
-      {autoLanes.map(lane => (
+      {!collapsed && autoLanes.map(lane => (
         <div key={lane.id} style={{ display: 'flex', height: AUTO_H, flexShrink: 0 }}>
           <AutoLaneHeader lane={lane} track={track} />
           <div style={{ flex: 1, height: AUTO_H, overflow: 'hidden', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
@@ -1541,7 +1669,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       ))}
 
       {/* Effects lane */}
-      {showFx && (
+      {!collapsed && showFx && (
         <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
           <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>FX</span>

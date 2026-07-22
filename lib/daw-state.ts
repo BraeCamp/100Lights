@@ -9,7 +9,7 @@ import type {
 } from './daw-types'
 import type { PodcastMeta } from './project-serializer'
 import {
-  defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT,
+  defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, GROUP_TRACK_HEIGHT,
   defaultTrackInstrument,
 } from './daw-types'
 import { DawEngine } from './daw-engine'
@@ -18,11 +18,16 @@ import { DawEngine } from './daw-engine'
 
 export type DawAction =
   // Tracks
-  | { type: 'ADD_TRACK'; instrument?: DawTrack['instrument']; id?: string; name?: string }
+  | { type: 'ADD_TRACK'; instrument?: DawTrack['instrument']; id?: string; name?: string; kind?: 'group'; groupId?: string }
   | { type: 'REMOVE_TRACK'; trackId: string }
   | { type: 'DUPLICATE_TRACK'; trackId: string; seed?: string }
   | { type: 'UPDATE_TRACK'; trackId: string; patch: Partial<DawTrack> }
   | { type: 'REORDER_TRACKS'; ids: string[] }
+  // Move a track (with its children if it's a group) before `beforeId` (null =
+  // end) and optionally set its parent group. Keeps group children contiguous.
+  | { type: 'MOVE_TRACK'; trackId: string; beforeId: string | null; groupId?: string | null }
+  // Wrap the given tracks in a new group (bus). Component supplies the group id.
+  | { type: 'GROUP_TRACKS'; trackIds: string[]; groupId: string; name?: string }
   // Clips (arrangement)
   | { type: 'ADD_CLIP'; clip: DawClip }
   | { type: 'REMOVE_CLIP'; clipId: string }
@@ -122,6 +127,38 @@ function makeIdGen(seed?: string): () => string {
   return () => `d-${next32()}${next32()}${next32()}${next32()}`
 }
 
+/**
+ * Enforce the group layout invariant on the tracks array:
+ *  - group tracks are never themselves grouped (no nesting)
+ *  - a child's groupId must point at a real group, else it's dropped (orphan → top level)
+ *  - every group's children sit immediately after it, in their current relative order
+ * Top-level items (ungrouped tracks + groups) keep their relative order.
+ */
+function normalizeGroups(tracks: DawTrack[]): DawTrack[] {
+  const groupIds = new Set(tracks.filter(t => t.kind === 'group').map(t => t.id))
+  const cleaned = tracks.map(t => {
+    let groupId = t.groupId
+    if (t.kind === 'group') groupId = undefined
+    else if (groupId && !groupIds.has(groupId)) groupId = undefined
+    return groupId === t.groupId ? t : { ...t, groupId }
+  })
+  const childrenByGroup = new Map<string, DawTrack[]>()
+  for (const t of cleaned) {
+    if (t.groupId) {
+      const arr = childrenByGroup.get(t.groupId) ?? []
+      arr.push(t)
+      childrenByGroup.set(t.groupId, arr)
+    }
+  }
+  const out: DawTrack[] = []
+  for (const t of cleaned) {
+    if (t.groupId) continue          // placed under its group below
+    out.push(t)
+    if (t.kind === 'group') out.push(...(childrenByGroup.get(t.id) ?? []))
+  }
+  return out
+}
+
 // A MIDI clip grows to fit its notes: adding or moving a note past the clip
 // end extends the clip to the next bar boundary. Looped clips are exempt —
 // their duration means "number of repeats", not content length.
@@ -139,10 +176,12 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'ADD_TRACK': {
       const colorIdx = project.tracks.length % TRACK_COLORS.length
       const num = project.tracks.length + 1
+      const isGroup = action.kind === 'group'
       const track: DawTrack = {
         id: action.id ?? crypto.randomUUID(),
-        name: action.name ?? `Track ${num}`,
+        name: action.name ?? (isGroup ? 'Group' : `Track ${num}`),
         type: 'audio',
+        ...(isGroup ? { kind: 'group' as const } : {}),
         color: TRACK_COLORS[colorIdx],
         volume: 0.8,
         pan: 0,
@@ -150,22 +189,64 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         solo: false,
         armed: false,
         inputSource: null,
-        height: DEFAULT_TRACK_HEIGHT,
+        height: isGroup ? GROUP_TRACK_HEIGHT : DEFAULT_TRACK_HEIGHT,
         effects: [],
         instrument: action.instrument ?? defaultTrackInstrument(),
+        ...(action.groupId ? { groupId: action.groupId } : {}),
       }
       const grid = { ...project.sessionGrid, [track.id]: Array(project.scenes.length).fill(null) }
-      return { ...project, tracks: [...project.tracks, track], sessionGrid: grid }
+      return { ...project, tracks: normalizeGroups([...project.tracks, track]), sessionGrid: grid }
+    }
+
+    case 'GROUP_TRACKS': {
+      const ids = new Set(action.trackIds.filter(id => {
+        const t = project.tracks.find(x => x.id === id)
+        return t && t.kind !== 'group'   // don't nest groups
+      }))
+      if (ids.size < 1) return project
+      const colorIdx = project.tracks.length % TRACK_COLORS.length
+      const group: DawTrack = {
+        id: action.groupId, name: action.name ?? 'Group', type: 'audio', kind: 'group',
+        color: TRACK_COLORS[colorIdx], volume: 0.8, pan: 0, mute: false, solo: false, armed: false,
+        inputSource: null, height: GROUP_TRACK_HEIGHT, effects: [], instrument: defaultTrackInstrument(),
+      }
+      const firstIdx = project.tracks.findIndex(t => ids.has(t.id))
+      const tagged = project.tracks.map(t => ids.has(t.id) ? { ...t, groupId: action.groupId } : t)
+      const withGroup = [...tagged.slice(0, firstIdx), group, ...tagged.slice(firstIdx)]
+      const grid = { ...project.sessionGrid, [group.id]: Array(project.scenes.length).fill(null) }
+      return { ...project, tracks: normalizeGroups(withGroup), sessionGrid: grid }
+    }
+
+    case 'MOVE_TRACK': {
+      const moving = project.tracks.find(t => t.id === action.trackId)
+      if (!moving) return project
+      let tracks = project.tracks
+      // Re-parent (unless it's a group — groups don't nest).
+      if (action.groupId !== undefined && moving.kind !== 'group') {
+        tracks = tracks.map(t => t.id === action.trackId ? { ...t, groupId: action.groupId ?? undefined } : t)
+      }
+      // The moving block = the track, plus its children when it's a group.
+      const blockIds = new Set<string>([action.trackId])
+      if (moving.kind === 'group') for (const t of tracks) if (t.groupId === action.trackId) blockIds.add(t.id)
+      const block = tracks.filter(t => blockIds.has(t.id))
+      const rest  = tracks.filter(t => !blockIds.has(t.id))
+      const idx = action.beforeId ? rest.findIndex(t => t.id === action.beforeId) : rest.length
+      const at = idx < 0 ? rest.length : idx
+      const next = [...rest.slice(0, at), ...block, ...rest.slice(at)]
+      return { ...project, tracks: normalizeGroups(next) }
     }
 
     case 'REMOVE_TRACK': {
-      const tracks = project.tracks.filter(t => t.id !== action.trackId)
+      // Deleting a group ungroups (keeps) its children.
+      const tracks = project.tracks
+        .filter(t => t.id !== action.trackId)
+        .map(t => t.groupId === action.trackId ? { ...t, groupId: undefined } : t)
       const clips  = project.arrangementClips.filter(c => c.trackId !== action.trackId)
       const grid   = { ...project.sessionGrid }
       delete grid[action.trackId]
       const automationLanes = project.automationLanes.filter(l => l.trackId !== action.trackId)
       const clipEffects     = (project.clipEffects ?? []).filter(e => e.trackId !== action.trackId)
-      return { ...project, tracks, arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects }
+      return { ...project, tracks: normalizeGroups(tracks), arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects }
     }
 
     case 'UPDATE_TRACK': {
@@ -200,7 +281,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       ]
       const grid = { ...project.sessionGrid, [newTrackId]: Array(project.scenes.length).fill(null) }
       return {
-        ...project, tracks,
+        ...project, tracks: normalizeGroups(tracks),
         arrangementClips: [...project.arrangementClips, ...newClips],
         automationLanes:  [...project.automationLanes,  ...newLanes],
         sessionGrid: grid,
@@ -210,7 +291,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'REORDER_TRACKS': {
       const map = new Map(project.tracks.map(t => [t.id, t]))
       const tracks = action.ids.map(id => map.get(id)!).filter(Boolean)
-      return { ...project, tracks }
+      return { ...project, tracks: normalizeGroups(tracks) }
     }
 
     case 'ADD_CLIP':
@@ -471,6 +552,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const p = action.project
       return {
         ...p,
+        tracks:          normalizeGroups(p.tracks ?? []),
         returnTracks:    p.returnTracks    ?? [],
         takeLanes:       p.takeLanes       ?? [],
         crossfaderValue: p.crossfaderValue ?? 0.5,
@@ -745,12 +827,12 @@ export function makeMidiClip(
 // Ensure projects loaded from disk have all required fields
 export function migrateProject(raw: Partial<DawProject>): DawProject {
   const base = defaultProject()
-  const tracks = (raw.tracks ?? []).map(t => ({
+  const tracks = normalizeGroups((raw.tracks ?? []).map(t => ({
     ...t,
     effects:    t.effects    ?? [],
     instrument: t.instrument ?? defaultTrackInstrument(t.type),
     height:     t.height     ?? DEFAULT_TRACK_HEIGHT,
-  }))
+  })))
   return {
     ...base,
     ...raw,
