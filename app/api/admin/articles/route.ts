@@ -2,6 +2,7 @@ import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { getArticles, getRepoSlugs } from '@/lib/learn-articles'
 import { ensureLearnSchema } from '@/lib/learn-schema'
+import { submitToIndexNow } from '@/lib/indexnow'
 
 export const runtime = 'nodejs'
 
@@ -40,6 +41,8 @@ export async function PUT(req: Request) {
       title = EXCLUDED.title, description = EXCLUDED.description, date = EXCLUDED.date,
       updated = EXCLUDED.updated, tags = EXCLUDED.tags, draft = EXCLUDED.draft, body = EXCLUDED.body
   `
+  // Nudge Bing/Yandex to crawl it now if it's published.
+  if (a.draft === false) void submitToIndexNow([`https://100lights.com/learn/${slug}`])
   return Response.json({ ok: true, slug })
 }
 

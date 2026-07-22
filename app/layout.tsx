@@ -27,6 +27,12 @@ export const metadata: Metadata = {
     description: 'A full DAW built for the browser, with a community of shared sounds and chord recipes.',
   },
   robots: { index: true, follow: true },
+  // Search Console / Bing verification via env vars — set the code from each
+  // console in Vercel and it verifies without touching DNS. Omitted when unset.
+  verification: {
+    ...(process.env.GOOGLE_SITE_VERIFICATION ? { google: process.env.GOOGLE_SITE_VERIFICATION } : {}),
+    ...(process.env.BING_SITE_VERIFICATION ? { other: { 'msvalidate.01': process.env.BING_SITE_VERIFICATION } } : {}),
+  },
 }
 
 // Public pages allow pinch-zoom — blocking it hurts accessibility and mobile

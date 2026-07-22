@@ -637,12 +637,22 @@ export default function ArticlesPanel() {
         </div>
       </div>
 
-      {/* New blank */}
-      <div>
+      {/* New blank + IndexNow */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button
           onClick={() => setSel({ slug: '', title: '', description: '', date: new Date().toISOString().slice(0, 10), tags: '', draft: true, body: '# Title\n\nStart writing…', source: 'db' })}
           style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
         >+ New article</button>
+        <button
+          onClick={async () => {
+            setMsg('Pinging search engines…')
+            const r = await fetch('/api/admin/indexnow', { method: 'POST' }).catch(() => null)
+            const d = r ? await r.json().catch(() => null) : null
+            setMsg(r?.ok ? `Submitted ${d?.submitted} URLs to Bing/Yandex ✓` : 'IndexNow ping failed')
+          }}
+          title="Tell Bing/Yandex to re-crawl everything now (e.g. after scheduled articles go live). Google uses Search Console, not this."
+          style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+        >⚡ Ping search engines</button>
       </div>
 
       {/* Publishing schedule */}
