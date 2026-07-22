@@ -94,6 +94,8 @@ export default function AudioManager() {
                     </div>
                     <audio key={src} controls preload="none" src={src} style={{ width: '100%', height: 38 }} />
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <a href={`/new?modules=audio&importAudio=${encodeURIComponent(`/api/demo-audio/${c.file}`)}&importName=${encodeURIComponent(c.label)}`} target="_blank" rel="noreferrer"
+                        style={{ ...btn, borderColor: 'var(--accent)', color: 'var(--accent-light)' }}>Edit in studio ↗</a>
                       <a href={`/api/demo-audio/${c.file}`} download={`${c.file}.wav`} style={btn}>Download</a>
                       <label style={{ ...btn, opacity: busy === c.file ? 0.5 : 1 }}>
                         {busy === c.file ? 'Uploading…' : 'Upload replacement'}

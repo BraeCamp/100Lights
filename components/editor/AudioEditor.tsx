@@ -8,7 +8,7 @@ import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
-import { DawContext, reducer, makeAudioClip, migrateProject, useDaw } from '@/lib/daw-state'
+import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import { Library, Settings, FileText, Users, Palette, Home, Code2 } from 'lucide-react'
@@ -626,6 +626,36 @@ export default function AudioEditor(props: AudioEditorProps) {
             dispatch({ type: 'ADD_TRACK', id: trackId, name: item.name })
             dispatch({ type: 'ADD_CLIP', clip: buildRecipeClip(recipe, trackId, 0) })
           }
+        }
+      } catch { /* deep-link is best-effort */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fix-a-clip deep-link: /new?importAudio=<url>&importName=<label> drops an
+  // external audio file onto a fresh track so it can be edited. Used by the
+  // demo-clip fixer at /audio-check ("Edit in studio"). Best-effort.
+  const clipImportRan = useRef(false)
+  useEffect(() => {
+    if (clipImportRan.current) return
+    clipImportRan.current = true
+    const params = new URLSearchParams(window.location.search)
+    const url = params.get('importAudio')
+    if (!url) return
+    void (async () => {
+      try {
+        const name = params.get('importName') || 'Clip to fix'
+        const trackId = crypto.randomUUID()
+        dispatch({ type: 'ADD_TRACK', id: trackId, name })
+        const clip = makeAudioClip(trackId, name, 0, 8, { audioUrl: url })
+        dispatch({ type: 'ADD_CLIP', clip })
+        const buf = await engineRef.current?.loadClipBuffer(clip)
+        if (buf) {
+          dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engineRef.current!.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+          // Persist so the clip survives a reload — audioUrl is stripped on save.
+          try {
+            const ab = await (await fetch(url)).arrayBuffer()
+            void uploadRecordingBlob(new Blob([ab], { type: 'audio/wav' }), clip.id).then(key => key && dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } }))
+          } catch { /* persistence is non-fatal */ }
         }
       } catch { /* deep-link is best-effort */ }
     })()
