@@ -91,6 +91,30 @@ export function makeReverb() {
   }
 }
 
+// ── Perceived loudness (K-weighted, gated) ─────────────────────────────────
+// A LUFS-style loudness estimate on the mono sum: a ~100 Hz high-pass plus a
+// high-frequency tilt, then a gated mean-square. This is what A/B pairs must be
+// matched on — plain RMS does NOT capture perceived loudness, so a compressed
+// or denser clip measures "matched" by RMS while clearly sounding louder.
+// Returns a linear amplitude (compare via 20*log10(ratio)).
+export function kloud(L, R = L) {
+  const N = L.length
+  const Rc = Math.exp(-2 * Math.PI * 100 / SR) // 1-pole high-pass
+  const sc = Math.exp(-2 * Math.PI * 2000 / SR) // high-shelf split
+  const win = Math.round(0.4 * SR)
+  let px = 0, po = 0, shy = 0, acc = 0, cnt = 0, g = 0, gc = 0
+  for (let i = 0; i < N; i++) {
+    const m = (L[i] + R[i]) / 2
+    const hp = Rc * (po + m - px); px = m; po = hp
+    shy = sc * shy + (1 - sc) * hp
+    const kw = hp + (hp - shy) * 0.6
+    acc += kw * kw; cnt++
+    if (cnt === win) { const ms = acc / win; if (ms > 6.4e-5) { g += ms; gc++ } acc = 0; cnt = 0 }
+  }
+  if (cnt > 0) { const ms = acc / cnt; if (ms > 6.4e-5) { g += ms; gc++ } }
+  return Math.sqrt(g / (gc || 1))
+}
+
 // ── Master: normalise to a target peak + short edge fades ──────────────────
 export function finalize(buf, peakTarget = 0.89) {
   let peak = 0

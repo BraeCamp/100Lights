@@ -6,7 +6,7 @@
 // Output → public/learn-audio.
 import { mkdirSync } from 'fs'
 import {
-  SR, mtof, clamp, resetNoise, biquad, osc, ar, drumSample, makeReverb, finalize, writeMp3Stereo,
+  SR, mtof, clamp, resetNoise, biquad, osc, ar, drumSample, makeReverb, finalize, writeMp3Stereo, kloud,
 } from './lib/audio-toolkit.mjs'
 
 const OUT = 'public/learn-audio'
@@ -251,14 +251,14 @@ function renderLoopClick(clean) {
 // for the compression pair, where a compressed signal reads a touch louder at
 // equal RMS (density), so a small trim keeps it from giving itself away.
 function matchPair(a, b, trimBdb = 0, preserve = false) {
-  const rms = ({ L, R }) => { let s = 0; for (let i = 0; i < L.length; i++) s += L[i] * L[i] + R[i] * R[i]; return Math.sqrt(s / (L.length * 2)) }
-  // Equalise the two clips' RMS — UNLESS `preserve`, where the difference under
-  // test IS a small level change on one element (e.g. hats +1 dB). There we keep
-  // the pair's relative levels and only apply a shared normalisation to both.
+  // Match PERCEIVED (K-weighted) loudness, not RMS — RMS-matching leaves a
+  // denser/compressed/brighter clip sounding louder. UNLESS `preserve`, where
+  // the difference under test IS a small level change on one element (hats
+  // +1 dB): there we keep the pair's relative levels and only shared-normalise.
   if (!preserve) {
-    const ra = rms(a), rb = rms(b), target = Math.min(ra, rb)
-    const scale = (x, r) => { const g = target / (r || 1); for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g } }
-    scale(a, ra); scale(b, rb)
+    const la = kloud(a.L, a.R), lb = kloud(b.L, b.R), target = Math.min(la, lb)
+    const scale = (x, l) => { const g = target / (l || 1); for (let i = 0; i < x.L.length; i++) { x.L[i] *= g; x.R[i] *= g } }
+    scale(a, la); scale(b, lb)
   }
   let peak = 0
   for (const x of [a, b]) for (let i = 0; i < x.L.length; i++) peak = Math.max(peak, Math.abs(x.L[i]), Math.abs(x.R[i]))
@@ -271,35 +271,10 @@ function writePair(n1, n2, a, b, trimBdb = 0, preserve = false) { matchPair(a, b
 function writeOne(name, x) { writeMp3Stereo(`${OUT}/${name}.mp3`, x.L, x.R); console.log(name) }
 
 // ── Render everything ──────────────────────────────────────────────────────
-{
-  // Explicit match for the compression pair: scale the compressed clip to the
-  // dry clip's RMS minus 0.5 dB, then normalise both by one shared factor. The
-  // compressed clip (comp→limit) already has a LOWER peak, so it ends up lower
-  // in both RMS and peak — it can't read as louder or punchier by any measure.
-  const dry = renderDrumLoop()
-  const off = dry.slice(), on = compress(dry)
-  // Match PERCEIVED loudness (K-weighted, gated), not RMS — a compressed signal
-  // reads louder than an uncompressed one at equal RMS, and only a perceptual
-  // match removes that. Minus 0.3 dB so, if anything, it's a hair quieter.
-  const kloud = a => {
-    let px = 0, po = 0, shy = 0
-    const R = Math.exp(-2 * Math.PI * 100 / SR), sc = Math.exp(-2 * Math.PI * 2000 / SR)
-    const o = new Float32Array(a.length)
-    for (let i = 0; i < a.length; i++) { const hp = R * (po + a[i] - px); px = a[i]; po = hp; shy = sc * shy + (1 - sc) * hp; o[i] = hp + (hp - shy) * 0.6 }
-    let g = 0, gc = 0; const w = Math.round(0.4 * SR)
-    for (let i = 0; i < o.length - w; i += w) { let s = 0; for (let k = 0; k < w; k++) s += o[i + k] * o[i + k]; if (s / w > 6.4e-5) { g += s / w; gc++ } }
-    return Math.sqrt(g / (gc || 1))
-  }
-  const k = (kloud(off) / kloud(on)) * Math.pow(10, -0.3 / 20)
-  for (let i = 0; i < on.length; i++) on[i] *= k
-  let pk = 0
-  for (const s of [off, on]) for (let i = 0; i < s.length; i++) pk = Math.max(pk, Math.abs(s[i]))
-  const g = 0.89 / (pk || 1)
-  for (const s of [off, on]) for (let i = 0; i < s.length; i++) s[i] *= g
-  writeMp3Stereo(`${OUT}/hear-comp-off.mp3`, off, off.slice())
-  writeMp3Stereo(`${OUT}/hear-comp-on.mp3`, on, on.slice())
-  console.log('hear-comp-off / hear-comp-on (explicit match)')
-}
+// Compression: a clean drums-only loop, dry vs compressed. matchPair now
+// K-weight-matches the pair (trim 0.3 dB so the compressed clip is a hair
+// quieter, never louder).
+{ const dry = renderDrumLoop(); writePair('hear-comp-off', 'hear-comp-on', stereo(dry.slice()), stereo(compress(dry)), 0.3) }
 writePair('hear-eq-flat', 'hear-eq-cut', renderMix(4, { pad: true }), renderMix(4, { pad: true, eqCut: true }))
 writePair('hear-verb-08', 'hear-verb-14', renderMix(4, { reverbDecay: 0.8 }), renderMix(4, { reverbDecay: 1.4 }))
 // preserve=true: the whole test IS the +1 dB on the hats, so don't loudness-match it away.
