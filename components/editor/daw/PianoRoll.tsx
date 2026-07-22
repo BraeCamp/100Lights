@@ -6,9 +6,12 @@ import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react
 import { useDaw } from '@/lib/daw-state'
 import { useVoiceMap, VoiceMapTrace, VoiceMapControls } from './VoiceMapKit'
 import { RollSettings } from './RollSettings'
+import { NoteFxSettings } from './NoteFxSettings'
 import { SaveRecipeButton } from '../SoundCreate'
-import type { MidiClip, MidiNote } from '@/lib/daw-types'
+import type { MidiClip, MidiNote, RollFx, PitchGraph, PresetSound } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
+import { sharePreset } from '@/lib/community'
+import NewPresetModal from './NewPresetModal'
 import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
@@ -494,6 +497,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [npHi,      setNpHi]      = useState(84)
   const [npLoading, setNpLoading] = useState(false)
   const [npSfText,  setNpSfText]  = useState<string | null>(null)
+  const [npSound,   setNpSound]   = useState<RollFx | undefined>(undefined)
+  const [npSustain, setNpSustain] = useState(0)
+  const [npGraphs,  setNpGraphs]  = useState<PitchGraph[]>([])
+  const [npShare,   setNpShare]   = useState(false)
+  const [npDesc,    setNpDesc]    = useState('')
 
   // ── New feature state
   const [chordType, setChordType] = useState<string | null>(null)
@@ -675,11 +683,23 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         const r = await importSoundfontToLibrary(npSfText, folder)
         lo = r.loNote; hi = r.hiNote
       }
-      const p = addPreset({ name, folder, loNote: lo, hiNote: hi, category: 'custom' })
+      // Bundle the sound shaping + pitch graphs onto the preset so every note
+      // that uses it inherits them (and they travel on a community share).
+      const fx = npSound && Object.keys(npSound).length ? npSound : undefined
+      const graphs = npGraphs.filter(g => g.points.length >= 1)
+      const sound: PresetSound | undefined = (fx || graphs.length)
+        ? { ...(fx ? { fx } : {}), ...(graphs.length ? { pitchGraphs: graphs } : {}) }
+        : undefined
+      const p = addPreset({ name, folder, loNote: lo, hiNote: hi, category: 'custom', sound })
       setPresets(getPresets())
       engine.setPresets(getPresets()) // engine resolves presets from its own list — keep it current
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } })
+      if (npShare) {
+        try { await sharePreset(p, npDesc.trim() || `${name} — custom preset`) }
+        catch (e) { alert(`Preset created, but sharing failed: ${e instanceof Error ? e.message : e}`) }
+      }
       setShowNewPreset(false); setNpName(''); setNpFolder(''); setNpSfText(null); setShowPresetPicker(false)
+      setNpSound(undefined); setNpGraphs([]); setNpShare(false); setNpDesc('')
     } catch (err) { alert(`Failed: ${err instanceof Error ? err.message : err}`) }
     finally { setNpLoading(false) }
   }
@@ -1207,6 +1227,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             />
           )}
 
+          {!isDrum && <NoteFxSettings clip={clip} dispatch={dispatch} selectedNoteIds={selectedNotes} />}
+
           {isDrum && (
             <button
               onClick={() => setStepMode(v => !v)}
@@ -1305,48 +1327,14 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       </div>
                     ))}
                     <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
-                    {!showNewPreset ? (<>
-                      <button onClick={() => setShowNewPreset(true)}
-                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
-                        + New Preset
-                      </button>
-                      <a href="/community?kind=preset" target="_blank" rel="noreferrer"
-                        style={{ display: 'block', padding: '5px 10px', fontSize: 10, color: 'var(--text-muted)', textDecoration: 'none' }}>
-                        Find presets in Community ↗
-                      </a>
-                    </>) : (
-                      <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <input placeholder="Preset name" value={npName} onChange={e => setNpName(e.target.value)}
-                          style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Upload soundfont (.js):</div>
-                        <input type="file" accept=".js" onChange={handleSoundfontFile}
-                          style={{ fontSize: 9, color: 'var(--text-secondary)', width: '100%' }} />
-                        {npSfText && <div style={{ fontSize: 9, color: '#4ade80' }}>✓ Soundfont loaded — note range auto-detected</div>}
-                        {!npSfText && (<>
-                          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Or: library folder name</div>
-                          <input placeholder="Folder" value={npFolder} onChange={e => setNpFolder(e.target.value)}
-                            style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 6px', boxSizing: 'border-box' }} />
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Lo</span>
-                            <input type="number" min={0} max={127} value={npLo} onChange={e => setNpLo(Number(e.target.value))}
-                              style={{ width: 44, background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 4px' }} />
-                            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Hi</span>
-                            <input type="number" min={0} max={127} value={npHi} onChange={e => setNpHi(Number(e.target.value))}
-                              style={{ width: 44, background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 10, padding: '3px 4px' }} />
-                          </div>
-                        </>)}
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button onClick={handleCreatePreset} disabled={npLoading || !npName.trim()}
-                            style={{ flex: 1, padding: '4px 0', fontSize: 10, background: '#7c3aed', border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>
-                            {npLoading ? '…' : 'Create'}
-                          </button>
-                          <button onClick={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null) }}
-                            style={{ padding: '4px 6px', fontSize: 10, background: 'transparent', border: '1px solid var(--border-light)', borderRadius: 3, color: 'var(--text-muted)', cursor: 'pointer' }}>
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    <button onClick={() => { setShowPresetPicker(false); setShowNewPreset(true) }}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
+                      + New Preset
+                    </button>
+                    <a href="/community?kind=preset" target="_blank" rel="noreferrer"
+                      style={{ display: 'block', padding: '5px 10px', fontSize: 10, color: 'var(--text-muted)', textDecoration: 'none' }}>
+                      Find presets in Community ↗
+                    </a>
                   </div>
                 )
               })(),
@@ -1354,6 +1342,23 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             )}
           </div>
         </div>
+
+        {showNewPreset && (
+          <NewPresetModal
+            name={npName} setName={setNpName}
+            folder={npFolder} setFolder={setNpFolder}
+            lo={npLo} setLo={setNpLo} hi={npHi} setHi={setNpHi}
+            sfText={npSfText} onSoundfontFile={handleSoundfontFile}
+            sound={npSound} setSound={setNpSound}
+            sustain={npSustain} setSustain={setNpSustain}
+            graphs={npGraphs} setGraphs={setNpGraphs}
+            share={npShare} setShare={setNpShare}
+            desc={npDesc} setDesc={setNpDesc}
+            loading={npLoading}
+            onCreate={handleCreatePreset}
+            onCancel={() => { setShowNewPreset(false); setNpName(''); setNpSfText(null); setNpSound(undefined); setNpSustain(0); setNpGraphs([]); setNpShare(false); setNpDesc('') }}
+          />
+        )}
 
         {/* Row 2: MUSICAL — draw mode, melodic clips only */}
         {tool === 'edit' && !isDrum && (

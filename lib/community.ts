@@ -192,7 +192,7 @@ export async function sharePreset(preset: MidiPreset, description: string, tags:
     body: JSON.stringify({
       kind: 'preset', name: preset.name, description,
       payload: {
-        preset: { name: preset.name, folder: preset.folder, loNote: preset.loNote, hiNote: preset.hiNote, category: preset.category, group: preset.group },
+        preset: { name: preset.name, folder: preset.folder, loNote: preset.loNote, hiNote: preset.hiNote, category: preset.category, group: preset.group, ...(preset.sound ? { sound: preset.sound } : {}) },
         entries: entries.map(e => ({ name: e.name, category: e.category, renderSpec: e.renderSpec, tags: e.tags })),
         ...(tags.length ? { tags } : {}),
       },
@@ -262,7 +262,7 @@ export async function importItem(item: CommunityItem): Promise<string> {
       })
     }
     const already = getPresets().some(x => !x.builtIn && x.folder === folder && x.name === p.preset.name)
-    if (!already) addPreset({ name: p.preset.name, folder, loNote: p.preset.loNote, hiNote: p.preset.hiNote, category: p.preset.category, group: p.preset.group })
+    if (!already) addPreset({ name: p.preset.name, folder, loNote: p.preset.loNote, hiNote: p.preset.hiNote, category: p.preset.category, group: p.preset.group, sound: p.preset.sound })
     void countDownload(item.id)
     return 'Preset installed — pick it from any MIDI clip’s sound menu.'
   }

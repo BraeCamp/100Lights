@@ -1,7 +1,8 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
+import { resolveNoteFx, fxHasAudibleField } from './roll-fx'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -1056,20 +1057,18 @@ export class DawEngine extends EventTarget {
     const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
 
     const scheduleLoop = (iterationStart: number) => {
-      const rollFx = clip.rollFx
-      const sustainSec = rollFx?.sustain ?? 0
       for (const note of processedNotes) {
+        const rfx = this._resolveNoteFx(clip, note)
+        const sustainSec = rfx.sustain ?? 0
         const noteStartAt = iterationStart + this.beatsToSeconds(this._applySwing(note.startBeat))
         const noteDur     = this.beatsToSeconds(note.durationBeats)
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
-        if (DawEngine.rollFxActive(rollFx)) {
-          const chain = this._buildRollFxChain(rollFx!, noteDest)
+        if (this._rollFxActive(rfx)) {
+          const chain = this._buildRollFxChain(rfx, noteDest)
           noteDest = chain.input
           const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
-          setTimeout(() => {
-            for (const nd of chain.nodes) { try { nd.disconnect() } catch { /* ok */ } }
-          }, Math.max(0, ttlMs))
+          setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
         }
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
@@ -1325,8 +1324,8 @@ export class DawEngine extends EventTarget {
         // them — the "volume effect doesn't touch the piano roll" bug).
         // 'pitch' is excluded: it detunes audio sources, MIDI has none.
         let noteDest: AudioNode = nodes.midiInput
-        const rollFx = clip.rollFx
-        const sustainSec = rollFx?.sustain ?? 0
+        const rfx = this._resolveNoteFx(clip, note)
+        const sustainSec = rfx.sustain ?? 0
         const fxCleanup: { nodes: AudioNode[]; oscs: OscillatorNode[] } = { nodes: [], oscs: [] }
         {
           const overlapping = this._clipEffects.filter(e =>
@@ -1357,14 +1356,12 @@ export class DawEngine extends EventTarget {
           }
         }
 
-        // Clip sound settings: distortion/filter/reverb wrap this note only
-        if (DawEngine.rollFxActive(rollFx)) {
-          const chain = this._buildRollFxChain(rollFx!, noteDest)
+        // Resolved clip/preset/note sound wraps this note only
+        if (this._rollFxActive(rfx)) {
+          const chain = this._buildRollFxChain(rfx, noteDest)
           noteDest = chain.input
           const ttlMs = (startAt - contextNow + remaining + sustainSec + chain.tailSec + 1.5) * 1000
-          setTimeout(() => {
-            for (const nd of chain.nodes) { try { nd.disconnect() } catch { /* ok */ } }
-          }, Math.max(0, ttlMs))
+          setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
         }
 
         // Use clip-level preset if set, otherwise fall back to track instrument
@@ -1899,32 +1896,69 @@ export class DawEngine extends EventTarget {
     return c
   }
 
-  static rollFxActive(rfx: MidiClip['rollFx']): boolean {
-    return !!rfx && ((rfx.distortion ?? 0) > 0 || (rfx.reverbWet ?? 0) > 0 || (rfx.filterHz !== undefined && rfx.filterHz < 17500)
-      || (rfx.sub ?? 0) !== 0 || (rfx.bass ?? 0) !== 0 || (rfx.mid ?? 0) !== 0 || (rfx.treble ?? 0) !== 0)
+  /** Tear down a per-note FX chain: stop any LFO oscillators, then disconnect. */
+  private _teardownFxNodes(nodes: AudioNode[]) {
+    for (const nd of nodes) {
+      try { (nd as OscillatorNode).stop?.() } catch { /* not a source / already stopped */ }
+      try { nd.disconnect() } catch { /* ok */ }
+    }
   }
 
-  /** Chain: note → distortion → lowpass → reverb mix → dest. Returns the entry node. */
-  private _buildRollFxChain(rfx: NonNullable<MidiClip['rollFx']>, dest: AudioNode): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
+  /** The effective per-note sound: preset sound → clip rollFx → note override,
+   *  with the preset's pitch graphs modulating by the note's pitch. */
+  private _resolveNoteFx(clip: MidiClip, note: MidiNote): RollFx {
+    const sound = clip.presetId ? this._presets.find(p => p.id === clip.presetId)?.sound : undefined
+    if (!sound && !clip.rollFx && !note.fx) return {}
+    return resolveNoteFx(sound, clip.rollFx, note)
+  }
+
+  /** Does a resolved bag need an audio chain? (sustain is applied to the gain
+   *  envelope, not the chain, so it doesn't count here.) */
+  private _rollFxActive(rfx: RollFx): boolean {
+    return fxHasAudibleField(rfx)
+  }
+
+  /** Legacy static entry (kept for callers passing a clip's own rollFx). */
+  static rollFxActive(rfx: MidiClip['rollFx']): boolean {
+    return fxHasAudibleField(rfx)
+  }
+
+  /** Per-note chain from a resolved RollFx bag:
+   *  input → highpass → lowpass(Q) → drive → distortion → tone EQ → chorus →
+   *  tremolo → gain → pan → (reverb + delay mix) → dest. Returns entry node. */
+  private _buildRollFxChain(rfx: RollFx, dest: AudioNode): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
     const nodes: AudioNode[] = []
     const input = this.ctx.createGain()
     nodes.push(input)
     let last: AudioNode = input
     let tail = 0
+
+    if (rfx.highpassHz !== undefined && rfx.highpassHz > 22) {
+      const f = this.ctx.createBiquadFilter()
+      f.type = 'highpass'; f.frequency.value = rfx.highpassHz; f.Q.value = 0.7
+      last.connect(f); last = f; nodes.push(f)
+    }
+    if (rfx.filterHz !== undefined && rfx.filterHz < 17500) {
+      const f = this.ctx.createBiquadFilter()
+      f.type = 'lowpass'; f.frequency.value = rfx.filterHz
+      f.Q.value = rfx.filterQ ?? 0.8
+      last.connect(f); last = f; nodes.push(f)
+    }
+    // Drive — gentle soft-clip, distinct from the harder distortion below.
+    if ((rfx.drive ?? 0) > 0) {
+      const ws = this.ctx.createWaveShaper()
+      ws.curve = this._getDistCurve(0.15 + rfx.drive! * 0.55) as Float32Array<ArrayBuffer>
+      ws.oversample = '2x'
+      const pg = this.ctx.createGain(); pg.gain.value = 1 - rfx.drive! * 0.25
+      last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws, pg)
+    }
     if ((rfx.distortion ?? 0) > 0) {
       const ws = this.ctx.createWaveShaper()
       ws.curve = this._getDistCurve(rfx.distortion!) as Float32Array<ArrayBuffer>
       ws.oversample = '2x'
       const pg = this.ctx.createGain()
       pg.gain.value = 1 - rfx.distortion! * 0.4  // tame the level lift saturation adds
-      last.connect(ws); ws.connect(pg); last = pg
-      nodes.push(ws, pg)
-    }
-    if (rfx.filterHz !== undefined && rfx.filterHz < 17500) {
-      const f = this.ctx.createBiquadFilter()
-      f.type = 'lowpass'; f.frequency.value = rfx.filterHz; f.Q.value = 0.8
-      last.connect(f); last = f
-      nodes.push(f)
+      last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws, pg)
     }
     // 4-band tone EQ
     if ((rfx.sub ?? 0) !== 0 || (rfx.bass ?? 0) !== 0 || (rfx.mid ?? 0) !== 0 || (rfx.treble ?? 0) !== 0) {
@@ -1935,17 +1969,59 @@ export class DawEngine extends EventTarget {
       last.connect(sub); sub.connect(bs); bs.connect(md); md.connect(tr); last = tr
       nodes.push(sub, bs, md, tr)
     }
-    if ((rfx.reverbWet ?? 0) > 0) {
-      const wetAmt = rfx.reverbWet!
-      const dry = this.ctx.createGain(); dry.gain.value = 1 - wetAmt * 0.5
-      const conv = this.ctx.createConvolver(); conv.buffer = this._getReverbIR()
-      const wet = this.ctx.createGain(); wet.gain.value = wetAmt
+    // Chorus — a short modulated delay blended back in.
+    if ((rfx.chorusDepth ?? 0) > 0) {
+      const d = rfx.chorusDepth!
+      const dry = this.ctx.createGain(); dry.gain.value = 1
+      const wet = this.ctx.createGain(); wet.gain.value = 0.5 * d
+      const dl = this.ctx.createDelay(0.05); dl.delayTime.value = 0.02
+      const lfo = this.ctx.createOscillator(); lfo.frequency.value = 0.8
+      const lfoGain = this.ctx.createGain(); lfoGain.gain.value = 0.006
+      lfo.connect(lfoGain); lfoGain.connect(dl.delayTime); lfo.start()
       const sum = this.ctx.createGain()
       last.connect(dry); dry.connect(sum)
-      last.connect(conv); conv.connect(wet); wet.connect(sum)
+      last.connect(dl); dl.connect(wet); wet.connect(sum)
+      last = sum; nodes.push(dry, wet, dl, lfoGain, sum, lfo as unknown as AudioNode)
+    }
+    // Tremolo — amplitude LFO.
+    if ((rfx.tremoloDepth ?? 0) > 0) {
+      const depth = rfx.tremoloDepth!
+      const amp = this.ctx.createGain(); amp.gain.value = 1 - depth * 0.5
+      const lfo = this.ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.tremoloRate ?? 5
+      const lg = this.ctx.createGain(); lg.gain.value = depth * 0.5
+      lfo.connect(lg); lg.connect(amp.gain); lfo.start()
+      last.connect(amp); last = amp; nodes.push(amp, lg, lfo as unknown as AudioNode)
+    }
+    if (rfx.gain !== undefined && Math.abs(rfx.gain - 1) > 1e-4) {
+      const g = this.ctx.createGain(); g.gain.value = Math.max(0, rfx.gain)
+      last.connect(g); last = g; nodes.push(g)
+    }
+    if (rfx.pan !== undefined && Math.abs(rfx.pan) > 0.02) {
+      const p = this.ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, rfx.pan))
+      last.connect(p); last = p; nodes.push(p)
+    }
+    // Wet sends (reverb + delay) sum in parallel at the end.
+    const wantReverb = (rfx.reverbWet ?? 0) > 0
+    const wantDelay  = (rfx.delayWet ?? 0) > 0
+    if (wantReverb || wantDelay) {
+      const sum = this.ctx.createGain()
+      const dry = this.ctx.createGain()
+      dry.gain.value = 1 - (rfx.reverbWet ?? 0) * 0.5
+      last.connect(dry); dry.connect(sum); nodes.push(dry, sum)
+      if (wantReverb) {
+        const conv = this.ctx.createConvolver(); conv.buffer = this._getReverbIR()
+        const wet = this.ctx.createGain(); wet.gain.value = rfx.reverbWet!
+        last.connect(conv); conv.connect(wet); wet.connect(sum)
+        nodes.push(conv, wet); tail = Math.max(tail, 2.4)
+      }
+      if (wantDelay) {
+        const dl = this.ctx.createDelay(1.2); dl.delayTime.value = rfx.delayTime ?? 0.25
+        const fb = this.ctx.createGain(); fb.gain.value = Math.min(0.9, rfx.delayFeedback ?? 0.3)
+        const wet = this.ctx.createGain(); wet.gain.value = rfx.delayWet!
+        last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(sum)
+        nodes.push(dl, fb, wet); tail = Math.max(tail, (rfx.delayTime ?? 0.25) * 6 + 1)
+      }
       last = sum
-      nodes.push(dry, conv, wet, sum)
-      tail = 2.4
     }
     last.connect(dest)
     return { input, nodes, tailSec: tail }

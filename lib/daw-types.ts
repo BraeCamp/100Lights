@@ -568,6 +568,56 @@ export interface AudioClip {
   followActionTime?: number  // beats after which follow action fires
 }
 
+// ── Piano-roll sound shaping (RollFx) ────────────────────────────────────────
+// One flat bag of sound-shaping parameters, reused at three scopes that cascade
+// preset → clip → note (each level overrides the one before, per key):
+//   • MidiPreset.sound.fx  — the preset's own sound, applied to every note using it
+//   • MidiClip.rollFx      — the "Sound" button, this clip only
+//   • MidiNote.fx          — an individual note override
+// Every field is optional; an absent field means "inherit". The engine builds a
+// per-note chain from the resolved bag (see lib/roll-fx.ts + daw-engine).
+export interface RollFx {
+  sustain?: number       // seconds — release ramp past each note's end (a pedal)
+  gain?: number          // 0–2 output level (1 = unity)
+  pan?: number           // -1..1
+  filterHz?: number      // lowpass cutoff Hz; undefined or ≥17500 = off
+  filterQ?: number       // lowpass resonance 0.1–18
+  highpassHz?: number    // highpass cutoff Hz; undefined or ≤20 = off
+  drive?: number         // 0–1 soft saturation
+  distortion?: number    // 0–1 hard waveshape
+  reverbWet?: number     // 0–1
+  delayWet?: number      // 0–1
+  delayTime?: number     // seconds 0.02–1
+  delayFeedback?: number // 0–0.9
+  chorusDepth?: number   // 0–1
+  tremoloRate?: number   // Hz 0.1–12
+  tremoloDepth?: number  // 0–1
+  sub?: number; bass?: number; mid?: number; treble?: number  // 4-band tone EQ, dB
+}
+
+// Parameters a pitch graph can drive. Excludes sustain/time-base params.
+export type PitchGraphTarget =
+  | 'gain' | 'pan' | 'filterHz' | 'filterQ' | 'highpassHz'
+  | 'drive' | 'distortion' | 'reverbWet' | 'delayWet' | 'chorusDepth' | 'tremoloDepth'
+  | 'sub' | 'bass' | 'mid' | 'treble'
+
+export interface PitchGraphPoint { pitch: number; amount: number } // pitch 0–127, amount 0–1
+
+// A curve mapping note pitch → an effect amount, so different notes get a
+// different amount of the same effect — e.g. to tame the brightness a sample
+// gains as it's pitched up. Lives on a preset's sound (per-effect).
+export interface PitchGraph {
+  id: string
+  target: PitchGraphTarget
+  enabled: boolean
+  points: PitchGraphPoint[]  // ≥2, sorted ascending by pitch
+}
+
+export interface PresetSound {
+  fx?: RollFx
+  pitchGraphs?: PitchGraph[]
+}
+
 export interface MidiNote {
   id: string
   pitch: number
@@ -575,6 +625,8 @@ export interface MidiNote {
   durationBeats: number
   velocity: number     // 0–127
   presetId?: string    // MIDI preset active when this note was recorded
+  /** Per-note sound override — wins over clip rollFx and preset sound. */
+  fx?: RollFx
 }
 
 export interface MidiClip {
@@ -599,11 +651,9 @@ export interface MidiClip {
   /** Pitch class (0=C … 11=B) the pattern is rooted on — the piano roll's Root selector transposes relative to this. */
   rootNote?: number
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
-  /** Clip-local sound settings from the piano roll's Settings panel. Sustain
-   *  (seconds) lets notes ring past their end with a release ramp; the rest
-   *  wrap each note in a distortion → lowpass → reverb chain. Only this
-   *  clip's notes are affected. */
-  rollFx?: { sustain?: number; reverbWet?: number; distortion?: number; filterHz?: number; sub?: number; bass?: number; mid?: number; treble?: number }
+  /** Clip-local sound settings from the piano roll's "Sound" panel — applied
+   *  to this clip's notes only, on top of the preset's own sound. See RollFx. */
+  rollFx?: RollFx
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

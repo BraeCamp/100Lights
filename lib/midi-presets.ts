@@ -7,6 +7,8 @@
  * Storage: localStorage JSON (small metadata, no blobs).
  */
 
+import type { PresetSound } from './daw-types'
+
 const STORAGE_KEY = '100lights-midi-presets-v1'
 
 export interface MidiPreset {
@@ -19,6 +21,9 @@ export interface MidiPreset {
   group:     string   // display group, e.g. "Piano", "Synth", "Strings"
   builtIn:   boolean  // true = seeded; cannot be deleted
   createdAt: string
+  /** The preset's own sound shaping — applied to every note that uses it.
+   *  Set in the preset creator; travels with the preset (and community share). */
+  sound?:    PresetSound
 }
 
 export const PRESET_GROUPS = ['Piano', 'Mallets', 'Organ', 'Guitar', 'Bass', 'Strings', 'Brass', 'Woodwinds', 'World', 'Synth', 'Custom'] as const

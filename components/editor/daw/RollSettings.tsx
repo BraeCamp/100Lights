@@ -8,22 +8,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
-import type { MidiClip } from '@/lib/daw-types'
+import type { MidiClip, RollFx } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
+import { fxHasAudibleField } from '@/lib/roll-fx'
+import FxControls, { cleanFx } from './FxControls'
 import { clampToViewport } from './menu-clamp'
 
-const CYAN = '#a78bfa'
-
-// Filter slider is log-mapped 200Hz…18kHz; the top of the range means "off"
-const FILTER_OFF_V = 1
-function vToHz(v: number): number | undefined {
-  if (v >= 0.995) return undefined
-  return Math.round(200 * Math.pow(90, v))
-}
-function hzToV(hz: number | undefined): number {
-  if (hz === undefined || hz >= 17500) return FILTER_OFF_V
-  return Math.log(hz / 200) / Math.log(90)
-}
+const CYAN = 'var(--accent-light)'
 
 export function RollSettings({ clip, dispatch, presetLabel, onChangeSound, onPreviewSound, canPreview }: {
   clip: MidiClip
@@ -37,7 +28,7 @@ export function RollSettings({ clip, dispatch, presetLabel, onChangeSound, onPre
   const btnRef = useRef<HTMLButtonElement>(null)
 
   const rfx = clip.rollFx
-  const active = (rfx?.sustain ?? 0) > 0 || (rfx?.reverbWet ?? 0) > 0 || (rfx?.distortion ?? 0) > 0 || rfx?.filterHz !== undefined
+  const active = (rfx?.sustain ?? 0) > 0 || fxHasAudibleField(rfx)
 
   return (
     <>
@@ -92,17 +83,11 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
 
   const rfx = clip.rollFx
   const [sustain, setSustain] = useState(rfx?.sustain ?? 0)
-  const [reverb, setReverb]   = useState(rfx?.reverbWet ?? 0)
-  const [dist, setDist]       = useState(rfx?.distortion ?? 0)
-  const [filterV, setFilterV] = useState(hzToV(rfx?.filterHz))
 
   // Different clip opened → mirror its stored settings
   useEffect(() => {
     const t = setTimeout(() => {  // async boundary — no sync setState in the effect
       setSustain(clip.rollFx?.sustain ?? 0)
-      setReverb(clip.rollFx?.reverbWet ?? 0)
-      setDist(clip.rollFx?.distortion ?? 0)
-      setFilterV(hzToV(clip.rollFx?.filterHz))
     }, 0)
     return () => clearTimeout(t)
   }, [clip.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -130,35 +115,34 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
     }
   }, [onClose, ignoreOutside])
 
-  function commit() {
-    const clean: NonNullable<MidiClip['rollFx']> = {}
-    if (sustain > 0) clean.sustain = Math.round(sustain * 100) / 100
-    if (reverb > 0)  clean.reverbWet = Math.round(reverb * 100) / 100
-    if (dist > 0)    clean.distortion = Math.round(dist * 100) / 100
-    const hz = vToHz(filterV)
-    if (hz !== undefined) clean.filterHz = hz
-    dispatch({
-      type: 'UPDATE_CLIP', clipId: clip.id,
-      patch: { rollFx: Object.keys(clean).length ? clean : undefined },
-    })
+  // Commit a new FX bag (from FxControls) while preserving the separate sustain.
+  function commitFx(fxBag: RollFx | undefined) {
+    const next: RollFx = { ...(fxBag ?? {}) }
+    if (sustain > 0) next.sustain = Math.round(sustain * 100) / 100
+    else delete next.sustain
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rollFx: Object.keys(next).length ? next : undefined } })
+  }
+  function commitSustain(s: number) {
+    const next: RollFx = { ...(clip.rollFx ?? {}) }
+    if (s > 0) next.sustain = Math.round(s * 100) / 100
+    else delete next.sustain
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rollFx: Object.keys(next).length ? next : undefined } })
   }
 
-  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px' }
-  const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }
-  const value: React.CSSProperties = { fontSize: 9.5, color: 'var(--text-primary)', width: 46, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
-  const slider: React.CSSProperties = { flex: 1, accentColor: CYAN, minWidth: 0 }
-
-  const hz = vToHz(filterV)
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px' }
+  const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 70, flexShrink: 0 }
+  const value: React.CSSProperties = { fontSize: 9.5, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
 
   if (typeof document === 'undefined') return null
   return createPortal(
     <div ref={panelRef} tabIndex={-1} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }} style={{
-      position: 'fixed', top: anchor.y, left: anchor.x, width: 292, zIndex: 9999, outline: 'none',
+      position: 'fixed', top: anchor.y, left: anchor.x, width: 300, zIndex: 9999, outline: 'none',
+      maxHeight: '78vh', overflowY: 'auto',
       background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
       padding: '6px 0 10px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
     }}>
-      <div style={{ padding: '4px 12px 6px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid var(--border)' }}>
-        CLIP SOUND SETTINGS — this clip only
+      <div style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)', padding: '4px 12px 6px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid var(--border)', zIndex: 1 }}>
+        CLIP SOUND — this clip only
       </div>
 
       {/* Sound / preset */}
@@ -176,50 +160,24 @@ export function RollSoundPanel({ clip, dispatch, anchor, onClose, presetLabel, o
           </button>
         )}
       </div>
-      <div style={{ padding: '0 12px 6px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-        The sound menu previews every preset with ▶ and shows note ranges.
-      </div>
 
-      {/* Sustain */}
+      {/* Sustain — kept as its own control (not graphable, applies to the envelope) */}
       <div style={row}>
         <span style={label}>Sustain</span>
-        <input type="range" min={0} max={4} step={0.05} value={sustain} style={slider}
+        <input type="range" min={0} max={4} step={0.05} value={sustain} style={{ flex: 1, accentColor: CYAN, minWidth: 0 }}
           onChange={e => setSustain(Number(e.target.value))}
-          onPointerUp={commit} onKeyUp={commit} />
+          onPointerUp={() => commitSustain(sustain)} onKeyUp={() => commitSustain(sustain)} />
         <span style={value}>{sustain > 0 ? `${sustain.toFixed(2)}s` : 'Off'}</span>
       </div>
-      <div style={{ padding: '0 12px 6px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-        Lets each note ring out past its end instead of cutting — like a pedal.
+      <div style={{ padding: '0 12px 4px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+        Ring past each note’s end, like a pedal.
       </div>
 
-      {/* Reverb */}
-      <div style={row}>
-        <span style={label}>Reverb</span>
-        <input type="range" min={0} max={1} step={0.02} value={reverb} style={slider}
-          onChange={e => setReverb(Number(e.target.value))}
-          onPointerUp={commit} onKeyUp={commit} />
-        <span style={value}>{reverb > 0 ? `${Math.round(reverb * 100)}%` : 'Off'}</span>
-      </div>
+      {/* Everything else, shared with the preset & per-note editors */}
+      <FxControls value={clip.rollFx} onCommit={commitFx} />
 
-      {/* Distortion */}
-      <div style={row}>
-        <span style={label}>Distortion</span>
-        <input type="range" min={0} max={1} step={0.02} value={dist} style={slider}
-          onChange={e => setDist(Number(e.target.value))}
-          onPointerUp={commit} onKeyUp={commit} />
-        <span style={value}>{dist > 0 ? `${Math.round(dist * 100)}%` : 'Off'}</span>
-      </div>
-
-      {/* Lowpass filter */}
-      <div style={row}>
-        <span style={label}>Filter</span>
-        <input type="range" min={0} max={1} step={0.005} value={filterV} style={slider}
-          onChange={e => setFilterV(Number(e.target.value))}
-          onPointerUp={commit} onKeyUp={commit} />
-        <span style={value}>{hz === undefined ? 'Off' : hz >= 1000 ? `${(hz / 1000).toFixed(1)}k` : `${hz}Hz`}</span>
-      </div>
-      <div style={{ padding: '0 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-        Effects apply to this clip’s notes only — playing live and on export.
+      <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+        Applies to this clip’s notes only — live and on export. To bake a sound into a reusable, shareable preset, use the sound menu’s <strong>New preset</strong>.
       </div>
     </div>,
     document.body,
