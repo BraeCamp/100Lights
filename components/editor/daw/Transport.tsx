@@ -719,9 +719,9 @@ export default function Transport() {
           ...base,
           width: 'auto', padding: '0 8px',
           fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.06em',
-          color: engine.isJamActive ? '#a78bfa' : 'var(--text-muted)',
-          border: engine.isJamActive ? '1px solid rgba(167,139,250,0.4)' : '1px solid var(--border)',
-          background: engine.isJamActive ? 'rgba(167,139,250,0.08)' : '#1e1e1e',
+          color: engine.isJamActive ? 'var(--accent-light)' : 'var(--text-muted)',
+          border: engine.isJamActive ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid var(--border)',
+          background: engine.isJamActive ? 'rgb(var(--accent-rgb) / 0.08)' : '#1e1e1e',
         }}
       >
         JAM
