@@ -8,7 +8,7 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
 import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
-import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT } from '@/lib/daw-types'
+import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT, clipLockedBy } from '@/lib/daw-types'
 import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
 import { clampToViewport } from './menu-clamp'
 import TrackInputCard from './TrackInputCard'
@@ -301,7 +301,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onSelectionResize?: (end: number) => void
   onSelectionLoopCommit?: (region: { start: number; end: number }, blocks: number) => void
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers, notifyLocked } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const workshopTheme = useWorkshopThemeOptional()
   const trackColors = workshopTheme?.theme.trackPalette ?? TRACK_COLORS
@@ -620,6 +620,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   // exclusive. `toggle` closes it if that clip's editor is already open.
   function openClipTyped(clip: DawClip, toggle = false) {
     if (!isMidiClip(clip)) return
+    // Collab lock — don't co-open a clip a peer is already editing.
+    const opening = clip.isDrumClip ? expandedStepSeqClipId !== clip.id : expandedPianoRollClipId !== clip.id
+    if (opening) { const locker = clipLockedBy(clip.id, collabPeers); if (locker) { notifyLocked?.(locker); return } }
     if (clip.isDrumClip) {
       const already = expandedStepSeqClipId === clip.id
       setExpandedStepSeqClipId(toggle && already ? null : clip.id)

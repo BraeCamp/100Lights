@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
-import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
+import { isMidiClip, isAudioClip, TRACK_COLORS, clipLockedBy } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip, DawClip, MidiClip } from '@/lib/daw-types'
 import { RollSoundPanel } from './RollSettings'
 import { DEFAULT_KIT } from '@/lib/drum-presets'
@@ -354,7 +354,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
 
   // The shared clip Sound panel — follows the current selection (retargets on
   // select) and closes when nothing is selected.
@@ -693,6 +693,9 @@ export default function ArrangementView() {
   // mutually exclusive so only one editor sits under a track. Toggles.
   function openClipEditor(clip: DawClip) {
     if (!isMidiClip(clip)) return
+    // Don't let two people open the same clip's editor at once (collab lock).
+    const opening = clip.isDrumClip ? expandedStepSeqClipId !== clip.id : expandedPianoRollClipId !== clip.id
+    if (opening) { const locker = clipLockedBy(clip.id, collabPeers); if (locker) { notifyLocked?.(locker); return } }
     if (clip.isDrumClip) {
       const already = expandedStepSeqClipId === clip.id
       setExpandedStepSeqClipId(already ? null : clip.id)

@@ -574,7 +574,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             background: collabHolder.color, color: '#fff', maxWidth: '60%',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
-            {collabHolder.editing ? '✎ ' : ''}{collabHolder.name}
+            {collabHolder.editing ? '🔒 ' : ''}{collabHolder.name}
           </div>
         )}
         {/* Waveform / MIDI notes */}

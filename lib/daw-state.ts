@@ -738,6 +738,8 @@ export interface DawContextValue {
   triggerBlink: (ids: string[]) => void
   // Connected collaborators' live focus (empty when working solo)
   collabPeers: CollabPeer[]
+  /** Surface a "someone else is editing this clip" notice (collab locks). */
+  notifyLocked?: (byName: string) => void
 }
 
 export const DawContext = createContext<DawContextValue | null>(null)

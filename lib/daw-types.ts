@@ -730,6 +730,14 @@ export interface CollabPeer {
   playheadBeat?: number | null
 }
 
+/** If a collaborator has this clip open in an editor, returns their name — the
+ *  clip is locked to everyone else. Null when nobody else is editing it. */
+export function clipLockedBy(clipId: string | null | undefined, peers: CollabPeer[]): string | null {
+  if (!clipId) return null
+  const p = peers.find(pr => pr.editingClipId === clipId)
+  return p ? (p.name || 'A collaborator') : null
+}
+
 // ── Scene ─────────────────────────────────────────────────────────────────────
 
 export interface Scene {

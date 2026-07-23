@@ -6,7 +6,7 @@ import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
@@ -396,6 +396,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   // Loop region/toggle are deliberately local: each collaborator loops their
   // own playback without yanking everyone else's transport around.
   const NO_BROADCAST = new Set<DawAction['type']>(['LOAD_PROJECT', 'SET_WAVEFORM_ZOOM', 'SET_CROSSFADER', 'SET_LOOP', 'SET_LOOP_ENABLED'])
+  // Clip-scoped mutations — refused when a collaborator holds that clip's lock.
+  const CLIP_LOCK_ACTIONS = new Set<DawAction['type']>(['REMOVE_CLIP', 'UPDATE_CLIP', 'MOVE_CLIP', 'ADD_MIDI_NOTE', 'REMOVE_MIDI_NOTE', 'UPDATE_MIDI_NOTE'])
 
   // ── Blink guidance — local only, never broadcast ─────────────────────────────
   const [blinkIds, setBlinkIds] = useState<Set<string>>(new Set())
@@ -583,6 +585,11 @@ export default function AudioEditor(props: AudioEditorProps) {
     // instead — the UI stays a live mirror. (LOAD_PROJECT still applies: it
     // carries the room's state to us.)
     if (readOnlyRef.current && action.type !== 'LOAD_PROJECT') return
+    // Collab lock: don't clobber a clip a collaborator has open in their editor.
+    if (CLIP_LOCK_ACTIONS.has(action.type)) {
+      const locker = clipLockedBy((action as { clipId?: string }).clipId, collabPeersRef.current)
+      if (locker) { notifyLocked(locker); return }
+    }
     // Reducers must be deterministic for collaboration: actions that create
     // entities carry their ids, otherwise each client mints a different one
     // and every later edit to that entity diverges across the room.
@@ -695,6 +702,14 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Transport state ─────────────────────────────────────────────────────────
   // Other users' live focus (bridged from the Liveblocks room; empty when solo)
   const [collabPeers, setCollabPeers] = useState<CollabPeer[]>([])
+  const collabPeersRef = useRef<CollabPeer[]>([])
+  useEffect(() => { collabPeersRef.current = collabPeers }, [collabPeers])
+  // Collab lock: "X is editing this clip" notice, shown when an edit is blocked.
+  const [lockNotice, setLockNotice] = useState<string | null>(null)
+  const notifyLocked = useCallback((byName: string) => {
+    setLockNotice(byName)
+    window.setTimeout(() => setLockNotice(cur => cur === byName ? null : cur), 2600)
+  }, [])
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
   const [position, setPositionState] = useState(0)
@@ -1266,13 +1281,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     blinkIds,
     triggerBlink,
     collabPeers,
+    notifyLocked,
   }), [
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
     expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
-    collabPeers, props.isGuest, resumeExport,
+    collabPeers, notifyLocked, props.isGuest, resumeExport,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -1620,6 +1636,16 @@ export default function AudioEditor(props: AudioEditorProps) {
             border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', whiteSpace: 'nowrap',
           }}>Discard</button>
         </div>
+      )}
+
+      {/* Collab lock notice */}
+      {lockNotice && (
+        <div role="status" style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
+          background: 'var(--bg-card)', border: '1px solid rgba(245,158,11,0.5)', color: '#facc15',
+          fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
+        }}>🔒 {lockNotice} is editing this clip — it’s locked while they’re in it.</div>
       )}
 
       {/* Save toast */}
