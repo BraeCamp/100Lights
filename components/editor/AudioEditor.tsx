@@ -56,6 +56,9 @@ export interface AudioEditorProps {
   onTimeChange?: (t: number) => void
   onProjectNameCommit?: (name: string) => void
   onSave?: (tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject }) => Promise<void>
+  /** When set on a read-only (view) member, enables "suggest changes": local
+   *  edits the owner can accept. Serializes/POSTs the proposal upstream. */
+  onSuggest?: (note: string, tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject }) => Promise<void>
   hideHeader?: boolean
   activeModules?: ModuleKey[]
   onModulesChange?: (modules: ModuleKey[]) => void
@@ -565,6 +568,15 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   const readOnlyRef = useRef(!!props.readOnly)
   useEffect(() => { readOnlyRef.current = !!props.readOnly }, [props.readOnly])
+  // "Suggest changes": a view member edits locally (no broadcast) and submits
+  // the result as a proposal. suggestSnapshot is the shared state to restore on
+  // discard/submit, since the local edits are just a proposal.
+  const [suggesting, setSuggesting] = useState(false)
+  const suggestingRef = useRef(false)
+  useEffect(() => { suggestingRef.current = suggesting }, [suggesting])
+  const suggestSnapshotRef = useRef<DawProject | null>(null)
+  const [submittingSuggestion, setSubmittingSuggestion] = useState(false)
+  const [suggestSent, setSuggestSent] = useState(false)
 
   // Collab attribution: stamp who created clips (dispatch-time, so the stamp
   // travels with the broadcast and every client stores the same author)
@@ -584,9 +596,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     // local edits would silently diverge from the real project. Drop them here
     // instead — the UI stays a live mirror. (LOAD_PROJECT still applies: it
     // carries the room's state to us.)
-    if (readOnlyRef.current && action.type !== 'LOAD_PROJECT') return
+    // Read-only members can't edit — unless they're in "suggest changes" mode,
+    // where edits apply locally (and are never broadcast; see below).
+    if (readOnlyRef.current && !suggestingRef.current && action.type !== 'LOAD_PROJECT') return
     // Collab lock: don't clobber a clip a collaborator has open in their editor.
-    if (CLIP_LOCK_ACTIONS.has(action.type)) {
+    // (Suggestions are local-only, so locks don't apply to them.)
+    if (CLIP_LOCK_ACTIONS.has(action.type) && !suggestingRef.current) {
       const locker = clipLockedBy((action as { clipId?: string }).clipId, collabPeersRef.current)
       if (locker) { notifyLocked(locker); return }
     }
@@ -604,7 +619,8 @@ export default function AudioEditor(props: AudioEditorProps) {
       redoRef.current = []
     }
     rawDispatch(action)
-    if (!isRemoteRef.current && !NO_BROADCAST.has(action.type)) {
+    // Suggestions stay local — never broadcast a proposal into the shared room.
+    if (!isRemoteRef.current && !suggestingRef.current && !NO_BROADCAST.has(action.type)) {
       broadcastRef.current?.(action)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1062,6 +1078,33 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => { selectedClipIdRef.current  = selectedClipId },  [selectedClipId])
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds }, [selectedClipIds])
 
+  // Build the persist-ready snapshot (audio tracks + a blob-URL-stripped
+  // DawProject) — shared by Save and "Suggest changes".
+  const collectSnapshot = useCallback((): { tracks: AudioTrack[]; dawProject: DawProject } => {
+    const p = projectRef.current
+    const tracks: AudioTrack[] = p.tracks
+      .filter(t => t.type === 'audio')
+      .map(t => {
+        const clip = p.arrangementClips.find(c => c.trackId === t.id && c.kind === 'audio')
+        const audioClip = clip?.kind === 'audio' ? clip : undefined
+        return {
+          id: t.id, name: t.name, url: audioClip?.audioUrl ?? '',
+          duration: audioClip ? audioClip.durationBeats * (60 / p.tempo) : 0, r2Key: audioClip?.r2Key,
+        } satisfies AudioTrack
+      })
+    // Blob URLs are browser-local — strip them; clips keep their r2Key and
+    // resolve audio on load.
+    const stripUrl = <C,>(c: C & { kind: string; audioUrl?: string }): C =>
+      c.kind === 'audio' && c.audioUrl?.startsWith('blob:') ? { ...c, audioUrl: undefined } : c
+    const dawProject = {
+      ...p,
+      arrangementClips: p.arrangementClips.map(stripUrl),
+      sessionGrid: Object.fromEntries(Object.entries(p.sessionGrid).map(([tid, row]) =>
+        [tid, row.map(c => (c ? stripUrl(c) : c))])),
+    }
+    return { tracks, dawProject }
+  }, [])
+
   const handleSaveRef = useRef(async () => {})
   useEffect(() => {
     handleSaveRef.current = async () => {
@@ -1069,29 +1112,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       setIsSaving(true)
       try {
         const p = projectRef.current
-        const tracks: AudioTrack[] = p.tracks
-          .filter(t => t.type === 'audio')
-          .map(t => {
-            const clip = p.arrangementClips.find(c => c.trackId === t.id && c.kind === 'audio')
-            const audioClip = clip?.kind === 'audio' ? clip : undefined
-            return {
-              id: t.id,
-              name: t.name,
-              url: audioClip?.audioUrl ?? '',
-              duration: audioClip ? audioClip.durationBeats * (60 / p.tempo) : 0,
-              r2Key: audioClip?.r2Key,
-            } satisfies AudioTrack
-          })
-        // Persist the full arrangement. Blob URLs are browser-local — strip
-        // them; clips keep their r2Key (eager upload) and resolve audio on load.
-        const stripUrl = <C,>(c: C & { kind: string; audioUrl?: string }): C =>
-          c.kind === 'audio' && c.audioUrl?.startsWith('blob:') ? { ...c, audioUrl: undefined } : c
-        const dawProject = {
-          ...p,
-          arrangementClips: p.arrangementClips.map(stripUrl),
-          sessionGrid: Object.fromEntries(Object.entries(p.sessionGrid).map(([tid, row]) =>
-            [tid, row.map(c => (c ? stripUrl(c) : c))])),
-        }
+        const { tracks, dawProject } = collectSnapshot()
         await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta, dawProject })
         void saveSnapshot(props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`, p, { synced: true }).catch(() => {})
         setSaveStatus('saved')
@@ -1108,6 +1129,31 @@ export default function AudioEditor(props: AudioEditorProps) {
       }
     }
   })
+
+  // ── Suggest changes (view members) ───────────────────────────────────────────
+  function enterSuggest() { suggestSnapshotRef.current = projectRef.current; setSuggesting(true) }
+  function discardSuggest() {
+    const snap = suggestSnapshotRef.current
+    setSuggesting(false)
+    if (snap) rawDispatch({ type: 'LOAD_PROJECT', project: snap })
+  }
+  async function submitSuggestion() {
+    const onSuggest = props.onSuggest
+    if (!onSuggest || submittingSuggestion) return
+    const note = window.prompt('Add a note for the owner about your suggestion (optional):') ?? ''
+    setSubmittingSuggestion(true)
+    try {
+      const { tracks, dawProject } = collectSnapshot()
+      await onSuggest(note, tracks, { audioMode: props.audioMode, podcastMeta, dawProject })
+      const snap = suggestSnapshotRef.current   // proposal sent → discard the local edits
+      setSuggesting(false)
+      if (snap) rawDispatch({ type: 'LOAD_PROJECT', project: snap })
+      setSuggestSent(true); window.setTimeout(() => setSuggestSent(false), 3500)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Could not send suggestion')
+      setSaveStatus('error'); window.setTimeout(() => { setSaveStatus(null); setSaveError('') }, 6000)
+    } finally { setSubmittingSuggestion(false) }
+  }
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -1520,13 +1566,36 @@ export default function AudioEditor(props: AudioEditorProps) {
                   border: '1px solid rgba(245,158,11,0.35)', whiteSpace: 'nowrap',
                 }}>OFFLINE — SAVING LOCALLY</span>
               )}
-              {props.readOnly && (
+              {props.readOnly && !suggesting && (
                 <span style={{
-                  display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, fontWeight: 700,
-                  padding: '3px 12px', borderRadius: 999, whiteSpace: 'nowrap',
+                  display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, fontWeight: 700,
+                  padding: '3px 8px 3px 12px', borderRadius: 999, whiteSpace: 'nowrap',
                   background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.45)', color: '#f59e0b',
                 }}>
-                  👁 View only — upgrade to Pro to edit shared projects
+                  👁 View only
+                  {props.onSuggest && (
+                    <button onClick={enterSuggest} title="Make edits locally and send them to the owner to accept"
+                      style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: 'none', background: '#f59e0b', color: '#1a1206' }}>
+                      ✎ Suggest changes
+                    </button>
+                  )}
+                </span>
+              )}
+              {props.readOnly && suggesting && (
+                <span style={{
+                  display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, fontWeight: 700,
+                  padding: '3px 8px 3px 12px', borderRadius: 999, whiteSpace: 'nowrap',
+                  background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.5)', color: '#a78bfa',
+                }}>
+                  ✎ Suggesting — edits are local until the owner accepts
+                  <button onClick={() => void submitSuggestion()} disabled={submittingSuggestion}
+                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: 'none', background: '#7c3aed', color: '#fff', opacity: submittingSuggestion ? 0.6 : 1 }}>
+                    {submittingSuggestion ? 'Sending…' : 'Submit'}
+                  </button>
+                  <button onClick={discardSuggest} disabled={submittingSuggestion}
+                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>
+                    Discard
+                  </button>
                 </span>
               )}
               <InspectorBridge />
@@ -1646,6 +1715,16 @@ export default function AudioEditor(props: AudioEditorProps) {
           background: 'var(--bg-card)', border: '1px solid rgba(245,158,11,0.5)', color: '#facc15',
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
         }}>🔒 {lockNotice} is editing this clip — it’s locked while they’re in it.</div>
+      )}
+
+      {/* Suggestion sent */}
+      {suggestSent && (
+        <div role="status" style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
+          background: 'var(--bg-card)', border: '1px solid #166534', color: '#4ade80',
+          fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
+        }}>✓ Suggestion sent — the owner can review and accept it.</div>
       )}
 
       {/* Save toast */}

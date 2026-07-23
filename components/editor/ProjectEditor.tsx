@@ -25,6 +25,7 @@ import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
 import type { DawProject } from '@/lib/daw-types'
 import { SmallScreenGate } from './SmallScreenGate'
+import SuggestionsReview from './SuggestionsReview'
 import type { AudioTrack } from './AudioEditor'
 
 // ── All editors are lazy. None load until their module is active. ─────────
@@ -394,7 +395,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   // Demo projects (no projectId, allowImport=false) are read-only — never persisted
   const isDemo = !projectId && !allowImport
 
-  async function save(patch: {
+  type SavePatch = {
     name?: string
     outputs?: Output[]
     captions?: Caption[]
@@ -404,7 +405,37 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     audioMode?: 'music' | 'podcast'
     podcastMeta?: import('@/lib/project-serializer').PodcastMeta
     dawProject?: import('@/lib/daw-types').DawProject
-  }) {
+  }
+  // The serialized project blob — shared by Save and "Suggest changes".
+  function buildCfProj(patch: SavePatch): CfProjFile {
+    const outs = patch.outputs ?? outputs
+    return {
+      _type: '100lights-project',
+      version: 1,
+      id: savedProjectId.current,
+      name: patch.name ?? localName,
+      savedAt: new Date().toISOString(),
+      tracks:      savedData?.tracks      ?? [],
+      clips:       savedData?.clips       ?? [],
+      adjustments: savedData?.adjustments ?? DEFAULT_ADJUSTMENTS,
+      zoomLevel:   savedData?.zoomLevel   ?? 1,
+      captions:    patch.captions ?? captions,
+      outputs:     outs.map(o => ({
+        id: o.id, type: o.type, title: o.title, content: o.content,
+        wordCount: o.wordCount, createdAt: o.createdAt instanceof Date ? o.createdAt.toISOString() : String(o.createdAt),
+        captions: o.captions,
+      })),
+      media:       savedData?.media ?? [],
+      audioMedia:  patch.audioMedia ?? audioMedia,
+      moduleSavedAt: patch.moduleSavedAt ? { ...moduleSavedAt, ...patch.moduleSavedAt } : moduleSavedAt,
+      modules:     patch.modules ?? activeModules ?? ['video'],
+      audioMode:   patch.audioMode ?? savedData?.audioMode,
+      podcastMeta: patch.podcastMeta ?? savedData?.podcastMeta,
+      dawProject:  patch.dawProject ?? savedData?.dawProject,
+    }
+  }
+
+  async function save(patch: SavePatch) {
     const name    = patch.name    ?? localName
     const outs    = patch.outputs ?? outputs
     const caps    = patch.captions ?? captions
@@ -412,30 +443,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     const am      = patch.audioMedia ?? audioMedia
     const msat    = patch.moduleSavedAt ? { ...moduleSavedAt, ...patch.moduleSavedAt } : moduleSavedAt
 
-    const project: CfProjFile = {
-      _type: '100lights-project',
-      version: 1,
-      id: savedProjectId.current,
-      name,
-      savedAt: new Date().toISOString(),
-      tracks:      savedData?.tracks      ?? [],
-      clips:       savedData?.clips       ?? [],
-      adjustments: savedData?.adjustments ?? DEFAULT_ADJUSTMENTS,
-      zoomLevel:   savedData?.zoomLevel   ?? 1,
-      captions:    caps,
-      outputs:     outs.map(o => ({
-        id: o.id, type: o.type, title: o.title, content: o.content,
-        wordCount: o.wordCount, createdAt: o.createdAt instanceof Date ? o.createdAt.toISOString() : String(o.createdAt),
-        captions: o.captions,
-      })),
-      media:       savedData?.media ?? [],
-      audioMedia:  am,
-      moduleSavedAt: msat,
-      modules:     mods,
-      audioMode:   patch.audioMode ?? savedData?.audioMode,
-      podcastMeta: patch.podcastMeta ?? savedData?.podcastMeta,
-      dawProject:  patch.dawProject ?? savedData?.dawProject,
-    }
+    const project = buildCfProj(patch)
 
     if (isDemo) return
     const res = await fetch('/api/projects', {
@@ -594,6 +602,30 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     })
   }
 
+  // A view member proposes edits: serialize just like a save, but POST it as a
+  // suggestion the owner can accept instead of writing the project directly.
+  async function submitSuggestion(
+    note: string,
+    tracks: AudioTrack[],
+    meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: import('@/lib/project-serializer').PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject },
+  ) {
+    if (!liveProjectId) throw new Error('Save the project before suggesting changes.')
+    const now = new Date().toISOString()
+    const serialized: SerializedAudioMedia[] = tracks
+      .filter(t => !!t.r2Key)
+      .map(t => ({ id: t.id, name: t.name, duration: t.duration, contentType: t.contentType ?? 'audio/mpeg', r2Key: t.r2Key!, savedAt: now }))
+    const data = buildCfProj({ audioMedia: serialized, audioMode: meta?.audioMode, podcastMeta: meta?.podcastMeta, dawProject: meta?.dawProject })
+    const res = await fetch(`/api/projects/${liveProjectId}/suggestions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, note }),
+    })
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try { const b = await res.json(); if (b?.error) detail = b.error } catch { /* ignore */ }
+      throw new Error(detail)
+    }
+  }
+
   // ── Load failure: explain, never guess at a module ────────
   if (loadError) {
     const backHref = loadError === 'unauthenticated'
@@ -670,6 +702,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onTimeChange: setCurrentTime,
     onProjectNameCommit: commitName,
     onSave: isOwner ? handleAudioSave : undefined,
+    onSuggest: viewOnly && liveProjectId ? submitSuggestion : undefined,
     initialTracks: initAudioTracks,
     initialDawProject: starterProject ?? savedData?.dawProject,
     readOnly: viewOnly,
@@ -731,6 +764,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     <>
       <><SmallScreenGate />{starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}</>
       {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
+      {isOwner && liveProjectId && <SuggestionsReview projectId={liveProjectId} currentDaw={savedData?.dawProject} />}
     </>
   )
   if (hasTranscript) return (

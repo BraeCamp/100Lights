@@ -36,6 +36,20 @@ export async function ensureSharingSchema() {
   // Members are invited by email but bound to their Clerk user_id on first
   // access, so the grant survives an email change.
   await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS user_id TEXT`
+  // Proposed edits from collaborators (view or edit role) the owner can accept
+  // or reject. `data` is a full serialized project (CfProjFile) snapshot.
+  await sql`
+    CREATE TABLE IF NOT EXISTS project_suggestions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id UUID NOT NULL,
+      author_id TEXT NOT NULL,
+      author_name TEXT NOT NULL DEFAULT 'A collaborator',
+      note TEXT NOT NULL DEFAULT '',
+      data JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
   ready = true
 }
 
