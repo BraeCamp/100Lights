@@ -1,14 +1,21 @@
 import { sql } from './db'
+import { getSubscription } from './subscription'
 
 // Project sharing model:
 // - visibility 'private' (default): owner + explicitly added members only
 // - visibility 'public': any signed-in user with the URL can view (view-only)
-// - each member the owner adds gets a role — 'edit' (co-edit live) or 'view'
-//   (listen/follow only) — which the owner can change at any time. The owner
-//   always edits their own projects.
+// - each member the owner adds gets a role the owner can change anytime:
+//     'view'  — listen and follow along (free)
+//     'edit'  — co-edit live; the member needs their own Pro plan to exercise it
+//     'owner' — co-owner: full edit + can manage sharing; also needs Pro
+//   The project's original owner (projects.user_id) always has owner access.
 
-export type MemberRole = 'edit' | 'view'
+export type MemberRole = 'owner' | 'edit' | 'view'
 export type ProjectAccess = 'owner' | 'edit' | 'view' | null
+
+export function asMemberRole(r: unknown): MemberRole {
+  return r === 'owner' ? 'owner' : r === 'edit' ? 'edit' : 'view'
+}
 
 let ready = false
 export async function ensureSharingSchema() {
@@ -22,10 +29,16 @@ export async function ensureSharingSchema() {
       PRIMARY KEY (project_id, email)
     )
   `
-  // Per-member permission. Added members default to 'edit' (sharing is a
-  // collaboration invite); the owner can downgrade any member to 'view'.
-  await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'edit'`
+  // Per-member permission. New members default to 'view'; the owner elevates
+  // them to edit/owner (which the member's own Pro plan then unlocks).
+  await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'view'`
+  await sql`ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'view'`
   ready = true
+}
+
+async function isPro(userId: string | null): Promise<boolean> {
+  if (!userId) return false
+  try { return (await getSubscription(userId)).plan === 'pro' } catch { return false }
 }
 
 export async function getProjectAccess(
@@ -45,13 +58,16 @@ export async function getProjectAccess(
   let role: MemberRole | null = null
   if (email) {
     const m = await sql`SELECT role FROM project_members WHERE project_id = ${projectId} AND LOWER(email) = ${email.toLowerCase()}`
-    if (m.length > 0) role = ((m[0].role as string) === 'view' ? 'view' : 'edit')
+    if (m.length > 0) role = asMemberRole(m[0].role)
   }
 
   const canView = role !== null || visibility === 'public'
   if (!canView) return { access: null, ownerId, visibility }
 
-  // Members edit or view per their assigned role; public (non-member) visitors
-  // are view-only.
-  return { access: role === 'edit' ? 'edit' : 'view', ownerId, visibility }
+  // Editing (edit or owner role) is unlocked only by the collaborator's own Pro
+  // plan; everyone else — including public visitors — is view-only.
+  if ((role === 'edit' || role === 'owner') && await isPro(userId)) {
+    return { access: role, ownerId, visibility }
+  }
+  return { access: 'view', ownerId, visibility }
 }

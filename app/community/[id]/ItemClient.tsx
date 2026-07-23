@@ -8,9 +8,12 @@ import { getCommunityItem, toggleVote, importItem, type CommunityItem } from '@/
 import { initLibrary } from '@/lib/sound-library'
 import { FeedCard } from '../FeedCard'
 
-export function ItemClient({ id }: { id: string }) {
+export function ItemClient({ id, initialItem }: { id: string; initialItem?: CommunityItem }) {
   const { user, isLoaded, isSignedIn } = useUser()
-  const [item, setItem] = useState<CommunityItem | null>(null)
+  // Seeded from the server so the name/description/author are in the SSR HTML
+  // (crawlable) instead of a "Loading…" placeholder; the fetch below then
+  // refreshes with the viewer's own vote/reaction state.
+  const [item, setItem] = useState<CommunityItem | null>(initialItem ?? null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 

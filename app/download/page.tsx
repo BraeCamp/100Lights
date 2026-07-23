@@ -1,11 +1,16 @@
 import Link from 'next/link'
-import { headers } from 'next/headers'
+import PlatformHighlight from './PlatformHighlight'
 
 export const metadata = {
   title: 'Download the Desktop App',
   description: 'Get 100Lights for macOS and Windows — the full browser studio as a desktop app, with computer-audio capture and offline-friendly windows.',
   alternates: { canonical: 'https://100lights.com/download' },
 }
+
+// Static + ISR: the release info is already cached; platform highlighting moved
+// to a tiny client component so the page doesn't need headers() (which forced
+// per-request dynamic rendering).
+export const revalidate = 3600
 
 const GITHUB_RELEASES = 'https://github.com/BraeCamp/100Lights/releases/latest'
 
@@ -40,16 +45,7 @@ async function getLatestRelease(): Promise<{ version: string; macDmg: string; ma
   }
 }
 
-function detectPlatform(ua: string): 'mac' | 'win' | 'other' {
-  if (/Mac|iPhone|iPad/.test(ua)) return 'mac'
-  if (/Win/.test(ua)) return 'win'
-  return 'other'
-}
-
 export default async function DownloadPage() {
-  const headersList = await headers()
-  const ua = headersList.get('user-agent') ?? ''
-  const platform = detectPlatform(ua)
   const release = await getLatestRelease()
 
   const version = release?.version ?? '1.0'
@@ -94,25 +90,26 @@ export default async function DownloadPage() {
         Download once. Buy only what you need.
       </p>
 
+      <PlatformHighlight />
+
       {/* Primary download CTAs */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 16 }}>
         {/* Mac */}
         <a
           href={release?.macDmg || GITHUB_RELEASES}
+          data-dl="mac"
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '14px 28px', borderRadius: 12,
-            background: platform === 'mac' ? '#6366f1' : '#1e1e2e',
-            border: platform === 'mac' ? 'none' : '1px solid #2a2a3e',
+            background: '#1e1e2e', border: '1px solid #2a2a3e',
             color: '#fff', textDecoration: 'none',
             fontSize: 15, fontWeight: 600,
-            boxShadow: platform === 'mac' ? '0 4px 24px rgba(99,102,241,0.4)' : 'none',
           }}
         >
           <span style={{ fontSize: 20 }}></span>
           <div>
             <div style={{ fontSize: 13, opacity: 0.7, fontWeight: 400, marginBottom: 1 }}>Download for</div>
-            <div>macOS {platform === 'mac' && '(Intel)'}</div>
+            <div>macOS (Intel)</div>
           </div>
         </a>
 
@@ -122,7 +119,7 @@ export default async function DownloadPage() {
             style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '14px 28px', borderRadius: 12,
-              background: platform === 'mac' ? '#1e1e2e' : '#1e1e2e',
+              background: '#1e1e2e',
               border: '1px solid #2a2a3e',
               color: '#fff', textDecoration: 'none',
               fontSize: 15, fontWeight: 600,
@@ -139,14 +136,13 @@ export default async function DownloadPage() {
         {/* Windows */}
         <a
           href={release?.winExe || GITHUB_RELEASES}
+          data-dl="win"
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '14px 28px', borderRadius: 12,
-            background: platform === 'win' ? '#6366f1' : '#1e1e2e',
-            border: platform === 'win' ? 'none' : '1px solid #2a2a3e',
+            background: '#1e1e2e', border: '1px solid #2a2a3e',
             color: '#fff', textDecoration: 'none',
             fontSize: 15, fontWeight: 600,
-            boxShadow: platform === 'win' ? '0 4px 24px rgba(99,102,241,0.4)' : 'none',
           }}
         >
           <span style={{ fontSize: 20 }}>🪟</span>

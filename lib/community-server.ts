@@ -119,3 +119,14 @@ export async function reactionMaps(itemIds: string[], userId: string | null): Pr
   }
   return { reactions, mine }
 }
+
+// First page of items for server-rendering /community — anonymous shaping (no
+// votes/reactions), newest first. Gives crawlers real feed content and internal
+// links to every item page instead of an empty client-loaded list.
+export async function getInitialCommunityItems(limit = 30) {
+  await ensureTables()
+  try {
+    const rows = await sql`SELECT * FROM community_items ORDER BY created_at DESC LIMIT ${limit}`
+    return rows.map(r => rowToItem(r, null, new Set<string>(), new Map(), new Map()))
+  } catch { return [] }
+}

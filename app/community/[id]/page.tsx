@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { sql } from '@/lib/db'
-import { ensureTables } from '@/lib/community-server'
+import { ensureTables, rowToItem } from '@/lib/community-server'
+import type { CommunityItem } from '@/lib/community'
 import { ItemClient } from './ItemClient'
 
 // Public share page for one community item. No account needed to listen —
@@ -61,10 +62,11 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
     url: `https://100lights.com/community/${id}`,
     ...(item.description ? { description: item.description } : {}),
   }
+  const initialItem = rowToItem(item, null, new Set<string>(), new Map(), new Map()) as unknown as CommunityItem
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <ItemClient id={id} />
+      <ItemClient id={id} initialItem={initialItem} />
     </>
   )
 }

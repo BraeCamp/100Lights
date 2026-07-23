@@ -35,7 +35,7 @@ export default function StepSequencer({ clipId }: { clipId?: string }) {
 }
 
 function StepSeqInner({ clip }: { clip: MidiClip }) {
-  const { project, dispatch, engine, playing, setExpandedStepSeqClipId } = useDaw()
+  const { project, dispatch, engine, playing, setExpandedStepSeqClipId, setExpandedPianoRollClipId } = useDaw()
   const track = project.tracks.find(t => t.id === clip.trackId)
   const beatsPerBar = project.timeSignatureNum || 4
   const stepsPerBar = Math.round(beatsPerBar / STEP_BEATS)
@@ -195,6 +195,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
         </div>
 
         <button onClick={() => { if (clip.notes.length) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: [] } }) }} style={{ ...selStyle, color: 'var(--text-secondary)' }} title="Clear all hits">Clear</button>
+        <button onClick={() => { setExpandedStepSeqClipId(null); setExpandedPianoRollClipId(clip.id) }} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 9 }} title="Open this beat in the piano roll for velocity, note lengths, and ghost notes">⇢ Roll</button>
         <button onClick={() => setTall(t => !t)} style={{ ...miniBtn, width: 'auto', padding: '0 8px' }} title="Taller rows">{tall ? '▤' : '▥'}</button>
         <button onClick={() => setExpandedStepSeqClipId(null)} style={{ ...miniBtn, width: 'auto', padding: '0 8px' }} title="Close">✕</button>
       </div>

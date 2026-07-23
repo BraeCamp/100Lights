@@ -12,7 +12,7 @@ import { Link2, Globe2, Lock, X, Plus } from 'lucide-react'
 
 interface Sharing {
   visibility: 'private' | 'public'
-  members: Array<{ email: string; role: 'edit' | 'view' }>
+  members: Array<{ email: string; role: 'owner' | 'edit' | 'view' }>
 }
 
 export function CollabInvite({ projectId }: { projectId: string }) {
@@ -190,8 +190,9 @@ export function CollabInvite({ projectId }: { projectId: string }) {
                         title="What this person can do"
                         style={{ fontSize: 10, padding: '2px 4px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', cursor: 'pointer' }}
                       >
-                        <option value="edit">Can edit</option>
                         <option value="view">Can view</option>
+                        <option value="edit">Can edit</option>
+                        <option value="owner">Owner</option>
                       </select>
                       <button onClick={() => void patch({ removeEmail: m.email })} aria-label={`Remove ${m.email}`}
                         style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
@@ -217,7 +218,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
 
               {err && <p style={{ fontSize: 10, color: '#ef4444', margin: '8px 0 0' }}>{err}</p>}
               <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
-                Set each person to <strong>Can edit</strong> (co-edit live with you) or <strong>Can view</strong> (listen and follow along). Change it anytime. You always edit your own projects.
+                <strong>Can view</strong> = listen and follow along (free). <strong>Can edit</strong> = co-edit live; <strong>Owner</strong> = that too, plus managing sharing. Editing and Owner need a Pro plan on that person&rsquo;s account. You always edit your own projects.
               </p>
             </>
           ) : (

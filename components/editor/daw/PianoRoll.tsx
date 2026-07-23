@@ -13,6 +13,7 @@ import { isMidiClip } from '@/lib/daw-types'
 import { sharePreset } from '@/lib/community'
 import NewPresetModal from './NewPresetModal'
 import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
+import { DRUM_LANES } from '@/lib/drum-presets'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
@@ -49,24 +50,13 @@ type Quant = 0.25 | 0.5 | 1 | 2
 let _noteClipboard: MidiNote[] | null = null
 
 // ── Drum lanes (isDrumClip) ───────────────────────────────────────────────────
-// Curated GM rows; alias pitches display on the same lane as their primary.
-const DRUM_LANES: Array<{ pitch: number; label: string; aliases: number[] }> = [
-  { pitch: 49, label: 'Crash',      aliases: [57] },
-  { pitch: 46, label: 'Open Hat',   aliases: [] },
-  { pitch: 42, label: 'Closed Hat', aliases: [44] },
-  { pitch: 48, label: 'Tom Hi',     aliases: [50] },
-  { pitch: 45, label: 'Tom Mid',    aliases: [47] },
-  { pitch: 41, label: 'Tom Lo',     aliases: [43] },
-  { pitch: 51, label: 'Rim',        aliases: [37] },
-  { pitch: 39, label: 'Clap',       aliases: [] },
-  { pitch: 38, label: 'Snare',      aliases: [40] },
-  { pitch: 36, label: 'Kick',       aliases: [35] },
-]
+// Canonical lanes come from lib/drum-presets — the single source of truth the
+// step sequencer also uses. Alias pitches display on their primary's row.
 const DRUM_LANE_H = 22
 const DRUM_PITCH_TO_ROW = new Map<number, number>()
 DRUM_LANES.forEach((l, row) => {
   DRUM_PITCH_TO_ROW.set(l.pitch, row)
-  l.aliases.forEach(a => DRUM_PITCH_TO_ROW.set(a, row))
+  l.aliases?.forEach(a => DRUM_PITCH_TO_ROW.set(a, row))
 })
 
 const QUANT_LABELS: Record<Quant, string> = { 0.25: '1/16', 0.5: '1/8', 1: '1/4', 2: '1/2' }
