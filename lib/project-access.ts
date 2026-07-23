@@ -33,6 +33,9 @@ export async function ensureSharingSchema() {
   // them to edit/owner (which the member's own Pro plan then unlocks).
   await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'view'`
   await sql`ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'view'`
+  // Members are invited by email but bound to their Clerk user_id on first
+  // access, so the grant survives an email change.
+  await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS user_id TEXT`
   ready = true
 }
 
@@ -54,11 +57,25 @@ export async function getProjectAccess(
 
   if (userId && userId === ownerId) return { access: 'owner', ownerId, visibility }
 
-  // A membership row (if any) carries the role the owner assigned.
+  // A membership row (if any) carries the role the owner assigned. Match by
+  // Clerk user_id OR email, so a member whose email changed still matches once
+  // bound; then bind user_id on this access if it wasn't already.
   let role: MemberRole | null = null
-  if (email) {
-    const m = await sql`SELECT role FROM project_members WHERE project_id = ${projectId} AND LOWER(email) = ${email.toLowerCase()}`
-    if (m.length > 0) role = asMemberRole(m[0].role)
+  const uid = userId ?? null
+  const em = email ? email.toLowerCase() : null
+  if (uid || em) {
+    const m = await sql`
+      SELECT role, user_id, email FROM project_members
+      WHERE project_id = ${projectId}
+        AND ( (${uid}::text IS NOT NULL AND user_id = ${uid})
+           OR (${em}::text IS NOT NULL AND LOWER(email) = ${em}) )
+      LIMIT 1`
+    if (m.length > 0) {
+      role = asMemberRole(m[0].role)
+      if (uid && m[0].user_id == null && m[0].email) {
+        await sql`UPDATE project_members SET user_id = ${uid} WHERE project_id = ${projectId} AND LOWER(email) = ${(m[0].email as string).toLowerCase()} AND user_id IS NULL`
+      }
+    }
   }
 
   const canView = role !== null || visibility === 'public'

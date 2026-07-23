@@ -1,3 +1,4 @@
+import { revalidatePath } from 'next/cache'
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { getArticles, getRepoSlugs } from '@/lib/learn-articles'
@@ -5,6 +6,13 @@ import { ensureLearnSchema } from '@/lib/learn-schema'
 import { submitToIndexNow } from '@/lib/indexnow'
 
 export const runtime = 'nodejs'
+
+// Publishing/editing/deleting an article must reflect immediately rather than
+// waiting out the ISR window — bust the index and the slug's own page.
+function bustLearn(slug: string) {
+  revalidatePath('/learn')
+  revalidatePath(`/learn/${slug}`)
+}
 
 // Admin article store. Articles here MERGE with the repo drafts in
 // content/learn/ (DB wins on slug clashes), and publish instantly — no
@@ -41,6 +49,7 @@ export async function PUT(req: Request) {
       title = EXCLUDED.title, description = EXCLUDED.description, date = EXCLUDED.date,
       updated = EXCLUDED.updated, tags = EXCLUDED.tags, draft = EXCLUDED.draft, body = EXCLUDED.body
   `
+  bustLearn(slug)
   // Nudge Bing/Yandex to crawl it now if it's published.
   if (a.draft === false) void submitToIndexNow([`https://100lights.com/learn/${slug}`])
   return Response.json({ ok: true, slug })
@@ -58,6 +67,7 @@ export async function DELETE(req: Request) {
   const url = new URL(req.url)
   const slug = url.searchParams.get('slug')
   if (!slug) return Response.json({ error: 'slug required' }, { status: 400 })
+  bustLearn(slug)
 
   // ?permanent=1 empties the trash for one item ahead of the 7 days.
   if (url.searchParams.get('permanent') === '1') {
@@ -101,6 +111,7 @@ export async function PATCH(req: Request) {
     RETURNING slug, repo_shadow, body
   `
   if (!row) return Response.json({ error: 'Not in the trash' }, { status: 404 })
+  bustLearn(body.slug)
 
   // A purged repo shadow has no content left; dropping the row hands the
   // article back to its committed file.

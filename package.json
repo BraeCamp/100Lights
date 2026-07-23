@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "validate:articles": "node scripts/validate-articles.mjs",
+    "prebuild": "node scripts/validate-articles.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
