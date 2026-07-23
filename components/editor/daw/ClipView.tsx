@@ -516,7 +516,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
         ]
       : [
-          { label: 'Open Piano Roll', fn: onDoubleClick },
+          { label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: onDoubleClick },
           { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
@@ -799,7 +799,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                   { glyph: '▦', label: 'Spectral Editor', fn: () => onSpectral?.() },
                 ]
               : [
-                  { glyph: '🎹', label: 'Open Piano Roll', fn: () => onDoubleClick() },
+                  { glyph: isMidiClip(clip) && clip.isDrumClip ? '◼' : '🎹', label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: () => onDoubleClick() },
                 ]
             ).map(a => (
               <button

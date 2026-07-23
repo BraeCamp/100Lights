@@ -378,6 +378,8 @@ export default function ArrangementView() {
   const [exportDefaultFormat, setExportDefaultFormat] = useState<'webm' | 'wav'>('webm')
   const [showExportDropdown, setShowExportDropdown] = useState(false)
   const exportDropdownRef = useRef<HTMLDivElement>(null)
+  const [showEditorMenu, setShowEditorMenu] = useState(false)
+  const editorDropdownRef = useRef<HTMLDivElement>(null)
   const [arrangeTransientDialog, setArrangeTransientDialog] = useState<{
     sensitivity: number; transients: number[]; buf: AudioBuffer; clip: AudioClip
   } | null>(null)
@@ -485,6 +487,20 @@ export default function ArrangementView() {
       document.removeEventListener('keydown', onKey)
     }
   }, [showExportDropdown])
+
+  useEffect(() => {
+    if (!showEditorMenu) return
+    function onDown(e: MouseEvent) {
+      if (editorDropdownRef.current && !editorDropdownRef.current.contains(e.target as Node)) setShowEditorMenu(false)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setShowEditorMenu(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [showEditorMenu])
 
   async function handleMorph() {
     const ids = [...selectedClipIds]
@@ -664,39 +680,6 @@ export default function ArrangementView() {
     setScrollLeft(0)
   }
 
-  function openPianoRoll() {
-    // If a MIDI clip is selected, toggle its inline piano roll
-    if (selectedClipId) {
-      const clip = project.arrangementClips.find(c => c.id === selectedClipId)
-      if (clip && isMidiClip(clip)) {
-        setExpandedPianoRollClipId(expandedPianoRollClipId === clip.id ? null : clip.id)
-        return
-      }
-    }
-    // Find any MIDI clip on selected track
-    if (selectedTrackId) {
-      const track = project.tracks.find(t => t.id === selectedTrackId)
-      if (track && track.instrument.type !== 'drum') {
-        const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
-        if (existing) {
-          setExpandedPianoRollClipId(expandedPianoRollClipId === existing.id ? null : existing.id)
-          return
-        }
-        // Create a new MIDI clip and immediately expand its piano roll
-        const newClip = makeMidiClip(selectedTrackId, 'MIDI', engine.currentBeat, 4)
-        dispatch({ type: 'ADD_CLIP', clip: newClip })
-        setExpandedPianoRollClipId(newClip.id)
-        return
-      }
-    }
-    // Toggle off if already open
-    if (expandedPianoRollClipId) { setExpandedPianoRollClipId(null); return }
-    // Nothing usable selected — say so and glow the track headers
-    setPrHint('Select a track to add piano roll')
-    window.setTimeout(() => setPrHint(null), 3500)
-    highlightHelpTargets(['track-head'])
-  }
-
   // Give a track a drum kit if it doesn't already have one, so beat hits sound.
   function ensureDrumKit(trackId: string) {
     const track = project.tracks.find(t => t.id === trackId)
@@ -705,30 +688,59 @@ export default function ArrangementView() {
     }
   }
 
-  // Open the standalone step sequencer under the track — sibling to the roll,
-  // and mutually exclusive with it so only one editor sits under a track.
-  function openStepSeq() {
-    const openSeq = (clipId: string) => {
-      const already = expandedStepSeqClipId === clipId
-      setExpandedStepSeqClipId(already ? null : clipId)
-      if (!already) setExpandedPianoRollClipId(null)
+  // The editor a clip opens into follows its type: a pattern (drum) clip opens
+  // the step sequencer, a melodic clip opens the piano roll. The two are
+  // mutually exclusive so only one editor sits under a track. Toggles.
+  function openClipEditor(clip: DawClip) {
+    if (!isMidiClip(clip)) return
+    if (clip.isDrumClip) {
+      const already = expandedStepSeqClipId === clip.id
+      setExpandedStepSeqClipId(already ? null : clip.id)
+      if (!already) { setExpandedPianoRollClipId(null); ensureDrumKit(clip.trackId) }
+    } else {
+      const already = expandedPianoRollClipId === clip.id
+      setExpandedPianoRollClipId(already ? null : clip.id)
+      if (!already) setExpandedStepSeqClipId(null)
     }
-    if (selectedClipId) {
-      const clip = project.arrangementClips.find(c => c.id === selectedClipId)
-      if (clip && isMidiClip(clip)) { openSeq(clip.id); if (expandedStepSeqClipId !== clip.id) ensureDrumKit(clip.trackId); return }
+  }
+
+  // Create a fresh clip of the chosen kind on the selected track and open it.
+  function createEditorClip(kind: 'roll' | 'beat') {
+    if (!selectedTrackId) {
+      setPrHint('Select a track first'); window.setTimeout(() => setPrHint(null), 3500); highlightHelpTargets(['track-head']); return
     }
-    if (selectedTrackId) {
-      const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
-      if (existing) { openSeq(existing.id); if (expandedStepSeqClipId !== existing.id) ensureDrumKit(selectedTrackId); return }
+    if (kind === 'beat') {
       const newClip = makeMidiClip(selectedTrackId, 'Beat', engine.currentBeat, 4, { isDrumClip: true })
       dispatch({ type: 'ADD_CLIP', clip: newClip })
       ensureDrumKit(selectedTrackId)
       setExpandedPianoRollClipId(null)
       setExpandedStepSeqClipId(newClip.id)
+      setSelectedClipId(newClip.id); setSelectedClipIds(new Set([newClip.id]))
+    } else {
+      const newClip = makeMidiClip(selectedTrackId, 'MIDI', engine.currentBeat, 4)
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+      setExpandedStepSeqClipId(null)
+      setExpandedPianoRollClipId(newClip.id)
+      setSelectedClipId(newClip.id); setSelectedClipIds(new Set([newClip.id]))
+    }
+  }
+
+  // Main editor button: open the selected clip's native editor; with only a
+  // track selected, open its existing clip or create a piano roll. The caret
+  // (createEditorClip) is how you explicitly make a Beat.
+  function openEditor() {
+    if (selectedClipId) {
+      const clip = project.arrangementClips.find(c => c.id === selectedClipId)
+      if (clip && isMidiClip(clip)) { openClipEditor(clip); return }
+    }
+    if (selectedTrackId) {
+      const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
+      if (existing) { openClipEditor(existing); return }
+      createEditorClip('roll')
       return
     }
-    if (expandedStepSeqClipId) { setExpandedStepSeqClipId(null); return }
-    setPrHint('Select a track to program a beat')
+    if (expandedPianoRollClipId || expandedStepSeqClipId) { setExpandedPianoRollClipId(null); setExpandedStepSeqClipId(null); return }
+    setPrHint('Select a track to open an editor')
     window.setTimeout(() => setPrHint(null), 3500)
     highlightHelpTargets(['track-head'])
   }
@@ -1326,22 +1338,35 @@ export default function ArrangementView() {
         })()}
 
         <div style={{ flex: 1 }} />
-        {audioMode !== 'podcast' && (
-          <div style={{ position: 'relative', display: 'flex' }}>
-            <button onClick={openStepSeq} title="Beat — open the step sequencer for the selected track (creates a drum clip)" data-help-id="step-seq" style={{
-              ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700, marginRight: 6,
-              border: `1px solid ${expandedStepSeqClipId ? '#7c3aed' : 'var(--border)'}`,
-              background: expandedStepSeqClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
-              color: expandedStepSeqClipId ? '#a78bfa' : 'var(--text-muted)',
-              letterSpacing: '0.04em',
-            }}>BEAT</button>
-            <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" data-help-id="piano-roll" style={{
+        {audioMode !== 'podcast' && (() => {
+          // One editor button, routed by clip type. Label reflects the selected
+          // clip (piano roll vs beat); the caret creates a new one of either kind.
+          const selClip = selectedClipId ? project.arrangementClips.find(c => c.id === selectedClipId) : null
+          const selMidi = selClip && isMidiClip(selClip) ? selClip : null
+          const label = selMidi ? (selMidi.isDrumClip ? 'BEAT' : 'PIANO ROLL') : 'EDITOR'
+          const active = !!(expandedPianoRollClipId || expandedStepSeqClipId)
+          const menuItem: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', fontSize: 10, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap' }
+          return (
+          <div ref={editorDropdownRef} style={{ position: 'relative', display: 'flex' }}>
+            <button onClick={openEditor} title="Open the editor for the selected clip — piano roll for melodic clips, step sequencer for beats" data-help-id="editor" style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-              border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,
-              background: expandedPianoRollClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
-              color: expandedPianoRollClipId ? '#a78bfa' : 'var(--text-muted)',
-              letterSpacing: '0.04em',
-            }}>PIANO ROLL</button>
+              border: `1px solid ${active ? '#7c3aed' : 'var(--border)'}`,
+              background: active ? 'rgba(124,58,237,0.18)' : 'transparent',
+              color: active ? '#a78bfa' : 'var(--text-muted)',
+              letterSpacing: '0.04em', borderRadius: '3px 0 0 3px', borderRight: 'none',
+            }}>{label}</button>
+            <button onClick={() => setShowEditorMenu(m => !m)} title="Create a new piano roll or beat" style={{
+              ...toolBtn, width: 14, padding: 0, fontSize: 9,
+              border: `1px solid ${active ? '#7c3aed' : 'var(--border)'}`,
+              background: showEditorMenu ? 'var(--bg-card)' : active ? 'rgba(124,58,237,0.18)' : 'transparent',
+              color: active ? '#a78bfa' : 'var(--text-muted)', borderRadius: '0 3px 3px 0',
+            }}>▾</button>
+            {showEditorMenu && (
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+                <button style={menuItem} onClick={() => { setShowEditorMenu(false); createEditorClip('roll') }}>♪ New Piano Roll</button>
+                <button style={{ ...menuItem, borderTop: '1px solid var(--border)' }} onClick={() => { setShowEditorMenu(false); createEditorClip('beat') }}>◼ New Beat</button>
+              </div>
+            )}
             {prHint && (
               <div style={{
                 position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 300,
@@ -1351,7 +1376,8 @@ export default function ArrangementView() {
               }}>{prHint}</div>
             )}
           </div>
-        )}
+          )
+        })()}
         {/* Export split button */}
         <div ref={exportDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
           <button

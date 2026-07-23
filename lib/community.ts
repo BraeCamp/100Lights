@@ -7,9 +7,10 @@ import { libraryGetAll, libraryAdd, type LibraryEntry, type LibraryCategory } fr
 import { libraryFulfill } from './default-samples'
 import { getPresets, addPreset, type MidiPreset } from './midi-presets'
 import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
+import { addKit, addPattern, type DrumKit, type DrumPattern } from './drum-presets'
 import type { MidiClip } from './daw-types'
 
-export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme'
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern'
 
 export interface CommunityItem {
   id: string
@@ -225,6 +226,22 @@ export async function shareTheme(theme: unknown, name: string, description: stri
   if (!res.ok) throw new Error('share failed')
 }
 
+export async function shareKit(kit: DrumKit, description: string): Promise<void> {
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'kit', name: kit.name, description, payload: { kit: { name: kit.name, desc: kit.desc, instrument: kit.instrument } } }),
+  })
+  if (!res.ok) throw new Error('share failed')
+}
+
+export async function sharePattern(pattern: DrumPattern, description: string): Promise<void> {
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'pattern', name: pattern.name, description, payload: { pattern: { name: pattern.name, desc: pattern.desc, bars: pattern.bars, hits: pattern.hits } } }),
+  })
+  if (!res.ok) throw new Error('share failed')
+}
+
 // ── Importing ────────────────────────────────────────────────────────────────
 
 export async function importItem(item: CommunityItem): Promise<string> {
@@ -234,6 +251,22 @@ export async function importItem(item: CommunityItem): Promise<string> {
     applyImportedTheme(p.theme)
     void countDownload(item.id)
     return 'Theme applied to your workshop — open the editor to see it.'
+  }
+
+  if (item.kind === 'kit') {
+    const p = (item.payload ?? {}) as { kit?: { name?: string; desc?: string; instrument?: DrumKit['instrument'] } }
+    if (!p.kit?.instrument) throw new Error('kit payload is malformed')
+    addKit({ id: `community-${item.id}`, name: p.kit.name ?? item.name, desc: p.kit.desc ?? `by ${item.authorName}`, instrument: p.kit.instrument })
+    void countDownload(item.id)
+    return 'Kit installed — pick it from the KIT menu in any beat.'
+  }
+
+  if (item.kind === 'pattern') {
+    const p = (item.payload ?? {}) as { pattern?: { name?: string; desc?: string; bars?: number; hits?: Record<string, number[]> } }
+    if (!p.pattern?.hits) throw new Error('pattern payload is malformed')
+    addPattern({ id: `community-${item.id}`, name: p.pattern.name ?? item.name, desc: p.pattern.desc ?? `by ${item.authorName}`, bars: p.pattern.bars ?? 1, hits: p.pattern.hits })
+    void countDownload(item.id)
+    return 'Pattern installed — pick it from the PATTERN menu in any beat.'
   }
 
   if (item.kind === 'recipe') {

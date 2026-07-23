@@ -13,8 +13,9 @@ import { isMidiClip } from '@/lib/daw-types'
 import type { MidiClip } from '@/lib/daw-types'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import {
-  DRUM_LANES, DRUM_KITS, DRUM_PATTERNS, STEP_BEATS,
-  DEFAULT_KIT, kitIdForInstrument, patternToNotes,
+  DRUM_LANES, STEP_BEATS, kitIdForInstrument, patternToNotes, notesToHits,
+  getKits, getPatterns, addKit, addPattern, deleteKit, deletePattern,
+  type DrumKit, type DrumPattern,
 } from '@/lib/drum-presets'
 
 // Alias pitch → its lane's primary pitch, so a note entered as 40 still lights
@@ -81,20 +82,44 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
     }
   }
 
-  // ── Header actions ──────────────────────────────────────────────────────────
+  // ── Kit & pattern libraries (built-in + user-saved) ──────────────────────────
+  const [kits, setKits] = useState<DrumKit[]>(() => getKits())
+  const [patterns, setPatterns] = useState<DrumPattern[]>(() => getPatterns())
+  const [patternSel, setPatternSel] = useState('')
+  const refreshLibs = () => { setKits(getKits()); setPatterns(getPatterns()) }
+
   function applyKit(kitId: string) {
-    const kit = DRUM_KITS.find(k => k.id === kitId)
+    const kit = kits.find(k => k.id === kitId)
     if (!kit || !track) return
     dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: structuredClone(kit.instrument) })
     audition(36)
   }
-
   function applyPattern(patternId: string) {
-    const p = DRUM_PATTERNS.find(x => x.id === patternId)
+    const p = patterns.find(x => x.id === patternId)
     if (!p) return
+    setPatternSel(p.builtIn ? '' : p.id)   // keep user patterns selected so they can be deleted
     const dur = Math.max(clip.durationBeats, p.bars * beatsPerBar)
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: patternToNotes(p), durationBeats: dur } })
   }
+  function saveKit() {
+    if (!track || track.instrument.type !== 'drum') return
+    const name = window.prompt('Name this kit')?.trim()
+    if (!name) return
+    addKit({ name, desc: 'Custom kit', instrument: structuredClone(track.instrument) }); refreshLibs()
+  }
+  function savePattern() {
+    if (!clip.notes.length) { window.alert('Add some hits first, then save them as a pattern.'); return }
+    const name = window.prompt('Name this beat pattern')?.trim()
+    if (!name) return
+    const p = addPattern({ name, desc: 'Custom pattern', bars, hits: notesToHits(clip.notes) })
+    refreshLibs(); setPatternSel(p.id)
+  }
+  const userKitSelected = !!currentKit && !!kits.find(k => k.id === currentKit && !k.builtIn)
+  const userPatternSelected = !!patterns.find(p => p.id === patternSel && !p.builtIn)
+  const userKits = kits.filter(k => !k.builtIn)
+  const userPatterns = patterns.filter(p => !p.builtIn)
+  function delKit() { if (userKitSelected && currentKit) { deleteKit(currentKit); refreshLibs() } }
+  function delPattern() { if (patternSel) { deletePattern(patternSel); setPatternSel(''); refreshLibs() } }
 
   function setBars(n: number) {
     const next = Math.max(1, Math.min(16, n))
@@ -126,21 +151,39 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
         <span style={{ flex: 1 }} />
 
         {/* Kit */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: 'var(--text-muted)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--text-muted)' }}>
           KIT
           <select value={currentKit ?? ''} onChange={e => applyKit(e.target.value)} style={selStyle} title="Drum kit — the sounds this beat uses">
             {!currentKit && <option value="">{isDrum ? 'Custom' : 'Pick a kit…'}</option>}
-            {DRUM_KITS.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+            <optgroup label="Kits">
+              {kits.filter(k => k.builtIn).map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+            </optgroup>
+            {userKits.length > 0 && (
+              <optgroup label="Yours">
+                {userKits.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+              </optgroup>
+            )}
           </select>
+          <button onClick={saveKit} disabled={!isDrum} style={{ ...miniBtn, width: 'auto', padding: '0 6px', opacity: isDrum ? 1 : 0.4 }} title="Save the current sounds as a kit">＋</button>
+          {userKitSelected && <button onClick={delKit} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved kit">🗑</button>}
         </label>
 
         {/* Pattern */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: 'var(--text-muted)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--text-muted)' }}>
           PATTERN
-          <select value="" onChange={e => { if (e.target.value) applyPattern(e.target.value) }} style={selStyle} title="Drop in a starter groove (replaces the current hits)">
+          <select value={patternSel} onChange={e => { if (e.target.value) applyPattern(e.target.value); else setPatternSel('') }} style={selStyle} title="Drop in a groove (replaces the current hits)">
             <option value="">Choose…</option>
-            {DRUM_PATTERNS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <optgroup label="Patterns">
+              {patterns.filter(p => p.builtIn).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </optgroup>
+            {userPatterns.length > 0 && (
+              <optgroup label="Yours">
+                {userPatterns.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </optgroup>
+            )}
           </select>
+          <button onClick={savePattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Save the current hits as a pattern">＋</button>
+          {userPatternSelected && <button onClick={delPattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved pattern">🗑</button>}
         </label>
 
         {/* Bars */}

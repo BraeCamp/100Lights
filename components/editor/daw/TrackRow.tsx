@@ -16,6 +16,7 @@ import TrackInputCard from './TrackInputCard'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
+import { DEFAULT_KIT } from '@/lib/drum-presets'
 import EffectLaneView, { EFFECT_H } from './EffectLane'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
@@ -614,6 +615,26 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     setCreateMenu({ x: e.clientX, y: e.clientY, beat: snapBeat(beatX, snap, project.timeSignatureNum) })
   }
 
+  // Open a clip in the editor that matches its type: a pattern (drum) clip opens
+  // the step sequencer, a melodic clip the piano roll. The two are kept mutually
+  // exclusive. `toggle` closes it if that clip's editor is already open.
+  function openClipTyped(clip: DawClip, toggle = false) {
+    if (!isMidiClip(clip)) return
+    if (clip.isDrumClip) {
+      const already = expandedStepSeqClipId === clip.id
+      setExpandedStepSeqClipId(toggle && already ? null : clip.id)
+      if (!(toggle && already)) {
+        setExpandedPianoRollClipId(null)
+        const t = project.tracks.find(tr => tr.id === clip.trackId)
+        if (t && t.instrument.type !== 'drum') dispatch({ type: 'SET_INSTRUMENT', trackId: clip.trackId, instrument: structuredClone(DEFAULT_KIT.instrument) })
+      }
+    } else {
+      const already = expandedPianoRollClipId === clip.id
+      setExpandedPianoRollClipId(toggle && already ? null : clip.id)
+      if (!(toggle && already)) setExpandedStepSeqClipId(null)
+    }
+  }
+
   async function importFileAtBeat(beat: number) {
     const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*'
     input.onchange = async () => {
@@ -1062,16 +1083,18 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               </button>
               {(() => {
                 const midiClip = clips.find(c => isMidiClip(c))
-                if (!midiClip) return null
-                const isExpanded = expandedPianoRollClipId === midiClip.id
+                if (!midiClip || !isMidiClip(midiClip)) return null
+                const beat = midiClip.isDrumClip
+                const isExpanded = beat ? expandedStepSeqClipId === midiClip.id : expandedPianoRollClipId === midiClip.id
+                const noun = beat ? 'Step Sequencer' : 'Piano Roll'
                 return (
-                  <button onClick={() => { setExpandedPianoRollClipId(isExpanded ? null : midiClip.id); setTrackCtxMenu(null) }}
+                  <button onClick={() => { openClipTyped(midiClip, true); setTrackCtxMenu(null) }}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
                     onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
                     onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
                   >
-                    <span>▦</span>
-                    <span>{isExpanded ? 'Close Piano Roll' : 'Open Piano Roll'}</span>
+                    <span>{beat ? '◼' : '▦'}</span>
+                    <span>{isExpanded ? `Close ${noun}` : `Open ${noun}`}</span>
                   </button>
                 )
               })()}
@@ -1192,9 +1215,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   } : undefined}
                   onSelect={() => {
                     setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])); setSelectedEffectIds(new Set())
-                    // An open piano roll follows the selection to the newly selected MIDI clip
-                    if (expandedPianoRollClipId && expandedPianoRollClipId !== clip.id && isMidiClip(clip)) {
-                      setExpandedPianoRollClipId(clip.id)
+                    // An open editor follows the selection to the newly selected MIDI
+                    // clip, switching editor type (roll/sequencer) to match it.
+                    const editorOpen = expandedPianoRollClipId || expandedStepSeqClipId
+                    if (editorOpen && isMidiClip(clip) && expandedPianoRollClipId !== clip.id && expandedStepSeqClipId !== clip.id) {
+                      openClipTyped(clip)
                     }
                   }}
                   onShiftSelect={() => {
@@ -1221,7 +1246,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     }
                   }}
                   isCropping={croppingClipId === clip.id}
-                  onDoubleClick={() => setExpandedPianoRollClipId(expandedPianoRollClipId === clip.id ? null : clip.id)}
+                  onDoubleClick={() => openClipTyped(clip, true)}
                   onSettings={() => { if (isAudioClip(clip)) setSettingsTarget(clip) }}
                   onDeleteAll={() => {
                     const toDelete = selectedClipIds.size > 0 ? [...selectedClipIds] : [clip.id]

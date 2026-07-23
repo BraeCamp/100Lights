@@ -4,12 +4,13 @@
 // and draw the one automation graph (0 = neutral/off, 1 = your settings) that
 // every active effect follows together. Graph points snap to 0 / 0.5 / 1.
 
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type { ClipEffect, RollFx, AutoPoint } from '@/lib/daw-types'
 import { activeBarFields } from '@/lib/effect-bar'
 import FxControls from './FxControls'
+import { clampToViewport } from './menu-clamp'
 
 const W = 300, H = 92, PAD = 8
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -60,13 +61,16 @@ export default function BarEditor({ effect: atOpen, anchor, onClose }: {
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
+  // Keep the panel on screen — open upward if it would run off the bottom.
+  useLayoutEffect(() => { clampToViewport(panelRef.current, anchor) }, [anchor, mode])
+
   if (typeof document === 'undefined') return null
   return createPortal(
     <div
       ref={panelRef}
       onMouseDown={e => e.stopPropagation()}
       style={{
-        position: 'fixed', top: Math.min(anchor.y, window.innerHeight - 520), left: Math.min(anchor.x, window.innerWidth - 324),
+        position: 'fixed', top: anchor.y, left: anchor.x,
         width: 320, maxHeight: '84vh', overflowY: 'auto', zIndex: 9999,
         background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
         boxShadow: '0 14px 40px rgba(0,0,0,0.7)', padding: '0 0 10px',

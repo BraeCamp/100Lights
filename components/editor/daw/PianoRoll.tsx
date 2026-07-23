@@ -69,69 +69,6 @@ DRUM_LANES.forEach((l, row) => {
   l.aliases.forEach(a => DRUM_PITCH_TO_ROW.set(a, row))
 })
 
-// ── Drum step sequencer ───────────────────────────────────────────────────────
-// The classic 16-step grid: one row per drum lane, one column per 16th. A
-// click toggles a hit; the grid covers the clip's pattern bar(s).
-function DrumStepGrid({ clip, dispatch, beatsPerBar }: {
-  clip: MidiClip
-  dispatch: (a: import('@/lib/daw-state').DawAction) => void
-  beatsPerBar: number
-}) {
-  const stepBeats = 0.25 // 16ths
-  const patternBeats = clip.loopEnabled && clip.loopLengthBeats
-    ? clip.loopLengthBeats
-    : Math.max(beatsPerBar, Math.min(clip.durationBeats, beatsPerBar * 2))
-  const steps = Math.round(patternBeats / stepBeats)
-
-  const noteAt = (pitch: number, step: number) =>
-    clip.notes.find(n => {
-      const row = DRUM_PITCH_TO_ROW.get(n.pitch)
-      return row === DRUM_PITCH_TO_ROW.get(pitch) && Math.abs(n.startBeat - step * stepBeats) < stepBeats / 2
-    })
-
-  return (
-    <div style={{ flex: 1, overflow: 'auto', padding: '10px 12px', background: 'var(--bg-base)' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: `84px repeat(${steps}, minmax(22px, 1fr))`, gap: 3, alignItems: 'center', minWidth: steps * 25 + 90 }}>
-        <span />
-        {Array.from({ length: steps }, (_, s) => (
-          <span key={`h${s}`} style={{ fontSize: 8, textAlign: 'center', color: s % 4 === 0 ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-            {s % 4 === 0 ? s / 4 + 1 : '·'}
-          </span>
-        ))}
-        {DRUM_LANES.map(lane => (
-          <React.Fragment key={lane.pitch}>
-            <span style={{ fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lane.label}</span>
-            {Array.from({ length: steps }, (_, s) => {
-              const hit = noteAt(lane.pitch, s)
-              const downbeat = s % 4 === 0
-              return (
-                <button
-                  key={s}
-                  onClick={() => {
-                    if (hit) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: hit.id })
-                    else dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: {
-                      id: crypto.randomUUID(), pitch: lane.pitch,
-                      startBeat: s * stepBeats, durationBeats: stepBeats, velocity: 100,
-                    } })
-                  }}
-                  style={{
-                    height: 22, borderRadius: 4, cursor: 'pointer', padding: 0,
-                    border: hit ? '1px solid rgba(248,113,113,0.8)' : downbeat ? '1px solid #333' : '1px solid #262626',
-                    background: hit ? 'rgba(220,38,38,0.7)' : downbeat ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)',
-                  }}
-                />
-              )
-            })}
-          </React.Fragment>
-        ))}
-      </div>
-      <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: '10px 2px 0', lineHeight: 1.5 }}>
-        Click a cell to toggle a hit — the pattern loops with the clip. Switch back to the roll for free placement, velocity, and note lengths.
-      </p>
-    </div>
-  )
-}
-
 const QUANT_LABELS: Record<Quant, string> = { 0.25: '1/16', 0.5: '1/8', 1: '1/4', 2: '1/2' }
 
 const INSTRUMENT_LABELS: Record<string, string> = {
@@ -539,7 +476,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     return row === undefined ? null : row * rowH
   }
   const rootRef = useRef<HTMLDivElement>(null)
-  const [stepMode, setStepMode] = useState(false)  // drum clips: 16-step grid view
   useEffect(() => { rootRef.current?.focus() }, [])
 
   useEffect(() => { setPresets(getPresets()) }, [])
@@ -1228,19 +1164,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
           {!isDrum && <NoteFxSettings clip={clip} dispatch={dispatch} selectedNoteIds={selectedNotes} />}
 
-          {isDrum && (
-            <button
-              onClick={() => setStepMode(v => !v)}
-              title="Step sequencer — the classic 16-step drum grid"
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600,
-                padding: '2px 7px', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
-                border: stepMode ? '1px solid rgba(248,113,113,0.6)' : '1px solid #333',
-                background: stepMode ? 'rgba(220,38,38,0.14)' : '#222',
-                color: stepMode ? '#f87171' : '#aaa', flexShrink: 0,
-              }}
-            >STEP</button>
-          )}
           <SaveRecipeButton clip={clip} />
 
           {/* Preset picker */}
@@ -1435,10 +1358,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           />
         )}
 
-        {/* Note grid + velocity (or the drum step grid) */}
-        {isDrum && stepMode ? (
-          <DrumStepGrid clip={clip} dispatch={dispatch} beatsPerBar={project.timeSignatureNum || 4} />
-        ) : (
+        {/* Note grid + velocity */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Note grid */}
           <div
@@ -1554,7 +1474,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             onVelocityChange={(noteId, velocity) => dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { velocity } })}
           />
         </div>
-        )}
       </div>
 
       {/* Right-click chord context menu */}

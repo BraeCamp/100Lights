@@ -41,6 +41,8 @@ export interface DrumKit {
   name: string
   desc: string
   instrument: TrackInstrument
+  builtIn?: boolean    // seeded kit — can't be deleted
+  createdAt?: string
 }
 
 /** Compact pad-setting builder — only deviations from the neutral pad. */
@@ -77,11 +79,34 @@ export const DRUM_KITS: DrumKit[] = [
 
 export const DEFAULT_KIT = DRUM_KITS[0]
 
+// User-saved + community-installed kits live in localStorage; built-ins are the
+// seed set above. getKits() returns built-ins first, then the user's own.
+const KITS_KEY = '100lights-drum-kits-v1'
+function loadUserKits(): DrumKit[] {
+  try { return (JSON.parse(localStorage.getItem(KITS_KEY) || '[]') as DrumKit[]).map(k => ({ ...k, builtIn: false })) } catch { return [] }
+}
+export function getKits(): DrumKit[] {
+  const builtIns = DRUM_KITS.map(k => ({ ...k, builtIn: true }))
+  if (typeof localStorage === 'undefined') return builtIns
+  return [...builtIns, ...loadUserKits()]
+}
+/** Save a user kit (or overwrite one by id, e.g. re-installing from community). */
+export function addKit(kit: Omit<DrumKit, 'id' | 'builtIn' | 'createdAt'> & { id?: string; createdAt?: string }): DrumKit {
+  const saved: DrumKit = { ...kit, id: kit.id ?? crypto.randomUUID(), builtIn: false, createdAt: kit.createdAt ?? new Date().toISOString() }
+  const users = loadUserKits().filter(u => u.id !== saved.id)
+  users.push(saved)
+  try { localStorage.setItem(KITS_KEY, JSON.stringify(users)) } catch { /* storage off */ }
+  return saved
+}
+export function deleteKit(id: string): void {
+  try { localStorage.setItem(KITS_KEY, JSON.stringify(loadUserKits().filter(u => u.id !== id))) } catch { /* storage off */ }
+}
+
 /** Which kit an instrument matches (by pack + kick tuning), for the picker. */
 export function kitIdForInstrument(inst: TrackInstrument | undefined): string | null {
   if (!inst || inst.type !== 'drum') return null
   const p = inst.params as { pack?: string; pads?: Record<number, DrumPadSettings> }
-  for (const k of DRUM_KITS) {
+  for (const k of getKits()) {
     const kp = k.instrument.params as { pack?: string; pads?: Record<number, DrumPadSettings> }
     if (kp.pack !== p.pack) continue
     const a = kp.pads?.[36]?.pitch ?? 0, b = p.pads?.[36]?.pitch ?? 0
@@ -98,6 +123,8 @@ export interface DrumPattern {
   desc: string
   bars: number
   hits: Record<string, number[]>   // laneKey → step indices that are ON
+  builtIn?: boolean
+  createdAt?: string
 }
 
 export const DRUM_PATTERNS: DrumPattern[] = [
@@ -138,4 +165,44 @@ export function patternToNotes(p: DrumPattern): MidiNote[] {
     }
   }
   return notes
+}
+
+/** Capture a clip's current drum notes as a pattern's hit grid (inverse of
+ *  patternToNotes). Pitches map back to their lane via the alias table. */
+export function notesToHits(notes: MidiNote[]): Record<string, number[]> {
+  const pitchToKey = new Map<number, string>()
+  for (const l of DRUM_LANES) {
+    pitchToKey.set(l.pitch, l.key)
+    l.aliases?.forEach(a => pitchToKey.set(a, l.key))
+  }
+  const hits: Record<string, number[]> = {}
+  for (const n of notes) {
+    const key = pitchToKey.get(n.pitch)
+    if (!key) continue
+    const step = Math.round(n.startBeat / STEP_BEATS)
+    ;(hits[key] ??= []).push(step)
+  }
+  for (const k of Object.keys(hits)) hits[k] = [...new Set(hits[k])].sort((a, b) => a - b)
+  return hits
+}
+
+// User-saved + community-installed patterns, mirroring the kit store.
+const PATTERNS_KEY = '100lights-drum-patterns-v1'
+function loadUserPatterns(): DrumPattern[] {
+  try { return (JSON.parse(localStorage.getItem(PATTERNS_KEY) || '[]') as DrumPattern[]).map(p => ({ ...p, builtIn: false })) } catch { return [] }
+}
+export function getPatterns(): DrumPattern[] {
+  const builtIns = DRUM_PATTERNS.map(p => ({ ...p, builtIn: true }))
+  if (typeof localStorage === 'undefined') return builtIns
+  return [...builtIns, ...loadUserPatterns()]
+}
+export function addPattern(pattern: Omit<DrumPattern, 'id' | 'builtIn' | 'createdAt'> & { id?: string; createdAt?: string }): DrumPattern {
+  const saved: DrumPattern = { ...pattern, id: pattern.id ?? crypto.randomUUID(), builtIn: false, createdAt: pattern.createdAt ?? new Date().toISOString() }
+  const users = loadUserPatterns().filter(u => u.id !== saved.id)
+  users.push(saved)
+  try { localStorage.setItem(PATTERNS_KEY, JSON.stringify(users)) } catch { /* storage off */ }
+  return saved
+}
+export function deletePattern(id: string): void {
+  try { localStorage.setItem(PATTERNS_KEY, JSON.stringify(loadUserPatterns().filter(u => u.id !== id))) } catch { /* storage off */ }
 }

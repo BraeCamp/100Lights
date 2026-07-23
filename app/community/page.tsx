@@ -5,14 +5,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Upload, Search, X } from 'lucide-react'
-import { listCommunity, toggleVote, importItem, shareSample, sharePreset, sharePack, COMMUNITY_TAGS, type CommunityItem } from '@/lib/community'
+import { listCommunity, toggleVote, importItem, shareSample, sharePreset, sharePack, shareKit, sharePattern, COMMUNITY_TAGS, type CommunityItem } from '@/lib/community'
 import { getPresets, noteRangeLabel, type MidiPreset } from '@/lib/midi-presets'
+import { getKits, getPatterns, type DrumKit, type DrumPattern } from '@/lib/drum-presets'
 import { libraryGetAll, initLibrary, CATEGORY_GROUPS, type LibraryEntry } from '@/lib/sound-library'
 import { useUser } from '@clerk/nextjs'
 import { FeedCard, KIND_META, stopFeedPlayback } from './FeedCard'
 
 type Kind = 'all' | CommunityItem['kind']
-const KINDS: Kind[] = ['all', 'song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme']
+const KINDS: Kind[] = ['all', 'song', 'sample', 'preset', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme']
 
 export default function CommunityPage() {
   const { user, isLoaded, isSignedIn } = useUser()
@@ -262,15 +263,19 @@ export default function CommunityPage() {
 // ── Upload modal ───────────────────────────────────────────────────────────────
 
 function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () => void }) {
-  const [mode, setMode] = useState<'sample' | 'preset' | 'pack'>('sample')
+  const [mode, setMode] = useState<'sample' | 'preset' | 'kit' | 'pattern' | 'pack'>('sample')
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [working, setWorking] = useState(false)
   const [err, setErr] = useState('')
   const [entries, setEntries] = useState<LibraryEntry[]>([])
   const [presets] = useState<MidiPreset[]>(() => typeof window === 'undefined' ? [] : getPresets().filter(p => !p.builtIn))
+  const [kits] = useState<DrumKit[]>(() => typeof window === 'undefined' ? [] : getKits().filter(k => !k.builtIn))
+  const [patterns] = useState<DrumPattern[]>(() => typeof window === 'undefined' ? [] : getPatterns().filter(p => !p.builtIn))
   const [pickedEntry, setPickedEntry] = useState('')
   const [pickedPreset, setPickedPreset] = useState('')
+  const [pickedKit, setPickedKit] = useState('')
+  const [pickedPattern, setPickedPattern] = useState('')
   const [packName, setPackName] = useState('')
   const [packPicks, setPackPicks] = useState<Set<string>>(new Set())
 
@@ -290,6 +295,14 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
         const preset = presets.find(p => p.id === pickedPreset)
         if (!preset) throw new Error('Pick one of your custom presets')
         await sharePreset(preset, description, tags)
+      } else if (mode === 'kit') {
+        const kit = kits.find(k => k.id === pickedKit)
+        if (!kit) throw new Error('Pick one of your saved kits')
+        await shareKit(kit, description)
+      } else if (mode === 'pattern') {
+        const pattern = patterns.find(p => p.id === pickedPattern)
+        if (!pattern) throw new Error('Pick one of your saved patterns')
+        await sharePattern(pattern, description)
       } else {
         if (!packName.trim()) throw new Error('Name the pack')
         const picked = entries.filter(e => packPicks.has(e.id))
@@ -311,7 +324,7 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
         </div>
 
         <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-          {(['sample', 'preset', 'pack'] as const).map(m => (
+          {(['sample', 'preset', 'kit', 'pattern', 'pack'] as const).map(m => (
             <button key={m} onClick={() => setMode(m)} style={{
               fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', textTransform: 'capitalize',
               background: mode === m ? 'var(--bg-card)' : 'transparent',
@@ -335,6 +348,24 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
             <option value="">Pick one of your custom presets…</option>
             {presets.map(p => <option key={p.id} value={p.id}>{p.name} — {noteRangeLabel(p)}</option>)}
           </select>
+        )}
+        {mode === 'kit' && (
+          <select value={pickedKit} onChange={e => setPickedKit(e.target.value)} style={selStyle} aria-label="Pick a kit">
+            <option value="">Pick one of your saved kits…</option>
+            {kits.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+          </select>
+        )}
+        {mode === 'pattern' && (
+          <select value={pickedPattern} onChange={e => setPickedPattern(e.target.value)} style={selStyle} aria-label="Pick a pattern">
+            <option value="">Pick one of your saved patterns…</option>
+            {patterns.map(p => <option key={p.id} value={p.id}>{p.name} — {p.bars} bar{p.bars === 1 ? '' : 's'}</option>)}
+          </select>
+        )}
+        {mode === 'kit' && kits.length === 0 && (
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>No saved kits yet — in a beat, tune a kit and press ＋ next to KIT.</p>
+        )}
+        {mode === 'pattern' && patterns.length === 0 && (
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>No saved patterns yet — in a beat, program some hits and press ＋ next to PATTERN.</p>
         )}
         {mode === 'pack' && (
           <>

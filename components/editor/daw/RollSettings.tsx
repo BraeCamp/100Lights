@@ -90,11 +90,24 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
 
+  // Basic vs advanced — remembered across panel instances via localStorage.
+  const [mode, setMode] = useState<'basic' | 'advanced'>(() => {
+    try { return localStorage.getItem(SOUND_MODE_KEY) === 'advanced' ? 'advanced' : 'basic' } catch { return 'basic' }
+  })
+  function toggleMode() {
+    const next = mode === 'basic' ? 'advanced' : 'basic'
+    setMode(next)
+    try { localStorage.setItem(SOUND_MODE_KEY, next) } catch { /* storage off */ }
+  }
+
   useLayoutEffect(() => {
+    // Re-clamp when the panel grows (e.g. switching to Advanced) so its bottom
+    // never runs off screen.
     clampToViewport(panelRef.current, anchor)
     // focus the panel so Escape works regardless of what else listens on document
     panelRef.current?.focus()
-  }, [anchor])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchor, mode])
 
   useEffect(() => {
     function onDown(e: MouseEvent) {
@@ -119,16 +132,6 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const targets: DawClip[] = clips && clips.length > 0 ? clips : [clip]
   const multi = targets.length > 1
   const showPreset = !multi && isMidiClip(clip)
-
-  // Basic vs advanced — remembered across panel instances via localStorage.
-  const [mode, setMode] = useState<'basic' | 'advanced'>(() => {
-    try { return localStorage.getItem(SOUND_MODE_KEY) === 'advanced' ? 'advanced' : 'basic' } catch { return 'basic' }
-  })
-  function toggleMode() {
-    const next = mode === 'basic' ? 'advanced' : 'basic'
-    setMode(next)
-    try { localStorage.setItem(SOUND_MODE_KEY, next) } catch { /* storage off */ }
-  }
 
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
@@ -254,7 +257,14 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       {showPreset && (
         <div style={{ ...row, paddingTop: 9 }}>
           <span style={label}>Sound</span>
-          <span style={{ flex: 1, fontSize: 10, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{presetLabel}</span>
+          {onChangeSound ? (
+            <button onClick={onChangeSound} title="Change the sound preset"
+              style={{ flex: 1, minWidth: 0, textAlign: 'left', fontSize: 10, color: 'var(--text-primary)', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: 'var(--border-light)', textUnderlineOffset: 2 }}>
+              {presetLabel}
+            </button>
+          ) : (
+            <span style={{ flex: 1, fontSize: 10, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{presetLabel}</span>
+          )}
           {canPreview && onPreviewSound && (
             <button onClick={onPreviewSound} title="Listen — plays middle C"
               style={{ border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 10, padding: '2px 4px', flexShrink: 0 }}>▶</button>

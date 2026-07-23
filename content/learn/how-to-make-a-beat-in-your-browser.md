@@ -14,11 +14,13 @@ That order is backwards, and it's the reason most people who want to make music 
 
 You need three sounds and about fifteen minutes. Not because I'm simplifying for beginners — because three sounds is genuinely what a beat is. Everything after that is decoration, and decoration added to nothing is still nothing.
 
-Open [100Lights](https://100lights.com) in the tab you're already in. Nothing to install, and you'll have a looping groove before you'd have finished downloading anything else.
+Everything below happens in [100Lights](https://100lights.com) — a full music studio that runs right in this browser tab. Nothing to install, no account needed to start. It's where we'll place every drum hit, bass note, and chord in this guide, so open it now and keep it one tab over. And so you can hear each idea the moment you read it, the steps below come with small playable versions built into the page — press play on those, then go build the real thing next door.
+
+You'll have a looping groove before you'd have finished downloading anything else.
 
 ## The drums are not where you get creative
 
-Add a track, open the piano roll, and switch to the **STEP** view — a row per drum sound, a column per sixteenth note. Click a cell to place a hit.
+Add a track, then open the **Editor** menu — the little ▾ next to the Editor button — and choose **New Beat**. That opens the step sequencer: a row per drum sound, a column per sixteenth note. Pick a **Kit** at the top to set the sounds, and click a cell to place a hit. (If you want to hear a full groove this second, the **Pattern** menu drops one in ready-made — but place your own first; it's the whole point.)
 
 Now place the oldest pattern in recorded music, and don't improve it:
 
@@ -40,7 +42,7 @@ One thing that *is* worth doing: drag the snare's velocity down. Beginners hit e
 
 ## The bass has one job and it isn't melody
 
-Add a second track and open its piano roll. Place one low note — C2 is fine — on the same beats as your kick.
+Add a second track and open a **New Piano Roll** from that same Editor ▾ menu. Place one low note — C2 is fine — on the same beats as your kick.
 
 That's the bassline. That's all of it.
 
@@ -57,6 +59,8 @@ Two rules keep beginners out of trouble here. Keep bass notes short, because lon
 You don't need theory to add harmony. You need one good progression, and producers have been recycling the same handful since the 1950s.
 
 The library ships **chord recipes** — progressions you drag onto a track as real, editable notes. Drag in *The pop progression* and you have C, G, Am, F under your beat: the four chords behind a genuinely embarrassing number of hit records.
+
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22G%22%2C%22pitches%22%3A%5B55%2C59%2C62%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22Am%22%2C%22pitches%22%3A%5B57%2C60%2C64%5D%2C%22beat%22%3A8%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22F%22%2C%22pitches%22%3A%5B53%2C57%2C60%5D%2C%22beat%22%3A12%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A0%7D) C – G – Am – F, playable. Press play, then change the key up top and hear the same four moves carry a different song. This is the exact progression *The pop progression* recipe drops onto your track.
 
 Because it lands as ordinary notes in the piano roll, you can stretch it, transpose it, or delete half of it. It's a starting point, not a stamp. Delete the third chord and see whether you prefer it. You might.
 
@@ -77,6 +81,10 @@ This is the part I'd argue about with anybody: your track isn't boring because i
 Export the mix as a WAV — 44.1 kHz for streaming, 48 kHz if it's going under video — straight from the studio. If you want to keep working elsewhere, export stems instead and you'll get one WAV per track.
 
 Then put it somewhere. Post it in the [community](https://100lights.com/community), send it to one person, whatever. A beat that only exists in your browser tab is functionally a beat you didn't make, and the difference between people who improve and people who don't is almost entirely whether anything ever leaves the project file.
+
+You've now heard every piece of this beat right here in the page. The only step left is the one that counts — placing them yourself, in the real thing, where you can export it and send it on.
+
+@studio(/new?modules=audio) Open the studio and build your beat
 
 ## Where to go next
 
