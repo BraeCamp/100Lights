@@ -17,6 +17,7 @@ import { playMelodicNote } from '@/lib/instrument-synth'
 import { encodeWav } from '@/lib/wav-codec'
 import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
 import { parseTags, MAX_TAGS } from '@/lib/tags'
+import { validateMarkers } from '@/lib/article-markers'
 import type { AudioFile } from '@/app/api/admin/articles/audio/list/route'
 import ArticleScheduleCalendar from './ArticleScheduleCalendar'
 
@@ -403,6 +404,23 @@ export default function ArticlesPanel() {
             {busy === 'save' ? 'Saving…' : 'Save'}
           </button>
         </div>
+
+        {(() => {
+          const issues = validateMarkers(sel.body)
+          if (!issues.length) return null
+          return (
+            <div style={{ border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.08)', borderRadius: 8, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#f87171' }}>
+                ⚠ {issues.length} widget marker{issues.length === 1 ? '' : 's'} will silently vanish from the page
+              </span>
+              {issues.map((iss, i) => (
+                <span key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                  line {iss.line}: @{iss.marker} {iss.message}
+                </span>
+              ))}
+            </div>
+          )
+        })()}
 
         {!preview ? (
           <>

@@ -8,7 +8,10 @@ import { TOOL_PROMOS } from '@/components/learn/tool-promos'
 export const metadata: Metadata = {
   title: 'Learn Music Production — Free Guides & Ear Training',
   description: 'Learn to make music from scratch: beats, chord progressions, recording, mixing, and arranging. Practical guides you can do free in your browser, no downloads.',
-  alternates: { canonical: 'https://100lights.com/learn' },
+  alternates: {
+    canonical: 'https://100lights.com/learn',
+    types: { 'application/rss+xml': [{ url: 'https://100lights.com/learn/rss.xml', title: '100Lights — Learn' }] },
+  },
   openGraph: {
     title: '100Lights Learn — Music Production Guides',
     description: 'Practical guides to beats, chords, recording, and mixing — all doable in your browser for free.',
