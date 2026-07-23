@@ -23,6 +23,21 @@ export interface SnapshotRecord {
   synced: boolean
   /** clip ids whose audio blobs are stored in the AUDIO store */
   audioClipIds: string[]
+  /** The last SYNCED version — the point this local copy branched from. Used as
+   *  the "base" for a 3-way merge when offline edits reconcile with the server.
+   *  Set on synced saves; preserved across unsynced (offline) edits. */
+  base?: DawProject
+}
+
+// The base is a server-equivalent reference, so drop browser-local blob URLs —
+// it's only compared structurally, never played.
+function stripBlobUrls(project: DawProject): DawProject {
+  return {
+    ...project,
+    arrangementClips: project.arrangementClips.map(c =>
+      c.kind === 'audio' && typeof (c as { audioUrl?: string }).audioUrl === 'string' && (c as { audioUrl: string }).audioUrl.startsWith('blob:')
+        ? { ...c, audioUrl: undefined } : c),
+  }
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -97,9 +112,19 @@ export async function saveSnapshot(key: string, project: DawProject, opts?: { sy
     savedAt: Date.now(),
     synced: opts?.synced ?? false,
     audioClipIds: [...nextIds],
+    // A synced save advances the branch point; offline edits keep the old one.
+    base: opts?.synced ? stripBlobUrls(project) : prev?.base,
   }
   t.objectStore(SNAPSHOTS).put(record)
   await txDone(t)
+}
+
+/** The offline branch for 3-way merge: the base (last synced) + the current
+ *  working copy. Null when there's no branch point (never synced) yet. */
+export async function getBranch(key: string): Promise<{ base: DawProject; working: DawProject } | null> {
+  const rec = await loadSnapshot(key)   // rehydrates working's blob audio
+  if (!rec || !rec.base) return null
+  return { base: rec.base, working: rec.project }
 }
 
 /**

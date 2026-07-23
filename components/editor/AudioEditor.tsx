@@ -454,6 +454,10 @@ export default function AudioEditor(props: AudioEditorProps) {
         } else if (rec && !rec.synced && differs) {
           setRestorePrompt({ savedAt: rec.savedAt, project: rec.project })
         } else {
+          // No unsynced local edits — the loaded project is the synced state, so
+          // record it as the branch point for offline 3-way merge (existing
+          // projects only; a fresh /new project gets its base on first save).
+          if (props.projectId) void saveSnapshot(snapshotKey, projectRef.current, { synced: true }).catch(() => {})
           restoreResolvedRef.current = true
         }
       })
