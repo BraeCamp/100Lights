@@ -4,7 +4,7 @@ description: Your loop isn't missing a layer — it's missing an absence. Three 
 date: 2026-07-20
 tags: arrangement, loops, technique
 draft: true
-publishAt: 2026-08-09T13:00:00Z
+publishAt: 2026-07-30T16:00:00Z
 ---
 
 # Why Your Loop Gets Boring After 8 Bars

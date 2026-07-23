@@ -4,7 +4,7 @@ description: Take I-V-vi-IV and rebuild it as pop, neo-soul, cinematic, blues, a
 date: 2026-07-20
 tags: chords, theory, arrangement
 draft: true
-publishAt: 2026-08-08T13:00:00Z
+publishAt: 2026-07-30T04:00:00Z
 ---
 
 # The Same Four Chords, Five Different Songs

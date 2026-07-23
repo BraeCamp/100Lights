@@ -4,7 +4,7 @@ description: Four blind listening tests you run on yourself — compression, EQ,
 date: 2026-07-20
 tags: ear-training, mixing, listening
 draft: true
-publishAt: 2026-08-15T13:00:00Z
+publishAt: 2026-08-01T16:00:00Z
 ---
 
 # Can You Hear the Difference?

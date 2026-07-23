@@ -4,7 +4,7 @@ description: Most producers arrange too early and kill the idea. Session view is
 date: 2026-07-20
 tags: workflow, arrangement, session
 draft: true
-publishAt: 2026-08-02T13:00:00Z
+publishAt: 2026-07-27T16:00:00Z
 ---
 
 # Session View vs Arrangement View (and When to Switch)

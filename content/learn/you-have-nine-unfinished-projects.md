@@ -4,7 +4,7 @@ description: A guide to finishing one track badly instead of starting nine perfe
 date: 2026-07-20
 tags: workflow, finishing, habits
 draft: true
-publishAt: 2026-08-17T13:00:00Z
+publishAt: 2026-08-02T16:00:00Z
 ---
 
 # You Have Nine Unfinished Projects

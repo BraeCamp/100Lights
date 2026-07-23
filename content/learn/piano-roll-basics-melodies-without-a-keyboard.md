@@ -4,7 +4,7 @@ description: Six experiments in the piano roll. Draw a note, move it, listen to 
 date: 2026-07-20
 tags: melody, piano-roll, beginner
 draft: true
-publishAt: 2026-07-30T13:00:00Z
+publishAt: 2026-07-26T04:00:00Z
 ---
 
 # Writing Melodies Without Touching a Piano

@@ -4,7 +4,7 @@ description: The honest order of what actually limits your music, why the microp
 date: 2026-07-20
 tags: gear, habits, mixing
 draft: true
-publishAt: 2026-08-11T13:00:00Z
+publishAt: 2026-07-31T04:00:00Z
 ---
 
 # You Don't Need Better Gear

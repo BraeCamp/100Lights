@@ -4,7 +4,7 @@ description: Count the bars in the songs you love before anyone explains anythin
 date: 2026-07-20
 tags: arrangement, structure, theory
 draft: true
-publishAt: 2026-08-07T13:00:00Z
+publishAt: 2026-07-29T16:00:00Z
 ---
 
 # Why Everything Is Eight Bars

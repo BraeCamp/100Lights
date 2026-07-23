@@ -4,7 +4,7 @@ description: A DAW is four things — a timeline, a piano roll, a mixer, and an 
 date: 2026-07-20
 tags: beginner, daw, basics
 draft: true
-publishAt: 2026-07-27T13:00:00Z
+publishAt: 2026-07-24T16:00:00Z
 ---
 
 # What Is a DAW, Really?

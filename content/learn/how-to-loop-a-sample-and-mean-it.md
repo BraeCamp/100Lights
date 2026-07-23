@@ -4,7 +4,7 @@ description: Loop points get chosen by transient, not by grid — the trade secr
 date: 2026-07-20
 tags: sampling, loops, technique
 draft: true
-publishAt: 2026-08-01T13:00:00Z
+publishAt: 2026-07-27T04:00:00Z
 ---
 
 # How to Loop a Sample (and Make It Sound Intentional)

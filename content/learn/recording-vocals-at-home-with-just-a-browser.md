@@ -4,7 +4,7 @@ description: Your bedroom vocal doesn't sound bad because of your mic. It sounds
 date: 2026-07-20
 tags: recording, vocals, beginner
 draft: true
-publishAt: 2026-07-29T13:00:00Z
+publishAt: 2026-07-25T16:00:00Z
 ---
 
 # Recording Vocals at Home With Just a Browser

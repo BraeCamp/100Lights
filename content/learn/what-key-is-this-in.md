@@ -4,7 +4,7 @@ description: Find the key of any song by ear in about twenty seconds, using your
 date: 2026-07-20
 tags: theory, ear, key
 draft: true
-publishAt: 2026-08-04T13:00:00Z
+publishAt: 2026-07-28T04:00:00Z
 ---
 
 # What Key Is This In?

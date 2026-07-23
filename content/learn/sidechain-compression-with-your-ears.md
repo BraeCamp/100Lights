@@ -4,7 +4,7 @@ description: Before you learn what sidechain compression is, you're going to hea
 date: 2026-07-20
 tags: mixing, compression, technique
 draft: true
-publishAt: 2026-08-06T13:00:00Z
+publishAt: 2026-07-29T04:00:00Z
 ---
 
 # Sidechain Compression, Explained With Your Ears

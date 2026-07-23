@@ -4,7 +4,7 @@ description: Free sample packs are why so much bedroom music sounds the same. On
 date: 2026-07-20
 tags: sounds, sampling, workflow
 draft: true
-publishAt: 2026-08-05T13:00:00Z
+publishAt: 2026-07-28T16:00:00Z
 ---
 
 # Stop Downloading Sample Packs

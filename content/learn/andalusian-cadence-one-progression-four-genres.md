@@ -4,7 +4,7 @@ description: Four chords — Am, G, F, E — that turn into flamenco, surf rock,
 date: 2026-07-20
 tags: chords, theory, genre
 draft: true
-publishAt: 2026-08-14T13:00:00Z
+publishAt: 2026-08-01T04:00:00Z
 ---
 
 # One Progression, Four Genres: The Andalusian Cadence

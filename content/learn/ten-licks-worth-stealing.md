@@ -4,7 +4,7 @@ description: Ten short melodic and harmonic moves that carry entire sections of 
 date: 2026-07-20
 tags: melody, recipes, technique
 draft: true
-publishAt: 2026-08-12T13:00:00Z
+publishAt: 2026-07-31T16:00:00Z
 ---
 
 # Ten Licks Worth Stealing

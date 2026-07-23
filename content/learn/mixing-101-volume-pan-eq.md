@@ -4,7 +4,7 @@ description: Your mix isn't muddy because you need better plugins. It's muddy be
 date: 2026-07-20
 tags: mixing, eq, beginner
 draft: true
-publishAt: 2026-07-31T13:00:00Z
+publishAt: 2026-07-26T16:00:00Z
 ---
 
 # Mixing 101: Volume, Pan, and EQ Before Anything Else

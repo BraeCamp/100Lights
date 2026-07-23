@@ -4,7 +4,7 @@ description: Build a complete beat — drums, bass, and chords — in about fift
 date: 2026-07-20
 tags: beats, beginner
 draft: true
-publishAt: 2026-07-28T13:00:00Z
+publishAt: 2026-07-25T04:00:00Z
 ---
 
 # How to Make a Beat in Your Browser (No Downloads)
