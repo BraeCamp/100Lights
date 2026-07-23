@@ -6,6 +6,32 @@ import { getPolySample } from './poly-sample-cache'
 import { playDrumHit } from './drum-samples'
 import type { BeatType } from './beat-analyzer'
 import { playFMNote } from './fm-synth'
+
+// ── Baked drum-pad samples ─────────────────────────────────────────────────────
+// A kit pad can carry its own recorded one-shot (base64), so sample kits are
+// portable and independent of the sound library. Decoded once and cached by the
+// sample's stable id. Playback is synchronous, so the buffer must already be
+// present — callers preload on kit change (preloadDrumInstrument); a pad that
+// isn't decoded yet falls back to the synth voice for that single hit.
+const _drumSampleBuf = new Map<string, AudioBuffer | null>()
+
+async function _decodeDrumSample(ctx: AudioContext, sample: { id: string; data: string }): Promise<void> {
+  if (_drumSampleBuf.has(sample.id)) return
+  _drumSampleBuf.set(sample.id, null)  // in-flight marker — don't decode twice
+  try {
+    const ab = await (await fetch(sample.data)).arrayBuffer()
+    _drumSampleBuf.set(sample.id, await ctx.decodeAudioData(ab))
+  } catch { _drumSampleBuf.set(sample.id, null) }
+}
+
+/** Warm the buffer cache for every baked pad sample in a drum instrument — call
+ *  when a kit is applied so the first hit isn't silent. */
+export function preloadDrumInstrument(ctx: AudioContext, instrument: TrackInstrument): void {
+  if (instrument.type !== 'drum') return
+  const pads = (instrument.params as DrumInstrumentParams).pads
+  if (!pads) return
+  for (const pad of Object.values(pads)) if (pad.sample) void _decodeDrumSample(ctx, pad.sample)
+}
 import { playWavetableNote } from './wavetable-synth'
 
 // General MIDI drum map (pitch → drum type)
@@ -298,6 +324,21 @@ export function playInstrumentNote(
       padGain.connect(padPanner)
       padPanner.connect(dest)
       effectiveDest = padGain
+    }
+    // A baked sample on the pad plays instead of the synth voice.
+    if (pad?.sample) {
+      const buf = _drumSampleBuf.get(pad.sample.id)
+      if (buf) {
+        const src = ctx.createBufferSource()
+        src.buffer = buf
+        if (pad.pitch) src.playbackRate.value = Math.pow(2, pad.pitch / 12)
+        const g = ctx.createGain()
+        g.gain.value = velocity / 127          // pad volume/pan already in effectiveDest
+        src.connect(g); g.connect(effectiveDest)
+        src.start(when)
+        return
+      }
+      void _decodeDrumSample(ctx, pad.sample)  // warm cache; fall through to synth this hit
     }
     const vel = pad ? (velocity / 127) * pad.volume : velocity / 127
     playDrumHit(ctx, p.pack, type, when, vel, pad?.pitch ? pitch + pad.pitch : undefined, undefined, effectiveDest)

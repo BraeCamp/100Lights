@@ -8,10 +8,13 @@
 // (a starter groove) are picked from the header. Length extends bar-by-bar.
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import { isMidiClip } from '@/lib/daw-types'
-import type { MidiClip } from '@/lib/daw-types'
-import { playInstrumentNote } from '@/lib/daw-instruments'
+import type { MidiClip, DrumInstrumentParams } from '@/lib/daw-types'
+import { playInstrumentNote, preloadDrumInstrument } from '@/lib/daw-instruments'
+import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
+import { libraryFulfill } from '@/lib/default-samples'
 import {
   DRUM_LANES, STEP_BEATS, kitIdForInstrument, patternToNotes, notesToHits,
   getKits, getPatterns, addKit, addPattern, deleteKit, deletePattern,
@@ -91,7 +94,9 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   function applyKit(kitId: string) {
     const kit = kits.find(k => k.id === kitId)
     if (!kit || !track) return
-    dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: structuredClone(kit.instrument) })
+    const inst = structuredClone(kit.instrument)
+    dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: inst })
+    if (engine.ctx) preloadDrumInstrument(engine.ctx, inst)   // warm any baked samples
     audition(36)
   }
   function applyPattern(patternId: string) {
@@ -120,6 +125,47 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   const userPatterns = patterns.filter(p => !p.builtIn)
   function delKit() { if (userKitSelected && currentKit) { deleteKit(currentKit); refreshLibs() } }
   function delPattern() { if (patternSel) { deletePattern(patternSel); setPatternSel(''); refreshLibs() } }
+
+  // ── Sample kits: bake a library sample onto a lane, so it travels with the kit ─
+  const [samplePicker, setSamplePicker] = useState<number | null>(null)  // pitch being assigned
+  const [libEntries, setLibEntries] = useState<LibraryEntry[] | null>(null)
+  const [libQuery, setLibQuery] = useState('')
+  const drumParams = track?.instrument.type === 'drum' ? (track.instrument.params as DrumInstrumentParams) : null
+  const padSample = (pitch: number) => drumParams?.pads?.[pitch]?.sample
+
+  // Preload baked samples for the current kit so the first hit isn't silent.
+  useEffect(() => { if (engine.ctx && track) preloadDrumInstrument(engine.ctx, track.instrument) }, [engine, track])
+
+  function openSamplePicker(pitch: number) {
+    setSamplePicker(pitch); setLibQuery('')
+    if (!libEntries) libraryGetAll().then(setLibEntries).catch(() => setLibEntries([]))
+  }
+  function blobToDataUri(blob: Blob): Promise<string> {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(blob) })
+  }
+  async function assignSample(pitch: number, entry: LibraryEntry) {
+    if (!track) return
+    const filled = entry.audioBlob ? entry : (await libraryFulfill(entry.id) ?? undefined)
+    const blob = filled?.audioBlob
+    if (!blob) return
+    const data = await blobToDataUri(blob)
+    const inst = track.instrument.type === 'drum' ? structuredClone(track.instrument) : { type: 'drum' as const, params: { pack: 'synth' as const } }
+    const p = inst.params as DrumInstrumentParams
+    const existing = p.pads?.[pitch] ?? { volume: 0.8, pitch: 0, pan: 0, mute: false }
+    p.pads = { ...(p.pads ?? {}), [pitch]: { ...existing, sample: { id: entry.id, name: entry.name, data } } }
+    dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: inst })
+    if (engine.ctx) preloadDrumInstrument(engine.ctx, inst)
+    setSamplePicker(null)
+    setTimeout(() => audition(pitch), 60)   // let the buffer decode, then preview
+  }
+  function clearSample(pitch: number) {
+    if (!track || track.instrument.type !== 'drum') return
+    const inst = structuredClone(track.instrument)
+    const p = inst.params as DrumInstrumentParams
+    const pad = p.pads?.[pitch]
+    if (pad?.sample) { const next = { ...pad }; delete next.sample; p.pads = { ...p.pads, [pitch]: next } }
+    dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: inst })
+  }
 
   function setBars(n: number) {
     const next = Math.max(1, Math.min(16, n))
@@ -210,7 +256,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
       <div ref={scrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', padding: '10px 12px', maxHeight: tall ? 420 : 300 }}>
         <div style={{ display: 'inline-block', minWidth: '100%' }}>
           {/* Step numbers */}
-          <div style={{ display: 'grid', gridTemplateColumns: `92px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `118px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3 }}>
             <span />
             {Array.from({ length: steps }, (_, s) => (
               <span key={`h${s}`} style={{ fontSize: 8, textAlign: 'center', color: s === playStep ? 'var(--accent-light)' : s % 4 === 0 ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
@@ -219,9 +265,17 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
             ))}
           </div>
           {DRUM_LANES.map(lane => (
-            <div key={lane.key} style={{ display: 'grid', gridTemplateColumns: `92px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3, alignItems: 'center' }}>
-              <span style={{ fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
-                onClick={() => audition(lane.pitch)} title={`Preview ${lane.label}`}>{lane.label}</span>
+            <div key={lane.key} style={{ display: 'grid', gridTemplateColumns: `118px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3, alignItems: 'center' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 }}>
+                <span style={{ flex: 1, fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
+                  onClick={() => audition(lane.pitch)} title={padSample(lane.pitch) ? `${lane.label} — sample: ${padSample(lane.pitch)!.name ?? 'custom'} (click to preview)` : `Preview ${lane.label}`}>{lane.label}</span>
+                {padSample(lane.pitch) && (
+                  <button onClick={() => clearSample(lane.pitch)} title="Remove sample (back to the synth voice)" style={{ flexShrink: 0, fontSize: 8, lineHeight: 1, padding: '1px 3px', borderRadius: 3, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}>✕</button>
+                )}
+                <button onClick={() => openSamplePicker(lane.pitch)}
+                  title={padSample(lane.pitch) ? 'Change this lane’s sample' : 'Load a sample onto this lane (baked into the kit)'}
+                  style={{ flexShrink: 0, fontSize: 9, lineHeight: 1, padding: '2px 4px', borderRadius: 3, cursor: 'pointer', border: '1px solid var(--border-light)', background: padSample(lane.pitch) ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-card)', color: padSample(lane.pitch) ? 'var(--accent-light)' : 'var(--text-muted)' }}>◎</button>
+              </span>
               {Array.from({ length: steps }, (_, s) => {
                 const hit = noteAt(lane.pitch, s)
                 const downbeat = s % 4 === 0
@@ -247,8 +301,40 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
         </div>
       </div>
       <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0, padding: '0 12px 10px', lineHeight: 1.5 }}>
-        Click a cell to place a hit — it plays through the current kit and loops with the clip. Open the Piano Roll for free placement, velocity, and note lengths on the same clip.
+        Click a cell to place a hit. The ◎ on a lane loads a sample onto it — the audio bakes into the kit, so saving the kit (＋ next to KIT) keeps it and it travels when you share.
       </p>
+
+      {samplePicker !== null && typeof document !== 'undefined' && createPortal(
+        <div onMouseDown={e => { if (e.target === e.currentTarget) setSamplePicker(null) }}
+          style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: 360, maxHeight: '72vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 14px 40px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>Load a sample onto {DRUM_LANES.find(l => l.pitch === samplePicker)?.label ?? 'lane'}</span>
+              <span style={{ flex: 1 }} />
+              <button onClick={() => setSamplePicker(null)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+            </div>
+            <input value={libQuery} onChange={e => setLibQuery(e.target.value)} placeholder="Search your library…" autoFocus
+              style={{ margin: '10px 12px', padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }} />
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 10px' }}>
+              {libEntries === null && <p style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 6px' }}>Loading library…</p>}
+              {libEntries !== null && (() => {
+                const q = libQuery.trim().toLowerCase()
+                const list = libEntries.filter(e => !q || e.name.toLowerCase().includes(q) || (e.folder ?? '').toLowerCase().includes(q)).slice(0, 200)
+                if (list.length === 0) return <p style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 6px' }}>No samples{q ? ' match' : ' in your library yet'}.</p>
+                return list.map(e => (
+                  <button key={e.id} onClick={() => void assignSample(samplePicker, e)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 8px', borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 11.5 }}
+                    onMouseEnter={ev => (ev.currentTarget.style.background = 'var(--bg-card)')}
+                    onMouseLeave={ev => (ev.currentTarget.style.background = 'transparent')}>
+                    {e.name}{e.folder ? <span style={{ color: 'var(--text-muted)' }}> · {e.folder}</span> : ''}
+                  </button>
+                ))
+              })()}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }

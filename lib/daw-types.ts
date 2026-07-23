@@ -258,6 +258,12 @@ export interface DrumPadSettings {
   pitch: number       // semitones -24..24
   pan: number         // -1..1
   mute: boolean
+  /** A one-shot sample baked into the pad — the audio travels WITH the kit
+   *  (localStorage + community), so a sample kit is portable and independent of
+   *  the sound library. `data` is a base64 audio data-URI; `id` is a stable key
+   *  for the decoded-buffer cache. When present it plays instead of the synth
+   *  pack. */
+  sample?: { id: string; name?: string; data: string }
 }
 
 export interface DrumInstrumentParams {
