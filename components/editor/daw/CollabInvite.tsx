@@ -1,8 +1,9 @@
 'use client'
 
 // Share popover: copy the link, switch the project between private and
-// public, and manage the private member list (emails). Editing rights on a
-// shared project come with a paid plan; free collaborators view and listen.
+// public, and manage the private member list. Each member gets a role the
+// owner sets and can change — Can edit (co-edit live) or Can view (listen and
+// follow along).
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -11,7 +12,7 @@ import { Link2, Globe2, Lock, X, Plus } from 'lucide-react'
 
 interface Sharing {
   visibility: 'private' | 'public'
-  members: Array<{ email: string }>
+  members: Array<{ email: string; role: 'edit' | 'view' }>
 }
 
 export function CollabInvite({ projectId }: { projectId: string }) {
@@ -70,7 +71,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
     } catch { setNotOwner(true) }
   }
 
-  async function patch(body: Record<string, string>) {
+  async function patch(body: Record<string, unknown>) {
     setErr('')
     try {
       const r = await fetch(`/api/projects/${projectId}/sharing`, {
@@ -182,6 +183,16 @@ export function CollabInvite({ projectId }: { projectId: string }) {
                   {sharing.members.map(m => (
                     <div key={m.email} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
                       <span style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</span>
+                      <select
+                        value={m.role}
+                        onChange={e => void patch({ setRole: { email: m.email, role: e.target.value } })}
+                        aria-label={`Permission for ${m.email}`}
+                        title="What this person can do"
+                        style={{ fontSize: 10, padding: '2px 4px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      >
+                        <option value="edit">Can edit</option>
+                        <option value="view">Can view</option>
+                      </select>
                       <button onClick={() => void patch({ removeEmail: m.email })} aria-label={`Remove ${m.email}`}
                         style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
                         <X size={11} />
@@ -206,7 +217,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
 
               {err && <p style={{ fontSize: 10, color: '#ef4444', margin: '8px 0 0' }}>{err}</p>}
               <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
-                People you share with can listen and follow along. Editing with you live needs a Pro plan; you always edit your own projects.
+                Set each person to <strong>Can edit</strong> (co-edit live with you) or <strong>Can view</strong> (listen and follow along). Change it anytime. You always edit your own projects.
               </p>
             </>
           ) : (

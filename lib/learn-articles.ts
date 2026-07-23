@@ -8,6 +8,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { cache } from 'react'
 import { sql } from './db'
 import { parseTags } from './tags'
 
@@ -127,8 +128,11 @@ function toArticle(r: Record<string, unknown>, now: number): LearnArticle {
   }
 }
 
-export async function getArticles(opts?: { includeDrafts?: boolean }): Promise<LearnArticle[]> {
-  const includeDrafts = opts?.includeDrafts ?? process.env.NODE_ENV === 'development'
+// Per-request memoised: generateMetadata + the page + recommendations each call
+// getArticles/getArticle in one render — React cache() dedupes the three
+// full-table reads down to one. Keyed by includeDrafts (a boolean) so the two
+// variants stay distinct.
+const getArticlesCached = cache(async (includeDrafts: boolean): Promise<LearnArticle[]> => {
   const now = Date.now()
   const { live, deleted } = await fromDb(now)
   // A slug is hidden if the DB has it live (that row wins) or trashed (the
@@ -138,6 +142,10 @@ export async function getArticles(opts?: { includeDrafts?: boolean }): Promise<L
   return all
     .filter(a => includeDrafts || !a.draft)
     .sort((a, b) => b.date.localeCompare(a.date))
+})
+
+export async function getArticles(opts?: { includeDrafts?: boolean }): Promise<LearnArticle[]> {
+  return getArticlesCached(opts?.includeDrafts ?? process.env.NODE_ENV === 'development')
 }
 
 /** Trashed articles, newest first — for the admin trash view. */

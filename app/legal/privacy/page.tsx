@@ -1,4 +1,9 @@
-export const metadata = { title: '100Lights — Privacy Policy' }
+export const metadata = {
+  title: '100Lights — Privacy Policy',
+  description: 'How 100Lights collects, uses, and protects your information, your uploaded content, and your rights.',
+  alternates: { canonical: 'https://100lights.com/legal/privacy' },
+  openGraph: { title: '100Lights — Privacy Policy', description: 'How 100Lights collects, uses, and protects your information.', url: 'https://100lights.com/legal/privacy' },
+}
 
 export default function PrivacyPage() {
   return (

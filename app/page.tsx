@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import DemoVideo from '@/components/DemoVideo'
-import { auth } from '@clerk/nextjs/server'
+import HeaderAuthCta from '@/components/HeaderAuthCta'
 import { getArticles } from '@/lib/learn-articles'
 import {
   Zap, Check, ArrowRight,
@@ -168,8 +168,12 @@ const jsonLd = {
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
 }
 
+// Static + hourly ISR: the landing page is the top SEO surface, so it must
+// prerender. Sign-in state is resolved on the client via <SignedIn>/<SignedOut>
+// instead of auth() (which would force per-request dynamic rendering).
+export const revalidate = 3600
+
 export default async function LandingPage() {
-  const { userId } = await auth()
   const hasGuides = (await getArticles({ includeDrafts: false })).length > 0
 
   return (
@@ -211,26 +215,7 @@ export default async function LandingPage() {
 
             {/* Auth-aware right side */}
             <div className="flex items-center gap-3">
-              {userId ? (
-                <Link
-                  href="/dashboard"
-                  className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg"
-                  style={{ background: 'var(--accent)', color: '#fff' }}
-                >
-                  Dashboard <ArrowRight size={14} aria-hidden="true" />
-                </Link>
-              ) : (
-                <>
-                  <Link href="/sign-in" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Sign in</Link>
-                  <Link
-                    href="/sign-up"
-                    className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg"
-                    style={{ background: 'var(--accent)', color: '#fff' }}
-                  >
-                    Get started
-                  </Link>
-                </>
-              )}
+              <HeaderAuthCta />
             </div>
           </nav>
         </header>

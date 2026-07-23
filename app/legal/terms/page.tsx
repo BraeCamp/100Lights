@@ -1,4 +1,9 @@
-export const metadata = { title: '100Lights — Terms of Service' }
+export const metadata = {
+  title: '100Lights — Terms of Service',
+  description: 'The terms governing your use of 100Lights: accounts, acceptable use, your content, billing, and service availability.',
+  alternates: { canonical: 'https://100lights.com/legal/terms' },
+  openGraph: { title: '100Lights — Terms of Service', description: 'The terms governing your use of 100Lights.', url: 'https://100lights.com/legal/terms' },
+}
 
 export default function TermsPage() {
   return (

@@ -25,6 +25,7 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
   const [state, setState] = useState<'idle' | 'recording' | 'done'>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [includeMic, setIncludeMic] = useState(false)
+  const [captureCursor, setCaptureCursor] = useState(true)
   const [result, setResult] = useState<RecordingResult | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,6 +63,7 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
         masterNode: engine.masterCompressor,
         audioContext: engine.ctx,
         includeMic,
+        captureCursor,
       })
       setElapsed(0)
       setState('recording')
@@ -114,9 +116,13 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
             Captures your screen plus the studio&rsquo;s audio straight from the mixer — not system
             sound, so nothing else on your machine ends up in the take.
           </p>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 12, cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 8, cursor: 'pointer' }}>
             <input type="checkbox" checked={includeMic} onChange={e => setIncludeMic(e.target.checked)} />
             Also record my microphone
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 12, cursor: 'pointer' }}>
+            <input type="checkbox" checked={captureCursor} onChange={e => setCaptureCursor(e.target.checked)} />
+            Capture mouse activity (show the cursor &amp; clicks)
           </label>
           <button onClick={() => void start()}
             style={{ width: '100%', padding: '9px 0', borderRadius: 9, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>

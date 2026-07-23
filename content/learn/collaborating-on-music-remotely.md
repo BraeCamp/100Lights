@@ -30,11 +30,13 @@ Now the part actually nobody documents.
 
 Two competent people in one session will, within about forty minutes, start quietly undoing each other. Not out of ego. Out of taste. You pull the hats back because they're busy; they push them up because they carry the groove; neither of you mentions it; you both do it twice more. Nothing is said. The session gets tense in a way that gets blamed on the music.
 
-Working sessions solve this with a rule so old and obvious that it's never written down: **one person owns the arrangement.** Not the song. The arrangement — section order, lengths, what enters and what drops. That person is the only one who moves, deletes, or duplicates sections. Everyone else works *inside* the sections they're given.
+There are two layers to solving this, and 100Lights now hands you the first one directly. In the Share panel, everyone you add is set to **Can edit** or **Can view**, and you can change it at any moment. Anyone who should be reacting rather than rearranging — the friend whose ear you trust, the singer who's finished tracking — goes to *Can view*: they hear every change live and leave comments, but they can't move a section by accident. That removes most of the quiet undoing on its own, because most of it comes from people having edit access they never actually needed.
 
-That's it. That's the trade knowledge. It's the same reason a studio has one person at the desk while four people have opinions, and it's why professional sessions with six people in the room somehow move faster than your two-person collaboration.
+The second layer is a convention, and it's for the people who *do* have edit access: **one person owns the arrangement.** Not the song. The arrangement — section order, lengths, what enters and what drops. Among the editors, that person is the only one who moves, deletes, or duplicates sections. Everyone else works *inside* the sections they're given.
 
-Assign it in the first ten minutes, out loud, before anyone's precious about anything. It can rotate between songs. It cannot rotate mid-session.
+That's the trade knowledge. It's the same reason a studio has one person at the desk while four people have opinions, and it's why professional sessions with six people in the room somehow move faster than your two-person collaboration.
+
+Assign the arrangement owner in the first ten minutes, out loud, before anyone's precious about anything — and set everyone who isn't editing to *Can view* so the agreement has teeth. It can rotate between songs. It cannot rotate mid-session.
 
 The rest divides cleanly. Whoever wrote the chords owns harmony. Whoever's singing owns the vocal and every decision about it, including the takes you preferred. Sound design and mix are usually one person, and if they're two, they need to agree on which of them touches the sends and returns, because two people on a reverb bus is its own special disaster.
 

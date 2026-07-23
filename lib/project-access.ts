@@ -1,12 +1,13 @@
 import { sql } from './db'
-import { getSubscription } from './subscription'
 
 // Project sharing model:
 // - visibility 'private' (default): owner + explicitly added members only
-// - visibility 'public': any signed-in user with the URL can view
-// - editing on someone else's project requires a paid plan; free accounts
-//   view. The owner always edits their own projects regardless of plan.
+// - visibility 'public': any signed-in user with the URL can view (view-only)
+// - each member the owner adds gets a role — 'edit' (co-edit live) or 'view'
+//   (listen/follow only) — which the owner can change at any time. The owner
+//   always edits their own projects.
 
+export type MemberRole = 'edit' | 'view'
 export type ProjectAccess = 'owner' | 'edit' | 'view' | null
 
 let ready = false
@@ -21,6 +22,9 @@ export async function ensureSharingSchema() {
       PRIMARY KEY (project_id, email)
     )
   `
+  // Per-member permission. Added members default to 'edit' (sharing is a
+  // collaboration invite); the owner can downgrade any member to 'view'.
+  await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'edit'`
   ready = true
 }
 
@@ -37,19 +41,17 @@ export async function getProjectAccess(
 
   if (userId && userId === ownerId) return { access: 'owner', ownerId, visibility }
 
-  let canView = visibility === 'public'
-  if (!canView && email) {
-    const m = await sql`SELECT 1 FROM project_members WHERE project_id = ${projectId} AND LOWER(email) = ${email.toLowerCase()}`
-    canView = m.length > 0
+  // A membership row (if any) carries the role the owner assigned.
+  let role: MemberRole | null = null
+  if (email) {
+    const m = await sql`SELECT role FROM project_members WHERE project_id = ${projectId} AND LOWER(email) = ${email.toLowerCase()}`
+    if (m.length > 0) role = ((m[0].role as string) === 'view' ? 'view' : 'edit')
   }
+
+  const canView = role !== null || visibility === 'public'
   if (!canView) return { access: null, ownerId, visibility }
 
-  // Viewers with a paid plan get edit rights on shared projects
-  if (userId) {
-    try {
-      const sub = await getSubscription(userId)
-      if (sub.plan === 'pro') return { access: 'edit', ownerId, visibility }
-    } catch { /* plan lookup failed → view */ }
-  }
-  return { access: 'view', ownerId, visibility }
+  // Members edit or view per their assigned role; public (non-member) visitors
+  // are view-only.
+  return { access: role === 'edit' ? 'edit' : 'view', ownerId, visibility }
 }

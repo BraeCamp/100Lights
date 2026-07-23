@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { cache } from 'react'
 import { sql } from '@/lib/db'
 import { ensureTables } from '@/lib/community-server'
 import { ItemClient } from './ItemClient'
@@ -9,8 +10,13 @@ import { ItemClient } from './ItemClient'
 // with a waveform card.
 
 export const runtime = 'nodejs'
+// ISR: a shared item's content is effectively static (votes/downloads load
+// client-side). Cache the rendered page an hour instead of hitting the DB on
+// every crawler visit across ~hundreds of item URLs.
+export const revalidate = 3600
 
-async function fetchItem(id: string) {
+// cache() dedupes the two fetches per render (generateMetadata + the page).
+const fetchItem = cache(async (id: string) => {
   await ensureTables()
   try {
     const rows = await sql`SELECT * FROM community_items WHERE id = ${id}`
@@ -18,10 +24,10 @@ async function fetchItem(id: string) {
   } catch {
     return null  // malformed uuid etc.
   }
-}
+})
 
 const KIND_LABEL: Record<string, string> = {
-  song: 'Song', sample: 'Sample', preset: 'Preset', recipe: 'Recipe', pack: 'Sample pack', project: 'Project starter',
+  song: 'Song', sample: 'Sample', preset: 'Preset', recipe: 'Recipe', pack: 'Sample pack', project: 'Project starter', theme: 'Theme', kit: 'Drum kit', pattern: 'Beat pattern',
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {

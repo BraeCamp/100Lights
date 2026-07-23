@@ -13,6 +13,9 @@ import dynamic from 'next/dynamic'
 const PadTuner    = dynamic(() => import('./PadTuner'),    { ssr: false })
 // Screen capture pulls in MediaRecorder plumbing nobody needs until they record.
 const ScreenRecorderPanel = dynamic(() => import('./ScreenRecorder'), { ssr: false })
+// The annotate-screenshot editor is heavy (canvas tools + colour picker) and
+// only needed the moment a shot is taken — load its chunk on demand.
+const ScreenshotAnnotator = dynamic(() => import('./ScreenshotAnnotator'), { ssr: false })
 const MaskingPanel = dynamic(() => import('./MaskingPanel'), { ssr: false })
 
 function fmtHMS(secs: number): string {
@@ -53,6 +56,7 @@ export default function Transport() {
   const [showRecorder, setShowRecorder] = useState(false)
   const [captureOpen, setCaptureOpen] = useState(false)
   const [shotBusy, setShotBusy] = useState(false)
+  const [shotBlob, setShotBlob] = useState<Blob | null>(null)
   const captureRef = useRef<HTMLDivElement>(null)
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
@@ -85,22 +89,14 @@ export default function Transport() {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [captureOpen])
 
-  // Grab a still of the studio and download it as a PNG
+  // Grab a still of the studio, then open the annotator to crop / draw / save.
   async function takeScreenshot() {
     setCaptureOpen(false)
     if (shotBusy) return
     setShotBusy(true)
     try {
       const blob = await captureScreenshot()
-      if (!blob) return
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `100lights-${(project.name || 'session').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      if (blob) setShotBlob(blob)   // opens the lazy-loaded annotator
     } finally {
       setShotBusy(false)
     }
@@ -1058,6 +1054,14 @@ export default function Transport() {
       {showRecorder && typeof document !== 'undefined' && createPortal(
         <ScreenRecorderPanel onClose={() => setShowRecorder(false)} />,
         document.body,
+      )}
+
+      {shotBlob && (
+        <ScreenshotAnnotator
+          blob={shotBlob}
+          defaultName={`100lights-${(project.name || 'session').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}
+          onClose={() => setShotBlob(null)}
+        />
       )}
 
       {/* Floating tuner panel */}

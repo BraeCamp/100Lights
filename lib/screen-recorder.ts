@@ -19,6 +19,8 @@ export interface RecorderSources {
   audioContext?: AudioContext
   /** Also capture the microphone (for talking over the demo). */
   includeMic?: boolean
+  /** Show the mouse cursor / clicks in the recording (getDisplayMedia cursor). */
+  captureCursor?: boolean
 }
 
 export interface RecordingResult {
@@ -61,8 +63,12 @@ export class ScreenRecorder {
 
     // Ask for the screen first: if the user cancels this, nothing else should
     // have been opened (no mic prompt, no dangling audio nodes).
+    // `cursor: 'always'` shows the pointer and clicks; 'motion' only while it
+    // moves. Not in lib.dom's MediaTrackConstraints, so set it dynamically.
+    const video: MediaTrackConstraints = { frameRate: 30 }
+    ;(video as Record<string, unknown>).cursor = sources.captureCursor ? 'always' : 'motion'
     this.displayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 },
+      video,
       audio: true,
     })
 
