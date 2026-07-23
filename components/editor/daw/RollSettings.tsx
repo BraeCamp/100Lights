@@ -230,15 +230,22 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       <div style={{ ...row, paddingTop: 2, paddingBottom: 6 }}>
         <span style={label}>Settings</span>
         <button
-          onClick={doCopy} disabled={hereCount === 0}
-          title={hereCount ? 'Copy this clip’s sound settings' : 'No settings to copy yet'}
-          style={clipBtn(hereCount > 0)}
+          onClick={doCopy}
+          title={hereCount ? 'Copy this clip’s sound settings' : 'Copy this clip’s (unchanged) settings — paste to reset another clip to defaults'}
+          style={clipBtn(true)}
         >{flash ? 'Copied ✓' : `⧉ Copy${hereCount ? ` (${hereCount})` : ''}`}</button>
         <button
-          onClick={() => { if (multi) { for (const t of targets) dispatch({ type: 'UPDATE_CLIP', clipId: t.id, patch: { rollFx: copied ?? undefined } }) } else commitFx(copied ?? undefined) }} disabled={!copied}
-          title={copied ? `Paste ${clipCount} copied setting${clipCount === 1 ? '' : 's'} onto ${multi ? `all ${targets.length} clips` : 'this clip'}` : 'Nothing copied yet'}
+          onClick={() => {
+            // An empty copy pastes as "reset to defaults" (rollFx cleared).
+            const toPaste = copied && clipCount > 0 ? copied : undefined
+            if (multi) for (const t of targets) dispatch({ type: 'UPDATE_CLIP', clipId: t.id, patch: { rollFx: toPaste } })
+            else commitFx(toPaste)
+          }} disabled={!copied}
+          title={!copied ? 'Nothing copied yet'
+            : clipCount > 0 ? `Paste ${clipCount} copied setting${clipCount === 1 ? '' : 's'} onto ${multi ? `all ${targets.length} clips` : 'this clip'}`
+            : `Reset ${multi ? `all ${targets.length} clips` : 'this clip'} to default (copied from an unchanged clip)`}
           style={clipBtn(!!copied)}
-        >Paste{copied ? ` (${clipCount})` : ''}</button>
+        >{copied ? (clipCount > 0 ? `Paste (${clipCount})` : 'Paste · reset') : 'Paste'}</button>
         <span style={{ flex: 1 }} />
       </div>
 

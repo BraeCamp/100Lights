@@ -17,8 +17,9 @@ export function countSetFields(fx: RollFx | null | undefined): number {
 
 export function copySound(fx: RollFx | undefined | null): void {
   try {
-    if (fx && countSetFields(fx) > 0) localStorage.setItem(KEY, JSON.stringify(fx))
-    else localStorage.removeItem(KEY)
+    // Always store — even an empty (unchanged) clip, so it can be pasted onto a
+    // modified clip to reset it back to defaults.
+    localStorage.setItem(KEY, JSON.stringify(fx ?? {}))
   } catch { /* storage unavailable */ }
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(SOUND_CLIPBOARD_EVENT))
 }

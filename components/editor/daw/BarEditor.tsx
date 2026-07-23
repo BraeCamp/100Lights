@@ -14,6 +14,7 @@ import FxControls from './FxControls'
 const W = 300, H = 92, PAD = 8
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 const SNAP = [0, 0.5, 1]
+const SOUND_MODE_KEY = '100lights-sound-mode-v1'   // shared with the clip Sound panel
 
 export default function BarEditor({ effect: atOpen, anchor, onClose }: {
   effect: ClipEffect
@@ -25,6 +26,14 @@ export default function BarEditor({ effect: atOpen, anchor, onClose }: {
   const panelRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
+  const [mode, setMode] = useState<'basic' | 'advanced'>(() => {
+    try { return localStorage.getItem(SOUND_MODE_KEY) === 'advanced' ? 'advanced' : 'basic' } catch { return 'basic' }
+  })
+  function toggleMode() {
+    const next = mode === 'basic' ? 'advanced' : 'basic'
+    setMode(next)
+    try { localStorage.setItem(SOUND_MODE_KEY, next) } catch { /* storage off */ }
+  }
 
   const dur = eff.durationBeats || 4
   const graph: AutoPoint[] = (eff.graph?.length ? eff.graph : [{ id: 'g0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] }, { id: 'g1', t: dur, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] }])
@@ -67,7 +76,14 @@ export default function BarEditor({ effect: atOpen, anchor, onClose }: {
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-primary)' }}>
           EFFECT BAR{active.length ? ` · ${active.length} on` : ''}
         </span>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={toggleMode}
+            title={mode === 'basic' ? 'Show all effects' : 'Show just the essentials'}
+            style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+            {mode === 'basic' ? 'ADVANCED ▸' : '◂ BASIC'}
+          </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+        </div>
       </div>
 
       {/* Graph */}
@@ -93,7 +109,7 @@ export default function BarEditor({ effect: atOpen, anchor, onClose }: {
       {/* Sound settings (targets) */}
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 4 }}>
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-muted)', padding: '4px 12px 2px' }}>EFFECTS (tick any to activate)</div>
-        <FxControls value={eff.fx} onCommit={commitFx} hideCats={['env', 'pitch']} />
+        <FxControls value={eff.fx} onCommit={commitFx} hideCats={['env', 'pitch']} mode={mode} />
       </div>
     </div>,
     document.body,
