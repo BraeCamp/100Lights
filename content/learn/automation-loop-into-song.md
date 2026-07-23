@@ -3,8 +3,7 @@ title: Automation Is the Difference Between a Loop and a Song
 description: Your track isn't static because it's missing an instrument. It's static because nothing moves. Volume, filter and send automation, and where to draw them.
 date: 2026-07-20
 tags: automation, arrangement, mixing
-draft: true
-publishAt: 2026-08-10T13:00:00Z
+draft: false
 ---
 
 # Automation Is the Difference Between a Loop and a Song

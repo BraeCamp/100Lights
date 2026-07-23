@@ -4,8 +4,7 @@ description: The growl in every jungle and drum-and-bass record is two sawtooth 
 date: 2026-07-20
 tags: sound-design, bass, synthesis
 voice: insider
-draft: true
-publishAt: 2026-08-13T13:00:00Z
+draft: false
 ---
 
 # Build a Reese Bass From Scratch

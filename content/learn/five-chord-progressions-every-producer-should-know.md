@@ -3,8 +3,7 @@ title: 5 Chord Progressions Every Producer Should Know
 description: Five progressions behind Let It Be, Zombie, Stand By Me and Fly Me to the Moon — heard first, explained second, with an interactive piano for each.
 date: 2026-07-20
 tags: chords, theory
-draft: true
-publishAt: 2026-08-03T13:00:00Z
+draft: false
 ---
 
 # 5 Chord Progressions Every Producer Should Know
