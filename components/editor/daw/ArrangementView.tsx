@@ -6,7 +6,9 @@ import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
-import type { ReturnTrack, AudioClip, DawClip } from '@/lib/daw-types'
+import type { ReturnTrack, AudioClip, DawClip, MidiClip } from '@/lib/daw-types'
+import { RollSoundPanel } from './RollSettings'
+import { getPresets } from '@/lib/midi-presets'
 
 // Module-level clipboards — persist across renders in the same session
 interface ClipboardEntry { clips: DawClip[]; originBeat: number; regionSpan?: number | null; buffers: [string, AudioBuffer][] }
@@ -351,7 +353,16 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+
+  // The shared clip Sound panel — follows the current selection (retargets on
+  // select) and closes when nothing is selected.
+  const soundClips: DawClip[] = selectedClipIds.size > 1
+    ? project.arrangementClips.filter(c => selectedClipIds.has(c.id))
+    : (selectedClipId ? project.arrangementClips.filter(c => c.id === selectedClipId) : [])
+  useEffect(() => {
+    if (soundPanel && soundClips.length === 0) setSoundPanel(null)
+  }, [soundPanel, soundClips.length, setSoundPanel])
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -1747,6 +1758,28 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
         </div>,
         document.body
       )}
+
+      {/* Shared clip Sound panel — follows the selection, retargets on select */}
+      {soundPanel && soundClips.length > 0 && (() => {
+        const rep = soundClips[0]
+        const track = project.tracks.find(t => t.id === rep.trackId)
+        const presetLabel = isMidiClip(rep)
+          ? ((rep as MidiClip).presetId
+              ? getPresets().find(p => p.id === (rep as MidiClip).presetId)?.name ?? '?'
+              : track && track.instrument.type !== 'none' ? `${track.instrument.type} (track)` : 'None')
+          : ''
+        return (
+          <RollSoundPanel
+            clip={rep}
+            clips={soundClips}
+            dispatch={dispatch}
+            anchor={soundPanel}
+            onClose={() => setSoundPanel(null)}
+            presetLabel={presetLabel}
+            retargetOnClipClick
+          />
+        )
+      })()}
     </div>
   )
 }

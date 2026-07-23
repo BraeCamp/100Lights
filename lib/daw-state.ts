@@ -13,6 +13,7 @@ import {
   defaultTrackInstrument,
 } from './daw-types'
 import { DawEngine } from './daw-engine'
+import { legacyToBar } from './effect-bar'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -553,6 +554,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return {
         ...p,
         tracks:          normalizeGroups(p.tracks ?? []),
+        clipEffects:     (p.clipEffects ?? []).map(legacyToBar),
         returnTracks:    p.returnTracks    ?? [],
         takeLanes:       p.takeLanes       ?? [],
         crossfaderValue: p.crossfaderValue ?? 0.5,
@@ -695,6 +697,10 @@ export interface DawContextValue {
   setSelectedClipId: (id: string | null) => void
   selectedClipIds: Set<string>
   setSelectedClipIds: React.Dispatch<React.SetStateAction<Set<string>>>
+  /** Screen position of the shared clip Sound panel, or null when closed. The
+   *  panel follows the current clip selection, so it retargets on select. */
+  soundPanel: { x: number; y: number } | null
+  setSoundPanel: (p: { x: number; y: number } | null) => void
   selectedEffectIds: Set<string>
   setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
   // Pad/voice MIDI card
@@ -837,6 +843,7 @@ export function migrateProject(raw: Partial<DawProject>): DawProject {
     ...base,
     ...raw,
     tracks,
+    clipEffects:     (raw.clipEffects ?? []).map(legacyToBar),
     automationLanes: raw.automationLanes ?? [],
     returnTracks:    raw.returnTracks    ?? [],
     takeLanes:       raw.takeLanes       ?? [],

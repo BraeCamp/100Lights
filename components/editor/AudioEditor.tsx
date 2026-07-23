@@ -7,6 +7,7 @@ import { computeRevertPatch } from '@/lib/daw-undo'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects } from '@/lib/daw-types'
+import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
@@ -719,11 +720,11 @@ export default function AudioEditor(props: AudioEditorProps) {
         dispatch({ type: 'ADD_CLIP', clip })
         const pendingFx = engineRef.current?.pendingRecordFx ?? []
         pendingFx.forEach((fx, i) => {
-          dispatch({ type: 'ADD_CLIP_EFFECT', effect: {
+          dispatch({ type: 'ADD_CLIP_EFFECT', effect: legacyToBar({
             id: crypto.randomUUID(), trackId, type: fx.type,
             startBeat: placed, durationBeats: dur, row: i,
             params: monitorFxParams(fx),
-          } })
+          }) })
         })
         void uploadRecordingBlob(blob, clip.id).then(key => {
           if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
@@ -875,11 +876,11 @@ export default function AudioEditor(props: AudioEditorProps) {
       dispatch({ type: 'ADD_CLIP', clip })
       const pendingFx = engineRef.current?.pendingRecordFx ?? []
       pendingFx.forEach((fx, i) => {
-        dispatch({ type: 'ADD_CLIP_EFFECT', effect: {
+        dispatch({ type: 'ADD_CLIP_EFFECT', effect: legacyToBar({
           id: crypto.randomUUID(), trackId, type: fx.type,
           startBeat, durationBeats, row: i,
           params: monitorFxParams(fx),
-        } })
+        }) })
       })
       if (engineRef.current) engineRef.current.pendingRecordFx = []
       console.log('[rec] master bus clip dispatched:', clip.id, 'at beat', startBeat)
@@ -963,6 +964,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const setSelectedReturnId = useCallback((id: string | null) => { setSelectedReturnId_(id); if (id) setSelectedTrackId_(null)  }, [])
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
+  const [soundPanel, setSoundPanel] = useState<{ x: number; y: number } | null>(null)
 
   // Dev console access to the multi-selection (window.__dawSelection)
   useEffect(() => {
@@ -1230,6 +1232,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setSelectedClipId,
     selectedClipIds,
     setSelectedClipIds,
+    soundPanel,
+    setSoundPanel,
     selectedEffectIds,
     setSelectedEffectIds,
     playing,

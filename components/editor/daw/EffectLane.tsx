@@ -4,10 +4,18 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type { ClipEffect, ClipEffectType } from '@/lib/daw-types'
-import ShapeModal from './ShapeModal'
-import EffectEditor from './EffectEditor'
+import { makeEffectBar, activeBarFields } from '@/lib/effect-bar'
+import BarEditor from './BarEditor'
 
 export const EFFECT_H = 40
+
+const BAR_COLOR = '#8b5cf6'
+function barLabel(eff: ClipEffect): string {
+  const fields = activeBarFields(eff.fx)
+  if (fields.length === 0) return 'empty'
+  if (fields.length === 1) return fields[0].label
+  return `${fields.length} fx`
+}
 
 const EFFECT_COLORS: Record<ClipEffectType, string> = {
   volume:     '#22c55e',
@@ -35,104 +43,6 @@ const SHAPEABLE: Partial<Record<ClipEffectType, 'volume' | 'pitch'>> = {
 }
 
 const EFFECT_TYPES: ClipEffectType[] = ['volume', 'pitch', 'reverb', 'delay', 'filter', 'tremolo', 'distortion']
-
-// ── Note name helpers ─────────────────────────────────────────────────────────
-
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-
-function hzToNoteName(hz: number): string {
-  const midi = 69 + 12 * Math.log2(hz / 440)
-  const rounded = Math.round(midi)
-  const name = NOTE_NAMES[((rounded % 12) + 12) % 12]
-  const octave = Math.floor(rounded / 12) - 1
-  return `${name}${octave}`
-}
-
-// ── Param editor popover ──────────────────────────────────────────────────────
-
-// Hoisted so its identity is stable across renders — defined inside the
-// editor it remounted on every param dispatch, which broke slider drags.
-function FxSlider({ label, raw, min, max, log = false, color, onSet }: {
-  label: string; raw: number; min: number; max: number; log?: boolean; color: string
-  onSet: (v: number) => void
-}) {
-  const normalized = log
-    ? (Math.log(raw / min) / Math.log(max / min))
-    : ((raw - min) / (max - min))
-  return (
-    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-      <span style={{ width: 60, flexShrink: 0 }}>{label}</span>
-      <input type="range" min={0} max={1} step={0.001} value={normalized}
-        onChange={e => {
-          const n = parseFloat(e.target.value)
-          onSet(log ? min * Math.pow(max / min, n) : min + n * (max - min))
-        }}
-        style={{ flex: 1, accentColor: color }} />
-      <span style={{ width: 40, fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-primary)', fontSize: 9 }}>
-        {raw.toFixed(raw < 10 ? 2 : 0)}
-      </span>
-    </label>
-  )
-}
-
-function EffectParamEditor({ effect: effectAtOpen, onClose }: { effect: ClipEffect; onClose: () => void }) {
-  const { dispatch, project } = useDaw()
-  // The open-time object goes stale as sliders dispatch — read the live one
-  const effect = project.clipEffects?.find(e => e.id === effectAtOpen.id) ?? effectAtOpen
-  const [liveSemitones, setLiveSemitones] = useState(
-    (effect.params as Record<string, number>).semitones ?? 0
-  )
-  function set(key: string, val: number) {
-    if (key === 'semitones') setLiveSemitones(val)
-    dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { [key]: val } } })
-  }
-  const params = effect.params as Record<string, number>
-  // plain function call (not JSX component) — a render-scoped component
-  // type would remount the input on every dispatch and break drags
-  const slider = (label: string, k: string, min: number, max: number, log = false) => (
-    <FxSlider key={k} label={label} raw={params[k] ?? (min + max) / 2} min={min} max={max} log={log}
-      color={EFFECT_COLORS[effect.type]} onSet={v => set(k, v)} />
-  )
-
-  return (
-    <div style={{ background: 'var(--bg-card-hover)', border: `1px solid ${EFFECT_COLORS[effect.type]}`, borderRadius: 6, padding: '10px 12px', minWidth: 220, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: EFFECT_COLORS[effect.type], textTransform: 'capitalize' }}>{effect.type}</span>
-        <button onClick={onClose} style={{ fontSize: 9, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {effect.type === 'volume'     && slider('Volume', 'gain', 0, 2)}
-        {effect.type === 'reverb'     && <>{slider('Wet', 'reverbWet', 0, 1)}{slider('Decay', 'reverbDecay', 0.3, 5)}</>}
-        {effect.type === 'delay'      && <>{slider('Time', 'delayTime', 0.05, 2)}{slider('Feedback', 'feedback', 0, 0.95)}{slider('Wet', 'delayWet', 0, 1)}</>}
-        {effect.type === 'filter'     && <>{slider('Freq', 'frequency', 40, 18000, true)}{slider('Q', 'filterQ', 0.1, 20, true)}</>}
-        {effect.type === 'tremolo'    && <>{slider('Rate', 'tremoloRate', 0.1, 15)}{slider('Depth', 'tremoloDepth', 0, 1)}</>}
-        {effect.type === 'distortion' && slider('Amount', 'distortion', 0, 1)}
-        {effect.type === 'pitch'      && (
-          <>
-            {slider('Semitones', 'semitones', -24, 24)}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-muted)', paddingTop: 2 }}>
-              <span style={{ width: 60, flexShrink: 0 }}>Note</span>
-              <span style={{ fontFamily: 'monospace', fontSize: 9 }}>A4</span>
-              <span style={{ fontSize: 9 }}>→</span>
-              <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 12, color: EFFECT_COLORS.pitch }}>
-                {hzToNoteName(440 * Math.pow(2, liveSemitones / 12))}
-              </span>
-            </div>
-          </>
-        )}
-        {effect.automation?.points.length ? (
-          <div style={{ fontSize: 9, color: EFFECT_COLORS[effect.type], marginTop: 2 }}>
-            automation: {effect.automation.points.length} pts  (dbl-click clip to edit)
-          </div>
-        ) : effect.params.shapeEnvelope ? (
-          <div style={{ fontSize: 9, color: EFFECT_COLORS[effect.type], marginTop: 2 }}>
-            ~ shape active · {effect.params.shapeEnvelope.length} frames
-          </div>
-        ) : null}
-      </div>
-    </div>
-  )
-}
 
 // ── Mini waveform canvas (for volume clips with shapeEnvelope) ────────────────
 
@@ -175,7 +85,7 @@ function ClipWaveform({ env, color }: { env: number[]; color: string }) {
 function AutomationPreview({ effect, width, color }: { effect: ClipEffect; width: number; color: string }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
-    const canvas = ref.current; if (!canvas || !effect.automation?.points.length) return
+    const canvas = ref.current; if (!canvas || !effect.graph?.length) return
     const H = canvas.offsetHeight
     if (!width || !H) return
     const dpr = window.devicePixelRatio || 1
@@ -184,7 +94,7 @@ function AutomationPreview({ effect, width, color }: { effect: ClipEffect; width
     ctx.scale(dpr, dpr)
     ctx.clearRect(0, 0, width, H)
 
-    const pts    = [...effect.automation.points].sort((a, b) => a.t - b.t)
+    const pts    = [...(effect.graph ?? [])].sort((a, b) => a.t - b.t)
     const dur    = effect.durationBeats
     const toX    = (t: number) => (t / dur) * width
     const toY    = (v: number) => H - v * H * 0.88
@@ -286,7 +196,7 @@ function EffectRow({
             if (eff.startBeat + eff.durationBeats < viewStartBeat || eff.startBeat > viewEndBeat) return null
             const left  = eff.startBeat * beatW
             const width = Math.max(8, eff.durationBeats * beatW)
-            const color = EFFECT_COLORS[eff.type]
+            const color = BAR_COLOR
             const isExpanded = eff.id === expandedEffectId
 
             const isSelected = selectedEffectIds.has(eff.id)
@@ -337,20 +247,16 @@ function EffectRow({
                 onDoubleClick={e => {
                   e.stopPropagation()
                   if (clickTimer.current) { clearTimeout(clickTimer.current.timer); clickTimer.current = null }
-                  onExpand(isExpanded ? null : eff)
+                  onEditTarget({ effect: eff, x: e.clientX, y: e.clientY })
                 }}
                 onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onSelect(eff.id, false); onCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
               >
-                {/* Mini waveform: volume shapeEnvelope */}
-                {eff.type === 'volume' && eff.params.shapeEnvelope?.length && !eff.automation?.points.length && (
-                  <ClipWaveform env={eff.params.shapeEnvelope} color={color} />
-                )}
-                {/* Automation curve preview */}
-                {eff.automation?.points.length ? (
+                {/* The bar's automation graph */}
+                {eff.graph?.length ? (
                   <AutomationPreview effect={eff} width={width - 2} color={color} />
                 ) : null}
                 <span style={{ position: 'absolute', top: 3, left: 4, fontSize: 8, color, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', pointerEvents: 'none', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: width - 16, zIndex: 1 }}>
-                  {eff.type}{eff.automation?.points.length ? ' ⟳' : eff.params.shapeEnvelope ? ' ~' : ''}
+                  {barLabel(eff)}
                 </span>
                 <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 5, cursor: 'ew-resize', zIndex: 2 }}
                   onMouseDown={e => {
@@ -368,16 +274,6 @@ function EffectRow({
           })}
         </div>
       </div>
-
-      {/* Expanded automation editor */}
-      {expandedInRow && (
-        <EffectEditor
-          effect={expandedInRow}
-          beatW={beatW}
-          scrollLeft={scrollLeft}
-          onClose={() => onExpand(null)}
-        />
-      )}
     </div>
   )
 }
@@ -442,17 +338,11 @@ export default function EffectLaneView({
     return (clientX - rect.left + scrollLeft) / beatW
   }
 
-  function addEffect(type: ClipEffectType, beat: number, row: number) {
-    const effect: ClipEffect = {
-      id: crypto.randomUUID(),
-      trackId,
-      type,
-      startBeat: Math.max(0, beat),
-      durationBeats: 4,
-      row,
-      params: { ...EFFECT_DEFAULTS[type] },
-    }
-    dispatch({ type: 'ADD_CLIP_EFFECT', effect })
+  function addBar(beat: number, row: number, x: number, y: number) {
+    const bar = makeEffectBar(trackId, beat, row)
+    dispatch({ type: 'ADD_CLIP_EFFECT', effect: bar })
+    setSelectedEffectIds(new Set([bar.id]))
+    setEditTarget({ effect: bar, x, y })   // open the bar editor immediately
   }
 
   function selectEffect(effId: string, shift: boolean) {
@@ -572,34 +462,28 @@ export default function EffectLaneView({
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
           >
-            <span style={{ fontSize: 12, lineHeight: 1 }}>+</span> Add FX Bar
+            <span style={{ fontSize: 12, lineHeight: 1 }}>+</span> New lane (separate graph)
           </button>
 
           <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
 
-          <div style={{ fontSize: 9, color: 'var(--text-muted)', padding: '2px 12px 4px', letterSpacing: 0.5, textTransform: 'uppercase' }}>Add Effect</div>
-          {EFFECT_TYPES.map(t => (
-            <button key={t}
-              onClick={() => { addEffect(t, addMenu.beat, addMenu.row); setAddMenu(null) }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-            >
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: EFFECT_COLORS[t], flexShrink: 0 }} />
-              <span style={{ textTransform: 'capitalize' }}>{t}</span>
-            </button>
-          ))}
+          <button
+            onClick={() => { addBar(addMenu.beat, addMenu.row, addMenu.x, addMenu.y); setAddMenu(null) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)', fontWeight: 600 }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: BAR_COLOR, flexShrink: 0 }} />
+            Create effect
+          </button>
         </div>,
         document.body
       )}
 
-      {/* Param editor popover */}
+      {/* Bar editor popover */}
       {editTarget && createPortal(
-        // React portals bubble events through the REACT tree — without the
-        // stops below, any click inside the popup reaches the lane's onClick,
-        // which closes the editor mid-adjustment.
-        <div ref={editPopRef} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1500, left: editTarget.x, top: editTarget.y + 8 }}>
-          <EffectParamEditor effect={editTarget.effect} onClose={() => setEditTarget(null)} />
+        <div ref={editPopRef} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+          <BarEditor effect={editTarget.effect} anchor={{ x: editTarget.x, y: editTarget.y + 8 }} onClose={() => setEditTarget(null)} />
         </div>,
         document.body
       )}
@@ -641,33 +525,13 @@ export default function EffectLaneView({
             )
           })()}
 
-          {SHAPEABLE[ctxMenu.effect.type] && (
-            <button
-              onClick={() => { setShapeTarget({ effect: ctxMenu.effect, mode: SHAPEABLE[ctxMenu.effect.type]! }); setCtxMenu(null) }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-            >
-              <span style={{ fontSize: 9 }}>~</span>
-              Shape {ctxMenu.effect.type === 'volume' ? 'Volume' : 'Pitch'}
-              {ctxMenu.effect.params.shapeEnvelope && <span style={{ fontSize: 8, color: EFFECT_COLORS[ctxMenu.effect.type], marginLeft: 4 }}>●</span>}
-            </button>
-          )}
-          <button
-            onClick={() => { setExpandedEffectId(ctxMenu.effect.id); setCtxMenu(null) }}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-          >
-            Edit Automation
-          </button>
           <button
             onClick={() => { setEditTarget({ effect: ctxMenu.effect, x: ctxMenu.x, y: ctxMenu.y }); setCtxMenu(null) }}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
           >
-            Edit Params
+            Edit effect &amp; graph
           </button>
           <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
           <button
@@ -689,9 +553,6 @@ export default function EffectLaneView({
         document.body
       )}
 
-      {shapeTarget && (
-        <ShapeModal effect={shapeTarget.effect} mode={shapeTarget.mode} onClose={() => setShapeTarget(null)} />
-      )}
     </div>
     </>
   )

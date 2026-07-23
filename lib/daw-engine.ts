@@ -2,7 +2,8 @@
 
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
-import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod } from './roll-fx'
+import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
+import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote } from './daw-instruments'
@@ -1373,7 +1374,7 @@ export class DawEngine extends EventTarget {
             for (const eff of overlapping) {
               const effContextStart  = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
               const effSeekOffsetSec = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
-              const r = this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
+              const r = eff.fx ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
               last = r.output
               fxCleanup.nodes.push(...r.extraNodes)
               fxCleanup.oscs.push(...r.extraOscs)
@@ -1749,12 +1750,19 @@ export class DawEngine extends EventTarget {
       // When seeking mid-clip, use now-relative timing so already-active effects start immediately
       const effContextStart   = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
       const effSeekOffsetSec  = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
-      const r = this._buildClipEffect(eff, lastNode, startAt, effContextStart, effSeekOffsetSec)
+      const r = eff.fx ? this._buildEffectBar(eff, lastNode, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, lastNode, startAt, effContextStart, effSeekOffsetSec)
       lastNode = r.output
       allExtraNodes.push(...r.extraNodes)
       allExtraOscs.push(...r.extraOscs)
     }
-    lastNode.connect(nodes.effectsInput)
+    // The clip's own sound settings (shared with the piano-roll "Sound" panel).
+    if (clip.rollFx && this._rollFxActive(clip.rollFx)) {
+      const chain = this._buildRollFxChain(clip.rollFx, nodes.effectsInput, startAt, effectiveDuration || undefined)
+      lastNode.connect(chain.input)
+      allExtraNodes.push(...chain.nodes)   // stopped/disconnected on teardown
+    } else {
+      lastNode.connect(nodes.effectsInput)
+    }
 
     // Pitch effects modify source.detune (added on top of effectiveDetune)
     for (const eff of pitchEffects) {
@@ -1781,10 +1789,16 @@ export class DawEngine extends EventTarget {
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
     }
 
-    // Reverb tails need to ring out after the source stops — find the longest decay
-    const maxReverbTailSec = insertEffects
-      .filter(e => e.type === 'reverb')
-      .reduce((max, e) => Math.max(max, e.params.reverbDecay ?? 2), 0)
+    // Reverb/delay tails need to ring out after the source stops — longest wins.
+    const maxReverbTailSec = insertEffects.reduce((max, e) => {
+      if (e.fx) {
+        let t = 0
+        if (fieldIsSet('reverbWet', e.fx.reverbWet)) t = Math.max(t, 0.6 + (e.fx.reverbSize ?? 0.4) * 3.4)
+        if (fieldIsSet('delayWet', e.fx.delayWet))   t = Math.max(t, (e.fx.delayTime ?? 0.25) * 8)
+        return Math.max(max, t)
+      }
+      return e.type === 'reverb' ? Math.max(max, e.params?.reverbDecay ?? 2) : max
+    }, 0)
 
     const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id, basePlaybackRate }
     this.scheduledSources.push(entry)
@@ -1795,7 +1809,7 @@ export class DawEngine extends EventTarget {
 
       const cleanupTail = () => {
         fadeGain.disconnect()
-        for (const n of allExtraNodes) { try { n.disconnect() } catch { /* ok */ } }
+        for (const n of allExtraNodes) { try { (n as OscillatorNode).stop?.() } catch { /* not a source */ } try { n.disconnect() } catch { /* ok */ } }
         for (const o of allExtraOscs) { try { o.stop(); o.disconnect() } catch { /* ok */ } }
         entry.tailTimerId = undefined
       }
@@ -2196,6 +2210,161 @@ export class DawEngine extends EventTarget {
     return { input, nodes, tailSec: tail }
   }
 
+  /**
+   * Effect bar: build the automated chain for a multi-parameter region. Each
+   * active param in `eff.fx` follows the region's single `graph` (0=neutral,
+   * 1=target) via setValueCurveAtTime; wet-mix effects fade their wet in, and
+   * waveshapers/tremolo/pan crossfade or scale their depth by the graph.
+   */
+  private _buildEffectBar(
+    eff: ClipEffect,
+    input: AudioNode,
+    _startAt: number,
+    effContextStart: number,
+    effSeekOffsetSec = 0,
+  ): { output: AudioNode; extraNodes: AudioNode[]; extraOscs: OscillatorNode[] } {
+    const ctx = this.ctx
+    const extraNodes: AudioNode[] = []
+    const extraOscs: OscillatorNode[] = []
+    const n = <T extends AudioNode>(node: T): T => { extraNodes.push(node); return node }
+    const fx = eff.fx ?? {}
+    const graph = eff.graph ?? []
+    const active = activeBarFields(fx)
+    if (active.length === 0) { const g = n(ctx.createGain()); input.connect(g); return { output: g, extraNodes, extraOscs } }
+
+    // A curve for `param.setValueCurveAtTime`, mapping the graph (0..1) → values.
+    const sched = (param: AudioParam, map: (g: number) => number) => {
+      const { curve, durSec } = this._slicedCurve(graph, eff.durationBeats, effSeekOffsetSec, map)
+      try { param.setValueCurveAtTime(curve, effContextStart, durSec) } catch { /* overlapping curve */ }
+    }
+    const has = (k: keyof typeof fx) => fieldIsSet(k, fx[k] as number | undefined)
+    const F = FX_FIELD_BY_KEY
+
+    let last: AudioNode = input
+
+    if (has('highpassHz')) {
+      const f = n(ctx.createBiquadFilter()); f.type = 'highpass'; f.Q.value = 0.7
+      sched(f.frequency, g => barParamValue(F.highpassHz, fx.highpassHz!, g))
+      last.connect(f); last = f
+    }
+    if (has('filterHz')) {
+      const f = n(ctx.createBiquadFilter()); f.type = 'lowpass'; f.Q.value = fx.filterQ ?? 0.8
+      sched(f.frequency, g => barParamValue(F.filterHz, fx.filterHz!, g))
+      last.connect(f); last = f
+    }
+    // Waveshapers (drive/distortion/bitcrush) — crossfade clean↔shaped by the graph.
+    const crossfadeShaper = (curveArr: Float32Array) => {
+      const ws = n(ctx.createWaveShaper()); ws.curve = curveArr as Float32Array<ArrayBuffer>; ws.oversample = '2x'
+      const dry = n(ctx.createGain()), wet = n(ctx.createGain()), sum = n(ctx.createGain())
+      last.connect(dry); dry.connect(sum)
+      last.connect(ws); ws.connect(wet); wet.connect(sum)
+      sched(dry.gain, g => 1 - g)
+      sched(wet.gain, g => g)
+      last = sum
+    }
+    if (has('drive'))      crossfadeShaper(this._getDistCurve(0.15 + fx.drive! * 0.55) as Float32Array<ArrayBuffer>)
+    if (has('distortion')) crossfadeShaper(this._getDistCurve(fx.distortion!) as Float32Array<ArrayBuffer>)
+    if (has('bitcrush')) {
+      const bits = Math.max(1.5, 16 - fx.bitcrush! * 14.5), levels = Math.pow(2, bits)
+      const c = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; c[i] = Math.round(x * levels) / levels }
+      crossfadeShaper(c)
+    }
+    // Tone EQ — automate each shelf/peak gain from 0 dB → target.
+    for (const k of ['sub', 'bass', 'mid', 'treble'] as const) {
+      if (!has(k)) continue
+      const f = n(ctx.createBiquadFilter())
+      if (k === 'sub')  { f.type = 'lowshelf';  f.frequency.value = 70 }
+      if (k === 'bass') { f.type = 'lowshelf';  f.frequency.value = 200 }
+      if (k === 'mid')  { f.type = 'peaking';   f.frequency.value = 1000; f.Q.value = 1 }
+      if (k === 'treble') { f.type = 'highshelf'; f.frequency.value = 8000 }
+      sched(f.gain, g => barParamValue(F[k], fx[k]!, g))
+      last.connect(f); last = f
+    }
+    // Chorus / flanger / phaser — build wet path, fade wet in by the graph.
+    const modWet = (build: () => { wetIn: AudioNode; wetOut: AudioNode }, target: number) => {
+      const { wetIn, wetOut } = build()
+      const dry = n(ctx.createGain()), wet = n(ctx.createGain()), sum = n(ctx.createGain())
+      last.connect(dry); dry.connect(sum)
+      last.connect(wetIn); wetOut.connect(wet); wet.connect(sum)
+      sched(wet.gain, g => target * g)
+      last = sum
+    }
+    if (has('chorusDepth')) modWet(() => {
+      const dl = n(ctx.createDelay(0.05)); dl.delayTime.value = 0.02
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.8; const lg = n(ctx.createGain()); lg.gain.value = 0.006
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start(); extraOscs.push(lfo)
+      return { wetIn: dl, wetOut: dl }
+    }, fx.chorusDepth! * 0.6)
+    if (has('flanger')) modWet(() => {
+      const dl = n(ctx.createDelay(0.02)); dl.delayTime.value = 0.003
+      const fb = n(ctx.createGain()); fb.gain.value = 0.6 * fx.flanger!
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.3; const lg = n(ctx.createGain()); lg.gain.value = 0.002 * fx.flanger!
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start(); extraOscs.push(lfo)
+      dl.connect(fb); fb.connect(dl)
+      return { wetIn: dl, wetOut: dl }
+    }, fx.flanger!)
+    if (has('phaser')) modWet(() => {
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.4; const lg = n(ctx.createGain()); lg.gain.value = 700 * fx.phaser!
+      const entry = n(ctx.createGain()); let apLast: AudioNode = entry
+      for (let i = 0; i < 4; i++) { const ap = n(ctx.createBiquadFilter()); ap.type = 'allpass'; ap.frequency.value = 400 + i * 350; ap.Q.value = 0.6; lg.connect(ap.frequency); apLast.connect(ap); apLast = ap }
+      lfo.connect(lg); lfo.start(); extraOscs.push(lfo)
+      return { wetIn: entry, wetOut: apLast }
+    }, fx.phaser!)
+    // Tremolo — amplitude LFO, depth scaled by the graph.
+    if (has('tremoloDepth')) {
+      const amp = n(ctx.createGain()); amp.gain.value = 1
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = fx.tremoloRate ?? 5
+      const lg = n(ctx.createGain())
+      lfo.connect(lg); lg.connect(amp.gain); lfo.start(); extraOscs.push(lfo)
+      sched(lg.gain, g => fx.tremoloDepth! * 0.5 * g)
+      // keep centre so gain stays ~1 while depth grows
+      sched(amp.gain, g => 1 - fx.tremoloDepth! * 0.5 * g)
+      last.connect(amp); last = amp
+    }
+    // Auto-pan — pan LFO, depth scaled by the graph.
+    if (has('autopanDepth')) {
+      const p = n(ctx.createStereoPanner())
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = fx.autopanRate ?? 2
+      const lg = n(ctx.createGain())
+      lfo.connect(lg); lg.connect(p.pan); lfo.start(); extraOscs.push(lfo)
+      sched(lg.gain, g => Math.min(1, fx.autopanDepth!) * g)
+      last.connect(p); last = p
+    }
+    // Stereo width (mid/side), side gain automated.
+    if (has('width')) {
+      const split = n(ctx.createChannelSplitter(2)), merge = n(ctx.createChannelMerger(2))
+      const mid = n(ctx.createGain()); mid.gain.value = 0.5
+      const sideL = n(ctx.createGain()), sideR = n(ctx.createGain()), side = n(ctx.createGain())
+      const outL = n(ctx.createGain()), outR = n(ctx.createGain()), negSide = n(ctx.createGain()); negSide.gain.value = -1
+      last.connect(split)
+      split.connect(mid, 0); split.connect(mid, 1)
+      split.connect(sideL, 0); split.connect(sideR, 1)
+      sideL.connect(side); sideR.connect(side)
+      mid.connect(outL); side.connect(outL); side.connect(negSide); mid.connect(outR); negSide.connect(outR)
+      outL.connect(merge, 0, 0); outR.connect(merge, 0, 1)
+      sched(sideL.gain, g => 0.5 * barParamValue(F.width, fx.width!, g))
+      sched(sideR.gain, g => -0.5 * barParamValue(F.width, fx.width!, g))
+      last = merge
+    }
+    if (has('gain')) { const g = n(ctx.createGain()); sched(g.gain, x => barParamValue(F.gain, fx.gain!, x)); last.connect(g); last = g }
+    if (has('pan'))  { const p = n(ctx.createStereoPanner()); sched(p.pan, x => barParamValue(F.pan, fx.pan!, x)); last.connect(p); last = p }
+    // Wet sends (reverb + delay) — fade wet in by the graph.
+    if (has('reverbWet')) {
+      const conv = n(ctx.createConvolver()); conv.buffer = this._getReverbIR(0.6 + (fx.reverbSize ?? 0.4) * 3.4)
+      const dry = n(ctx.createGain()), wet = n(ctx.createGain()), sum = n(ctx.createGain())
+      last.connect(dry); dry.connect(sum); last.connect(conv); conv.connect(wet); wet.connect(sum)
+      sched(wet.gain, g => fx.reverbWet! * g); last = sum
+    }
+    if (has('delayWet')) {
+      const dl = n(ctx.createDelay(1.2)); dl.delayTime.value = fx.delayTime ?? 0.25
+      const fb = n(ctx.createGain()); fb.gain.value = Math.min(0.9, fx.delayFeedback ?? 0.3)
+      const dry = n(ctx.createGain()), wet = n(ctx.createGain()), sum = n(ctx.createGain())
+      last.connect(dry); dry.connect(sum); last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(sum)
+      sched(wet.gain, g => fx.delayWet! * g); last = sum
+    }
+    return { output: last, extraNodes, extraOscs }
+  }
+
   private _buildClipEffect(
     eff: ClipEffect,
     input: AudioNode,
@@ -2207,6 +2376,10 @@ export class DawEngine extends EventTarget {
     const extraOscs: OscillatorNode[] = []
     const ctx = this.ctx
     function n<T extends AudioNode>(node: T): T { extraNodes.push(node); return node }
+    // Legacy single-effect path — only reached for un-migrated data; bars go to
+    // _buildEffectBar. Fields are optional on ClipEffect now, so default them.
+    const params = eff.params ?? {}
+    if (!eff.type) { const g = n(ctx.createGain()); input.connect(g); return { output: g, extraNodes, extraOscs } }
 
     switch (eff.type) {
       case 'volume': {
@@ -2216,10 +2389,10 @@ export class DawEngine extends EventTarget {
           const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
           g.gain.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
-          const env = eff.params.shapeEnvelope
+          const env = params.shapeEnvelope
           if (env && env.length > 0) {
-            const baseGain = eff.params.gain ?? 1
-            const sr       = eff.params.shapeSampleRate ?? 30
+            const baseGain = params.gain ?? 1
+            const sr       = params.shapeSampleRate ?? 30
             const skip     = Math.floor(effSeekOffsetSec * sr)
             const startVal = skip < env.length ? env[skip] : env[env.length - 1]
             g.gain.setValueAtTime(Math.max(0, startVal * baseGain), effContextStart)
@@ -2228,7 +2401,7 @@ export class DawEngine extends EventTarget {
               if (t > ctx.currentTime) g.gain.linearRampToValueAtTime(Math.max(0, env[i] * baseGain), t)
             }
           } else {
-            g.gain.value = eff.params.gain ?? 1
+            g.gain.value = params.gain ?? 1
           }
         }
         input.connect(g)
@@ -2239,20 +2412,20 @@ export class DawEngine extends EventTarget {
         return { output: input, extraNodes, extraOscs }
       case 'filter': {
         const f = n(ctx.createBiquadFilter())
-        f.type = eff.params.filterType ?? 'lowpass'
-        f.Q.value = eff.params.filterQ ?? 1
+        f.type = params.filterType ?? 'lowpass'
+        f.Q.value = params.filterQ ?? 1
         if (eff.automation?.points.length) {
           const meta = CLIP_EFFECT_PARAM_META.filter
           const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
           f.frequency.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
-          f.frequency.value = eff.params.frequency ?? 1000
+          f.frequency.value = params.frequency ?? 1000
         }
         input.connect(f)
         return { output: f, extraNodes, extraOscs }
       }
       case 'tremolo': {
-        const depth = eff.params.tremoloDepth ?? 0.5
+        const depth = params.tremoloDepth ?? 0.5
         const outG = n(ctx.createGain()); outG.gain.value = 1 - depth * 0.5
         const lfoG = n(ctx.createGain()); lfoG.gain.value = depth * 0.5
         const lfo = ctx.createOscillator(); extraOscs.push(lfo)
@@ -2262,7 +2435,7 @@ export class DawEngine extends EventTarget {
           const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
           lfo.frequency.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
-          lfo.frequency.value = eff.params.tremoloRate ?? 4
+          lfo.frequency.value = params.tremoloRate ?? 4
         }
         lfo.connect(lfoG); lfoG.connect(outG.gain)
         // Start LFO offset by seek so its phase matches mid-effect position
@@ -2270,10 +2443,10 @@ export class DawEngine extends EventTarget {
         return { output: outG, extraNodes, extraOscs }
       }
       case 'reverb': {
-        const staticWet = eff.params.reverbWet ?? 0.3
+        const staticWet = params.reverbWet ?? 0.3
         const dry  = n(ctx.createGain())
         const wetG = n(ctx.createGain())
-        const conv = n(ctx.createConvolver()); conv.buffer = this._makeIR(eff.params.reverbDecay ?? 2)
+        const conv = n(ctx.createConvolver()); conv.buffer = this._makeIR(params.reverbDecay ?? 2)
         const mix  = n(ctx.createGain()); mix.gain.value = 1
         if (eff.automation?.points.length) {
           const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
@@ -2288,10 +2461,10 @@ export class DawEngine extends EventTarget {
         return { output: mix, extraNodes, extraOscs }
       }
       case 'delay': {
-        const staticWet = eff.params.delayWet ?? 0.3
+        const staticWet = params.delayWet ?? 0.3
         const dry   = n(ctx.createGain())
-        const delay = n(ctx.createDelay(2.0)); delay.delayTime.value = eff.params.delayTime ?? 0.375
-        const fbG   = n(ctx.createGain()); fbG.gain.value = Math.min(0.95, eff.params.feedback ?? 0.4)
+        const delay = n(ctx.createDelay(2.0)); delay.delayTime.value = params.delayTime ?? 0.375
+        const fbG   = n(ctx.createGain()); fbG.gain.value = Math.min(0.95, params.feedback ?? 0.4)
         const wetG  = n(ctx.createGain())
         const mix   = n(ctx.createGain()); mix.gain.value = 1
         if (eff.automation?.points.length) {
@@ -2309,7 +2482,7 @@ export class DawEngine extends EventTarget {
       }
       case 'distortion': {
         const ws = n(ctx.createWaveShaper())
-        ws.curve = this._makeDistortionCurve(eff.params.distortion ?? 0.5)
+        ws.curve = this._makeDistortionCurve(params.distortion ?? 0.5)
         ws.oversample = '2x'
         if (eff.automation?.points.length) {
           // The shaper curve itself can't be automated — crossfade clean and
@@ -2341,7 +2514,8 @@ export class DawEngine extends EventTarget {
     effSeekOffsetSec = 0,
   ) {
     const meta      = CLIP_EFFECT_PARAM_META.pitch
-    const baseCents = (eff.params.semitones ?? 0) * 100 + clipDetuneOffset
+    const params    = eff.params ?? {}
+    const baseCents = (params.semitones ?? 0) * 100 + clipDetuneOffset
 
     if (eff.automation?.points.length) {
       const { curve, durSec } = this._slicedCurve(
@@ -2351,9 +2525,9 @@ export class DawEngine extends EventTarget {
       source.detune.setValueCurveAtTime(curve, effContextStart, durSec)
       source.detune.setValueAtTime(clipDetuneOffset, effContextStart + durSec)
     } else {
-      const env = eff.params.shapeEnvelope
+      const env = params.shapeEnvelope
       if (env && env.length > 0) {
-        const sr    = eff.params.shapeSampleRate ?? 30
+        const sr    = params.shapeSampleRate ?? 30
         const skip  = Math.floor(effSeekOffsetSec * sr)
         const start = skip < env.length ? env[skip] : env[env.length - 1]
         source.detune.setValueAtTime(baseCents + start * 100, effContextStart)

@@ -422,31 +422,34 @@ export interface AutoPoint {
 export interface ClipEffect {
   id: string
   trackId: string
-  type: ClipEffectType
   startBeat: number
   durationBeats: number
   row?: number
-  params: {
-    gain?: number           // volume: 0-2; also pitch base gain
-    reverbWet?: number      // reverb: 0-1
-    reverbDecay?: number    // reverb: 0.5-5s
-    delayTime?: number      // delay: 0-2s
-    feedback?: number       // delay: 0-0.9
-    delayWet?: number       // delay: 0-1
-    frequency?: number      // filter: 20-20000 Hz
-    filterType?: BiquadFilterType
-    filterQ?: number        // filter: 0.1-20
-    tremoloRate?: number    // tremolo: 0.1-15 Hz
-    tremoloDepth?: number   // tremolo: 0-1
-    distortion?: number     // distortion: 0-1
-    semitones?: number      // pitch: static offset in semitones
-    shapeEnvelope?: number[] // shaped volume (0-1) or pitch (semitone offsets) data
-    shapeSampleRate?: number // samples per second of shapeEnvelope (default 30)
+  // ── Effect-bar model (current) ──────────────────────────────────────────
+  // A bar exposes the sound-settings params (`fx`, the "full-on" target) and a
+  // single automation `graph` (0..1 over the region). Every active param in
+  // `fx` follows the graph together: 0 = neutral/off, 1 = the dialed-in value.
+  // A bar with one active param is just a single-effect region.
+  fx?: RollFx
+  graph?: AutoPoint[]
+  // ── Legacy single-effect model (migrated to a bar on load) ──────────────
+  type?: ClipEffectType
+  params?: {
+    gain?: number; reverbWet?: number; reverbDecay?: number
+    delayTime?: number; feedback?: number; delayWet?: number
+    frequency?: number; filterType?: BiquadFilterType; filterQ?: number
+    tremoloRate?: number; tremoloDepth?: number; distortion?: number
+    semitones?: number; shapeEnvelope?: number[]; shapeSampleRate?: number
   }
   automation?: {
     param: string
     points: AutoPoint[]
   }
+}
+
+/** A ClipEffect is a "bar" once it carries an `fx` target bag. */
+export function isEffectBar(e: ClipEffect): boolean {
+  return !!e.fx
 }
 
 // ── Automation ────────────────────────────────────────────────────────────────
@@ -568,6 +571,9 @@ export interface AudioClip {
   pitchSemitones?: number
   pitchCents?: number
   boomerang?: boolean
+  /** Clip sound settings — the same bag the piano-roll "Sound" panel edits, so
+   *  samples and MIDI clips share one menu. Applied to this clip's playback. */
+  rollFx?: RollFx
   color?: string
   launchQuantization?: LaunchQuantization
   followAction?: FollowAction

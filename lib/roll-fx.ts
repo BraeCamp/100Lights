@@ -116,6 +116,10 @@ export const FX_FIELD_BY_KEY: Record<string, FxField> = Object.fromEntries(FX_FI
 export const TOP_FIELDS: FxField[] = FX_FIELDS.filter(f => f.top)
 export const GRAPH_TARGETS: PitchGraphTarget[] = FX_FIELDS.filter(f => f.graph).map(f => f.key as PitchGraphTarget)
 
+// "Basic" mode — the original small sound set, shown flat (no categories).
+const BASIC_KEYS: (keyof RollFx)[] = ['sustain', 'filterHz', 'drive', 'reverbWet', 'distortion']
+export const BASIC_FIELDS: FxField[] = BASIC_KEYS.map(k => FX_FIELD_BY_KEY[k as string]).filter(Boolean)
+
 /** Is a value meaningfully different from the field's neutral? */
 export function fieldIsSet(key: keyof RollFx, v: number | undefined): boolean {
   if (v === undefined) return false

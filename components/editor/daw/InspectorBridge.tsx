@@ -29,7 +29,7 @@ export function InspectorBridge() {
       const eff = (project.clipEffects ?? []).find(e => e.id === effectId)
       if (eff) {
         const track = project.tracks.find(t => t.id === eff.trackId)
-        return { kind: 'effect', trackName: track?.name ?? '', effect: { id: eff.id, type: eff.type, startBeat: eff.startBeat, durationBeats: eff.durationBeats, params: { ...eff.params } } }
+        return { kind: 'effect', trackName: track?.name ?? '', effect: { id: eff.id, type: eff.fx ? 'bar' : (eff.type ?? 'effect'), startBeat: eff.startBeat, durationBeats: eff.durationBeats, params: { ...(eff.params ?? {}) } } }
       }
     }
     const clipId = expandedPianoRollClipId ?? selectedClipId ?? [...selectedClipIds][0]

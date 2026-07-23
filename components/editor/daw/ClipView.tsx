@@ -92,7 +92,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onCopy?(): void
   onPaste?(): void
 }) {
-  const { engine, project, dispatch } = useDaw()
+  const { engine, project, dispatch, selectedClipIds, setSoundPanel } = useDaw()
   const clipDivRef = useRef<HTMLDivElement>(null)
   const menuRef    = useRef<HTMLDivElement>(null)
   const dragRef    = useRef<{ startX: number; startBeat: number } | null>(null)
@@ -102,7 +102,6 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   // Which submenu the ctx menu is showing: edit ops, clip tools/sound extras,
   // or the preset picker. null = the top level.
   const [ctxSub, setCtxSub] = useState<null | 'edit' | 'more' | 'presets'>(null)
-  const [soundPanelAnchor, setSoundPanelAnchor] = useState<{ x: number; y: number } | null>(null)
 
   // Menus open upward/leftward instead of running off the screen edge
   useLayoutEffect(() => {
@@ -405,6 +404,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   }
 
   const isMulti = multiSelected && !!onDeleteAll
+  // Genuine multi-selection (2+ clips) — gates the shared "edit all clips' sound" flow.
+  const soundMulti = !!selectedClipIds && selectedClipIds.size > 1 && selectedClipIds.has(clip.id)
   type MenuItem = { label: string; fn: () => void; keepOpen?: boolean; color?: string }
   const back = (label: string): MenuItem => ({ label, fn: () => setCtxSub(null), keepOpen: true })
 
@@ -510,10 +511,13 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
 
   const menuItems: MenuItem[] = ctxSub === 'edit' ? editItems : ctxSub === 'more' ? moreItems : [
     ...(isAudioClip(clip)
-      ? [{ label: 'Clip Settings', fn: () => onSettings?.() }]
+      ? [
+          { label: 'Clip Settings', fn: () => onSettings?.() },
+          { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
+        ]
       : [
           { label: 'Open Piano Roll', fn: onDoubleClick },
-          { label: 'Sound Settings…', fn: () => { if (ctxPos) setSoundPanelAnchor({ x: ctxPos.x, y: ctxPos.y }) } },
+          { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
@@ -951,23 +955,6 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
           </div>
         </div>,
         document.body
-      )}
-      {soundPanelAnchor && isMidiClip(clip) && (
-        <RollSoundPanel
-          clip={clip as MidiClip}
-          dispatch={dispatch}
-          anchor={soundPanelAnchor}
-          onClose={() => setSoundPanelAnchor(null)}
-          presetLabel={(clip as MidiClip).presetId
-            ? getPresets().find(p => p.id === (clip as MidiClip).presetId)?.name ?? '?'
-            : track.instrument.type !== 'none' ? `${track.instrument.type} (track)` : 'None'}
-          onChangeSound={() => {
-            // hop back into the ctx menu's preset picker at the same spot
-            setSoundPanelAnchor(null)
-            setCtxSub('presets')
-            setCtxPos(prev => prev ?? { x: soundPanelAnchor.x, y: soundPanelAnchor.y, beat: clip.startBeat })
-          }}
-        />
       )}
       {shareOpen && (
         <ShareCommunityDialog
