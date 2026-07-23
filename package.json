@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "test:merge": "tsc lib/project-merge.ts --outDir .test-build --rootDir lib --target es2022 --module esnext --moduleResolution bundler --skipLibCheck && node scripts/project-merge.test.mjs",
     "validate:articles": "node scripts/validate-articles.mjs",
     "prebuild": "node scripts/validate-articles.mjs",
     "build": "next build",
