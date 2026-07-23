@@ -13,6 +13,7 @@ const DISMISS_KEY = '100lights-small-screen-ok'
 export function SmallScreenGate() {
   const [small, setSmall] = useState(false)
   const [dismissed, setDismissed] = useState(true)  // assume fine until measured
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     const check = () => setSmall(window.innerWidth < 760)
@@ -24,6 +25,14 @@ export function SmallScreenGate() {
 
   if (!small || dismissed) return null
 
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2200)
+    } catch { /* clipboard blocked — the other options still work */ }
+  }
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 4000, background: 'var(--bg-base)',
@@ -33,13 +42,19 @@ export function SmallScreenGate() {
       <MonitorSmartphone size={34} color="#a78bfa" />
       <h1 style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>The studio wants a bigger screen</h1>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 340 }}>
-        Editing works best on a laptop or desktop browser. On your phone you can still
-        browse and listen to everything the community has shared.
+        Editing works best on a laptop or desktop browser. Save the link to pick up
+        on a computer — or on your phone, browse and listen to everything the
+        community has shared.
       </p>
-      <Link href="/community" style={{
+      <button onClick={copyLink} style={{
         marginTop: 6, padding: '11px 26px', borderRadius: 999, background: 'var(--accent, #8b5cf6)',
-        color: '#fff', fontSize: 13, fontWeight: 700, textDecoration: 'none',
-      }}>Browse the Community</Link>
+        color: '#fff', fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
+      }}>{copied ? 'Link copied ✓' : 'Copy the link for your computer'}</button>
+      <Link href="/community" style={{
+        padding: '10px 24px', borderRadius: 999, background: 'transparent',
+        color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, textDecoration: 'none',
+        border: '1px solid var(--border)',
+      }}>Browse the Community →</Link>
       <button
         onClick={() => { sessionStorage.setItem(DISMISS_KEY, '1'); setDismissed(true) }}
         style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 11.5, cursor: 'pointer', textDecoration: 'underline' }}

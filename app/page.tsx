@@ -2,9 +2,10 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import DemoVideo from '@/components/DemoVideo'
 import HeaderAuthCta from '@/components/HeaderAuthCta'
+import HeroCta from '@/components/HeroCta'
 import { getArticles } from '@/lib/learn-articles'
 import {
-  Zap, Check, ArrowRight,
+  Zap, Check,
   Layers, Music2, Sliders, CircleDot,
   Library, Globe2, Users, AudioLines,
   Music, GraduationCap, ListMusic, Code2,
@@ -254,13 +255,7 @@ export default async function LandingPage() {
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-              <Link
-                href="/sign-up"
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold"
-                style={{ background: 'var(--accent)', color: '#fff' }}
-              >
-                Start making music <ArrowRight size={15} aria-hidden="true" />
-              </Link>
+              <HeroCta />
               <Link
                 href="/community"
                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium"
@@ -501,13 +496,7 @@ export default async function LandingPage() {
               <p className="text-base mb-8 max-w-lg" style={{ color: 'var(--text-secondary)' }}>
                 Open the studio, drop a chord recipe on a track, and start shaping your sound — free, in the browser, right now.
               </p>
-              <Link
-                href="/sign-up"
-                className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold"
-                style={{ background: 'var(--accent)', color: '#fff' }}
-              >
-                Get started for free <ArrowRight size={15} aria-hidden="true" />
-              </Link>
+              <HeroCta className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold" guestLabel="Get started for free" />
             </div>
           </section>
 

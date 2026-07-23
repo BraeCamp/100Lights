@@ -364,6 +364,19 @@ export default function ArrangementView() {
   useEffect(() => {
     if (soundPanel && soundClips.length === 0) setSoundPanel(null)
   }, [soundPanel, soundClips.length, setSoundPanel])
+
+  // Guests build freely but must sign up to save. Every 5 minutes, pulse the
+  // Save button — a wordless nudge toward keeping their work. Once they sign up
+  // isGuest flips false and this tears down, so a saved user is never nagged.
+  const [saveNudge, setSaveNudge] = useState(false)
+  useEffect(() => {
+    if (!isGuest || !onSave) return
+    const id = window.setInterval(() => {
+      setSaveNudge(true)
+      window.setTimeout(() => setSaveNudge(false), 2600)
+    }, 5 * 60 * 1000)
+    return () => window.clearInterval(id)
+  }, [isGuest, onSave])
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
@@ -1457,12 +1470,13 @@ export default function ArrangementView() {
           </>
         )}
         {onSave && (
-          <button onClick={onSave} disabled={isSaving} title="Save project (⌘S)" data-help-id="save" style={{
+          <button onClick={onSave} disabled={isSaving} title={isGuest ? 'Sign up to save your project (⌘S)' : 'Save project (⌘S)'} data-help-id="save" style={{
             ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
-            border: '1px solid var(--border)',
-            background: isSaving ? 'rgba(34,197,94,0.15)' : 'transparent',
-            color: isSaving ? '#4ade80' : 'var(--text-muted)',
+            border: `1px solid ${saveNudge ? 'var(--accent)' : 'var(--border)'}`,
+            background: isSaving ? 'rgba(34,197,94,0.15)' : saveNudge ? 'rgba(139,92,246,0.15)' : 'transparent',
+            color: isSaving ? '#4ade80' : saveNudge ? 'var(--accent-light)' : 'var(--text-muted)',
             letterSpacing: '0.04em', marginLeft: 4,
+            animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
           }}>{isSaving ? 'SAVING…' : 'SAVE'}</button>
         )}
         <VersionHistory />
