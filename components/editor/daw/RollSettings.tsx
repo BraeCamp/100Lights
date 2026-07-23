@@ -130,13 +130,35 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     try { localStorage.setItem(SOUND_MODE_KEY, next) } catch { /* storage off */ }
   }
 
+  // Revert toggle — flip the clip(s) back to their default sound, and back
+  // again if clicked before any edit. A change dialed in while reverted commits
+  // the revert (drops the snapshot / untoggles the button) but keeps that change.
+  const [revertSnap, setRevertSnap] = useState<Record<string, RollFx | undefined> | null>(null)
+  const reverted = revertSnap !== null
+  const sig = targets.map(t => t.id).join(',')
+  useEffect(() => { setRevertSnap(null) }, [sig])   // new selection → drop any pending revert
+  const canRevert = reverted || targets.some(t => countSetFields(t.rollFx) > 0)
+  function doRevert() {
+    if (!reverted) {
+      const snap: Record<string, RollFx | undefined> = {}
+      for (const t of targets) snap[t.id] = t.rollFx
+      setRevertSnap(snap)
+      for (const t of targets) dispatch({ type: 'UPDATE_CLIP', clipId: t.id, patch: { rollFx: undefined } })
+    } else {
+      for (const t of targets) dispatch({ type: 'UPDATE_CLIP', clipId: t.id, patch: { rollFx: revertSnap![t.id] } })
+      setRevertSnap(null)
+    }
+  }
+
   // Whole-bag commit (single-clip mode).
   function commitFx(fxBag: RollFx | undefined) {
+    if (reverted) setRevertSnap(null)   // an edit after revert makes the revert permanent
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { rollFx: fxBag } })
   }
   // Per-field commit (multi-select) — apply just this setting to every clip, so
   // only its heat band collapses.
   function applyField(key: keyof RollFx, value: number) {
+    if (reverted) setRevertSnap(null)   // an edit after revert makes the revert permanent
     const set = fieldIsSet(key, value)
     for (const t of targets) {
       const next: RollFx = { ...(t.rollFx ?? {}) }
@@ -177,6 +199,15 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     setFlash(true); setTimeout(() => setFlash(false), 1100)
   }
 
+  // Rename the clip (track item) from here — single clip only.
+  const [nameDraft, setNameDraft] = useState(clip.name)
+  useEffect(() => { setNameDraft(clip.name) }, [clip.id, clip.name])
+  function commitName() {
+    const name = nameDraft.trim()
+    if (name && name !== clip.name) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { name } })
+    else if (!name) setNameDraft(clip.name)
+  }
+
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px' }
   const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 70, flexShrink: 0 }
   const clipBtn = (enabled: boolean): React.CSSProperties => ({
@@ -202,6 +233,22 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           {mode === 'basic' ? 'ADVANCED ▸' : '◂ BASIC'}
         </button>
       </div>
+
+      {/* Rename this track item (single clip only) */}
+      {!multi && (
+        <div style={{ ...row, paddingTop: 9 }}>
+          <span style={label}>Name</span>
+          <input
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
+            spellCheck={false}
+            placeholder="Clip name"
+            style={{ flex: 1, minWidth: 0, fontSize: 11, padding: '3px 7px', borderRadius: 4, border: '1px solid var(--border-light)', background: 'var(--bg-base)', color: 'var(--text-primary)', outline: 'none' }}
+          />
+        </div>
+      )}
 
       {/* Sound / preset (single MIDI clip only) */}
       {showPreset && (
@@ -238,7 +285,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           onClick={() => {
             // An empty copy pastes as "reset to defaults" (rollFx cleared).
             const toPaste = copied && clipCount > 0 ? copied : undefined
-            if (multi) for (const t of targets) dispatch({ type: 'UPDATE_CLIP', clipId: t.id, patch: { rollFx: toPaste } })
+            if (multi) { if (reverted) setRevertSnap(null); for (const t of targets) dispatch({ type: 'UPDATE_CLIP', clipId: t.id, patch: { rollFx: toPaste } }) }
             else commitFx(toPaste)
           }} disabled={!copied}
           title={!copied ? 'Nothing copied yet'
@@ -246,6 +293,15 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
             : `Reset ${multi ? `all ${targets.length} clips` : 'this clip'} to default (copied from an unchanged clip)`}
           style={clipBtn(!!copied)}
         >{copied ? (clipCount > 0 ? `Paste (${clipCount})` : 'Paste · reset') : 'Paste'}</button>
+        <button
+          onClick={doRevert} disabled={!canRevert}
+          title={reverted
+            ? 'Reverted to default — click again to restore, or dial in a change to keep it'
+            : `Revert ${multi ? `all ${targets.length} clips` : 'this clip'} to default sound (toggle — click again to restore)`}
+          style={reverted
+            ? { ...clipBtn(true), border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.18)', color: CYAN }
+            : clipBtn(canRevert)}
+        >{reverted ? '⟳ Reverted' : '⟲ Revert'}</button>
         <span style={{ flex: 1 }} />
       </div>
 

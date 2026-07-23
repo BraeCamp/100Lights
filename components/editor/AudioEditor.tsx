@@ -378,6 +378,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   const engineForRender = engineRef.current
 
   // ── Undo history ────────────────────────────────────────────────────────────
+  // How many actions you can step back through. Entries store a reference to the
+  // pre-action project (immutable, so this shares structure — cheap), letting us
+  // keep a deep stack without deep-copying each snapshot.
+  const UNDO_LIMIT = 200
   const historyRef = useRef<Array<{ before: DawProject; action: DawAction }>>([])
   const redoRef    = useRef<Array<{ before: DawProject; action: DawAction }>>([])
   const projectRef         = useRef(project)
@@ -589,7 +593,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       action = { ...action, clip: { ...action.clip, createdAt: new Date().toISOString(), ...(userNameRef.current && !action.clip.createdBy ? { createdBy: userNameRef.current } : {}) } }
     }
     if (action.type !== 'LOAD_PROJECT') {
-      historyRef.current = [...historyRef.current.slice(-49), { before: projectRef.current, action }]
+      historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action }]
       redoRef.current = []
     }
     rawDispatch(action)
@@ -997,6 +1001,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
   const expandedRollRef = useRef<string | null>(null)
   useEffect(() => { expandedRollRef.current = expandedPianoRollClipId }, [expandedPianoRollClipId])
+  const [expandedStepSeqClipId, setExpandedStepSeqClipId] = useState<string | null>(null)
   const [loopToolArmed, setLoopToolArmed] = useState(false)
 
   // ── Create-recipe entry point: the sound library's "+ Create a recipe"
@@ -1153,7 +1158,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         e.preventDefault()
         const entry = historyRef.current.pop()
         if (entry) {
-          redoRef.current = [...redoRef.current.slice(-49), { before: projectRef.current, action: entry.action }]
+          redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
           const patch = computeRevertPatch(entry.before, projectRef.current, entry.action)
           const patchAction: DawAction = { type: 'PATCH_PROJECT', patch }
           rawDispatch(patchAction)
@@ -1166,7 +1171,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         e.preventDefault()
         const entry = redoRef.current.pop()
         if (entry) {
-          historyRef.current = [...historyRef.current.slice(-49), { before: projectRef.current, action: entry.action }]
+          historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
           const patch = computeRevertPatch(entry.before, projectRef.current, entry.action)
           const patchAction: DawAction = { type: 'PATCH_PROJECT', patch }
           rawDispatch(patchAction)
@@ -1246,6 +1251,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setShowPads,
     expandedPianoRollClipId,
     setExpandedPianoRollClipId,
+    expandedStepSeqClipId,
+    setExpandedStepSeqClipId,
     loopToolArmed,
     setLoopToolArmed,
     onSave: onSave ? () => { if (props.isGuest) requireAccountRef.current('save'); else void handleSaveRef.current() } : undefined,
@@ -1264,7 +1271,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
-    expandedPianoRollClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
+    expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
     collabPeers, props.isGuest, resumeExport,
   ])
 

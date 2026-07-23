@@ -708,6 +708,9 @@ export interface DawContextValue {
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void
   // Piano roll (inline, under track)
   expandedPianoRollClipId: string | null
+  // Step sequencer (inline, under track — sibling to the piano roll)
+  expandedStepSeqClipId: string | null
+  setExpandedStepSeqClipId: (id: string | null) => void
   /** Loop tool: armed by the transport's loop button — the next drag across
    *  the ruler or track lanes draws the loop region. */
   loopToolArmed: boolean

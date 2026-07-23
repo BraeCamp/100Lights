@@ -98,7 +98,7 @@ export const FX_FIELDS: FxField[] = [
   { key: 'flanger',      label: 'Flanger',    cat: 'space',  neutral: 0,     graph: true,  chain: true,  ...lin(0, 1),    fmt: pct },
   { key: 'phaser',       label: 'Phaser',     cat: 'space',  neutral: 0,     graph: true,  chain: true,  ...lin(0, 1),    fmt: pct },
   // Level & stereo
-  { key: 'gain',         label: 'Gain',       cat: 'level',  neutral: 1,     graph: true,  chain: true,  ...lin(0, 2),    fmt: v => `${Math.round(v * 100)}%` },
+  { key: 'gain',         label: 'Volume',     cat: 'level',  neutral: 1,     graph: true,  chain: true,  ...lin(0, 2),    fmt: v => `${Math.round(v * 100)}%` },
   { key: 'pan',          label: 'Pan',        cat: 'level',  neutral: 0,     graph: true,  chain: true,  ...lin(-1, 1),   fmt: v => Math.abs(v) < 0.02 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}` },
   { key: 'width',        label: 'Width',      cat: 'level',  neutral: 1,     graph: true,  chain: true,  ...lin(0, 2),    fmt: v => `${Math.round(v * 100)}%` },
   { key: 'tremoloDepth', label: 'Tremolo',    cat: 'level',  neutral: 0,     graph: true,  chain: true,  ...lin(0, 1),    fmt: pct },
@@ -118,7 +118,8 @@ export const GRAPH_TARGETS: PitchGraphTarget[] = FX_FIELDS.filter(f => f.graph).
 
 // "Basic" mode — the most basic controls, shown flat (no categories):
 // sustain, filter (low-pass), gain, plus reverb and drive.
-const BASIC_KEYS: (keyof RollFx)[] = ['sustain', 'filterHz', 'gain', 'reverbWet', 'drive']
+// Volume (gain) leads the basic set, then sustain, filter, reverb, drive.
+const BASIC_KEYS: (keyof RollFx)[] = ['gain', 'sustain', 'filterHz', 'reverbWet', 'drive']
 export const BASIC_FIELDS: FxField[] = BASIC_KEYS.map(k => FX_FIELD_BY_KEY[k as string]).filter(Boolean)
 
 /** Is a value meaningfully different from the field's neutral? */

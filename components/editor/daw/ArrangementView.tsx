@@ -8,6 +8,7 @@ import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip, DawClip, MidiClip } from '@/lib/daw-types'
 import { RollSoundPanel } from './RollSettings'
+import { DEFAULT_KIT } from '@/lib/drum-presets'
 import { getPresets } from '@/lib/midi-presets'
 
 // Module-level clipboards — persist across renders in the same session
@@ -353,7 +354,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
 
   // The shared clip Sound panel — follows the current selection (retargets on
   // select) and closes when nothing is selected.
@@ -692,6 +693,42 @@ export default function ArrangementView() {
     if (expandedPianoRollClipId) { setExpandedPianoRollClipId(null); return }
     // Nothing usable selected — say so and glow the track headers
     setPrHint('Select a track to add piano roll')
+    window.setTimeout(() => setPrHint(null), 3500)
+    highlightHelpTargets(['track-head'])
+  }
+
+  // Give a track a drum kit if it doesn't already have one, so beat hits sound.
+  function ensureDrumKit(trackId: string) {
+    const track = project.tracks.find(t => t.id === trackId)
+    if (track && track.instrument.type !== 'drum') {
+      dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: structuredClone(DEFAULT_KIT.instrument) })
+    }
+  }
+
+  // Open the standalone step sequencer under the track — sibling to the roll,
+  // and mutually exclusive with it so only one editor sits under a track.
+  function openStepSeq() {
+    const openSeq = (clipId: string) => {
+      const already = expandedStepSeqClipId === clipId
+      setExpandedStepSeqClipId(already ? null : clipId)
+      if (!already) setExpandedPianoRollClipId(null)
+    }
+    if (selectedClipId) {
+      const clip = project.arrangementClips.find(c => c.id === selectedClipId)
+      if (clip && isMidiClip(clip)) { openSeq(clip.id); if (expandedStepSeqClipId !== clip.id) ensureDrumKit(clip.trackId); return }
+    }
+    if (selectedTrackId) {
+      const existing = project.arrangementClips.find(c => isMidiClip(c) && c.trackId === selectedTrackId)
+      if (existing) { openSeq(existing.id); if (expandedStepSeqClipId !== existing.id) ensureDrumKit(selectedTrackId); return }
+      const newClip = makeMidiClip(selectedTrackId, 'Beat', engine.currentBeat, 4, { isDrumClip: true })
+      dispatch({ type: 'ADD_CLIP', clip: newClip })
+      ensureDrumKit(selectedTrackId)
+      setExpandedPianoRollClipId(null)
+      setExpandedStepSeqClipId(newClip.id)
+      return
+    }
+    if (expandedStepSeqClipId) { setExpandedStepSeqClipId(null); return }
+    setPrHint('Select a track to program a beat')
     window.setTimeout(() => setPrHint(null), 3500)
     highlightHelpTargets(['track-head'])
   }
@@ -1291,6 +1328,13 @@ export default function ArrangementView() {
         <div style={{ flex: 1 }} />
         {audioMode !== 'podcast' && (
           <div style={{ position: 'relative', display: 'flex' }}>
+            <button onClick={openStepSeq} title="Beat — open the step sequencer for the selected track (creates a drum clip)" data-help-id="step-seq" style={{
+              ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700, marginRight: 6,
+              border: `1px solid ${expandedStepSeqClipId ? '#7c3aed' : 'var(--border)'}`,
+              background: expandedStepSeqClipId ? 'rgba(124,58,237,0.18)' : 'transparent',
+              color: expandedStepSeqClipId ? '#a78bfa' : 'var(--text-muted)',
+              letterSpacing: '0.04em',
+            }}>BEAT</button>
             <button onClick={openPianoRoll} title="Open Piano Roll (open/create MIDI clip for selected track)" data-help-id="piano-roll" style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
               border: `1px solid ${expandedPianoRollClipId ? '#7c3aed' : 'var(--border)'}`,

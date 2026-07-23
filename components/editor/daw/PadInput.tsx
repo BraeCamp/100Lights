@@ -106,12 +106,6 @@ const C = {
   muted:  '#7c7c7c',
 } as const
 
-// ── Step Sequencer constants ────────────────────────────────────────────────────
-
-type StepRate = '1/4' | '1/8' | '1/16' | '1/32'
-const STEP_RATES: StepRate[]               = ['1/32', '1/16', '1/8', '1/4']
-const RATE_BEATS: Record<StepRate, number> = { '1/4': 1, '1/8': 0.5, '1/16': 0.25, '1/32': 0.125 }
-const STEP_COUNT = 16
 
 function reverseBuffer(ctx: AudioContext, buf: AudioBuffer): AudioBuffer {
   const rev = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate)
@@ -142,79 +136,6 @@ function PopSlider({ label, value, min, max, step, format, onChange, accent }: {
         style={{ width: '100%', accentColor: accent || C.accent, cursor: 'pointer', display: 'block' }}
       />
     </div>
-  )
-}
-
-// ── Step cell right-click popover ─────────────────────────────────────────────
-
-function StepCellPopover({
-  probability, ratchet, onProbChange, onRatchetChange, onClose, x, y,
-}: {
-  probability: number
-  ratchet: 1|2|4
-  onProbChange: (v: number) => void
-  onRatchetChange: (v: 1|2|4) => void
-  onClose: () => void
-  x: number
-  y: number
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    function onDocDown(e: MouseEvent) {
-      if (!ref.current?.contains(e.target as Node)) onClose()
-    }
-    document.addEventListener('mousedown', onDocDown)
-    return () => document.removeEventListener('mousedown', onDocDown)
-  }, [onClose])
-
-  const left = Math.min(x, (typeof window !== 'undefined' ? window.innerWidth  : 800) - 190)
-  const top  = Math.min(y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 160)
-
-  return createPortal(
-    <div
-      ref={ref}
-      onMouseDown={e => e.stopPropagation()}
-      style={{
-        position: 'fixed', left, top, width: 180, zIndex: 3100,
-        background: C.bgCard, border: `1px solid ${C.border}`,
-        borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,0.85)',
-        padding: '10px 12px',
-      }}
-    >
-      <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 9 }}>
-        Step Properties
-      </div>
-
-      {/* Probability */}
-      <PopSlider
-        label="Probability"
-        value={probability}
-        min={0} max={100} step={1}
-        format={v => `${v}%`}
-        onChange={onProbChange}
-      />
-
-      {/* Ratchet */}
-      <div>
-        <div style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Ratchet</div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {([1, 2, 4] as const).map(r => (
-            <button
-              key={r}
-              onClick={() => onRatchetChange(r)}
-              style={{
-                flex: 1, padding: '4px 0', borderRadius: 4, cursor: 'pointer', fontSize: 11,
-                fontWeight: ratchet === r ? 700 : 400,
-                border: `1px solid ${ratchet === r ? C.accent : C.border}`,
-                background: ratchet === r ? `${C.accent}22` : 'transparent',
-                color: ratchet === r ? C.accent : C.muted,
-              }}
-            >{r}×</button>
-          ))}
-        </div>
-      </div>
-    </div>,
-    document.body
   )
 }
 
@@ -952,18 +873,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     y: typeof window !== 'undefined' ? Math.max(0, window.innerHeight - 420)      : 200,
   }))
 
-  // ── Step sequencer state ─────────────────────────────────────────────────────
-  const [drumSteps,         setDrumSteps]         = useState<Record<string, boolean[]>>(() => {
-    const m: Record<string, boolean[]> = {}
-    for (const p of DEFAULT_PADS) m[p.id] = Array.from({ length: STEP_COUNT }, () => false)
-    return m
-  })
-  const [stepProbabilities, setStepProbabilities] = useState<Record<string, Record<number, number>>>({})
-  const [stepRatchets,      setStepRatchets]      = useState<Record<string, Record<number, 1|2|4>>>({})
-  const [rowRates,          setRowRates]          = useState<Record<string, StepRate>>({})
-  const [stepPopover,       setStepPopover]       = useState<{ padId: string; stepIndex: number; x: number; y: number } | null>(null)
-  const [, setSeqTick]                            = useState(0)
-
   const containerRef  = useRef<HTMLDivElement>(null)
   const noteStarts = useRef<Map<number, { beat: number; sounds: PadSound[]; velocity: number }>>(new Map())
   const captureStarts = useRef<Map<number, { beat: number; velocity: number }>>(new Map())
@@ -974,15 +883,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const activeSources = useRef<Map<number, ActiveSource[]>>(new Map())
   const dragging      = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
   const resizing      = useRef<{ dir: string; sx: number; sy: number; ow: number; oh: number } | null>(null)
-
-  // Step sequencer refs
-  const drumStepsRef        = useRef(drumSteps)
-  const stepProbsRef        = useRef(stepProbabilities)
-  const stepRatchetsRef     = useRef(stepRatchets)
-  const rowRatesRef         = useRef(rowRates)
-  const seqBeatRef          = useRef(0)
-  const seqPrevStep32Ref    = useRef(-1)
-  const seqLastStepsRef     = useRef<Record<string, number>>({})
 
   // Live refs so capture handler always reads fresh values without re-registering
   const entriesRef    = useRef<LibraryEntry[]>([])
@@ -1041,10 +941,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   }, [pads])
   useEffect(() => { padKeyMapRef.current   = padKeyMap   }, [padKeyMap])
   useEffect(() => { pianoKeyMapRef.current = pianoKeyMap }, [pianoKeyMap])
-  useEffect(() => { drumStepsRef.current        = drumSteps         }, [drumSteps])
-  useEffect(() => { stepProbsRef.current        = stepProbabilities }, [stepProbabilities])
-  useEffect(() => { stepRatchetsRef.current     = stepRatchets      }, [stepRatchets])
-  useEffect(() => { rowRatesRef.current         = rowRates          }, [rowRates])
 
   const saveMenuRef = useRef<HTMLDivElement>(null)
   // Close save menu on outside click
@@ -1081,51 +977,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     padTrackMap.current.set(pitch, id)
     return id
   }, [project.tracks, dispatch])
-
-  // ── Drum step fire (sequencer playback, no recording) ────────────────────────
-
-  const fireDrumStep = useCallback((pad: Pad, ratchet: 1|2|4, stepBeats: number) => {
-    const sounds = pad.customSounds ?? []
-
-    const playAt = (ctxAt: number) => {
-      if (sounds.length > 0) {
-        for (const sound of sounds) {
-          const rawBuf = soundBuffers.current.get(sound.id)
-          if (!rawBuf) continue
-          let playBuf = rawBuf
-          if (pad.sampleReverse) {
-            const rev = reversedBufs.current.get(sound.id)
-            if (rev) playBuf = rev
-          }
-          const gainNode = engine.ctx.createGain()
-          gainNode.gain.value = sound.volume ?? 1
-          gainNode.connect(engine.masterGain)
-          const tStart = (pad.sampleTrimStart ?? 0) * playBuf.duration
-          const tDur   = Math.max(0.001, ((pad.sampleTrimEnd ?? 1) - (pad.sampleTrimStart ?? 0)) * playBuf.duration)
-          const src    = engine.ctx.createBufferSource()
-          src.buffer   = playBuf
-          src.playbackRate.value = Math.pow(2, (sound.pitch ?? 0) / 12)
-          src.connect(gainNode)
-          src.start(ctxAt, tStart, tDur)
-          src.onended = () => gainNode.disconnect()
-        }
-      } else {
-        const instr = instrumentRef.current
-        if (instr) {
-          playInstrumentNote(engine.ctx, engine.masterGain, instr, pad.pitch, 100, ctxAt, 0.25)
-        }
-      }
-    }
-
-    const now = engine.ctx.currentTime
-    playAt(now)
-    if (ratchet > 1) {
-      const stepDurSec = engine.beatsToSeconds(stepBeats)
-      for (let r = 1; r < ratchet; r++) {
-        playAt(now + (stepDurSec / ratchet) * r)
-      }
-    }
-  }, [engine])
 
   // ── Audio playback ────────────────────────────────────────────────────────────
 
@@ -1391,47 +1242,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     setCaptureCount(0)
   }
 
-  // ── Step sequencer tick handler ───────────────────────────────────────────────
-
-  useEffect(() => {
-    function onTick(e: Event) {
-      const beat = (e as CustomEvent<{ beat: number }>).detail.beat
-      seqBeatRef.current = beat
-
-      // Trigger re-render only when the fastest step (1/32) changes
-      const step32 = engine.isPlaying ? Math.floor(beat / 0.125) % (STEP_COUNT * 2) : -1
-      if (step32 !== seqPrevStep32Ref.current) {
-        seqPrevStep32Ref.current = step32
-        setSeqTick(v => v + 1)
-      }
-
-      if (!engine.isPlaying) return
-
-      for (const pad of padsRef.current) {
-        const steps = drumStepsRef.current[pad.id]
-        if (!steps) continue
-        const rate      = rowRatesRef.current[pad.id] ?? '1/16'
-        const stepBeats = RATE_BEATS[rate]
-        const stepIndex = Math.floor(beat / stepBeats) % STEP_COUNT
-
-        const lastStep = seqLastStepsRef.current[pad.id]
-        if (lastStep === stepIndex) continue
-        seqLastStepsRef.current[pad.id] = stepIndex
-
-        if (!steps[stepIndex]) continue
-
-        const prob = (stepProbsRef.current[pad.id] ?? {})[stepIndex] ?? 100
-        if (prob < 100 && Math.random() * 100 >= prob) continue
-
-        const ratchet = (stepRatchetsRef.current[pad.id] ?? {})[stepIndex] ?? 1
-        fireDrumStep(pad, ratchet, stepBeats)
-      }
-    }
-
-    engine.addEventListener('tick', onTick)
-    return () => engine.removeEventListener('tick', onTick)
-  }, [engine, fireDrumStep])
-
   // ── Click-outside deactivation ────────────────────────────────────────────────
 
   useEffect(() => {
@@ -1549,40 +1359,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     setPads(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))
     setContextMenu(prev => prev ? { ...prev, pad: { ...prev.pad, ...patch } } : null)
   }, [contextMenu])
-
-  // ── Sequencer helpers ─────────────────────────────────────────────────────────
-
-  function toggleStep(padId: string, idx: number) {
-    setDrumSteps(prev => {
-      const row  = (prev[padId] ?? Array.from({ length: STEP_COUNT }, () => false)) as boolean[]
-      const next = [...row] as boolean[]
-      next[idx]  = !next[idx]
-      return { ...prev, [padId]: next }
-    })
-  }
-
-  function setStepProb(padId: string, idx: number, prob: number) {
-    setStepProbabilities(prev => ({
-      ...prev,
-      [padId]: { ...(prev[padId] ?? {}), [idx]: Math.round(prob) },
-    }))
-  }
-
-  function setStepRatchet(padId: string, idx: number, r: 1|2|4) {
-    setStepRatchets(prev => ({
-      ...prev,
-      [padId]: { ...(prev[padId] ?? {}), [idx]: r },
-    }))
-  }
-
-  function cycleRate(padId: string) {
-    setRowRates(prev => {
-      const cur  = prev[padId] ?? '1/16'
-      const idx  = STEP_RATES.indexOf(cur)
-      const next = STEP_RATES[(idx + 1) % STEP_RATES.length]
-      return { ...prev, [padId]: next }
-    })
-  }
 
   const isRecActive = engine.isRecording && engine.isPlaying
 
@@ -1917,108 +1693,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                 </div>
               </div>
 
-              {/* ── Drum Step Sequencer ─────────────────────────────────────── */}
-              <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
-                <div style={{ fontSize: 9, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, fontWeight: 700 }}>
-                  Step Sequencer
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {pads.map(pad => {
-                    const rate        = rowRates[pad.id] ?? '1/16'
-                    const steps       = drumSteps[pad.id] ?? (Array.from({ length: STEP_COUNT }, () => false) as boolean[])
-                    const probs       = stepProbabilities[pad.id] ?? {}
-                    const ratchetsRow = stepRatchets[pad.id] ?? {}
-                    const rowCurrent  = engine.isPlaying
-                      ? Math.floor(seqBeatRef.current / RATE_BEATS[rate]) % STEP_COUNT
-                      : -1
-                    return (
-                      <div key={pad.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {/* Row label + rate badge */}
-                        <div style={{ width: 60, flexShrink: 0 }}>
-                          <div style={{
-                            fontSize: 9, color: C.text, overflow: 'hidden',
-                            textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2,
-                          }}>{pad.drumLabel}</div>
-                          <button
-                            onClick={() => cycleRate(pad.id)}
-                            title="Click to cycle step rate"
-                            style={{
-                              fontSize: 8, padding: '1px 5px', borderRadius: 3, cursor: 'pointer',
-                              border: `1px solid ${rate !== '1/16' ? C.accent : C.border}`,
-                              background: rate !== '1/16' ? `${C.accent}22` : 'transparent',
-                              color: rate !== '1/16' ? C.accent : C.muted,
-                              fontFamily: 'monospace', fontWeight: 700,
-                            }}
-                          >{rate}</button>
-                        </div>
-
-                        {/* Step cells */}
-                        <div style={{ display: 'flex', flex: 1, gap: 1 }}>
-                          {Array.from({ length: STEP_COUNT }, (_, i) => {
-                            const isOn    = steps[i] ?? false
-                            const prob    = probs[i] ?? 100
-                            const ratch   = ratchetsRow[i] ?? 1
-                            const isCurr  = rowCurrent === i
-                            const beatDiv = i > 0 && i % 4 === 0  // gap before each beat group
-                            const alpha   = isOn ? (prob >= 100 ? 1 : Math.max(0.25, prob / 100)) : 1
-                            return (
-                              <div
-                                key={i}
-                                title={`Step ${i + 1}${isOn ? ` · ${prob}%` : ''}${ratch > 1 ? ` · ×${ratch}` : ''} — click: toggle · right-click: options`}
-                                onClick={() => toggleStep(pad.id, i)}
-                                onContextMenu={e => {
-                                  e.preventDefault()
-                                  setStepPopover({ padId: pad.id, stepIndex: i, x: e.clientX, y: e.clientY })
-                                }}
-                                style={{
-                                  flex: 1,
-                                  height: 18,
-                                  borderRadius: 2,
-                                  cursor: 'pointer',
-                                  position: 'relative',
-                                  border: `1px solid ${isCurr ? 'rgba(255,255,255,0.55)' : beatDiv ? '#3a3a3a' : C.border}`,
-                                  background: isOn
-                                    ? `rgba(61,143,239,${alpha * (isCurr ? 1 : 0.82)})`
-                                    : isCurr
-                                    ? 'rgba(255,255,255,0.07)'
-                                    : C.bgCard,
-                                  marginLeft: beatDiv ? 3 : 0,
-                                  boxSizing: 'border-box' as const,
-                                  overflow: 'hidden',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  transition: 'background 40ms',
-                                }}
-                              >
-                                {/* Ratchet tick marks */}
-                                {isOn && ratch > 1 && (
-                                  <div style={{ display: 'flex', gap: 1, height: '55%', alignItems: 'stretch' }}>
-                                    {Array.from({ length: ratch }, (_, ri) => (
-                                      <div key={ri} style={{ width: 1, background: 'rgba(255,255,255,0.65)', borderRadius: 1 }} />
-                                    ))}
-                                  </div>
-                                )}
-                                {/* Probability label (when < 100 and ratchet=1) */}
-                                {isOn && prob < 100 && ratch === 1 && (
-                                  <span style={{
-                                    position: 'absolute', bottom: 1, right: 1,
-                                    fontSize: 6, color: 'rgba(255,255,255,0.75)',
-                                    fontFamily: 'monospace', lineHeight: 1,
-                                    pointerEvents: 'none',
-                                  }}>
-                                    {prob}
-                                  </span>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
             </div>
           )}
 
@@ -2117,18 +1791,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         />
       )}
 
-      {/* Step cell right-click popover */}
-      {stepPopover && (
-        <StepCellPopover
-          x={stepPopover.x}
-          y={stepPopover.y}
-          probability={(stepProbabilities[stepPopover.padId] ?? {})[stepPopover.stepIndex] ?? 100}
-          ratchet={(stepRatchets[stepPopover.padId] ?? {})[stepPopover.stepIndex] ?? 1}
-          onProbChange={v  => setStepProb(stepPopover.padId, stepPopover.stepIndex, v)}
-          onRatchetChange={r => setStepRatchet(stepPopover.padId, stepPopover.stepIndex, r)}
-          onClose={() => setStepPopover(null)}
-        />
-      )}
     </>,
     document.body
   )

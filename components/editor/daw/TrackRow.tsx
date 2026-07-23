@@ -25,6 +25,7 @@ import dynamic from 'next/dynamic'
 
 const AutomationLaneView = dynamic(() => import('./AutomationLaneView'), { ssr: false })
 const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
+const StepSequencer = dynamic(() => import('./StepSequencer'), { ssr: false })
 const SoundLibrary = dynamic(() => import('../SoundLibrary'), { ssr: false })
 const PolyCodePanel = dynamic(() => import('./PolyCodePanel'), { ssr: false })
 
@@ -299,7 +300,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onSelectionResize?: (end: number) => void
   onSelectionLoopCommit?: (region: { start: number; end: number }, blocks: number) => void
 }) {
-  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
+  const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const workshopTheme = useWorkshopThemeOptional()
   const trackColors = workshopTheme?.theme.trackPalette ?? TRACK_COLORS
@@ -1775,6 +1776,24 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </div>
             <div style={{ flex: 1, height: rollTall ? 'max(400px, calc(100vh - 300px))' : 240, overflow: 'hidden' }}>
               <PianoRoll clipId={expandedClip.id} />
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Inline Step Sequencer — sibling to the roll, for a drum clip on this track */}
+      {(() => {
+        const seqClip = clips.find(c => isMidiClip(c) && c.id === expandedStepSeqClipId)
+        if (!seqClip) return null
+        return (
+          <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
+            <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>BEAT</span>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{seqClip.name}</span>
+              <button onClick={() => setExpandedStepSeqClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close step sequencer">✕</button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <StepSequencer clipId={seqClip.id} />
             </div>
           </div>
         )
