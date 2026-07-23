@@ -31,7 +31,8 @@ import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
-import { saveSnapshot, loadSnapshot, deleteSnapshot } from '@/lib/offline-store'
+import { saveSnapshot, loadSnapshot, deleteSnapshot, getBranch } from '@/lib/offline-store'
+import { mergeProjects, applyResolutions, hasDiverged, type MergeConflict } from '@/lib/project-merge'
 import { getPresets } from '@/lib/midi-presets'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
@@ -416,6 +417,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [isOffline, setIsOffline] = useState(false)
   const restoreResolvedRef = useRef(false)
   const autosaveTimerRef = useRef<number | null>(null)
+  // Offline sync (Phase C): a pending 3-way merge whose conflicts need resolving.
+  const [pendingMerge, setPendingMerge] = useState<{ merged: DawProject; conflicts: MergeConflict[] } | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
   // Guests build freely; saving or exporting needs an account. Flush the work
   // to the local snapshot first (so nothing is lost across the sign-up round
@@ -489,10 +494,10 @@ export default function AudioEditor(props: AudioEditorProps) {
     return () => document.removeEventListener('visibilitychange', flush)
   }, [snapshotKey])
 
-  // Online / offline indicator
+  // Online / offline indicator — and reconcile offline edits on reconnect.
   useEffect(() => {
     setIsOffline(!navigator.onLine)
-    const on = () => setIsOffline(false)
+    const on = () => { setIsOffline(false); void syncOfflineEditsRef.current() }
     const off = () => setIsOffline(true)
     window.addEventListener('online', on)
     window.addEventListener('offline', off)
@@ -1134,6 +1139,42 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   })
 
+  // ── Offline sync: reconcile offline edits with the server (3-way merge) ───────
+  function applyMerged(project: DawProject, msg: string) {
+    rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject(project) })
+    setTimeout(() => { void handleSaveRef.current() }, 300)  // persist merged → rebases the branch point
+    setSyncMsg(msg); setTimeout(() => setSyncMsg(null), 3200)
+  }
+  // Resolve a conflicted merge with the user's picks and apply it. Empty choices
+  // keep every conflict as "theirs" (the default).
+  function resolveMerge(choices: Record<string, 'mine' | 'theirs'>) {
+    if (!pendingMerge) return
+    const final = applyResolutions(pendingMerge.merged, pendingMerge.conflicts, choices)
+    setPendingMerge(null)
+    applyMerged(final, 'Applied your resolution.')
+  }
+  const syncOfflineEditsRef = useRef(async (_manual?: boolean) => {})
+  useEffect(() => {
+    syncOfflineEditsRef.current = async (manual = false) => {
+      if (!props.projectId || syncing || pendingMerge) return
+      if (!navigator.onLine) { if (manual) { setSyncMsg('You’re offline — reconnect to sync.'); setTimeout(() => setSyncMsg(null), 3000) } return }
+      setSyncing(true)
+      try {
+        const branch = await getBranch(snapshotKey)
+        if (!branch || !hasDiverged(branch.base, branch.working)) { if (manual) { setSyncMsg('Already up to date.'); setTimeout(() => setSyncMsg(null), 3000) } return }
+        const res = await fetch(`/api/projects/${props.projectId}`)
+        if (!res.ok) { if (manual) { setSyncMsg('Couldn’t reach the server.'); setTimeout(() => setSyncMsg(null), 3000) } return }
+        const cf = await res.json()
+        const theirs = cf?.dawProject ? (cf.dawProject as DawProject) : null
+        if (!theirs) return
+        const { merged, conflicts } = mergeProjects(branch.base, branch.working, theirs)
+        if (conflicts.length === 0) applyMerged(merged, 'Synced your offline edits.')
+        else setPendingMerge({ merged, conflicts })
+      } catch { if (manual) { setSyncMsg('Sync failed.'); setTimeout(() => setSyncMsg(null), 3000) } }
+      finally { setSyncing(false) }
+    }
+  })
+
   // ── Suggest changes (view members) ───────────────────────────────────────────
   function enterSuggest() { suggestSnapshotRef.current = projectRef.current; setSuggesting(true) }
   function discardSuggest() {
@@ -1332,13 +1373,15 @@ export default function AudioEditor(props: AudioEditorProps) {
     triggerBlink,
     collabPeers,
     notifyLocked,
+    mergeConflicts: pendingMerge?.conflicts ?? null,
+    resolveMerge,
   }), [
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
     expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
-    collabPeers, notifyLocked, props.isGuest, resumeExport,
+    collabPeers, notifyLocked, pendingMerge, props.isGuest, resumeExport,
   ])
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -1570,6 +1613,13 @@ export default function AudioEditor(props: AudioEditorProps) {
                   border: '1px solid rgba(245,158,11,0.35)', whiteSpace: 'nowrap',
                 }}>OFFLINE — SAVING LOCALLY</span>
               )}
+              {!isOffline && props.projectId && !pendingMerge && (
+                <button onClick={() => void syncOfflineEditsRef.current(true)} disabled={syncing}
+                  title="Reconcile any offline edits with the current shared version"
+                  style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 8px', borderRadius: 4, marginRight: 6, cursor: 'pointer', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                  {syncing ? 'SYNCING…' : '↻ SYNC'}
+                </button>
+              )}
               {props.readOnly && !suggesting && (
                 <span style={{
                   display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, fontWeight: 700,
@@ -1729,6 +1779,32 @@ export default function AudioEditor(props: AudioEditorProps) {
           background: 'var(--bg-card)', border: '1px solid #166534', color: '#4ade80',
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
         }}>✓ Suggestion sent — the owner can review and accept it.</div>
+      )}
+
+      {/* Sync status toast */}
+      {syncMsg && (
+        <div role="status" style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)',
+          fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
+        }}>↻ {syncMsg}</div>
+      )}
+
+      {/* Merge conflict banner — Phase D adds the per-item "Yours vs Theirs"
+          panel; this is the bulk fallback so a conflict is always resolvable. */}
+      {pendingMerge && (
+        <div style={{
+          position: 'fixed', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 1300,
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '11px 16px', borderRadius: 12, maxWidth: 'calc(100vw - 32px)',
+          background: 'var(--bg-surface)', border: '1px solid rgba(245,158,11,0.6)', boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+        }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#facc15' }}>⚠ {pendingMerge.conflicts.length} change{pendingMerge.conflicts.length === 1 ? '' : 's'} conflict with the shared version</span>
+          <button onClick={() => resolveMerge(Object.fromEntries(pendingMerge.conflicts.map(c => [c.id, 'mine'])))}
+            style={{ fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>Keep mine</button>
+          <button onClick={() => resolveMerge({})}
+            style={{ fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>Keep theirs</button>
+        </div>
       )}
 
       {/* Save toast */}

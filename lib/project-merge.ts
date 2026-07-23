@@ -14,12 +14,15 @@ export type Side = 'mine' | 'theirs'
 
 export interface Keyed { id: string; name?: string }
 
-/** The parts we merge. DawProject satisfies this structurally. */
+/** The parts we merge. DawProject satisfies this structurally (an index
+ *  signature would exclude concrete interfaces, so dynamic keys are read via a
+ *  cast inside). */
 export interface ProjectLike {
   arrangementClips: Keyed[]
   tracks: Keyed[]
-  [key: string]: unknown
 }
+
+type AnyRec = Record<string, unknown>
 
 export interface MergeConflict {
   /** What kind of thing collided — drives the review UI's labelling. */
@@ -113,13 +116,14 @@ function mergeKeyed(
 }
 
 export function mergeProjects<P extends ProjectLike>(base: P, mine: P, theirs: P): MergeResult<P> {
+  const B = base as unknown as AnyRec, M = mine as unknown as AnyRec, T = theirs as unknown as AnyRec
   // Start from THEIRS (the authoritative shared state); overlay merged
   // collections/fields. Anything not explicitly merged stays as theirs.
-  const merged = structuredClone(theirs) as Record<string, unknown>
+  const merged = structuredClone(theirs) as AnyRec
   const conflicts: MergeConflict[] = []
 
   for (const { key, kind } of KEYED_COLLECTIONS) {
-    const b = base[key], m = mine[key], t = theirs[key]
+    const b = B[key], m = M[key], t = T[key]
     // Only merge when all present sides are arrays of {id}.
     if (!Array.isArray(t ?? []) || !Array.isArray(m ?? []) || !Array.isArray(b ?? [])) continue
     const r = mergeKeyed((b as Keyed[]) ?? [], (m as Keyed[]) ?? [], (t as Keyed[]) ?? [], kind, key)
@@ -128,7 +132,7 @@ export function mergeProjects<P extends ProjectLike>(base: P, mine: P, theirs: P
   }
 
   for (const f of SCALAR_FIELDS) {
-    const b = base[f], m = mine[f], t = theirs[f]
+    const b = B[f], m = M[f], t = T[f]
     const mineChanged = !eq(b, m), theirsChanged = !eq(b, t)
     if (mineChanged && !theirsChanged) merged[f] = m
     else if (mineChanged && theirsChanged && !eq(m, t)) {

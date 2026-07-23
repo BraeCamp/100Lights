@@ -740,6 +740,10 @@ export interface DawContextValue {
   collabPeers: CollabPeer[]
   /** Surface a "someone else is editing this clip" notice (collab locks). */
   notifyLocked?: (byName: string) => void
+  /** Offline-sync 3-way merge conflicts awaiting the user's Yours/Theirs pick,
+   *  and the resolver that applies their choices. */
+  mergeConflicts?: import('./project-merge').MergeConflict[] | null
+  resolveMerge?: (choices: Record<string, 'mine' | 'theirs'>) => void
 }
 
 export const DawContext = createContext<DawContextValue | null>(null)
