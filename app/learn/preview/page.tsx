@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getArticles } from '@/lib/learn-articles'
 import { isAdmin } from '@/lib/admin-auth'
+import { previewUrl } from '@/lib/preview-token'
+import CopyPreviewLink from './CopyPreviewLink'
 
 // Admin-only index of everything in the Learn section, drafts included, so
 // unpublished articles are reachable in production for review. Force-dynamic
@@ -31,21 +33,24 @@ export default async function DraftIndexPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {articles.map(a => (
-            <Link key={a.slug} href={`/learn/preview/${a.slug}`} style={{
-              display: 'block', textDecoration: 'none', padding: '16px 18px', borderRadius: 12,
-              border: '1px solid var(--border)', background: 'var(--bg-card)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <h2 style={{ fontSize: 16, fontWeight: 750, color: 'var(--text-primary)', margin: 0 }}>{a.title}</h2>
-                {a.draft
-                  ? <span style={{ fontSize: 9, fontWeight: 800, color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 99, padding: '1px 8px', letterSpacing: '0.06em' }}>DRAFT</span>
-                  : <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', border: '1px solid rgba(52,211,153,0.4)', borderRadius: 99, padding: '1px 8px', letterSpacing: '0.06em' }}>LIVE</span>}
-              </div>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '7px 0 8px' }}>{a.description}</p>
-              <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                {a.minutes} min read{a.tags.length ? ` · ${a.tags.join(' · ')}` : ''}
-              </div>
-            </Link>
+            <div key={a.slug} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Link href={`/learn/preview/${a.slug}`} style={{
+                display: 'block', textDecoration: 'none', padding: '16px 18px', borderRadius: 12,
+                border: '1px solid var(--border)', background: 'var(--bg-card)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <h2 style={{ fontSize: 16, fontWeight: 750, color: 'var(--text-primary)', margin: 0 }}>{a.title}</h2>
+                  {a.draft
+                    ? <span style={{ fontSize: 9, fontWeight: 800, color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 99, padding: '1px 8px', letterSpacing: '0.06em' }}>DRAFT</span>
+                    : <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', border: '1px solid rgba(52,211,153,0.4)', borderRadius: 99, padding: '1px 8px', letterSpacing: '0.06em' }}>LIVE</span>}
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '7px 0 8px' }}>{a.description}</p>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                  {a.minutes} min read{a.tags.length ? ` · ${a.tags.join(' · ')}` : ''}
+                </div>
+              </Link>
+              <CopyPreviewLink url={previewUrl(a.slug)} />
+            </div>
           ))}
         </div>
       </main>

@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getArticle, getArticles } from '@/lib/learn-articles'
 import { isAdmin } from '@/lib/admin-auth'
+import { verifyPreviewToken } from '@/lib/preview-token'
 import { renderMarkdown } from '@/lib/simple-markdown'
 import { pickRecommendations } from '@/lib/article-recommendations'
 import ArticleRecommendations from '@/components/ArticleRecommendations'
@@ -19,14 +20,19 @@ export const metadata = {
   robots: { index: false, follow: false },
 }
 
-export default async function DraftPreviewPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function DraftPreviewPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ token?: string }> }) {
   const { slug } = await params
-  if (!await isAdmin()) notFound()
+  const { token } = await searchParams
+  // Admins see everything; anyone with a valid signed link sees just this slug.
+  const admin = await isAdmin()
+  if (!admin && !verifyPreviewToken(slug, token)) notFound()
 
   const a = await getArticle(slug, { includeDrafts: true })
   if (!a) notFound()
 
-  const all = await getArticles({ includeDrafts: true })
+  // Cross-draft browsing (all-drafts index, prev/next) is admin-only — a shared
+  // token grants exactly one article.
+  const all = admin ? await getArticles({ includeDrafts: true }) : []
   const i = all.findIndex(x => x.slug === slug)
   const prev = i > 0 ? all[i - 1] : null
   const next = i >= 0 && i < all.length - 1 ? all[i + 1] : null
@@ -35,7 +41,7 @@ export default async function DraftPreviewPage({ params }: { params: Promise<{ s
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
       <main id="main" className="max-w-3xl mx-auto px-6 py-14">
         <nav style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 22, flexWrap: 'wrap' }}>
-          <Link href="/learn/preview" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>← All drafts</Link>
+          {admin && <Link href="/learn/preview" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>← All drafts</Link>}
           <span style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', letterSpacing: '0.08em' }}>
             {a.draft ? 'DRAFT PREVIEW' : 'PUBLISHED'}
           </span>
@@ -57,14 +63,16 @@ export default async function DraftPreviewPage({ params }: { params: Promise<{ s
             live page — so a preview shows what readers will actually get. */}
         <ArticleRecommendations items={pickRecommendations(a, all.filter(x => !x.draft), 3)} />
 
-        <nav style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginTop: 44, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
-          {prev
-            ? <Link href={`/learn/preview/${prev.slug}`} style={{ fontSize: 13, color: '#a78bfa', textDecoration: 'none', maxWidth: '46%' }}>← {prev.title}</Link>
-            : <span />}
-          {next
-            ? <Link href={`/learn/preview/${next.slug}`} style={{ fontSize: 13, color: '#a78bfa', textDecoration: 'none', textAlign: 'right', maxWidth: '46%' }}>{next.title} →</Link>
-            : <span />}
-        </nav>
+        {admin && (
+          <nav style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginTop: 44, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+            {prev
+              ? <Link href={`/learn/preview/${prev.slug}`} style={{ fontSize: 13, color: '#a78bfa', textDecoration: 'none', maxWidth: '46%' }}>← {prev.title}</Link>
+              : <span />}
+            {next
+              ? <Link href={`/learn/preview/${next.slug}`} style={{ fontSize: 13, color: '#a78bfa', textDecoration: 'none', textAlign: 'right', maxWidth: '46%' }}>{next.title} →</Link>
+              : <span />}
+          </nav>
+        )}
       </main>
     </div>
   )

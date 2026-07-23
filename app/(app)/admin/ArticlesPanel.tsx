@@ -461,6 +461,20 @@ export default function ArticlesPanel() {
                 onClick={() => void openAudioPicker()}
                 style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(56,189,248,0.5)', background: audioPicker ? 'rgba(56,189,248,0.08)' : 'transparent', color: '#38bdf8', cursor: 'pointer' }}
               >🎵 Existing audio files</button>
+              {/* Interactive-widget templates — insert VALID pre-encoded markers so
+                  the JSON never gets hand-typed (the build validator enforces this too). */}
+              <button
+                onClick={() => { appendToBody(`@grid(${encodeURIComponent(JSON.stringify({ lanes: [{ name: 'Kick', sound: 'kick' }, { name: 'Snare', sound: 'snare' }, { name: 'Hat', sound: 'hat' }], steps: 16, bpm: 120, pattern: [[0, 4, 8, 12], [4, 12], [2, 6, 10, 14]] }))}) A playable beat — click any cell to change it`); setMsg('Beat grid inserted — edit the pattern, then preview ✓') }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(248,113,113,0.5)', background: 'transparent', color: '#f87171', cursor: 'pointer' }}
+              >◼ Beat grid</button>
+              <button
+                onClick={() => { appendToBody(`@synth(${encodeURIComponent(JSON.stringify({ caption: 'Drag the controls to hear each one' }))}) `); setMsg('Synth widget inserted ✓') }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(251,191,36,0.5)', background: 'transparent', color: '#fbbf24', cursor: 'pointer' }}
+              >🎛 Synth demo</button>
+              <button
+                onClick={() => { appendToBody(`@ab(${encodeURIComponent(JSON.stringify({ treatedSrc: 'REPLACE_WITH_TREATED_AUDIO_URL', plainSrc: 'REPLACE_WITH_PLAIN_AUDIO_URL', question: 'Which one has the effect?', explanation: 'What to listen for next time.' }))}) A/B blind test`); setMsg('A/B widget inserted — set the two audio URLs ✓') }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px dashed rgba(167,139,250,0.5)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
+              >🔀 A/B test</button>
             </div>
             {audioPicker && (
               <div style={{ border: '1px solid rgba(56,189,248,0.35)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -607,7 +621,7 @@ export default function ArticlesPanel() {
                   ))}
                 </div>
               </div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>BODY — markdown; `@video caption` = clip slot · `@audio(url) caption` = audio file · `@sound(id) caption` = community embed</label>
+              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>BODY — markdown. Use the buttons above to insert widgets (beat grid, synth, A/B, chords, audio, embeds) so the encoded markers are always valid.</label>
               <textarea
                 style={{ ...input, minHeight: 420, fontFamily: 'var(--font-geist-mono)', fontSize: 12.5, lineHeight: 1.6, resize: 'vertical' }}
                 value={sel.body}
