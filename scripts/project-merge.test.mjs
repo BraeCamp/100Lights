@@ -149,5 +149,73 @@ const findClip = (p, id) => p.arrangementClips.find(c => c.id === id)
   ok('14 tracks: t2 rename kept', merged.tracks.find(t => t.id === 't2').name === 'Bass')
 }
 
+// ── Resolution paths Phase D drives ──
+
+// 15) Keep-all-mine across multiple conflicts
+{
+  const base = P({ arrangementClips: [clip('A'), clip('B')] })
+  const mine = P({ arrangementClips: [clip('A', { startBeat: 8 }), clip('B', { startBeat: 8 })] })
+  const theirs = P({ arrangementClips: [clip('A', { startBeat: 16 }), clip('B', { startBeat: 16 })] })
+  const { merged, conflicts } = mergeProjects(base, mine, theirs)
+  ok('15 two conflicts', conflicts.length === 2)
+  const keptMine = applyResolutions(merged, conflicts, Object.fromEntries(conflicts.map(c => [c.id, 'mine'])))
+  ok('15 keep-all-mine: A=8', findClip(keptMine, 'A').startBeat === 8)
+  ok('15 keep-all-mine: B=8', findClip(keptMine, 'B').startBeat === 8)
+}
+
+// 16) Keep-all-theirs = empty choices (default)
+{
+  const base = P({ arrangementClips: [clip('A')] })
+  const { merged, conflicts } = mergeProjects(base, P({ arrangementClips: [clip('A', { startBeat: 8 })] }), P({ arrangementClips: [clip('A', { startBeat: 16 })] }))
+  const keptTheirs = applyResolutions(merged, conflicts, {})
+  ok('16 keep-all-theirs: A=16', findClip(keptTheirs, 'A').startBeat === 16)
+}
+
+// 17) Mixed picks
+{
+  const base = P({ arrangementClips: [clip('A'), clip('B')] })
+  const mine = P({ arrangementClips: [clip('A', { startBeat: 8 }), clip('B', { startBeat: 8 })] })
+  const theirs = P({ arrangementClips: [clip('A', { startBeat: 16 }), clip('B', { startBeat: 16 })] })
+  const { merged, conflicts } = mergeProjects(base, mine, theirs)
+  const mixed = applyResolutions(merged, conflicts, { A: 'mine', B: 'theirs' })
+  ok('17 mixed: A=mine(8)', findClip(mixed, 'A').startBeat === 8)
+  ok('17 mixed: B=theirs(16)', findClip(mixed, 'B').startBeat === 16)
+}
+
+// 18) Resolving a delete-vs-edit conflict both ways
+{
+  const base = P({ arrangementClips: [clip('A')] })
+  const mine = P({ arrangementClips: [] })                     // I deleted A
+  const theirs = P({ arrangementClips: [clip('A', { startBeat: 8 })] })  // they edited A
+  const { merged, conflicts } = mergeProjects(base, mine, theirs)
+  ok('18 delete-conflict exists', conflicts.length === 1)
+  const keepMine = applyResolutions(merged, conflicts, { A: 'mine' })
+  ok('18 choose mine → A removed', !findClip(keepMine, 'A'))
+  const keepTheirs = applyResolutions(merged, conflicts, { A: 'theirs' })
+  ok('18 choose theirs → A kept, =8', findClip(keepTheirs, 'A')?.startBeat === 8)
+}
+
+// 19) Field conflict resolution
+{
+  const base = P({ tempo: 120 })
+  const { merged, conflicts } = mergeProjects(base, P({ tempo: 100 }), P({ tempo: 140 }))
+  ok('19 field: choose mine → 100', applyResolutions(merged, conflicts, { tempo: 'mine' }).tempo === 100)
+  ok('19 field: default → 140', applyResolutions(merged, conflicts, {}).tempo === 140)
+}
+
+// 20) Non-conflicting items survive alongside a conflict + a resolution
+{
+  const base = P({ arrangementClips: [clip('A'), clip('B'), clip('C')] })
+  const mine = P({ arrangementClips: [clip('A', { startBeat: 8 }), clip('B', { startBeat: 4 }), clip('C')] })   // A conflict, B mine-only
+  const theirs = P({ arrangementClips: [clip('A', { startBeat: 16 }), clip('B'), clip('C', { durationBeats: 2 })] }) // A conflict, C theirs-only
+  const { merged, conflicts } = mergeProjects(base, mine, theirs)
+  ok('20 exactly one conflict (A)', conflicts.length === 1 && conflicts[0].id === 'A')
+  ok('20 B mine-only kept', findClip(merged, 'B').startBeat === 4)
+  ok('20 C theirs-only kept', findClip(merged, 'C').durationBeats === 2)
+  const resolved = applyResolutions(merged, conflicts, { A: 'mine' })
+  ok('20 after resolve: A=mine, B & C intact', findClip(resolved, 'A').startBeat === 8 && findClip(resolved, 'B').startBeat === 4 && findClip(resolved, 'C').durationBeats === 2)
+  eq('20 no clips lost', clipIds(resolved), ['A', 'B', 'C'])
+}
+
 console.log(`\nproject-merge: ${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

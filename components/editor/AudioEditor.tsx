@@ -12,6 +12,7 @@ import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
+import MergeReview from './daw/MergeReview'
 import { Library, Settings, FileText, Users, Palette, Home, Code2 } from 'lucide-react'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { DawEngine } from '@/lib/daw-engine'
@@ -1791,21 +1792,9 @@ export default function AudioEditor(props: AudioEditorProps) {
         }}>↻ {syncMsg}</div>
       )}
 
-      {/* Merge conflict banner — Phase D adds the per-item "Yours vs Theirs"
-          panel; this is the bulk fallback so a conflict is always resolvable. */}
-      {pendingMerge && (
-        <div style={{
-          position: 'fixed', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 1300,
-          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '11px 16px', borderRadius: 12, maxWidth: 'calc(100vw - 32px)',
-          background: 'var(--bg-surface)', border: '1px solid rgba(245,158,11,0.6)', boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
-        }}>
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#facc15' }}>⚠ {pendingMerge.conflicts.length} change{pendingMerge.conflicts.length === 1 ? '' : 's'} conflict with the shared version</span>
-          <button onClick={() => resolveMerge(Object.fromEntries(pendingMerge.conflicts.map(c => [c.id, 'mine'])))}
-            style={{ fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>Keep mine</button>
-          <button onClick={() => resolveMerge({})}
-            style={{ fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>Keep theirs</button>
-        </div>
-      )}
+      {/* Offline-sync conflict review — the per-item "Yours vs Theirs" panel
+          (self-gates on the context's mergeConflicts). */}
+      <MergeReview />
 
       {/* Save toast */}
       {(saveStatus === 'saved' || saveStatus === 'error') && (
