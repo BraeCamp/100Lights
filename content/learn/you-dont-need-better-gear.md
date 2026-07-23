@@ -4,6 +4,7 @@ description: The honest order of what actually limits your music, why the microp
 date: 2026-07-20
 tags: gear, habits, mixing
 draft: true
+publishAt: 2026-08-11T13:00:00Z
 ---
 
 # You Don't Need Better Gear
@@ -51,6 +52,8 @@ Not opinions. Order of magnitude.
 Most people find the new one sounds bigger. Not because anything got louder — because things stopped competing. If that just happened to you, you now have direct evidence that your problem was never the signal chain.
 
 @ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fgear-competing%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fgear-rebalanced%22%2C%22question%22%3A%22Same%20sounds.%20One%20has%20elements%20fighting%20at%20the%20same%20level%3B%20the%20other%20was%20rebuilt%20into%20a%20clear%20hierarchy.%20Which%20sounds%20bigger%3F%22%2C%22explanation%22%3A%22Nothing%20got%20louder%20%E2%80%94%20things%20stopped%20competing.%20Direct%20evidence%20the%20problem%20was%20never%20the%20mic%20or%20the%20signal%20chain.%22%7D)
+
+@studio(/new?modules=audio) Open a project and rebalance it →
 
 ## What genuinely is worth money, eventually
 

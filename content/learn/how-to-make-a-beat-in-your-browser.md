@@ -4,6 +4,7 @@ description: Build a complete beat — drums, bass, and chords — in about fift
 date: 2026-07-20
 tags: beats, beginner
 draft: true
+publishAt: 2026-07-28T13:00:00Z
 ---
 
 # How to Make a Beat in Your Browser (No Downloads)
@@ -38,7 +39,7 @@ The instinct right now is to add a clap, a shaker, a second snare, a fill. Don't
 
 @ear Turn the hi-hats off entirely and let the kick and snare loop alone for thirty seconds. Most people find they don't miss them. Trust that reaction more than any tutorial.
 
-One thing that *is* worth doing: drag the snare's velocity down. Beginners hit everything at full strength, which is exactly why beginner drums sound like a machine gun and yours are about to not.
+One thing that *is* worth doing means dropping into the piano roll for a moment: click **⇢ Roll** to open the beat there, then pull down the velocity — how hard each hit plays — on a few of the snares. Beginners hit everything at full strength, which is exactly why beginner drums sound like a machine gun and yours are about to not.
 
 ## The bass has one job and it isn't melody
 
@@ -50,7 +51,7 @@ I know how that feels, and the urge to make it more interesting is enormous. Res
 
 @theory Low frequencies need time to develop before your ear registers them as weight. When bass and kick land together, you hear a single event with more body. When they land slightly apart, you hear mud — same notes, no impact. Agreement is the whole trick.
 
-Then earn some movement. Take the *last* note of the bar and move it up or down a couple of semitones. Now the loop turns around and pulls back to the start instead of just stopping and starting again.
+Then earn some movement. Take the *last* note of the bar and move it up or down a couple of semitones — one or two rows in the piano roll. Now the loop turns around and pulls back to the start instead of just stopping and starting again.
 
 Two rules keep beginners out of trouble here. Keep bass notes short, because long overlapping bass notes turn into mud. And change pitch at the end of the bar rather than the middle, because that's what makes a loop breathe instead of wander.
 

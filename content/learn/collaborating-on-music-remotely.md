@@ -4,6 +4,7 @@ description: Remote collaborations don't fail on tools — they fail on ownershi
 date: 2026-07-20
 tags: collaboration, workflow, remote
 draft: true
+publishAt: 2026-08-16T13:00:00Z
 ---
 
 # How to Actually Collaborate on a Track Remotely
@@ -30,7 +31,7 @@ Now the part actually nobody documents.
 
 Two competent people in one session will, within about forty minutes, start quietly undoing each other. Not out of ego. Out of taste. You pull the hats back because they're busy; they push them up because they carry the groove; neither of you mentions it; you both do it twice more. Nothing is said. The session gets tense in a way that gets blamed on the music.
 
-There are two layers to solving this, and 100Lights now hands you the first one directly. In the Share panel, everyone you add gets a role you can change at any moment — **Can view** (listen and follow along, free), **Can edit** (co-edit live), or **Owner** (that plus managing who else is in). Anyone who should be reacting rather than rearranging — the friend whose ear you trust, the singer who's finished tracking — goes to *Can view*: they hear every change live and leave comments, but they can't move a section by accident. That removes most of the quiet undoing on its own, because most of it comes from people having edit access they never actually needed. (Live editing is a Pro feature on the editor's account; viewing and commenting are always free.)
+There are two layers to solving this, and 100Lights now hands you the first one directly. In the Share panel, everyone you add gets a role you can change at any moment — **Can view** (listen and follow along, free), **Can edit** (co-edit live), or **Owner** (that plus managing who else is in). Anyone who should be reacting rather than rearranging — the friend whose ear you trust, the singer who's finished tracking — goes to *Can view*: they hear every change live, but they can't move a section by accident. That removes most of the quiet undoing on its own, because most of it comes from people having edit access they never actually needed. (Live editing is a Pro feature on the editor's account; viewing and following along is always free.)
 
 The second layer is a convention, and it's for the people who *do* have edit access: **one person owns the arrangement.** Not the song. The arrangement — section order, lengths, what enters and what drops. Among the editors, that person is the only one who moves, deletes, or duplicates sections. Everyone else works *inside* the sections they're given.
 
@@ -68,10 +69,12 @@ Set an end date at the start. Say it out loud in the first hour. Collaborations 
 
 @ear Play the arrangement owner's latest bounce and the version from a week earlier back to back. Don't judge them — count the differences you can identify without looking at the timeline. If you can't name three, the project has been busy rather than moving.
 
+@studio(/new?modules=audio) Share a project and co-edit live →
+
 ## Finding the other person
 
 The hard part is not the workflow. It's that most people don't have anyone to do this with.
 
 Start by making things in public. Publish samples, presets, or a finished song to the [100Lights community](https://100lights.com/community) and pay attention to whose sounds you keep pulling into your own projects — that's a better compatibility signal than any conversation. Reach out to someone whose work you've actually used. Propose one song, one deadline, one arrangement owner.
 
-The shared session, the comments, the stems all run free in the browser — live co-editing is the one piece that asks for a Pro plan on the editor's side. Either way the cost of trying a collaboration with a stranger is a link. The reason it usually still fails has never been the software.
+Watching the session and pulling the stems run free in the browser — live co-editing, and the timeline comments that go with an editing seat, are the piece that asks for a Pro plan on the editor's side. Either way the cost of trying a collaboration with a stranger is a link. The reason it usually still fails has never been the software.

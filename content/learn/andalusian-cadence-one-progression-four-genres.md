@@ -4,6 +4,7 @@ description: Four chords — Am, G, F, E — that turn into flamenco, surf rock,
 date: 2026-07-20
 tags: chords, theory, genre
 draft: true
+publishAt: 2026-08-14T13:00:00Z
 ---
 
 # One Progression, Four Genres: The Andalusian Cadence
@@ -34,7 +35,7 @@ Staircase. Every time. It only goes down, one step at a time, and it never turns
 
 Delete the strum. Give every chord exactly eight even eighth notes, machine-steady. Drop the whole thing an octave. Swap the preset to something bright and thin with a fast attack. Add reverb on the track — a lot of it, more than feels tasteful, because tasteful is not what 1962 was doing.
 
-You have just written the skeleton of "Misirlou," which is the Andalusian cadence played by a man in a hurry.
+You have just written the skeleton of a thousand surf and spy-theme cues — the Andalusian cadence played by a man in a hurry.
 
 @ear Loop your surf version four times without stopping. Somewhere around the third pass you'll notice you don't want it to end on the fourth chord — you want it to go around again. Note that feeling. It's going to be the whole point.
 
@@ -75,6 +76,8 @@ Go back to that surf-rock moment where you didn't want it to stop. Here's the me
 @theory A normal progression ends by arriving somewhere and staying. This one ends by arriving somewhere that *points* — the last chord is a question, not a period. So the loop never closes. Every time around, the final chord hands you back to the first chord as if it were doing you a favor, and the descent starts over. This is why flamenco can sit on these four chords for eleven minutes, and why a producer can loop them for four bars under a chorus without anyone getting bored. The progression is a wheel with no flat side.
 
 It also means the cadence is terrible at endings. If you want to actually stop, you have to stop on the first chord and let the fourth one resolve into it one final time — which is exactly what every song built on it does.
+
+@studio(/new?modules=audio) Build the Andalusian cadence four ways →
 
 ## What to do with this
 

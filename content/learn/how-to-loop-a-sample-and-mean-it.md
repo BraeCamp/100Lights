@@ -4,6 +4,7 @@ description: Loop points get chosen by transient, not by grid — the trade secr
 date: 2026-07-20
 tags: sampling, loops, technique
 draft: true
+publishAt: 2026-08-01T13:00:00Z
 ---
 
 # How to Loop a Sample (and Make It Sound Intentional)
@@ -26,13 +27,13 @@ So when you slice a bar out of that performance at exactly the grid line, you ar
 
 @theory Your ear does not locate a drum hit at the moment the waveform starts. It locates it at the peak of the attack, a hair afterward. This is why a kick with a slow, soft attack has to be placed earlier than a clicky one to feel like it's in the same place. Grid position and perceived position are two different things, and only one of them is audible.
 
-@ear Load any breakbeat from the sound library and set a one-bar loop by eye, snapped to the grid. Play it eight times. Now drag the loop's start point a few pixels earlier — into the silence before the kick — and play it eight more. One of those two versions makes you want to nod. That's not a measurement, that's the whole skill.
+@ear Load any breakbeat from the sound library and set a one-bar loop by eye, snapped to the grid. Play it eight times. Now drag the loop's start point a few pixels earlier — into the silence before the kick (turn snap off first, or hold **Alt** while you drag, so it doesn't jump back to the grid) — and play it eight more. One of those two versions makes you want to nod. That's not a measurement, that's the whole skill.
 
 ## Trim to the transient, not the line
 
 The working method, in order:
 
-Zoom in until the waveform stops looking like a shape and starts looking like a drawing. You want to see the individual attack — that near-vertical spike where the kick begins. Put your loop start a whisker *before* that spike, capturing a couple of milliseconds of the near-silence in front of it. Not on the spike. Before it.
+First, turn snap off — the **SNAP** control at the top of the arrangement, or just hold **Alt** while you drag — otherwise every cut jumps back to the nearest grid line and none of this works. Then zoom in until the waveform stops looking like a shape and starts looking like a drawing. You want to see the individual attack — that near-vertical spike where the kick begins. Put your loop start a whisker *before* that spike, capturing a couple of milliseconds of the near-silence in front of it. Not on the spike. Before it.
 
 Then find the same drum one bar later and do the same thing. Your loop is now one bar of that drummer's actual playing, including their actual timing, instead of one bar of the grid's opinion about it.
 
@@ -61,6 +62,8 @@ So you let it bleed. Take a slightly longer tail than you need — a few hundred
 This is why sampled records feel warm and your programmed loop feels stapled together. Not the gear. The overlap.
 
 Practically: duplicate your clip, trim the copy down to just that ringing tail, drop it on a second track at the top of the next repeat, and pull the fader down until you'd miss it if it vanished but can't quite point at it. A short reverb send from the mixer gets you partway there too, but the bleed is better, because it's the actual sound of the actual room rather than a guess at one.
+
+@studio(/new?modules=audio) Chop a loop on the transient now →
 
 ## Where this leaves you
 

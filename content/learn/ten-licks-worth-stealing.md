@@ -4,6 +4,7 @@ description: Ten short melodic and harmonic moves that carry entire sections of 
 date: 2026-07-20
 tags: melody, recipes, technique
 draft: true
+publishAt: 2026-08-12T13:00:00Z
 ---
 
 # Ten Licks Worth Stealing
@@ -60,9 +61,9 @@ Stack notes a fourth apart instead of a third. Three of them, climbing. McCoy Ty
 
 Fourths are the cheapest way to make a chord sound like it belongs to no particular key. Use them when a progression is getting too obedient.
 
-@math A major third spans four semitones; a perfect fourth spans five. Stack three fourths from D and you land on D, G, C, F — every note of D minor eleven, with no third anywhere to tell you whether you're happy or sad. That missing third is the whole effect.
+@math A major third spans four semitones; a perfect fourth spans five. Stack two fourths up from D — D, G, C — and there's no third anywhere to tell you whether you're happy or sad. (Add a third fourth, F, and you've quietly put the minor third back: D to F is three semitones. That's why the pure, keyless sound lives in just three notes.) That missing third is the whole effect.
 
-@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22Dm11%20quartal%22%2C%22pitches%22%3A%5B50%2C55%2C60%2C65%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A2%7D) A quartal voicing — D, G, C, F stacked in fourths, no third at all.
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22Quartal%20trichord%22%2C%22pitches%22%3A%5B50%2C55%2C60%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%5D%2C%22originalKey%22%3A2%7D) A quartal voicing — D, G, C stacked in fourths, no third at all.
 
 ## 7. The blues turnaround
 
@@ -89,6 +90,8 @@ Play it fast enough and it stops being a melody and becomes a sound effect. That
 Beethoven's first movement: a minor triad broken into steady triplets, one note at a time, endlessly, under a melody that barely moves. C-sharp minor, 1801, and it has never gone out of use — Lennon said outright that "Because" came from playing the Moonlight Sonata's chords backwards.
 
 Program a minor triad as continuous triplet arpeggios. Put a melody of long held notes on top. Do nothing else for eight bars. It will sound composed, and it took you ninety seconds.
+
+@studio(/new?modules=audio) Steal one of these licks now →
 
 ## Where to put them
 

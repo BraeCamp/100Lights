@@ -4,6 +4,7 @@ description: Most producers arrange too early and kill the idea. Session view is
 date: 2026-07-20
 tags: workflow, arrangement, session
 draft: true
+publishAt: 2026-08-02T13:00:00Z
 ---
 
 # Session View vs Arrangement View (and When to Switch)
@@ -45,6 +46,8 @@ There's a second trigger, and it's a sound rather than a milestone: the moment y
 @ear Set your clips going and play the song through once with your hands, no editing, no undo. Record nothing. Then do it again and pay attention only to where you got bored — not where it sounded bad, where your attention *left*. That's almost never where you thought it was. Fix that spot before you touch the timeline, because in the timeline it'll be buried under twelve other edits.
 
 Everything I just described works in the free browser studio — [100Lights](https://100lights.com) has both views, and clips move between them without exporting anything.
+
+@studio(/new?modules=audio) Sketch a song in session view →
 
 ## What the arrangement view is for, since we're here
 

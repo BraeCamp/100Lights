@@ -1,9 +1,10 @@
 ---
 title: Can You Hear the Difference?
-description: Five blind listening tests you run on yourself — compression, EQ, reverb, and one decibel — with the answers withheld until after you commit to a guess.
+description: Four blind listening tests you run on yourself — compression, EQ, reverb, and one decibel — with the answers withheld until after you commit to a guess.
 date: 2026-07-20
 tags: ear-training, mixing, listening
 draft: true
+publishAt: 2026-08-15T13:00:00Z
 ---
 
 # Can You Hear the Difference?
@@ -74,11 +75,13 @@ Now try three decibels. Most people hear three. The gap between "can't hear one"
 
 @math Three decibels is roughly double the power, and ten is the rough point where most listeners say "twice as loud." Those two facts are unrelated and both true, which is why the numbers help less than you'd hope.
 
+@studio(/new?modules=audio) Run the blind listening tests →
+
 ## What to do with all this
 
 Run these drills on records you already know inside out. Take something with an unmistakable mix — *Bad Guy*, or *Seven Nation Army*, or any Steely Dan — and try to describe what the snare's reverb is doing before you try it on your own track. Known material is a better teacher than your own work, because with your own work you can't tell the difference between "this sounds right" and "this sounds familiar."
 
-All five drills run start to finish in the free studio at [100Lights](https://100lights.com) — you need a loop, a mixer, and the bypass button, and that's it. Sends and returns make the reverb test easier to set up: one reverb on a return, two saved decay settings, flip between them.
+All four drills run start to finish in the free studio at [100Lights](https://100lights.com) — you need a loop, a mixer, and the bypass button, and that's it. Sends and returns make the reverb test easier to set up: one reverb on a return, two saved decay settings, flip between them.
 
 Then go argue with someone. Post a loop to the [community](https://100lights.com/community) with two versions and let people guess which is which — you'll learn more from the people who guess wrong than from the ones who guess right, because their wrong answers will name things you weren't listening for.
 

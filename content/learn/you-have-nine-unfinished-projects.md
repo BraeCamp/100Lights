@@ -4,6 +4,7 @@ description: A guide to finishing one track badly instead of starting nine perfe
 date: 2026-07-20
 tags: workflow, finishing, habits
 draft: true
+publishAt: 2026-08-17T13:00:00Z
 ---
 
 # You Have Nine Unfinished Projects
@@ -65,6 +66,8 @@ So you have to do it artificially. Set a rule now, before you're inside the work
 Then — and this is the part that actually matters — do not open it again for thirty days.
 
 @ear Play your last finished bounce next to a commercial track you love, at the same volume, and don't listen for quality. Listen for *events*: count how many times something new arrives in the first sixty seconds of each. That gap, not the mix, is what you're hearing when you think yours sounds "unfinished."
+
+@studio(/new?modules=audio) Open a loop and finish it today →
 
 ## What changes
 

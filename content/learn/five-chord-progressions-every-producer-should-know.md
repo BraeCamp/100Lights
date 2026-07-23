@@ -4,6 +4,7 @@ description: Five progressions behind Let It Be, Zombie, Stand By Me and Fly Me 
 date: 2026-07-20
 tags: chords, theory
 draft: true
+publishAt: 2026-08-03T13:00:00Z
 ---
 
 # 5 Chord Progressions Every Producer Should Know
@@ -58,7 +59,7 @@ That's **I–vi–IV–V**, the doo-wop changes, every fifty-year-old slow dance
 
 ## 4. The one with the held breath
 
-@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22Dm7%22%2C%22pitches%22%3A%5B50%2C53%2C57%2C60%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22G7%22%2C%22pitches%22%3A%5B47%2C50%2C53%2C59%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22Cmaj7%22%2C%22pitches%22%3A%5B48%2C52%2C55%2C59%5D%2C%22beat%22%3A8%2C%22dur%22%3A8%7D%5D%2C%22originalKey%22%3A0%7D) Play ii–V–I and change the key
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22Dm7%22%2C%22pitches%22%3A%5B50%2C53%2C57%2C60%5D%2C%22beat%22%3A0%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22G7%22%2C%22pitches%22%3A%5B43%2C47%2C50%2C53%5D%2C%22beat%22%3A4%2C%22dur%22%3A4%7D%2C%7B%22name%22%3A%22Cmaj7%22%2C%22pitches%22%3A%5B48%2C52%2C55%2C59%5D%2C%22beat%22%3A8%2C%22dur%22%3A8%7D%5D%2C%22originalKey%22%3A0%7D) Play ii–V–I and change the key
 
 Three chords, and the last one lands like someone finally exhaling. This is the **ii–V–I**, the cadence jazz is built out of.
 
@@ -83,6 +84,8 @@ This is the **Andalusian cadence**, and it's doing something sneaky at the end.
 @theory The final chord is major in a minor world. That single borrowed note is out of key on purpose, and it's the reason this reads as flamenco rather than as a sad pop loop. Take it away and you have a perfectly nice progression that sounds like nothing in particular.
 
 *Hit the Road Jack*. The intro to *Sultans of Swing*. *Stray Cat Strut*. Drama and momentum without needing a chorus lift.
+
+@studio(/new?modules=audio) Build these five progressions now →
 
 ## What to do with this
 

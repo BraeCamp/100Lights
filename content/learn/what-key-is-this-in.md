@@ -4,6 +4,7 @@ description: Find the key of any song by ear in about twenty seconds, using your
 date: 2026-07-20
 tags: theory, ear, key
 draft: true
+publishAt: 2026-08-04T13:00:00Z
 ---
 
 # What Key Is This In?
@@ -40,9 +41,9 @@ You will hunt. It'll take you six or seven tries the first time and you'll feel 
 
 ## Major or minor: the second question
 
-You have the note. The key is either that note's major or that note's minor, and there's exactly one way to tell that doesn't involve counting anything.
+You have the note. The key is either that note's major or that note's minor, and there's exactly one way to tell — it comes down to two notes sitting right next to each other.
 
-Play your root note. Then play the note two white-key steps above it and listen. Then go back and play the note *one step lower than that* — the one squeezed in between, usually a black key. One of those two will sound like it belongs in the song. The other will sound wrong in a way that's almost physical.
+Play your root note. Now count up four keys — every key, black and white — and play that note. Then play the key just below it, three up from your root. Those are your two candidates, and they sit right next to each other. One will sound like it belongs in the song. The other will sound wrong in a way that's almost physical.
 
 The higher one is the major third. The lower one is the minor third. Whichever one fits, that's your key.
 
@@ -52,13 +53,15 @@ The third is the single most opinionated note in music. Everything else in the s
 
 Some songs will fight you. "Creep" is a real one — it's in G major but it keeps borrowing a chord that isn't, which is exactly why it sounds haunted. Modal tracks will also refuse to settle. When a song genuinely won't commit, that's usually the interesting thing about it, not a failure of your ears.
 
+@studio(/new?modules=audio) Find the key of your favorite song →
+
 ## What about all those sharps and flats
 
 Skip this entire section if you want. Nothing later depends on it. You can find the key of any song for the rest of your life without knowing a single key signature, and plenty of working producers do exactly that.
 
 @math A key signature is bookkeeping. Start at C, which has none, and every time you move up a fifth you add one sharp: C to G is one sharp, G to D is two, D to A is three, A to E is four. Going the other direction — down a fifth — you add flats: C to F is one flat, F to B-flat is two. That loop is the circle of fifths, and it closes after twelve steps because twelve fifths stacked up land back where you started. Minor keys share signatures with the major key three semitones above them, so A minor and C major both have zero sharps, and F-sharp minor and A major both have three.
 
-That paragraph is genuinely useful for writing music down and nearly useless for hearing it. Which is why it's the last thing here instead of the first.
+Key signatures are genuinely useful for writing music down and nearly useless for hearing it. Which is why they're the last thing here instead of the first.
 
 ## The drill
 

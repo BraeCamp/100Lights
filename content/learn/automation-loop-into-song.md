@@ -4,6 +4,7 @@ description: Your track isn't static because it's missing an instrument. It's st
 date: 2026-07-20
 tags: automation, arrangement, mixing
 draft: true
+publishAt: 2026-08-10T13:00:00Z
 ---
 
 # Automation Is the Difference Between a Loop and a Song
@@ -45,6 +46,8 @@ Long. Longer than you think. This is the single most common error and it's not c
 The instinct is to automate over one or two bars because that's the timescale you're editing at — you're zoomed in, you're looking at a bar, you draw a bar-length move. Zoom out. Most of the automation that makes a track feel like a track spans sixteen to thirty-two bars, and at that length the listener experiences it as *the song developing* rather than as *an effect happening*.
 
 A starting point rather than gospel: filter opens across a whole section, volume rides across a phrase, send moves across two or four bars. Anything under one bar is a transition effect, not automation.
+
+@studio(/new?modules=audio) Automate a loop into a song →
 
 @math At 128 BPM, one bar of 4/4 is 1.875 seconds — so a 16-bar filter sweep runs 30 seconds and a 32-bar one runs a full minute. Bar length in seconds is 240 divided by BPM for 4/4. Worth calculating once so you know what you're actually asking a listener to sit through: a "slow" sweep you drew across four bars is over in seven and a half seconds.
 

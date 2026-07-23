@@ -4,6 +4,7 @@ description: Count the bars in the songs you love before anyone explains anythin
 date: 2026-07-20
 tags: arrangement, structure, theory
 draft: true
+publishAt: 2026-08-07T13:00:00Z
 ---
 
 # Why Everything Is Eight Bars
@@ -34,7 +35,7 @@ Interesting that it feels like an event, isn't it. You removed something. The li
 
 Let's use records where the count is unambiguous.
 
-"Billie Jean" gives you the drum groove alone for four bars, then the bass enters at bar 5. Four. "Smells Like Teen Spirit" opens on the clean guitar figure for four bars, then the whole band lands. Four. "Superstition" runs the clavinet vamp for a long stretch, but count in eights and every arrival sits exactly on one. "Get Lucky" — eight-bar cycles the entire song, top to bottom, no exceptions.
+"Billie Jean" lets the drum groove ride alone before the bassline slides in underneath and the song locks in. "Smells Like Teen Spirit" opens on the clean guitar figure for four bars, then the whole band lands. Four. "Superstition" runs the clavinet vamp for a long stretch, but count in eights and every arrival sits exactly on one. "Get Lucky" — eight-bar cycles the entire song, top to bottom, no exceptions.
 
 Now the counterexample, because there always is one: "Bohemian Rhapsody" doesn't do this, and neither do most of the sections in "Paranoid Android." Both are famous specifically for not doing it. That should tell you something about how strong the default is — you get a reputation for breaking it.
 
@@ -51,6 +52,8 @@ There's a body reason underneath the mental one. Phrases at this length are roug
 @theory The corollary is the part most producers miss: eight bars is also how long it takes for something unchanging to stop being interesting. The ear's attention decays on a schedule. Not because the sound got worse — because the sound stayed the same and the brain finished categorizing it. Once it's categorized, it's furniture. This is why your four-bar loop sounded great for the first minute and dead by the fifth. It didn't change. You did.
 
 @math If you want the arithmetic: at 120 BPM in 4/4, one beat is 0.5 seconds, one bar is 2 seconds, and eight bars is 16 seconds. At 90 BPM, eight bars is about 21 seconds; at 174 (drum and bass), about 11. Sixteen bars at 120 is 32 seconds — which is close to the length of a standard verse, and not by accident. If your track is 128 BPM and you want a 30-second intro, that's 16 bars exactly. Every one of these numbers is deletable; the point stands without them.
+
+@studio(/new?modules=audio) Write an 8-bar loop now →
 
 ## What to actually do at bar 8
 

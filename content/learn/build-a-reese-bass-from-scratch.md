@@ -5,6 +5,7 @@ date: 2026-07-20
 tags: sound-design, bass, synthesis
 voice: insider
 draft: true
+publishAt: 2026-08-13T13:00:00Z
 ---
 
 # Build a Reese Bass From Scratch
@@ -46,7 +47,7 @@ But you don't have to leave this page to build it. Here's the whole patch, live.
 
 @theory Two notes at the same pitch add up to one louder note. Two notes almost at the same pitch can't agree on where they are, so they take turns reinforcing and erasing each other — loud, thin, loud, thin — and that slow pulsing is what your ear reads as movement. The further apart they are, the faster the pulse, until it stops sounding like motion and starts sounding like two separate instruments playing badly together. The Reese lives in the narrow band right before that happens.
 
-@math The beat rate is just the difference between the two frequencies. One cent is a hundredth of a semitone, so nine cents on a note near 92 Hz puts the second oscillator roughly half a hertz away — one full swell every two seconds. Notice that the beat rate scales with pitch: play the same patch two octaves up and the swelling doubles twice, which is exactly why a Reese sounds sluggish and menacing down low and jittery up high.
+@math The beat rate is just the difference between the two frequencies. One cent is a hundredth of a semitone, so nine cents on a low note near 41 Hz puts the second oscillator about a fifth of a hertz away — one full swell every four or five seconds. Notice that the beat rate scales with pitch: play the same patch two octaves up and the swelling speeds up fourfold, which is exactly why a Reese sounds sluggish and menacing down low and jittery up high.
 
 **Filter: low-pass at 620 Hz, resonance 6.** This is the number that surprises people. Six hundred and twenty hertz is *dark* — you're throwing away most of the saw's harmonics. The resonance at Q 6 is high enough to put an audible bump right at the cutoff, which is what gives the patch its vowel-like quality, that "ooooo" that sits under the drums. Turn resonance to 1 and the patch goes polite immediately. Turn it to 12 and it starts whistling on its own.
 

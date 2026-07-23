@@ -4,6 +4,7 @@ description: A DAW is four things — a timeline, a piano roll, a mixer, and an 
 date: 2026-07-20
 tags: beginner, daw, basics
 draft: true
+publishAt: 2026-07-27T13:00:00Z
 ---
 
 # What Is a DAW, Really?
@@ -63,6 +64,8 @@ It sounds trivial. It is not — a project file is worthless outside the softwar
 @math WAV at 44.1 kHz is the CD and streaming standard; 48 kHz is the video standard, because film runs at frame rates that divide into it cleanly. Stereo 24-bit WAV runs about 15 MB per minute at 44.1 kHz, so a three-minute song is roughly 45 MB before any compression.
 
 Stems — one file per track, exported as a zip — matter the moment you want someone else to mix your song, or you want to rebuild it somewhere else. MIDI export is the notes without the sounds, which is how you hand a melody to a collaborator who hates your synth choice.
+
+@studio(/new?modules=audio) Open a tab and use all four →
 
 ## The ninety percent you're allowed to ignore
 

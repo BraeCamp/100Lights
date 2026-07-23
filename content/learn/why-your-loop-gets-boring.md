@@ -4,6 +4,7 @@ description: Your loop isn't missing a layer — it's missing an absence. Three 
 date: 2026-07-20
 tags: arrangement, loops, technique
 draft: true
+publishAt: 2026-08-09T13:00:00Z
 ---
 
 # Why Your Loop Gets Boring After 8 Bars
@@ -61,6 +62,8 @@ Do the same with the bass. Bars 1–3 land on the root. Bar 4 lands on the fifth
 Most beginner loops are four bars of one bar copy-pasted. If that's what yours is, the boredom isn't at bar 8 — it started at bar 2 and you didn't notice until bar 8 because you were still enjoying the sound design.
 
 @ear Play your loop and count out loud: one-two-three-four, two-two-three-four, three, four. If you can't tell from listening alone which of the four bars you're in, your loop has no internal shape. Now go change one note in bar four and count again. You'll know exactly where you are.
+
+@studio(/new?modules=audio) Subtract from your loop now →
 
 ## The uncomfortable part
 

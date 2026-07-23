@@ -4,6 +4,7 @@ description: Your mix isn't muddy because you need better plugins. It's muddy be
 date: 2026-07-20
 tags: mixing, eq, beginner
 draft: true
+publishAt: 2026-07-31T13:00:00Z
 ---
 
 # Mixing 101: Volume, Pan, and EQ Before Anything Else
@@ -57,7 +58,7 @@ Now EQ — and only subtractive EQ. You're removing what's in the way, not addin
 
 Almost every muddy mix has the same disease: six different instruments all producing energy in the low mids, that region where pianos, guitars, vocals, snares and synth pads all live. Individually they're fine. Stacked, they're a fog.
 
-The move is to decide what owns each region and get everything else out of its way. Bass owns the bottom. So take a high-pass filter — a shelf that removes everything below a chosen point — and put one on almost every other track, pulling out low end those tracks weren't using anyway. Guitars, pads, vocals, hats, all of them. You will not hear anything disappear. You will hear the bass and kick suddenly become clear, because they finally have the basement to themselves.
+The move is to decide what owns each region and get everything else out of its way. Bass owns the bottom. So take a high-pass filter — it removes everything below a chosen point — and put one on almost every other track, pulling out low end those tracks weren't using anyway. Guitars, pads, vocals, hats, all of them. You will not hear anything disappear. You will hear the bass and kick suddenly become clear, because they finally have the basement to themselves.
 
 @ab(%7B%22plainSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fmix-mud%22%2C%22treatedSrc%22%3A%22%2Fapi%2Fdemo-audio%2Fmix-hp%22%2C%22question%22%3A%22One%20mix%20high-passes%20everything%20except%20the%20kick%20and%20bass.%20Which%20one%2C%20and%20does%20anything%20sound%20missing%3F%22%2C%22explanation%22%3A%22Nothing%20disappears%20%E2%80%94%20you%20gave%20the%20kick%20and%20bass%20the%20basement%20to%20themselves%2C%20which%20is%20why%20subtractive%20EQ%20reads%20as%20clarity%20rather%20than%20change.%22%7D)
 
@@ -65,7 +66,9 @@ Then hunt. Sweep a narrow boost across a track until you find the frequency that
 
 @math Rough starting points, all adjustable by ear: high-pass hats and cymbals around 400 Hz, most synths and guitars around 100–150 Hz, and a lead vocal around 80–100 Hz. Boxiness usually hides between 200 and 500 Hz; harshness between 2 and 4 kHz. Cuts of 3–6 dB with a moderately narrow bandwidth do more than most people expect. None of these are laws — they're where to point the flashlight first.
 
-Every one of those numbers can be ignored. Find the ugly frequency by ear, turn it down until it stops being ugly, move on.
+The reliable method needs none of it: find the ugly frequency by ear, turn it down until it stops being ugly, move on.
+
+@studio(/new?modules=audio) Mix a track faders-first right now →
 
 ## Then, and only then
 

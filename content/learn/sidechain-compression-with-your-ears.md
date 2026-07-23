@@ -4,6 +4,7 @@ description: Before you learn what sidechain compression is, you're going to hea
 date: 2026-07-20
 tags: mixing, compression, technique
 draft: true
+publishAt: 2026-08-06T13:00:00Z
 ---
 
 # Sidechain Compression, Explained With Your Ears
@@ -64,7 +65,9 @@ Once you can hear it, the mixer version is easy to reach for. Put a compressor o
 
 @math If you want the arithmetic: a starting point for a clean, functional duck is a ratio around 4:1, threshold set so the meter shows 4–6 dB of gain reduction on each kick, the fastest attack available, and release timed to the tempo. At 120 BPM a quarter note is 500 ms, so a release of roughly 150–250 ms lets the bass recover just before the next beat. Shorten the release and it snaps; lengthen it past the beat and the bass never fully returns, which sounds gutless. For the audible French house pump, push the ratio higher and the gain reduction toward 10 dB and stop pretending it's a fix.
 
-Ignore all of that if it's noise to you. Set it by ear: increase the effect until you can clearly hear the pumping, then back it off until you can only feel it. That's the setting. Everyone arrives at the same place eventually, the numbers just get you there on a bad day.
+You can set the whole thing by ear instead. Increase the effect until you can clearly hear the pumping, then back it off until you can only feel it. That's the setting. Everyone arrives at the same place eventually; the numbers just get you there on a bad day.
+
+@studio(/new?modules=audio) Set up a sidechain by ear →
 
 ## What you actually learned
 

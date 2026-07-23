@@ -4,6 +4,7 @@ description: Six experiments in the piano roll. Draw a note, move it, listen to 
 date: 2026-07-20
 tags: melody, piano-roll, beginner
 draft: true
+publishAt: 2026-07-30T13:00:00Z
 ---
 
 # Writing Melodies Without Touching a Piano
@@ -85,6 +86,8 @@ Here's the one that surprises people. Take your phrase and drag one middle note 
 The sourness mostly evaporates. Passing quickly through a note that doesn't belong is not an error — it's an ornament, and jazz, blues, and basically all of Motown are built on notes that would be "wrong" if you held them and are delicious because you don't.
 
 @theory Your ear judges a note largely by how long it commits to it. Brief dissonance reads as movement and colour; sustained dissonance reads as a mistake. This is why the same pitch can be a bad note or the best note in the bar depending only on what surrounds it and how long it stays.
+
+@studio(/new?modules=audio) Open the piano roll and draw your first melody →
 
 ## What you actually learned
 

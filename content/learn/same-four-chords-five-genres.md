@@ -4,6 +4,7 @@ description: Take I-V-vi-IV and rebuild it as pop, neo-soul, cinematic, blues, a
 date: 2026-07-20
 tags: chords, theory, arrangement
 draft: true
+publishAt: 2026-08-08T13:00:00Z
 ---
 
 # The Same Four Chords, Five Different Songs
@@ -48,7 +49,7 @@ Use a pad with a slow attack. Add reverb, generously. Add nothing else. No drums
 
 @theory Wide spacing reads as *large*. The ear estimates the size of a space from how far apart its lowest and highest sounds are, the same way you judge a room by its echo. Cram the notes together and the music sounds like it's coming from an object; pull them apart and leave the middle empty and it sounds like it's coming from a place. Film composers voice this way constantly, and it costs nothing — it's the same three notes, moved.
 
-@math In the recipe as it loads, the C triad is MIDI 60, 64, 67 — all within seven semitones. The cinematic voicing of the same chord would be 36, 72, 76: a span of forty semitones, more than three octaves, with a two-octave hole in the middle. Identical pitch classes. Identical chord. Nothing else about it is the same.
+@math In the recipe as it loads, the C triad is MIDI 60, 64, 67 — all within seven semitones. The cinematic voicing of the same chord would be 36, 72, 76: a span of forty semitones, more than three octaves, with a three-octave hole in the middle. Identical pitch classes. Identical chord. Nothing else about it is the same.
 
 ## Four: blues
 
@@ -71,6 +72,8 @@ Then automate a low-pass filter on the arp so it opens gradually across eight ba
 @ear Loop it for eight bars with the filter opening. Notice you stopped hearing chords. You're hearing *texture that is slowly brightening*, and the harmony has become the thing underneath rather than the thing you're listening to.
 
 @theory This is the trade electronic music makes. Fast repeating notes at a steady rate stop registering as individual events after a few seconds — the ear bundles them into a single continuous object. Once that happens, changes in the object's *quality* (brightness, width, movement) become more perceptually interesting than changes in its notes. So the arrangement moves attention off harmony and onto timbre, and the chords, which are still doing all the emotional work, get to run the whole track without ever being noticed.
+
+@studio(/new?modules=audio) Reshape these four chords into five genres →
 
 ## What this proves
 

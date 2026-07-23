@@ -4,6 +4,7 @@ description: Your bedroom vocal doesn't sound bad because of your mic. It sounds
 date: 2026-07-20
 tags: recording, vocals, beginner
 draft: true
+publishAt: 2026-07-29T13:00:00Z
 ---
 
 # Recording Vocals at Home With Just a Browser
@@ -66,9 +67,11 @@ Then comp. Pull the best line from take three, the best word from take six, and 
 
 If you've ever recorded a vocal that felt perfectly in time while you sang it and landed noticeably ahead of the beat on playback, you have not lost your sense of rhythm. Your computer took a few milliseconds to get your voice from the mic to the disk, and it stamped the audio where it arrived, not where you sang it.
 
-100Lights does latency compensation, shifting the take back by the measured round-trip delay so it lands where you actually performed it. Turn it on and forget it. If a take still feels a hair off against the drums, nudge the whole clip — that's a musical decision now, not a technical one.
+100Lights does latency compensation automatically, shifting the take back by the measured round-trip delay so it lands where you actually performed it. Leave it on and forget it. If a take still feels a hair off against the drums, nudge the whole clip — that's a musical decision now, not a technical one.
 
 @theory Vocals that sit a fraction behind the beat feel relaxed and soulful; ones that sit a fraction ahead feel urgent and pushy. Neither is wrong. Rap and gospel are built on this. But you want that to be a choice you made, not an artifact of your hardware.
+
+@studio(/new?modules=audio) Arm a track and record your first take →
 
 ## The part where you actually do it
 

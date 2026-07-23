@@ -4,6 +4,7 @@ description: Free sample packs are why so much bedroom music sounds the same. On
 date: 2026-07-20
 tags: sounds, sampling, workflow
 draft: true
+publishAt: 2026-08-05T13:00:00Z
 ---
 
 # Stop Downloading Sample Packs
@@ -39,6 +40,8 @@ Then mangle it. Pitch it down four octaves and a stapler becomes a kick with a w
 The word for this is not *sound design*. It's just *deciding*. Every one of those choices is a decision a pack author made for you and charged you nothing for, which should have been your first clue.
 
 @math If you want a sample to land an octave lower, halve its playback rate — 2x length, half the frequency. Four octaves down is a rate of 1/16, which stretches a 0.2-second stapler click into a 3.2-second groan. Pitching *up* a perfect fifth is a rate of 1.5. None of this matters if you'd rather just drag the pitch control until it sounds right, which is what most people do and what I do.
+
+@studio(/new?modules=audio) Record a real object and mangle it →
 
 ## So what's the 1000+ sound library for, then
 
