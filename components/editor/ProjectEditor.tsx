@@ -25,6 +25,7 @@ import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
 import type { DawProject } from '@/lib/daw-types'
 import { SmallScreenGate } from './SmallScreenGate'
+import StudioGuide from './StudioGuide'
 import SuggestionsReview from './SuggestionsReview'
 import type { AudioTrack } from './AudioEditor'
 
@@ -762,6 +763,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
   if (hasAudio)      return (
     <>
+      <StudioGuide />
       <><SmallScreenGate />{starterLoading ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>Opening starter…</div> : <AudioEditor {...audioProps} />}</>
       {syncItems && <AudioSyncModal items={syncItems} onConfirm={handleSyncConfirm} onSkip={handleSyncSkip} />}
       {isOwner && liveProjectId && <SuggestionsReview projectId={liveProjectId} currentDaw={savedData?.dawProject} />}

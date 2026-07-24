@@ -75,7 +75,7 @@ Now try three decibels. Most people hear three. The gap between "can't hear one"
 
 @math Three decibels is roughly double the power, and ten is the rough point where most listeners say "twice as loud." Those two facts are unrelated and both true, which is why the numbers help less than you'd hope.
 
-@studio(/new?modules=audio) Run the blind listening tests →
+@studio(/new?modules=audio&guide=blind-test) Run your own blind test →
 
 ## What to do with all this
 
