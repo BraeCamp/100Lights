@@ -6,6 +6,7 @@
     "dev": "next dev",
     "test:merge": "tsc lib/project-merge.ts --outDir .test-build --rootDir lib --target es2022 --module esnext --moduleResolution bundler --skipLibCheck && node scripts/project-merge.test.mjs",
     "validate:articles": "node scripts/validate-articles.mjs",
+    "capture-tutorials": "node scripts/capture-tutorials.mjs",
     "prebuild": "node scripts/validate-articles.mjs",
     "build": "next build",
     "start": "next start",
@@ -43,6 +44,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
+    "playwright": "^1.61.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
