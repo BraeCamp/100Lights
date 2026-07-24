@@ -124,6 +124,21 @@ const DRIVERS = {
     await gotoStudio()
     await shoot('swing', 0, '[data-help-id="swing"]')  // step 2 is text-only
   },
+  tracks: async () => {
+    await gotoStudio()  // the demo song's tracks make these header controls visible
+    await shoot('tracks', 0, '[data-help-id="arm"]')
+    await shoot('tracks', 1, '[data-help-id="mute"]')
+    await shoot('tracks', 2, '[data-help-id="solo"]')
+    await shoot('tracks', 3, '[data-help-id="track-settings"]')
+  },
+  returns: async () => {
+    await gotoStudio()
+    await shoot('returns', 0, '[data-help-id="add-return"]')  // step 2 is text-only
+  },
+  'key-scale': async () => {
+    await gotoStudio()
+    await shoot('key-scale', 0, '[data-help-id="key-scale"]')  // step 2 is text-only
+  },
 }
 
 const slugs = ONLY ? [ONLY] : Object.keys(DRIVERS)

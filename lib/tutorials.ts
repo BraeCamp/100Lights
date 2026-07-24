@@ -104,6 +104,38 @@ export const TUTORIALS: Tutorial[] = [
       { text: 'A little goes a long way: most grooves live between a subtle nudge and a full triplet shuffle. Trust your ears over the number.' },
     ],
   },
+  {
+    slug: 'tracks',
+    title: 'Arm, Mute, and Solo a Track',
+    description: 'The per-track controls in the 100Lights studio — record-enable, mute, solo, and the gear that opens a track’s devices.',
+    tagline: 'The per-track controls: record-enable, silence, isolate.',
+    steps: [
+      { text: 'Each track header has an arm (record-enable) button. Armed tracks capture audio when you hit record — and several tracks can record at once.', helpId: 'arm' },
+      { text: 'M mutes a track, silencing just it. Press it again to bring it back.', helpId: 'mute' },
+      { text: 'S solos a track — silencing everything else so you can hear that part in context. Solo several at once to audition a group.', helpId: 'solo' },
+      { text: 'The gear (⚙) opens the track’s devices and instrument in the panel below; right-click the header for rename, color, freeze, and more.', helpId: 'track-settings' },
+    ],
+  },
+  {
+    slug: 'returns',
+    title: 'Add a Reverb Send (Return Track)',
+    description: 'Add a return track in the 100Lights studio so one shared reverb or delay serves every channel — the clean way to add space to a mix.',
+    tagline: 'One shared effect any track can send to.',
+    steps: [
+      { text: 'Add a return track with +Ret. Put a reverb or delay on it once, and any track can send signal to it — instead of loading the same effect on every channel.', helpId: 'add-return' },
+      { text: 'Then each track’s send sets how much of it goes to the return. That’s how you give a whole mix one cohesive space without muddying it.' },
+    ],
+  },
+  {
+    slug: 'key-scale',
+    title: 'Set the Key and Scale',
+    description: 'Set the project key and scale in the 100Lights studio so instruments, pads, and pitch tools all stay in tune together.',
+    tagline: 'Lock the project to a key so everything stays in tune.',
+    steps: [
+      { text: 'Set the project’s root note and scale here. Instruments, pads, and the pitch tools all reference it, so what you play and program stays in key together.', helpId: 'key-scale' },
+      { text: 'Working in A minor? Set it once and the piano roll highlights the in-key notes, so wrong notes are much harder to hit by accident.' },
+    ],
+  },
 ]
 
 export function getTutorial(slug: string): Tutorial | undefined {
