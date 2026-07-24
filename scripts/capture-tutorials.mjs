@@ -21,7 +21,7 @@ import net from 'node:net'
 const ROOT = process.cwd()
 const PORT = 3210
 const ONLY = process.argv[2] || null
-const MARGIN = 130
+const MARGIN = 200  // pull back a bit so the button's location in the UI is clear
 const VW = 1440, VH = 900
 
 function portUp(port) {
@@ -91,6 +91,38 @@ const DRIVERS = {
     await page.waitForTimeout(900)
     await shoot('fx', 2, '[data-help-id="add-device"]')
     // step 4 (bypass) is text-only — no screenshot
+  },
+  // The rest point at always-visible controls, so the driver is just shoots
+  // (no state to set up). Shoot indices match the steps in lib/tutorials.ts —
+  // text-only steps are skipped.
+  transport: async () => {
+    await gotoStudio()
+    await shoot('transport', 0, '[data-help-id="play"]')
+    await shoot('transport', 1, '[data-help-id="loop"]')
+    await shoot('transport', 2, '[data-help-id="rewind"]')
+  },
+  tempo: async () => {
+    await gotoStudio()
+    await shoot('tempo', 0, '[data-help-id="bpm"]')
+    await shoot('tempo', 2, '[data-help-id="metronome"]')  // step 1 (TAP) is text-only
+  },
+  views: async () => {
+    await gotoStudio()
+    await shoot('views', 0, '[data-help-id="view-session"]')
+    await shoot('views', 1, '[data-help-id="view-arrangement"]')
+    await shoot('views', 2, '[data-help-id="view-mixer"]')
+  },
+  sounds: async () => {
+    await gotoStudio()
+    await shoot('sounds', 0, '[data-help-id="sound-library"]')  // step 2 is text-only
+  },
+  export: async () => {
+    await gotoStudio()
+    await shoot('export', 0, '[data-help-id="export"]')  // step 2 is text-only
+  },
+  swing: async () => {
+    await gotoStudio()
+    await shoot('swing', 0, '[data-help-id="swing"]')  // step 2 is text-only
   },
 }
 

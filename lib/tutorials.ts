@@ -41,6 +41,69 @@ export const TUTORIALS: Tutorial[] = [
       { text: 'Now play the track and toggle the effect’s Bypass on and off. That instant before-and-after is how you learn what an effect really does — the same blind-test idea, on your own sound.' },
     ],
   },
+  {
+    slug: 'transport',
+    title: 'Play, Loop, and Move Around',
+    description: 'Control playback in the 100Lights studio — start and stop, loop a section to work on it, and jump back to the top.',
+    tagline: 'Start, stop, loop a section, and navigate your project.',
+    steps: [
+      { text: 'Press Play to start from the playhead — or just hit the spacebar from anywhere. Play again (or Space) to stop.', helpId: 'play' },
+      { text: 'Turn on Loop to repeat a section over and over while you tweak sounds and levels underneath it.', helpId: 'loop' },
+      { text: 'Jump the playhead straight back to the start of the project with Rewind — or press the Home key.', helpId: 'rewind' },
+    ],
+  },
+  {
+    slug: 'tempo',
+    title: 'Set Your Tempo',
+    description: 'Set the project tempo in the 100Lights studio — type an exact BPM or tap it in — and turn on the metronome.',
+    tagline: 'Dial in the BPM, tap a tempo, and toggle the click.',
+    steps: [
+      { text: 'Click the BPM readout and type an exact tempo. The grid, the metronome, and playback all follow it.', helpId: 'bpm' },
+      { text: 'Not sure of the tempo? Hit TAP along to a track and 100Lights measures the BPM from the timing of your taps.' },
+      { text: 'Toggle the Metronome to hear a click on every beat while you play or record. Press M to flip it from anywhere.', helpId: 'metronome' },
+    ],
+  },
+  {
+    slug: 'views',
+    title: 'Session, Arrangement, and Mixer Views',
+    description: 'The three ways to see a project in the 100Lights studio — a clip grid for jamming, a timeline for building, and a mixer for balancing.',
+    tagline: 'The three views, and when to use each.',
+    steps: [
+      { text: 'Session view is a grid of clips you launch scene by scene — great for sketching ideas and jamming before you commit anything.', helpId: 'view-session' },
+      { text: 'Arrangement view is the timeline where clips sit on tracks against bars and beats — where you build the actual song.', helpId: 'view-arrangement' },
+      { text: 'Mixer view gives every track a fader, pan, mute/solo, and meters — the place to balance the whole mix in one screen.', helpId: 'view-mixer' },
+    ],
+  },
+  {
+    slug: 'sounds',
+    title: 'Find and Add Sounds',
+    description: 'Browse the built-in sound library in the 100Lights studio and drop sounds straight onto your tracks.',
+    tagline: 'Browse the library and drop sounds onto tracks.',
+    steps: [
+      { text: 'Open the Sound Library (or press B) to browse thousands of built-in sounds, organized into folders.', helpId: 'sound-library' },
+      { text: 'Drag any sound straight onto a track in the arrangement and it drops in as a clip. Save your own captures back into the library too.' },
+    ],
+  },
+  {
+    slug: 'export',
+    title: 'Export Your Finished Track',
+    description: 'Render a project to an audio file in the 100Lights studio — a lossless WAV to master, or a compact file to share.',
+    tagline: 'Render your project to an audio file.',
+    steps: [
+      { text: 'Click Export to render your project to audio — a lossless WAV for mastering and distribution, or a compact file for quick web sharing.', helpId: 'export' },
+      { text: 'Exporting asks you to make a free account first, so the render is saved to your projects and nothing gets lost.' },
+    ],
+  },
+  {
+    slug: 'swing',
+    title: 'Give Your Beat Some Swing',
+    description: 'Use the global swing control in the 100Lights studio to loosen up rigid, quantized timing into a human groove.',
+    tagline: 'Turn stiff, on-the-grid timing into a groove.',
+    steps: [
+      { text: 'Drag the Swing control to the right to push every off-beat slightly later — turning a stiff, on-the-grid pattern into a shuffling groove. Drag left for straight timing.', helpId: 'swing' },
+      { text: 'A little goes a long way: most grooves live between a subtle nudge and a full triplet shuffle. Trust your ears over the number.' },
+    ],
+  },
 ]
 
 export function getTutorial(slug: string): Tutorial | undefined {
