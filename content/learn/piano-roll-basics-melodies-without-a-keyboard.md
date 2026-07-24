@@ -87,7 +87,7 @@ The sourness mostly evaporates. Passing quickly through a note that doesn't belo
 
 @theory Your ear judges a note largely by how long it commits to it. Brief dissonance reads as movement and colour; sustained dissonance reads as a mistake. This is why the same pitch can be a bad note or the best note in the bar depending only on what surrounds it and how long it stays.
 
-@studio(/new?modules=audio) Open the piano roll and draw your first melody →
+@studio(/tutorial/piano-roll) Open the piano roll and draw your first melody →
 
 ## What you actually learned
 

@@ -63,7 +63,7 @@ This is why sampled records feel warm and your programmed loop feels stapled tog
 
 Practically: duplicate your clip, trim the copy down to just that ringing tail, drop it on a second track at the top of the next repeat, and pull the fader down until you'd miss it if it vanished but can't quite point at it. A short reverb send from the mixer gets you partway there too, but the bleed is better, because it's the actual sound of the actual room rather than a guess at one.
 
-@studio(/new?modules=audio) Chop a loop on the transient now →
+@studio(/tutorial/snap) Chop a loop on the transient now →
 
 ## Where this leaves you
 

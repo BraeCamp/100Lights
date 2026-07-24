@@ -85,7 +85,7 @@ Then put it somewhere. Post it in the [community](https://100lights.com/communit
 
 You've now heard every piece of this beat right here in the page. The only step left is the one that counts — placing them yourself, in the real thing, where you can export it and send it on.
 
-@studio(/new?modules=audio) Open the studio and build your beat
+@studio(/tutorial/instrument) Open the studio and build your beat
 
 ## Where to go next
 

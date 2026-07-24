@@ -77,7 +77,7 @@ Go back to that surf-rock moment where you didn't want it to stop. Here's the me
 
 It also means the cadence is terrible at endings. If you want to actually stop, you have to stop on the first chord and let the fourth one resolve into it one final time — which is exactly what every song built on it does.
 
-@studio(/new?modules=audio) Build the Andalusian cadence four ways →
+@studio(/tutorial/piano-roll) Build the Andalusian cadence four ways →
 
 ## What to do with this
 

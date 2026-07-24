@@ -75,7 +75,7 @@ Then automate the cutoff by hand across sixteen bars. Not with an LFO. Draw it. 
 
 When you land on one you like, save it as a preset and put it on the [community](https://100lights.com/community) page. Reese patches are folk knowledge — they've been passed hand to hand for thirty-five years, and every producer's version is slightly wrong in a way that turns out to be the good part.
 
-@studio(/new?modules=audio) Open the studio and build your own
+@studio(/tutorial/instrument) Open the studio and build your own
 
 ## Questions
 

@@ -73,7 +73,7 @@ Then automate a low-pass filter on the arp so it opens gradually across eight ba
 
 @theory This is the trade electronic music makes. Fast repeating notes at a steady rate stop registering as individual events after a few seconds — the ear bundles them into a single continuous object. Once that happens, changes in the object's *quality* (brightness, width, movement) become more perceptually interesting than changes in its notes. So the arrangement moves attention off harmony and onto timbre, and the chords, which are still doing all the emotional work, get to run the whole track without ever being noticed.
 
-@studio(/new?modules=audio) Reshape these four chords into five genres →
+@studio(/tutorial/piano-roll) Reshape these four chords into five genres →
 
 ## What this proves
 

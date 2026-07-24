@@ -53,7 +53,7 @@ Hip-hop mostly swings the sixteenths, and more loosely. This is Dilla territory 
 
 @ear Program a plain sixteenth-note hi-hat, straight, and loop it. Now raise the SWING slider slowly while it plays. Listen for the moment the pattern stops sounding like a typewriter and starts to bounce — and then the later moment it tips into a limp that's too much. The good zone is the gap between those two. Mark where it is for this tempo. It'll move when you change the tempo.
 
-@studio(/new?modules=audio) Push the swing slider now →
+@studio(/tutorial/swing) Push the swing slider now →
 
 ## Swing is one number. Groove isn't.
 

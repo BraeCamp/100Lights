@@ -37,7 +37,7 @@ In the 100Lights mixer you can do this right now, free, in the browser. Make a r
 
 Why this beats an insert on every track isn't subtle. One reverb means one room. Everything you send lands in the *same* space, which is what a real recording sounds like — a band in a room, not five soloists in five different closets. You get one decay knob to shorten when the mix crowds up, one high-pass to clean the whole thing at once, and a fraction of the CPU. Change your mind about the room and you change it in one place; the entire mix moves together.
 
-@studio(/new?modules=audio) Build a reverb return and dial the sends →
+@studio(/tutorial/returns) Build a reverb return and dial the sends →
 
 ## Two knobs that decide everything: decay and pre-delay
 

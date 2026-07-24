@@ -65,7 +65,7 @@ It sounds trivial. It is not — a project file is worthless outside the softwar
 
 Stems — one file per track, exported as a zip — matter the moment you want someone else to mix your song, or you want to rebuild it somewhere else. MIDI export is the notes without the sounds, which is how you hand a melody to a collaborator who hates your synth choice.
 
-@studio(/new?modules=audio) Open a tab and use all four →
+@studio(/tutorial/views) Open a tab and use all four →
 
 ## The ninety percent you're allowed to ignore
 

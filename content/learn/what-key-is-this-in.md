@@ -53,7 +53,7 @@ The third is the single most opinionated note in music. Everything else in the s
 
 Some songs will fight you. "Creep" is a real one — it's in G major but it keeps borrowing a chord that isn't, which is exactly why it sounds haunted. Modal tracks will also refuse to settle. When a song genuinely won't commit, that's usually the interesting thing about it, not a failure of your ears.
 
-@studio(/new?modules=audio) Find the key of your favorite song →
+@studio(/tutorial/key-scale) Find the key of your favorite song →
 
 ## What about all those sharps and flats
 

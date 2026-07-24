@@ -53,7 +53,7 @@ There's a body reason underneath the mental one. Phrases at this length are roug
 
 @math If you want the arithmetic: at 120 BPM in 4/4, one beat is 0.5 seconds, one bar is 2 seconds, and eight bars is 16 seconds. At 90 BPM, eight bars is about 21 seconds; at 174 (drum and bass), about 11. Sixteen bars at 120 is 32 seconds — which is close to the length of a standard verse, and not by accident. If your track is 128 BPM and you want a 30-second intro, that's 16 bars exactly. Every one of these numbers is deletable; the point stands without them.
 
-@studio(/new?modules=audio) Write an 8-bar loop now →
+@studio(/tutorial/session) Write an 8-bar loop now →
 
 ## What to actually do at bar 8
 

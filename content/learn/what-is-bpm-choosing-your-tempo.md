@@ -53,7 +53,7 @@ Whatever song made you want to write this one — the mood you're chasing — go
 
 Once you've got a starting number, the honest move is to write a bar or two and then nudge the tempo up and down by five while it loops. You'll feel the right one lock in. It stops sounding like a demo and starts sounding like the thing in your head. That's not a metaphor — it's a specific, findable moment, and it's usually not the round number you assumed.
 
-@studio(/new?modules=audio) Open a project and tap your tempo in →
+@studio(/tutorial/tempo) Open a project and tap your tempo in →
 
 ## Changing it later is not cheating
 

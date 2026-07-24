@@ -63,7 +63,7 @@ Most beginner loops are four bars of one bar copy-pasted. If that's what yours i
 
 @ear Play your loop and count out loud: one-two-three-four, two-two-three-four, three, four. If you can't tell from listening alone which of the four bars you're in, your loop has no internal shape. Now go change one note in bar four and count again. You'll know exactly where you are.
 
-@studio(/new?modules=audio) Subtract from your loop now →
+@studio(/tutorial/automation) Subtract from your loop now →
 
 ## The uncomfortable part
 

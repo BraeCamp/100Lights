@@ -46,7 +46,7 @@ The instinct is to automate over one or two bars because that's the timescale yo
 
 A starting point rather than gospel: filter opens across a whole section, volume rides across a phrase, send moves across two or four bars. Anything under one bar is a transition effect, not automation.
 
-@studio(/new?modules=audio) Automate a loop into a song →
+@studio(/tutorial/automation) Automate a loop into a song →
 
 @math At 128 BPM, one bar of 4/4 is 1.875 seconds — so a 16-bar filter sweep runs 30 seconds and a 32-bar one runs a full minute. Bar length in seconds is 240 divided by BPM for 4/4. Worth calculating once so you know what you're actually asking a listener to sit through: a "slow" sweep you drew across four bars is over in seven and a half seconds.
 

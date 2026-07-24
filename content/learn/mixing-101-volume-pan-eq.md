@@ -68,7 +68,7 @@ Then hunt. Sweep a narrow boost across a track until you find the frequency that
 
 The reliable method needs none of it: find the ugly frequency by ear, turn it down until it stops being ugly, move on.
 
-@studio(/new?modules=audio) Mix a track faders-first right now →
+@studio(/tutorial/fx) Mix a track faders-first right now →
 
 ## Then, and only then
 

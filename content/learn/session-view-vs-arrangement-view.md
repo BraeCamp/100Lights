@@ -47,7 +47,7 @@ There's a second trigger, and it's a sound rather than a milestone: the moment y
 
 Everything I just described works in the free browser studio — [100Lights](https://100lights.com) has both views, and clips move between them without exporting anything.
 
-@studio(/new?modules=audio) Sketch a song in session view →
+@studio(/tutorial/session) Sketch a song in session view →
 
 ## What the arrangement view is for, since we're here
 

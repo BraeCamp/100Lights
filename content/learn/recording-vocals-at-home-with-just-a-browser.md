@@ -71,7 +71,7 @@ If you've ever recorded a vocal that felt perfectly in time while you sang it an
 
 @theory Vocals that sit a fraction behind the beat feel relaxed and soulful; ones that sit a fraction ahead feel urgent and pushy. Neither is wrong. Rap and gospel are built on this. But you want that to be a choice you made, not an artifact of your hardware.
 
-@studio(/new?modules=audio) Arm a track and record your first take →
+@studio(/tutorial/tracks) Arm a track and record your first take →
 
 ## The part where you actually do it
 

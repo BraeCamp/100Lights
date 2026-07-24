@@ -91,7 +91,7 @@ Beethoven's first movement: a minor triad broken into steady triplets, one note 
 
 Program a minor triad as continuous triplet arpeggios. Put a melody of long held notes on top. Do nothing else for eight bars. It will sound composed, and it took you ninety seconds.
 
-@studio(/new?modules=audio) Steal one of these licks now →
+@studio(/tutorial/piano-roll) Steal one of these licks now →
 
 ## Where to put them
 

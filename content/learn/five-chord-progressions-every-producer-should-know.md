@@ -84,7 +84,7 @@ This is the **Andalusian cadence**, and it's doing something sneaky at the end.
 
 *Hit the Road Jack*. The intro to *Sultans of Swing*. *Stray Cat Strut*. Drama and momentum without needing a chorus lift.
 
-@studio(/new?modules=audio) Build these five progressions now →
+@studio(/tutorial/piano-roll) Build these five progressions now →
 
 ## What to do with this
 

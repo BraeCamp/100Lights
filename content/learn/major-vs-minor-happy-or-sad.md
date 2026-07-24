@@ -33,7 +33,7 @@ The higher version is a major chord. The lower one is minor. That gap — the di
 
 You can run this whole experiment in the free browser studio — no download, no plugins. Place a root, drop the third in at four semitones, then at three, and flip between them by ear.
 
-@studio(/new?modules=audio) Build both chords and flip the third →
+@studio(/tutorial/piano-roll) Build both chords and flip the third →
 
 ## Now the part where "happy" and "sad" fall apart
 
