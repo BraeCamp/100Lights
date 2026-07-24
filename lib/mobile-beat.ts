@@ -39,6 +39,46 @@ export function buildBeatProject(grid: boolean[][], lanePitches: number[], kitId
   return proj
 }
 
+export interface MobileTrack {
+  id: string
+  name: string
+  kind: 'drum'
+  kitId: string
+  grid: boolean[][]   // [lane][step]
+  volume: number      // 0..1
+  muted: boolean
+}
+
+/** A whole mobile project: one DawProject drum track per mobile track. */
+export function buildMultiTrackProject(tracks: MobileTrack[], lanePitches: number[], bpm: number): DawProject {
+  const proj = defaultProject()
+  proj.name = 'Mobile Beat'
+  proj.tempo = bpm
+  const colors = ['#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#f97316', '#14b8a6', '#eab308', '#ec4899']
+
+  tracks.forEach((t, i) => {
+    const kit = DRUM_KITS.find(k => k.id === t.kitId) ?? DRUM_KITS[0]
+    const trackId = uid()
+    proj.tracks.push({
+      id: trackId, name: t.name, type: 'audio', color: colors[i % colors.length],
+      volume: t.volume, pan: 0, mute: t.muted, solo: false, armed: false, inputSource: null,
+      height: 64, effects: [], instrument: structuredClone(kit.instrument) as TrackInstrument,
+    })
+    proj.sessionGrid[trackId] = Array(proj.scenes.length).fill(null)
+    const notes: BeatNote[] = []
+    t.grid.forEach((row, l) => row.forEach((on, s) => {
+      if (on) notes.push({ id: uid(), pitch: lanePitches[l], startBeat: s * STEP_BEATS, durationBeats: STEP_BEATS, velocity: 112 })
+    }))
+    proj.arrangementClips.push({
+      kind: 'midi', id: uid(), trackId, name: t.name, startBeat: 0,
+      durationBeats: STEPS_PER_BAR * STEP_BEATS, isDrumClip: true, notes,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+  })
+
+  return proj
+}
+
 /** Wrap a DawProject in the project-file envelope the POST /api/projects route expects. */
 export function beatToCfProj(dawProject: DawProject): CfProjFile {
   return {
