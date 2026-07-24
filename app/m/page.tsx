@@ -1,5 +1,5 @@
-import MobileStudio from '@/components/mobile/MobileStudio'
+import MobileDawClient from '@/components/mobile/MobileDawClient'
 
 export default function MobilePage() {
-  return <MobileStudio />
+  return <MobileDawClient />
 }
