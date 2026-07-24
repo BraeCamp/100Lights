@@ -1,60 +1,61 @@
 'use client'
 
-// Mobile DAW — a touch front-end over the SAME DawProject + DawEngine as the
-// desktop studio. A real arrangement (clips on a timeline), a real mixer, and
-// clip editors (step grid / piano roll), all driven by the shared engine, so a
-// phone project is a full project that opens on desktop.
+// Mobile DAW shell — a phone layout around the REAL desktop feature components
+// (Transport, ArrangementView incl. inline piano roll + step sequencer, Mixer,
+// SessionView, InstrumentPicker, DeviceChain, PadInput), all driven by the
+// shared DawContext (see MobileDawProvider). We change the layout, not the
+// functions — so mobile gets the full DAW.
 
 import { useCallback, useState } from 'react'
 import Link from 'next/link'
 import posthog from 'posthog-js'
 import { useUser } from '@clerk/nextjs'
-import { useDawEngine } from './daw/engine-hook'
-import { seedProject, drumInstrument, polyInstrument } from './daw/seed'
-import { makeMidiClip } from '@/lib/daw-state'
+import { MobileDawProvider } from './MobileDawProvider'
+import { useDaw, makeMidiClip } from '@/lib/daw-state'
 import { beatToCfProj } from '@/lib/mobile-beat'
-import { Timeline } from './daw/Timeline'
-import { Mixer } from './daw/Mixer'
-import { ClipEditor } from './daw/ClipEditor'
-import type { TrackInstrument } from '@/lib/daw-types'
+import { drumInstrument, polyInstrument } from './daw/seed'
+import Transport from '@/components/editor/daw/Transport'
+import ArrangementView from '@/components/editor/daw/ArrangementView'
+import Mixer from '@/components/editor/daw/Mixer'
+import SessionView from '@/components/editor/daw/SessionView'
+import InstrumentPicker from '@/components/editor/daw/InstrumentPicker'
+import DeviceChain from '@/components/editor/daw/DeviceChain'
+import PadInput from '@/components/editor/daw/PadInput'
+import type { DawView, TrackInstrument } from '@/lib/daw-types'
 
 export default function MobileDaw() {
-  const { isSignedIn } = useUser()
-  const daw = useDawEngine(seedProject)
-  const { project, dispatch } = daw
+  return (
+    <MobileDawProvider>
+      <Shell />
+    </MobileDawProvider>
+  )
+}
 
-  const [view, setView] = useState<'song' | 'mix'>('song')
-  const [editClipId, setEditClipId] = useState<string | null>(null)
+const VIEW_TABS: { id: DawView; label: string }[] = [
+  { id: 'session', label: 'Clips' },
+  { id: 'arrangement', label: 'Song' },
+  { id: 'mixer', label: 'Mixer' },
+]
+
+function Shell() {
+  const { project, dispatch, view, setView, selectedTrackId, setSelectedTrackId } = useDaw()
+  const { isSignedIn } = useUser()
+  const [panel, setPanel] = useState<'sounds' | 'fx' | 'keys' | null>(null)
   const [adding, setAdding] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [savedId, setSavedId] = useState<string | null>(null)
   const [saveMsg, setSaveMsg] = useState('')
   const [linkCopied, setLinkCopied] = useState(false)
 
-  const loopOn = !!project.loopEnabled
-  const bar = Math.floor(daw.position / 4) + 1
-  const beat = Math.floor(daw.position % 4) + 1
-
   const addTrack = (kind: 'drum' | 'melody') => {
     const n = project.tracks.filter(t => (t.instrument?.type === 'drum') === (kind === 'drum')).length + 1
     const inst: TrackInstrument = kind === 'drum' ? drumInstrument('studio') : polyInstrument({ waveform: 'triangle', filterCutoff: 3000, attack: 0.005, decay: 0.4, sustain: 0.5, release: 0.3 })
     const name = kind === 'drum' ? (n > 1 ? `Drums ${n}` : 'Drums') : (n > 1 ? `Melody ${n}` : 'Melody')
-    // ADD_TRACK takes an id, so we know it immediately and can drop in a starter
-    // clip + open it — no waiting for the next render.
     const trackId = crypto.randomUUID()
     dispatch({ type: 'ADD_TRACK', id: trackId, name, instrument: inst })
-    const clip = makeMidiClip(trackId, name, 0, 4, { isDrumClip: kind === 'drum' })
-    dispatch({ type: 'ADD_CLIP', clip })
-    setEditClipId(clip.id)
+    dispatch({ type: 'ADD_CLIP', clip: makeMidiClip(trackId, name, 0, 4, { isDrumClip: kind === 'drum' }) })
+    setSelectedTrackId(trackId)
     setAdding(false)
-  }
-
-  const toggleLoop = () => {
-    if (!loopOn) {
-      const end = Math.max(4, ...project.arrangementClips.map(c => c.startBeat + c.durationBeats))
-      dispatch({ type: 'SET_LOOP', start: 0, end })
-    }
-    dispatch({ type: 'SET_LOOP_ENABLED', enabled: !loopOn })
   }
 
   const save = useCallback(async () => {
@@ -72,41 +73,58 @@ export default function MobileDaw() {
     } catch (e) { setSaveMsg((e as Error).message); setSaveState('error') }
   }, [project, isSignedIn])
 
+  const track = selectedTrackId ? project.tracks.find(t => t.id === selectedTrackId) : undefined
+
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
-      {/* Header */}
-      <header style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', paddingTop: 'calc(10px + env(safe-area-inset-top))', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <span style={{ width: 18, height: 18, borderRadius: 5, background: 'var(--accent)' }} />
-        <strong style={{ fontSize: 13.5 }}>100Lights</strong>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· Studio</span>
-        <Link href="/" style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-muted)', textDecoration: 'none' }}>Full studio ↗</Link>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 14px', paddingTop: 'calc(9px + env(safe-area-inset-top))', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <span style={{ width: 17, height: 17, borderRadius: 5, background: 'var(--accent)' }} />
+        <strong style={{ fontSize: 13 }}>100Lights</strong>
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>· Studio</span>
+        <button onClick={() => void save()} disabled={saveState === 'saving'} style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 800, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+        <Link href="/" style={{ fontSize: 11, color: 'var(--text-muted)', textDecoration: 'none' }}>Exit ↗</Link>
       </header>
 
-      {/* Transport */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <button onClick={daw.toggle} aria-label={daw.playing ? 'Stop' : 'Play'} style={{ width: 44, height: 44, borderRadius: 22, border: 'none', flexShrink: 0, cursor: 'pointer', background: daw.playing ? '#ef4444' : 'var(--accent)', color: '#fff', fontSize: 18 }}>{daw.playing ? '■' : '▶'}</button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo - 5 })} style={sBtn}>−</button>
-          <div style={{ textAlign: 'center', minWidth: 46 }}><div style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{Math.round(project.tempo)}</div><div style={{ fontSize: 8, color: 'var(--text-muted)' }}>BPM</div></div>
-          <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo + 5 })} style={sBtn}>+</button>
-        </div>
-        <div style={{ textAlign: 'center', minWidth: 44 }}><div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{bar}:{beat}</div><div style={{ fontSize: 8, color: 'var(--text-muted)' }}>BAR</div></div>
-        <button onClick={toggleLoop} aria-pressed={loopOn} style={{ ...sBtn, width: 'auto', padding: '0 10px', fontSize: 12, fontWeight: 800, background: loopOn ? 'rgba(139,92,246,0.16)' : 'var(--bg-card)', color: loopOn ? 'var(--accent-light)' : 'var(--text-muted)', border: `1px solid ${loopOn ? 'var(--accent)' : 'var(--border)'}` }}>↻</button>
-        <button onClick={() => void save()} disabled={saveState === 'saving'} style={{ ...sBtn, marginLeft: 'auto', width: 'auto', padding: '0 14px', fontSize: 12.5, fontWeight: 800, background: 'var(--accent)', color: '#fff', border: 'none' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+      {/* Real transport — scrolls horizontally if it overflows a narrow screen */}
+      <div style={{ overflowX: 'auto', overflowY: 'hidden', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+        <Transport />
       </div>
 
-      {/* Main view */}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        {view === 'song' ? <Timeline daw={daw} onEditClip={setEditClipId} /> : <Mixer daw={daw} />}
-      </div>
-
-      {/* Bottom bar: view switch + add track */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px calc(8px + env(safe-area-inset-bottom))', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-        {(['song', 'mix'] as const).map(v => (
-          <button key={v} onClick={() => setView(v)} style={{ flex: 1, padding: '9px 0', borderRadius: 9, fontSize: 12.5, fontWeight: 700, textTransform: 'capitalize', cursor: 'pointer', border: `1px solid ${view === v ? 'var(--accent)' : 'var(--border)'}`, background: view === v ? 'rgba(139,92,246,0.14)' : 'transparent', color: view === v ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{v === 'song' ? 'Song' : 'Mixer'}</button>
+      {/* View switch */}
+      <div style={{ display: 'flex', gap: 6, padding: '8px 12px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+        {VIEW_TABS.map(t => (
+          <button key={t.id} onClick={() => setView(t.id)} style={{ flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${view === t.id ? 'var(--accent)' : 'var(--border)'}`, background: view === t.id ? 'rgba(139,92,246,0.14)' : 'transparent', color: view === t.id ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{t.label}</button>
         ))}
-        <button onClick={() => setAdding(true)} style={{ padding: '9px 16px', borderRadius: 9, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px dashed var(--accent)', background: 'transparent', color: 'var(--accent-light)' }}>+ Track</button>
+        <button onClick={() => setAdding(true)} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px dashed var(--accent)', background: 'transparent', color: 'var(--accent-light)' }}>+</button>
       </div>
+
+      {/* Main view — the real feature components */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', position: 'relative' }}>
+        {view === 'session' && <SessionView />}
+        {view === 'arrangement' && <ArrangementView />}
+        {view === 'mixer' && <Mixer />}
+      </div>
+
+      {/* Selected-track panel: Sounds / FX / Keys */}
+      {track && (
+        <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: track.color }} />
+            <strong style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</strong>
+            {(['sounds', 'fx', 'keys'] as const).map(p => (
+              <button key={p} onClick={() => setPanel(panel === p ? null : p)} style={{ padding: '5px 11px', borderRadius: 7, fontSize: 11, fontWeight: 700, textTransform: 'capitalize', cursor: 'pointer', border: `1px solid ${panel === p ? 'var(--accent)' : 'var(--border)'}`, background: panel === p ? 'rgba(139,92,246,0.14)' : 'transparent', color: panel === p ? 'var(--accent-light)' : 'var(--text-muted)' }}>{p}</button>
+            ))}
+            <button onClick={() => setSelectedTrackId(null)} aria-label="Close track panel" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 17, cursor: 'pointer', lineHeight: 1 }}>×</button>
+          </div>
+          {panel && (
+            <div style={{ maxHeight: '42vh', overflow: 'auto', borderTop: '1px solid var(--border)' }}>
+              {panel === 'sounds' && <InstrumentPicker trackId={track.id} />}
+              {panel === 'fx' && <DeviceChain trackId={track.id} />}
+              {panel === 'keys' && <PadInput trackId={track.id} onClose={() => setPanel(null)} />}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add-track sheet */}
       {adding && (
@@ -117,12 +135,10 @@ export default function MobileDaw() {
               <button onClick={() => addTrack('drum')} style={pickBtn}><span style={{ fontSize: 24 }}>🥁</span>Drums</button>
               <button onClick={() => addTrack('melody')} style={pickBtn}><span style={{ fontSize: 24 }}>🎹</span>Melody</button>
             </div>
-            <p style={{ margin: '12px 0 0', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>Adds a track with a starter clip. Tap the clip on the timeline to edit its beat or notes.</p>
+            <p style={{ margin: '12px 0 0', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>Tap a track to select it, then use Sounds / FX / Keys below.</p>
           </div>
         </div>
       )}
-
-      {editClipId && <ClipEditor daw={daw} clipId={editClipId} onClose={() => setEditClipId(null)} />}
 
       {(saveState === 'saved' || saveState === 'error') && (
         <div onClick={() => setSaveState('idle')} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
@@ -149,6 +165,5 @@ export default function MobileDaw() {
   )
 }
 
-const sBtn: React.CSSProperties = { width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 16, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }
 const bigBtn: React.CSSProperties = { display: 'block', width: '100%', padding: 13, borderRadius: 12, fontSize: 14.5, fontWeight: 800, border: 'none', cursor: 'pointer', marginTop: 8 }
 const pickBtn: React.CSSProperties = { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '18px 0', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 14, fontWeight: 700, cursor: 'pointer' }
