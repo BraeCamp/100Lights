@@ -72,6 +72,10 @@ export interface ProjectEditorProps {
   allowImport?: boolean
   /** Community starter item id — its shared dawProject seeds this new project. */
   starterId?: string
+  /** Load a committed demo project from /tutorial/_fixtures/<id>.json as the
+   *  starting state (used by the tutorial capture pipeline for a realistic
+   *  WIP backdrop). Static, same-origin, id-restricted — safe. */
+  fixtureId?: string
   audioMode?: 'music' | 'podcast'
 }
 
@@ -280,7 +284,7 @@ style={{
 
 // ── Main component ────────────────────────────────────────────
 
-export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId }: ProjectEditorProps) {
+export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId }: ProjectEditorProps) {
   const isNewProject = !projectId
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
     isNewProject ? (moduleProp ?? ['video']) : null
@@ -289,7 +293,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const [outputs, setOutputs]           = useState<Output[]>([])
   const [savedData, setSavedData]       = useState<CfProjFile | null>(null)
   const [starterProject, setStarterProject] = useState<DawProject | null>(null)
-  const [starterLoading, setStarterLoading] = useState(!!starterId)
+  const [starterLoading, setStarterLoading] = useState(!!starterId || !!fixtureId)
   useEffect(() => {
     if (!starterId) return
     let alive = true
@@ -303,6 +307,15 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       .catch(() => { if (alive) setStarterLoading(false) })
     return () => { alive = false }
   }, [starterId])
+  useEffect(() => {
+    if (!fixtureId || !/^[a-z0-9-]+$/.test(fixtureId)) return
+    let alive = true
+    fetch(`/tutorial-fixtures/${fixtureId}.json`)
+      .then(r => r.ok ? r.json() : null)
+      .then((p: DawProject | null) => { if (alive && p) setStarterProject(p); if (alive) setStarterLoading(false) })
+      .catch(() => { if (alive) setStarterLoading(false) })
+    return () => { alive = false }
+  }, [fixtureId])
   const [localName, setLocalName]       = useState(projectName)
   const [currentTime, setCurrentTime]   = useState(0)
   const [audioMedia, setAudioMedia]     = useState<SerializedAudioMedia[]>([])

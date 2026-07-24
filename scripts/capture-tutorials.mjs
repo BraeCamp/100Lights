@@ -49,9 +49,11 @@ const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: VW, height: VH }, deviceScaleFactor: 2 })
 
 async function gotoStudio() {
-  await page.goto(`${baseUrl}/new?modules=audio`, { waitUntil: 'domcontentloaded' })
+  // Load against the demo WIP song so buttons are shown in a real, populated
+  // project (see scripts/build-tutorial-song.mjs).
+  await page.goto(`${baseUrl}/new?modules=audio&fixture=demo-song`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('[data-help-id="add-track"]', { timeout: 25000 })
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(1800)  // let the fixture's tracks + clips render
 }
 
 async function shoot(slug, index, selector) {
