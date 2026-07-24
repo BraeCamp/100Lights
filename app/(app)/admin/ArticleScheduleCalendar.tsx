@@ -6,7 +6,8 @@
  * which the bulk drip couldn't do). Arm a draft, pick a time, click a day.
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 interface Row { slug: string; title: string; draft: boolean; scheduledFor?: string }
 
@@ -25,6 +26,11 @@ export default function ArticleScheduleCalendar({ rows, onSchedule, onClose }: {
   const [armed, setArmed] = useState<string | null>(null)
   const [time, setTime] = useState('09:00')
   const [busy, setBusy] = useState(false)
+  // Portal to <body> so the fixed overlay covers the viewport even if an admin
+  // ancestor has a transform/filter (which would otherwise contain it and push
+  // the calendar out of view). Mount-gated to stay SSR-safe.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
 
   const scheduled = useMemo(() => rows.filter(r => r.scheduledFor), [rows])
   const unscheduled = useMemo(() => rows.filter(r => r.draft && !r.scheduledFor).sort((a, b) => a.title.localeCompare(b.title)), [rows])
@@ -78,12 +84,14 @@ export default function ArticleScheduleCalendar({ rows, onSchedule, onClose }: {
     setBusy(false)
   }
 
-  return (
+  if (!mounted) return null
+
+  return createPortal(
     <div
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '4vh 16px', overflowY: 'auto' }}
     >
-      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 860, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 16, padding: '18px 20px 22px' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 860, maxHeight: '92vh', overflowY: 'auto', boxSizing: 'border-box', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 16, padding: '18px 20px 22px' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>Publishing schedule</span>
@@ -171,7 +179,8 @@ export default function ArticleScheduleCalendar({ rows, onSchedule, onClose }: {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
