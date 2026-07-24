@@ -8,6 +8,7 @@
 // user. Signup is captured later, at Save/Export, not up front.
 
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 
@@ -15,7 +16,17 @@ const DEFAULT_CLASS = 'w-full sm:w-auto flex items-center justify-center gap-2 p
 
 export default function HeroCta({ className, guestLabel = 'Start making music' }: { className?: string; guestLabel?: string }) {
   const { isSignedIn } = useUser()
-  const href = isSignedIn ? '/dashboard' : '/new?modules=audio'
+  // Phones can't use the desktop studio — send guests straight to the mobile
+  // studio (/m) instead of bouncing through /new's small-screen gate. SSR paints
+  // the desktop href; the client swaps it after measuring the viewport.
+  const [isPhone, setIsPhone] = useState(false)
+  useEffect(() => {
+    const check = () => setIsPhone(window.innerWidth < 760)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+  const href = isSignedIn ? '/dashboard' : (isPhone ? '/m' : '/new?modules=audio')
   const label = isSignedIn ? 'Open your studio' : guestLabel
   return (
     <Link
