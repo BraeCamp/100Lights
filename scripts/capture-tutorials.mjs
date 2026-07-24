@@ -53,6 +53,9 @@ async function gotoStudio() {
   // project (see scripts/build-tutorial-song.mjs).
   await page.goto(`${baseUrl}/new?modules=audio&fixture=demo-song`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('[data-help-id="add-track"]', { timeout: 25000 })
+  // Suppress the editor's own "here's the help button" glow (and any feature
+  // glow) so it can't bleed a yellow highlight into a shot.
+  await page.addStyleTag({ content: '.daw-help-glow { animation: none !important; box-shadow: none !important; outline: none !important; }' })
   await page.waitForTimeout(1800)  // let the fixture's tracks + clips render
 }
 
@@ -138,6 +141,51 @@ const DRIVERS = {
   'key-scale': async () => {
     await gotoStudio()
     await shoot('key-scale', 0, '[data-help-id="key-scale"]')  // step 2 is text-only
+  },
+  code: async () => { await gotoStudio(); await shoot('code', 0, '[data-help-id="sound-code"]') },
+  jam: async () => { await gotoStudio(); await shoot('jam', 0, '[data-help-id="jam"]') },
+  'record-session': async () => { await gotoStudio(); await shoot('record-session', 0, '[data-help-id="capture"]') },
+  tuner: async () => { await gotoStudio(); await shoot('tuner', 0, '[data-help-id="tuner"]') },
+  'time-signature': async () => { await gotoStudio(); await shoot('time-signature', 0, '[data-help-id="time-sig"]') },
+  navigate: async () => {
+    await gotoStudio()
+    await shoot('navigate', 0, '[data-help-id="zoom-in"]')
+    await shoot('navigate', 1, '[data-help-id="zoom-out"]')
+    await shoot('navigate', 2, '[data-help-id="fit-window"]')
+  },
+  snap: async () => {
+    await gotoStudio()
+    await shoot('snap', 0, '[data-help-id="snap"]')
+    await shoot('snap', 1, '[data-help-id="ripple"]')
+  },
+  masking: async () => { await gotoStudio(); await shoot('masking', 0, '[data-help-id="masking"]') },
+  varispeed: async () => { await gotoStudio(); await shoot('varispeed', 0, '[data-help-id="varispeed"]') },
+
+  // Driver-heavy: reveal the control first.
+  'piano-roll': async () => {
+    await gotoStudio()  // the EDITOR button is always in the arrangement toolbar
+    await shoot('piano-roll', 0, '[data-help-id="editor"]')
+  },
+  automation: async () => {
+    await gotoStudio()
+    await page.locator('[data-help-id="track-settings"]').first().click()  // selects a track
+    await page.waitForTimeout(700)
+    await shoot('automation', 0, '[data-help-id="automation"]')
+  },
+  session: async () => {
+    await gotoStudio()
+    await page.locator('[data-help-id="view-session"]').click()  // switch to Session view
+    await page.waitForTimeout(900)
+    await shoot('session', 0, '[data-help-id="add-scene"]')
+    await shoot('session', 1, '[data-help-id="capture-arrangement"]')
+  },
+  instrument: async () => {
+    await gotoStudio()
+    await page.locator('[data-help-id="track-settings"]').first().click()  // open the device panel
+    await page.waitForTimeout(700)
+    await page.getByText('Instrument', { exact: true }).first().click().catch(() => {})
+    await page.waitForTimeout(600)
+    await shoot('instrument', 0, '[data-help-id="bottom-instrument"]')
   },
 }
 

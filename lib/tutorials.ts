@@ -136,6 +136,138 @@ export const TUTORIALS: Tutorial[] = [
       { text: 'Working in A minor? Set it once and the piano roll highlights the in-key notes, so wrong notes are much harder to hit by accident.' },
     ],
   },
+  {
+    slug: 'code',
+    title: 'Generate a Track from Code',
+    description: 'Use the Code panel in the 100Lights studio to generate a synth track from a few lines of math — scales, chords, euclidean rhythms, seeded randomness.',
+    tagline: 'A few lines of math become a playable synth track.',
+    steps: [
+      { text: 'Open the Code panel (the </> icon). Write a short script that returns a synth patch and a list of notes — scales, chords, and euclidean rhythms are built in.', helpId: 'sound-code' },
+      { text: 'Run it and it drops in as a poly-synth track you can play and edit like any other. Or select a clip to load its patch and notes back as editable code.' },
+    ],
+  },
+  {
+    slug: 'jam',
+    title: 'Never Lose a Take: Jam Capture',
+    description: 'Jam Capture in the 100Lights studio keeps the last 30 seconds of everything you play, so a great unrecorded take is never lost.',
+    tagline: 'Grab the last 30 seconds you played — even without recording.',
+    steps: [
+      { text: 'Everything you play while the transport runs is held in a rolling 30-second buffer, even when you are not recording.', helpId: 'jam' },
+      { text: 'Played something great you did not capture? Hit JAM and those last seconds drop straight into the arrangement as a clip.' },
+    ],
+  },
+  {
+    slug: 'record-session',
+    title: 'Record Your Screen and Studio Audio',
+    description: 'Record your screen with the studio’s own audio (and optionally your mic) in 100Lights — clean, with no notifications or other tabs in the take.',
+    tagline: 'Screen + studio audio, straight from the mixer.',
+    steps: [
+      { text: 'Open Capture to record your screen together with the studio’s audio, taken from the mixer — so notifications and other tabs never end up in the take. (It grabs annotated screenshots too.)', helpId: 'capture' },
+      { text: 'Optionally record your mic too, to talk over what you’re doing. Preview it and save the video when you stop — great for demos and tutorials.' },
+    ],
+  },
+  {
+    slug: 'tuner',
+    title: 'Tune Your Sounds',
+    description: 'Open the tuner in the 100Lights studio to check and adjust the pitch of pads and instruments so everything agrees on one reference.',
+    tagline: 'Check pitch so every layer agrees.',
+    steps: [
+      { text: 'Open the tuner to check and nudge the pitch of pads and instruments, so all your sounds reference the same tuning.', helpId: 'tuner' },
+      { text: 'Handy when layering a sampled sound against synths — small tuning differences are what make a stack sound cheap.' },
+    ],
+  },
+  {
+    slug: 'time-signature',
+    title: 'Change the Time Signature',
+    description: 'Set the project’s time signature in the 100Lights studio — the ruler, grid, metronome, and bar numbering all follow the meter you choose.',
+    tagline: 'Work in 3/4, 5/4, or 7/8 — not just 4/4.',
+    steps: [
+      { text: 'Click the time signature to change the project’s meter. The ruler, snap grid, metronome, and bar numbering all follow it.', helpId: 'time-sig' },
+      { text: 'Most music is in four, but a waltz is in three and plenty of interesting music lives in five or seven — switch it here and the whole grid re-counts.' },
+    ],
+  },
+  {
+    slug: 'navigate',
+    title: 'Zoom and Fit the Timeline',
+    description: 'Zoom in for detailed edits and fit the whole arrangement to the window in the 100Lights studio.',
+    tagline: 'Get in close, then see the whole song.',
+    steps: [
+      { text: 'Zoom in for fine, detailed edits — your position stays anchored as you zoom.', helpId: 'zoom-in' },
+      { text: 'Zoom out for a bird’s-eye view of the whole arrangement.', helpId: 'zoom-out' },
+      { text: 'Or hit Fit to Window (also the F key) to instantly scale the entire song to the visible area.', helpId: 'fit-window' },
+    ],
+  },
+  {
+    slug: 'snap',
+    title: 'Snap to the Grid, and Ripple Edits',
+    description: 'Control the grid clips snap to in the 100Lights studio, and use ripple editing to keep everything after an edit glued together.',
+    tagline: 'Choose the grid — and keep edits from leaving gaps.',
+    steps: [
+      { text: 'Choose the grid clips snap to while dragging — off, 1/16, 1/8, beat, or bar. Hold Alt mid-drag to bypass the grid entirely.', helpId: 'snap' },
+      { text: 'Turn on Ripple and moving or trimming a clip shifts everything to its right by the same amount — so an edit never leaves a hole.', helpId: 'ripple' },
+    ],
+  },
+  {
+    slug: 'masking',
+    title: 'Spot Frequency Clashes',
+    description: 'The masking detector in the 100Lights studio shows which tracks compete for the same frequencies, so you can EQ or pan them apart.',
+    tagline: 'See which tracks fight for the same frequencies.',
+    steps: [
+      { text: 'Run the masking detector and it analyzes your mix, showing which tracks are competing for the same frequency bands.', helpId: 'masking' },
+      { text: 'Then EQ or pan the clashing tracks apart for a cleaner result — the fast way to find what’s making a mix muddy.' },
+    ],
+  },
+  {
+    slug: 'varispeed',
+    title: 'Slow Down with Varispeed',
+    description: 'Tape-style speed control in the 100Lights studio — pitch rises and falls with playback speed, exactly like a reel-to-reel.',
+    tagline: 'Tape-style speed — the pitch moves with it.',
+    steps: [
+      { text: 'Varispeed is tape-style speed control from a quarter-speed crawl to double time — pitch rises and falls with the speed, exactly like slowing a reel-to-reel.', helpId: 'varispeed' },
+      { text: 'Great for learning a fast part slowly, or for the deliberately dragged, detuned sound of a slowed-down sample.' },
+    ],
+  },
+  {
+    slug: 'piano-roll',
+    title: 'Write Notes in the Piano Roll',
+    description: 'Open the piano roll in the 100Lights studio to draw, move, and resize MIDI notes on a grid, with your project’s key highlighted.',
+    tagline: 'Draw a melody without touching a keyboard.',
+    steps: [
+      { text: 'Select a melodic clip and click EDITOR to open it in the piano roll (a drum clip opens the step sequencer instead).', helpId: 'editor' },
+      { text: 'Draw notes with the mouse, drag to move or resize them, and the notes in your project’s key are highlighted — so a wrong one is hard to hit.' },
+      { text: 'Everything you record from the pads or a MIDI keyboard lands here too, ready to fix up by hand.' },
+    ],
+  },
+  {
+    slug: 'automation',
+    title: 'Automate a Parameter Over Time',
+    description: 'Add automation lanes in the 100Lights studio to change volume, pan, filter, and more over time, drawn as editable curves under a track.',
+    tagline: 'Draw volume rides, filter sweeps, and pan moves.',
+    steps: [
+      { text: 'Add an automation lane to a track to change a parameter over time — a volume ride, a pan sweep, a slow filter open — drawn as an editable curve right under the clips.', helpId: 'automation' },
+      { text: 'This is what turns a static loop into a song: bring an element in, sweep a filter across a build, duck a pad under a vocal.' },
+    ],
+  },
+  {
+    slug: 'session',
+    title: 'Jam with Scenes in Session View',
+    description: 'Session view in the 100Lights studio is a grid of clips you launch scene by scene, then capture straight into the arrangement timeline.',
+    tagline: 'Launch clips live, then capture the jam.',
+    steps: [
+      { text: 'Session view is a grid of clips. Add a scene — a row that launches together as one unit — and build your idea up scene by scene.', helpId: 'add-scene' },
+      { text: 'Perform by launching scenes, and Capture to Arrangement stamps what you play straight onto the timeline — turning a live jam into a structured song.', helpId: 'capture-arrangement' },
+    ],
+  },
+  {
+    slug: 'instrument',
+    title: 'Pick a Synth or Drum Kit',
+    description: 'Choose the instrument a MIDI track plays in the 100Lights studio — a synth, drum kit, or sampler — and browse presets with instant preview.',
+    tagline: 'Choose what a track plays, and audition presets.',
+    steps: [
+      { text: 'Open a track’s devices, switch to the Instrument tab, and choose the synth, drum kit, or sampler it plays.', helpId: 'bottom-instrument' },
+      { text: 'Browse presets with an instant middle-C preview before you commit, then play it live from the pads, your computer keyboard, or a MIDI controller.' },
+    ],
+  },
 ]
 
 export function getTutorial(slug: string): Tutorial | undefined {
