@@ -26,9 +26,19 @@ interface ReportedItem {
   reasons: string[] | null
 }
 
+interface ReportedComment {
+  id: string
+  item_id: string
+  author_name: string
+  body: string
+  report_count: number
+  reasons: string[] | null
+}
+
 export default function CommunityModerationPanel() {
   const [items, setItems] = useState<Item[] | null>(null)
   const [reported, setReported] = useState<ReportedItem[]>([])
+  const [reportedComments, setReportedComments] = useState<ReportedComment[]>([])
   const [busy, setBusy] = useState<string | null>(null)
 
   async function load() {
@@ -39,11 +49,20 @@ export default function CommunityModerationPanel() {
       ])
       const d = await r.json()
       setItems(d.items)
-      const dr = await rep.json().catch(() => ({ items: [] }))
+      const dr = await rep.json().catch(() => ({ items: [], comments: [] }))
       setReported(dr.items ?? [])
+      setReportedComments(dr.comments ?? [])
     } catch {
       setItems([])
     }
+  }
+
+  async function removeComment(c: ReportedComment) {
+    if (!confirm(`Delete this comment by ${c.author_name}?\n\n“${c.body.slice(0, 200)}”`)) return
+    setBusy(c.id)
+    await fetch(`/api/community/${c.item_id}/comments?commentId=${c.id}`, { method: 'DELETE' }).catch(() => {})
+    setBusy(null)
+    void load()
   }
   useEffect(() => {
     const t = setTimeout(() => { void load() }, 0)
@@ -74,6 +93,26 @@ export default function CommunityModerationPanel() {
               <a href={`/community/${r.id}`} target="_blank" rel="noreferrer" title="View" style={{ color: 'var(--text-muted)', display: 'flex' }}><ExternalLink size={13} /></a>
               <button onClick={() => remove({ id: r.id, name: r.name, authorName: r.author_name } as Item)} title="Remove from community"
                 style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'flex' }}>
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {reportedComments.length > 0 && (
+        <div style={{ border: '1px solid rgba(239,68,68,0.4)', borderRadius: 10, padding: '10px 12px', marginBottom: 6 }}>
+          <p style={{ fontSize: 11, fontWeight: 800, color: '#ef4444', margin: '0 0 8px' }}>⚑ REPORTED COMMENTS ({reportedComments.length})</p>
+          {reportedComments.map(c => (
+            <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.4 }}>“{c.body.slice(0, 200)}”</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  by {c.author_name} · {c.report_count} report{c.report_count !== 1 ? 's' : ''}{c.reasons?.length ? ` — “${c.reasons[0].slice(0, 100)}”` : ''}
+                </div>
+              </div>
+              <a href={`/community/${c.item_id}`} target="_blank" rel="noreferrer" title="View thread" style={{ color: 'var(--text-muted)', display: 'flex' }}><ExternalLink size={13} /></a>
+              <button onClick={() => removeComment(c)} disabled={busy === c.id} title="Delete comment"
+                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'flex', opacity: busy === c.id ? 0.4 : 1 }}>
                 <Trash2 size={13} />
               </button>
             </div>

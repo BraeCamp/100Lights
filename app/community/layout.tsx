@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { UserButton } from '@clerk/nextjs'
 import type { Metadata } from 'next'
+import NotificationBell from '@/components/NotificationBell'
 
 export const metadata: Metadata = {
   title: 'Community — Free Sounds, Samples & Chord Recipes',
@@ -35,6 +36,7 @@ export default function CommunityLayout({ children }: { children: React.ReactNod
           <Link href="/dashboard" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted, #a3a2b5)', textDecoration: 'none' }}>
             Open Studio →
           </Link>
+          <NotificationBell />
           <UserButton />
         </div>
       </header>

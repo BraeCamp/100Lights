@@ -2,7 +2,7 @@ import { sql } from './db'
 
 // Server-side shared helpers for the community API routes.
 
-export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern'] as const
+export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post'] as const
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 
 let tablesReady = false
@@ -38,7 +38,7 @@ export async function ensureTables() {
     if (!COMMUNITY_KINDS.every(k => def.includes(`'${k}'`))) {
       await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
       // Keep this list in sync with COMMUNITY_KINDS above.
-      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern'))`
+      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post'))`
     }
   } catch { /* concurrent migration won the race — constraint is in place */ }
   await sql`
@@ -66,6 +66,29 @@ export async function ensureTables() {
       UNIQUE (item_id, user_id)
     )
   `
+  await sql`
+    CREATE TABLE IF NOT EXISTS community_comments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      item_id UUID NOT NULL,
+      user_id TEXT NOT NULL,
+      author_name TEXT NOT NULL DEFAULT 'Anonymous',
+      body TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+  await sql`CREATE INDEX IF NOT EXISTS community_comments_item_idx ON community_comments (item_id, created_at)`
+  await sql`CREATE INDEX IF NOT EXISTS community_comments_user_idx ON community_comments (user_id, created_at)`
+  await sql`
+    CREATE TABLE IF NOT EXISTS community_comment_reports (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      comment_id UUID NOT NULL,
+      item_id UUID NOT NULL,
+      user_id TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (comment_id, user_id)
+    )
+  `
   // Indexes for the feed's hot paths — cheap at any size, needed at scale
   await sql`CREATE INDEX IF NOT EXISTS community_items_kind_idx ON community_items (kind, created_at DESC)`
   await sql`CREATE INDEX IF NOT EXISTS community_items_created_idx ON community_items (created_at DESC)`
@@ -87,7 +110,7 @@ export function devTestUser(req: Request): string | null {
     : null
 }
 
-export function rowToItem(r: Record<string, unknown>, userId: string | null, votedIds: Set<string>, reactions: Map<string, Record<string, number>>, myReactions: Map<string, string[]>) {
+export function rowToItem(r: Record<string, unknown>, userId: string | null, votedIds: Set<string>, reactions: Map<string, Record<string, number>>, myReactions: Map<string, string[]>, comments?: Map<string, number>) {
   return {
     id: r.id, kind: r.kind, name: r.name, description: r.description,
     authorName: r.author_name, votes: r.votes, downloads: r.downloads,
@@ -96,7 +119,20 @@ export function rowToItem(r: Record<string, unknown>, userId: string | null, vot
     mine: userId !== null && r.user_id === userId,
     reactions: reactions.get(r.id as string) ?? {},
     myReactions: myReactions.get(r.id as string) ?? [],
+    commentCount: comments?.get(r.id as string) ?? 0,
   }
+}
+
+/** Comment counts for a batch of items (one grouped query). Empty on any error
+ *  (e.g. the comments table not existing yet). */
+export async function commentCounts(itemIds: string[]): Promise<Map<string, number>> {
+  const m = new Map<string, number>()
+  if (itemIds.length === 0) return m
+  try {
+    const rows = await sql`SELECT item_id, COUNT(*)::int AS n FROM community_comments WHERE item_id = ANY(${itemIds}::uuid[]) GROUP BY item_id`
+    for (const r of rows) m.set(r.item_id as string, r.n as number)
+  } catch { /* table may not exist yet */ }
+  return m
 }
 
 export async function reactionMaps(itemIds: string[], userId: string | null): Promise<{ reactions: Map<string, Record<string, number>>; mine: Map<string, string[]> }> {

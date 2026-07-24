@@ -10,7 +10,15 @@ import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import { addKit, addPattern, type DrumKit, type DrumPattern } from './drum-presets'
 import type { MidiClip } from './daw-types'
 
-export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern'
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post'
+
+export interface CommunityComment {
+  id: string
+  authorName: string
+  body: string
+  createdAt: string
+  mine: boolean
+}
 
 export interface CommunityItem {
   id: string
@@ -27,6 +35,7 @@ export interface CommunityItem {
   mine: boolean
   reactions: Record<string, number>
   myReactions: string[]
+  commentCount?: number
 }
 
 export const COMMUNITY_TAGS = ['drums', 'melody', 'bass', 'vocals', 'lofi', 'electronic', 'hiphop', 'rock', 'jazz', 'ambient', 'pop', 'experimental'] as const
@@ -91,6 +100,78 @@ async function countDownload(id: string): Promise<void> {
   fetch(`/api/community/${id}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download' }),
   }).catch(() => {})
+}
+
+// ── Comments ───────────────────────────────────────────────────────────────────
+
+export async function listComments(id: string): Promise<CommunityComment[]> {
+  const res = await fetch(`/api/community/${id}/comments`)
+  if (!res.ok) return []
+  return (await res.json()).comments as CommunityComment[]
+}
+
+export async function addComment(id: string, body: string): Promise<CommunityComment> {
+  const res = await fetch(`/api/community/${id}/comments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Comment failed')
+  return (await res.json()).comment as CommunityComment
+}
+
+export async function deleteComment(itemId: string, commentId: string): Promise<void> {
+  await fetch(`/api/community/${itemId}/comments?commentId=${commentId}`, { method: 'DELETE' })
+}
+
+export async function reportComment(itemId: string, commentId: string, reason: string): Promise<void> {
+  await fetch(`/api/community/${itemId}/comments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'report', commentId, reason }),
+  })
+}
+
+/** Edit an item's title/body (author or admin). Used for text posts. */
+export async function editItem(id: string, patch: { name?: string; description?: string }): Promise<void> {
+  const res = await fetch(`/api/community/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Edit failed')
+}
+
+// ── Text / help posts ──────────────────────────────────────────────────────────
+
+/** Share a plain-text post (a tip, question, or help thread). Body lives in
+ *  `description`; no audio or payload. */
+export async function sharePost(title: string, body: string): Promise<string> {
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'post', name: title, description: body }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Post failed')
+  return (await res.json()).id as string
+}
+
+// ── Audio download (Pro) ─────────────────────────────────────────────────────────
+
+const CT_EXT: Record<string, string> = {
+  'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/mpeg': 'mp3',
+  'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/flac': 'flac',
+}
+
+/** Download a community item's audio to the user's computer. For packs, pass the
+ *  sample index. Bumps the download counter. Caller gates this to Pro users. */
+export async function downloadCommunityAudio(id: string, filename: string, sampleIndex?: number): Promise<void> {
+  const url = `/api/community/${id}/audio${sampleIndex !== undefined ? `?i=${sampleIndex}` : ''}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error('Could not fetch audio')
+  const blob = await res.blob()
+  const ext = CT_EXT[blob.type] ?? 'wav'
+  const safe = filename.replace(/[^\w.\- ]+/g, '_').slice(0, 80) || 'sound'
+  const obj = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = obj; a.download = safe.endsWith(`.${ext}`) ? safe : `${safe}.${ext}`
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(obj), 4000)
+  void countDownload(id)
 }
 
 // ── Sharing ──────────────────────────────────────────────────────────────────

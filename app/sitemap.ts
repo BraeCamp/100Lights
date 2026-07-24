@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next'
 import { sql } from '@/lib/db'
 import { getArticles } from '@/lib/learn-articles'
+import { TUTORIALS } from '@/lib/tutorials'
 
 // Community items are the long-tail SEO surface: every shared sample, recipe,
 // and song is a public, playable page with its own OG card. Fragments (#…)
@@ -16,6 +17,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: base,                    lastModified: new Date(), changeFrequency: 'weekly',  priority: 1 },
     { url: `${base}/community`,     lastModified: new Date(), changeFrequency: 'daily',   priority: 0.9 },
     { url: `${base}/sign-up`,       lastModified: new Date(), changeFrequency: 'monthly', priority: 0.9 },
+    { url: `${base}/m`,             lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     { url: `${base}/download`,      lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     { url: `${base}/tools`,                     lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/tuner`,               lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
@@ -44,6 +46,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ]
 
+  // Feature tutorials — a static, self-contained SEO surface (lib/tutorials.ts)
+  const tutorials: MetadataRoute.Sitemap = [
+    { url: `${base}/tutorial`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
+    ...TUTORIALS.map(t => ({
+      url: `${base}/tutorial/${t.slug}`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.6,
+    })),
+  ]
+
   let items: MetadataRoute.Sitemap = []
   try {
     const rows = await sql`
@@ -58,5 +71,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }))
   } catch { /* DB unavailable — static pages still ship */ }
 
-  return [...staticPages, ...learn, ...items]
+  return [...staticPages, ...learn, ...tutorials, ...items]
 }

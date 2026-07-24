@@ -1,6 +1,6 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, LARGE_MODE_LIMITS } from '@/lib/community-server'
+import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, LARGE_MODE_LIMITS } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
 import { isAdminEmail } from '@/lib/admin-auth'
 
@@ -74,12 +74,13 @@ export async function GET(req: Request) {
     for (const r of myVotes) votedIds.add(r.item_id as string)
   }
   const { reactions, mine } = await reactionMaps(pageRows.map(r => r.id as string), userId)
+  const comments = await commentCounts(pageRows.map(r => r.id as string))
 
   // Community pulse for the feed header — makes a small feed feel alive
   const statRows = await sql`SELECT COUNT(*)::int AS items, COUNT(DISTINCT author_name)::int AS authors FROM community_items`
 
   const res = Response.json({
-    items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine)),
+    items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine, comments)),
     hasMore,
     total: totalRows[0]?.n ?? 0,
     scale: communityScale,
@@ -108,8 +109,11 @@ export async function POST(req: Request) {
     return Response.json({ error: `kind (${COMMUNITY_KINDS.join('|')}) and name are required` }, { status: 400 })
   }
   const audioKind = kind === 'sample' || kind === 'song'
+  // A 'post' is a plain text discussion/help item — carries its body in
+  // `description`, so it needs neither audio nor a payload.
   if (audioKind && !body.r2Key) return Response.json({ error: `${kind} requires r2Key` }, { status: 400 })
-  if (!audioKind && !body.payload) return Response.json({ error: `${kind} requires payload` }, { status: 400 })
+  if (!audioKind && kind !== 'post' && !body.payload) return Response.json({ error: `${kind} requires payload` }, { status: 400 })
+  if (kind === 'post' && !body.description?.trim()) return Response.json({ error: 'post requires a body' }, { status: 400 })
   const payloadJson = body.payload ? JSON.stringify(body.payload) : null
   if (payloadJson && payloadJson.length > 900_000) return Response.json({ error: 'payload too large' }, { status: 413 })
 
@@ -128,7 +132,7 @@ export async function POST(req: Request) {
 
   const rows = await sql`
     INSERT INTO community_items (user_id, author_name, kind, name, description, payload, r2_key)
-    VALUES (${userId}, ${authorName}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null})
+    VALUES (${userId}, ${authorName}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null})
     RETURNING id
   `
   return Response.json({ id: rows[0].id })

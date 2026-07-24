@@ -9,21 +9,24 @@ export const contentType = 'image/png'
 
 const KIND_COLOR: Record<string, string> = {
   song: '#22d3ee', sample: '#3b82f6', preset: '#a78bfa', recipe: '#f59e0b', pack: '#34d399', project: '#fb7185',
+  theme: '#e879f9', kit: '#f87171', pattern: '#fbbf24', post: '#94a3b8',
 }
 const KIND_LABEL: Record<string, string> = {
   song: 'SONG', sample: 'SAMPLE', preset: 'PRESET', recipe: 'RECIPE', pack: 'SAMPLE PACK', project: 'PROJECT STARTER',
+  theme: 'THEME', kit: 'DRUM KIT', pattern: 'BEAT PATTERN', post: 'POST',
 }
 
 export default async function OgImage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  type OgItem = { name: string; author_name: string; kind: string; payload: { peaks?: number[]; bpm?: number; key?: string } | null }
+  type OgItem = { name: string; author_name: string; kind: string; description: string | null; payload: { peaks?: number[]; bpm?: number; key?: string } | null }
   let item: OgItem | null = null
   try {
-    const rows = await sql`SELECT name, author_name, kind, payload FROM community_items WHERE id = ${id}`
+    const rows = await sql`SELECT name, author_name, kind, description, payload FROM community_items WHERE id = ${id}`
     item = (rows[0] as unknown as OgItem) ?? null
   } catch { /* fall through to branded card */ }
 
   const color = KIND_COLOR[item?.kind ?? ''] ?? '#8b5cf6'
+  const isPost = item?.kind === 'post'
   const peaks: number[] = item?.payload?.peaks?.length
     ? item.payload.peaks
     : Array.from({ length: 80 }, (_, i) => 0.25 + 0.55 * Math.abs(Math.sin(i * 0.55)) * Math.abs(Math.sin(i * 0.13)))
@@ -43,15 +46,25 @@ export default async function OgImage({ params }: { params: Promise<{ id: string
           }}>{KIND_LABEL[item?.kind ?? ''] ?? 'COMMUNITY'}</div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 220 }}>
-          {bars.map((p, i) => (
-            <div key={i} style={{
-              display: 'flex', width: 10, borderRadius: 3,
-              height: Math.max(10, p * 220),
-              background: color, opacity: 0.85,
-            }} />
-          ))}
-        </div>
+        {isPost ? (
+          <div style={{
+            display: 'flex', height: 220, alignItems: 'center',
+            fontSize: 30, lineHeight: 1.4, color: '#c9c8d8',
+            borderLeft: `4px solid ${color}`, paddingLeft: 28,
+          }}>
+            {(item?.description ?? '').slice(0, 160) || 'A post on the 100Lights Community'}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 220 }}>
+            {bars.map((p, i) => (
+              <div key={i} style={{
+                display: 'flex', width: 10, borderRadius: 3,
+                height: Math.max(10, p * 220),
+                background: color, opacity: 0.85,
+              }} />
+            ))}
+          </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontSize: 56, fontWeight: 800, color: '#f1f0ff', display: 'flex', letterSpacing: -1 }}>
@@ -61,7 +74,7 @@ export default async function OgImage({ params }: { params: Promise<{ id: string
             <span>by {item?.author_name ?? 'a producer'}</span>
             {item?.payload?.bpm ? <span>· {item.payload.bpm} BPM</span> : null}
             {item?.payload?.key ? <span>· {item.payload.key}</span> : null}
-            <span>· listen free, no account needed</span>
+            <span>· {isPost ? 'join the conversation' : 'listen free, no account needed'}</span>
           </div>
         </div>
       </div>

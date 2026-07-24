@@ -96,10 +96,20 @@ export function addKit(kit: Omit<DrumKit, 'id' | 'builtIn' | 'createdAt'> & { id
   const users = loadUserKits().filter(u => u.id !== saved.id)
   users.push(saved)
   try { localStorage.setItem(KITS_KEY, JSON.stringify(users)) } catch { /* storage off */ }
+  void import('./user-library-sync').then(m => m.pushLibraryItem('kit', saved.id, saved.name, saved)).catch(() => {})
   return saved
 }
 export function deleteKit(id: string): void {
   try { localStorage.setItem(KITS_KEY, JSON.stringify(loadUserKits().filter(u => u.id !== id))) } catch { /* storage off */ }
+  void import('./user-library-sync').then(m => m.deleteLibraryItem(id)).catch(() => {})
+}
+/** Merge account-synced kits from another device into local storage (additive). */
+export function upsertSyncedKits(items: DrumKit[]): void {
+  if (typeof localStorage === 'undefined' || items.length === 0) return
+  const users = loadUserKits()
+  const have = new Set(users.map(k => k.id))
+  const add = items.filter(k => k && k.id && !have.has(k.id)).map(k => ({ ...k, builtIn: false }))
+  if (add.length) try { localStorage.setItem(KITS_KEY, JSON.stringify([...users, ...add])) } catch { /* storage off */ }
 }
 
 /** Which kit an instrument matches (by pack + kick tuning), for the picker. */
@@ -201,8 +211,18 @@ export function addPattern(pattern: Omit<DrumPattern, 'id' | 'builtIn' | 'create
   const users = loadUserPatterns().filter(u => u.id !== saved.id)
   users.push(saved)
   try { localStorage.setItem(PATTERNS_KEY, JSON.stringify(users)) } catch { /* storage off */ }
+  void import('./user-library-sync').then(m => m.pushLibraryItem('pattern', saved.id, saved.name, saved)).catch(() => {})
   return saved
 }
 export function deletePattern(id: string): void {
   try { localStorage.setItem(PATTERNS_KEY, JSON.stringify(loadUserPatterns().filter(u => u.id !== id))) } catch { /* storage off */ }
+  void import('./user-library-sync').then(m => m.deleteLibraryItem(id)).catch(() => {})
+}
+/** Merge account-synced patterns from another device into local storage (additive). */
+export function upsertSyncedPatterns(items: DrumPattern[]): void {
+  if (typeof localStorage === 'undefined' || items.length === 0) return
+  const users = loadUserPatterns()
+  const have = new Set(users.map(p => p.id))
+  const add = items.filter(p => p && p.id && !have.has(p.id)).map(p => ({ ...p, builtIn: false }))
+  if (add.length) try { localStorage.setItem(PATTERNS_KEY, JSON.stringify([...users, ...add])) } catch { /* storage off */ }
 }

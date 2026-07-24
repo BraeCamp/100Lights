@@ -6,8 +6,9 @@
 // sign-in prompts instead of failing.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag, Palette, Drum, Grid3x3 } from 'lucide-react'
-import { toggleReaction, type CommunityItem } from '@/lib/community'
+import posthog from 'posthog-js'
+import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag, Palette, Drum, Grid3x3, Repeat, MessageCircle, Send, Lock, MessageSquare, Pencil } from 'lucide-react'
+import { toggleReaction, downloadCommunityAudio, listComments, addComment, deleteComment, reportComment, editItem, type CommunityItem, type CommunityComment } from '@/lib/community'
 import { renderSpecToBuffer } from '@/lib/default-samples'
 import type { RenderSpec } from '@/lib/sound-library'
 import { playMelodicNote } from '@/lib/instrument-synth'
@@ -22,9 +23,28 @@ export const KIND_META: Record<CommunityItem['kind'], { label: string; plural: s
   theme:   { label: 'Theme',   plural: 'Themes',   color: '#e879f9', icon: Palette,        action: 'Apply theme' },
   kit:     { label: 'Kit',     plural: 'Kits',     color: '#f87171', icon: Drum,           action: 'Install kit' },
   pattern: { label: 'Pattern', plural: 'Patterns', color: '#fbbf24', icon: Grid3x3,        action: 'Add pattern' },
+  post:    { label: 'Post',    plural: 'Posts',    color: '#94a3b8', icon: MessageSquare,   action: '' },
 }
 
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
+
+// ── Pro detection: one cached fetch of billing info, shared across all cards ────
+
+let proCache: boolean | null = null
+let proPromise: Promise<boolean> | null = null
+function fetchPro(): Promise<boolean> {
+  if (proCache !== null) return Promise.resolve(proCache)
+  proPromise ??= fetch('/api/billing/info')
+    .then(r => (r.ok ? r.json() : null))
+    .then(b => { proCache = !!(b && b.plan === 'pro' && b.status === 'active'); return proCache })
+    .catch(() => { proCache = false; return false })
+  return proPromise
+}
+function useIsPro(signedIn: boolean): boolean {
+  const [pro, setPro] = useState(proCache ?? false)
+  useEffect(() => { if (signedIn) void fetchPro().then(setPro) }, [signedIn])
+  return pro
+}
 
 // ── Shared playback: one thing plays at a time, like a feed should ────────────
 
@@ -44,21 +64,6 @@ function releasePlayback(stop: () => void) {
   if (stopCurrent === stop) stopCurrent = null
 }
 export function stopFeedPlayback() { stopCurrent?.() }
-
-// Playlist behaviour: audio cards register in feed order; when one ends,
-// the next starts.
-const playQueue: Array<{ id: string; play: () => void }> = []
-function registerPlayer(id: string, play: () => void) {
-  playQueue.push({ id, play })
-  return () => {
-    const i = playQueue.findIndex(p => p.id === id)
-    if (i >= 0) playQueue.splice(i, 1)
-  }
-}
-function playNextAfter(id: string) {
-  const i = playQueue.findIndex(p => p.id === id)
-  if (i >= 0 && i + 1 < playQueue.length) playQueue[i + 1].play()
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -115,6 +120,12 @@ function drawWave(canvas: HTMLCanvasElement, peaks: number[], played: number, co
     g.fillStyle = i / n <= played ? color : 'rgba(255,255,255,0.18)'
     g.fillRect(i * barW + barW * 0.15, (h - bh) / 2, barW * 0.7, bh)
   }
+  // Playhead: a bright vertical line at the current position while playing.
+  if (played > 0 && played < 1) {
+    const x = Math.min(w - 1, Math.max(1, played * w))
+    g.fillStyle = '#fff'
+    g.fillRect(x - 1, 0, 2, h)
+  }
 }
 
 type ItemMeta = { bpm?: number; key?: string; durationSec?: number; peaks?: number[]; tags?: string[]; tempo?: number; tracks?: number; clips?: number }
@@ -166,6 +177,36 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
   const tags = ((item.payload ?? {}) as ItemMeta).tags ?? []
   const [reactions, setReactions] = useState(item.reactions)
   const [myReactions, setMyReactions] = useState(item.myReactions)
+  const [showComments, setShowComments] = useState(false)
+  const [commentCount, setCommentCount] = useState(item.commentCount ?? 0)
+  const [name, setName] = useState(item.name)
+  const [desc, setDesc] = useState(item.description)
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(item.name)
+  const [editBody, setEditBody] = useState(item.description)
+  const [savingEdit, setSavingEdit] = useState(false)
+  const isPro = useIsPro(signedIn)
+  const isAudio = item.kind === 'song' || item.kind === 'sample'
+  const canEdit = item.mine && item.kind === 'post'
+
+  async function saveEdit() {
+    const t = editTitle.trim()
+    if (!t) return
+    setSavingEdit(true)
+    try {
+      await editItem(item.id, { name: t, description: editBody })
+      setName(t); setDesc(editBody); setEditing(false)
+    } catch (e) { onToast((e as Error).message) }
+    finally { setSavingEdit(false) }
+  }
+
+  async function handleDownload() {
+    if (!signedIn) { window.location.assign('/sign-in'); return }
+    if (!isPro) { posthog.capture('community_download_gated', { kind: item.kind }); onToast('Saving audio files to your computer is a Pro feature — upgrade to download sounds.'); return }
+    posthog.capture('community_download', { kind: item.kind })
+    onToast('Downloading…')
+    try { await downloadCommunityAudio(item.id, item.name) } catch { onToast('Download failed') }
+  }
 
   function copyLink() {
     const url = `${window.location.origin}/community/${item.id}`
@@ -210,13 +251,38 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
       </div>
 
       {/* Title + badges + description */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>{item.name}</span>
-        {badges.map(b => (
-          <span key={b} style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', borderRadius: 5, padding: '2px 7px', fontVariantNumeric: 'tabular-nums' }}>{b}</span>
-        ))}
-      </div>
-      {item.description && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0', lineHeight: 1.45 }}>{item.description}</p>}
+      {editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '2px 0' }}>
+          <input value={editTitle} onChange={e => setEditTitle(e.target.value)} maxLength={120} aria-label="Post title" style={{
+            width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, fontSize: 14, fontWeight: 700,
+            background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)',
+          }} />
+          <textarea value={editBody} onChange={e => setEditBody(e.target.value)} maxLength={4000} rows={5} aria-label="Post body" style={{
+            width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.5, resize: 'vertical',
+            background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'inherit',
+          }} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={saveEdit} disabled={savingEdit || !editTitle.trim()} style={{
+              padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer',
+              background: 'var(--accent)', color: '#fff', opacity: savingEdit || !editTitle.trim() ? 0.5 : 1,
+            }}>{savingEdit ? 'Saving…' : 'Save'}</button>
+            <button onClick={() => { setEditing(false); setEditTitle(name); setEditBody(desc) }} style={{
+              padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
+            }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>{name}</span>
+            {badges.map(b => (
+              <span key={b} style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', borderRadius: 5, padding: '2px 7px', fontVariantNumeric: 'tabular-nums' }}>{b}</span>
+            ))}
+          </div>
+          {desc && item.kind !== 'post' && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0', lineHeight: 1.45 }}>{desc}</p>}
+        </>
+      )}
       {tags.length > 0 && (
         <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
           {tags.map(t => (
@@ -235,6 +301,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
         {item.kind === 'preset' && <PresetPreview item={item} color={meta.color} />}
         {item.kind === 'pack' && <PackPreview item={item} color={meta.color} />}
         {item.kind === 'project' && <ProjectPreview item={item} color={meta.color} />}
+        {item.kind === 'post' && !editing && <PostPreview body={desc} />}
       </div>
 
       {/* Actions */}
@@ -263,6 +330,18 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
           display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 999, cursor: 'pointer',
           background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
         }}><Link2 size={12} /></button>
+
+        <button onClick={() => setShowComments(s => !s)} title="Comments" aria-label={`Comments (${commentCount})`} aria-expanded={showComments} style={{
+          display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+          background: showComments ? 'rgba(255,255,255,0.06)' : 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
+        }}><MessageCircle size={13} />{commentCount > 0 && <span>{commentCount}</span>}</button>
+
+        {canEdit && !editing && (
+          <button onClick={() => { setEditTitle(name); setEditBody(desc); setEditing(true) }} title="Edit post" aria-label="Edit post" style={{
+            display: 'flex', alignItems: 'center', padding: '5px 9px', borderRadius: 999, cursor: 'pointer',
+            background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)',
+          }}><Pencil size={12} /></button>
+        )}
 
         {!item.mine && (
           <button
@@ -296,6 +375,13 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
               <Trash2 size={14} />
             </button>
           )}
+          {isAudio && (
+            <button onClick={handleDownload} title={isPro ? 'Download the audio file' : 'Download audio (Pro)'} aria-label="Download audio file" style={{
+              display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700,
+              padding: '7px 12px', borderRadius: 999, cursor: 'pointer', border: '1px solid var(--border)',
+              background: 'transparent', color: 'var(--text-muted)',
+            }}>{isPro ? <Download size={12} /> : <Lock size={11} />} Download</button>
+          )}
           {openInStudio && (
             <a href={`/new?communityItem=${item.id}`} target="_blank" rel="noreferrer" title="Open a new project with this ready to play" style={{
               display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
@@ -307,7 +393,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
               padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)',
             }}><ExternalLink size={13} /> {meta.action}</a>
-          ) : (
+          ) : item.kind === 'post' ? null : (
             <button onClick={signedIn ? onImport : () => { window.location.assign('/sign-in') }} disabled={busy} style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700,
               padding: '7px 14px', borderRadius: 999, cursor: 'pointer', border: '1px solid var(--border)',
@@ -316,7 +402,103 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
           )}
         </div>
       </div>
+
+      {showComments && <CommentsSection itemId={item.id} signedIn={signedIn} onToast={onToast} onCount={setCommentCount} />}
     </article>
+  )
+}
+
+// ── Post body ────────────────────────────────────────────────────────────────────
+
+function PostPreview({ body }: { body: string }) {
+  return (
+    <div style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+      {body || 'No content.'}
+    </div>
+  )
+}
+
+// ── Comments ─────────────────────────────────────────────────────────────────────
+
+function CommentsSection({ itemId, signedIn, onToast, onCount }: { itemId: string; signedIn: boolean; onToast: (msg: string) => void; onCount?: (n: number) => void }) {
+  const [comments, setComments] = useState<CommunityComment[] | null>(null)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    listComments(itemId).then(c => { if (alive) { setComments(c); onCount?.(c.length) } }).catch(() => { if (alive) setComments([]) })
+    return () => { alive = false }
+  }, [itemId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submit() {
+    const body = draft.trim()
+    if (!body) return
+    if (!signedIn) { window.location.assign('/sign-in'); return }
+    setBusy(true)
+    try {
+      const c = await addComment(itemId, body)
+      posthog.capture('community_comment_added', { itemId })
+      setComments(list => { const next = [...(list ?? []), c]; onCount?.(next.length); return next })
+      setDraft('')
+    } catch (e) { onToast((e as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function remove(id: string) {
+    setComments(list => { const next = (list ?? []).filter(c => c.id !== id); onCount?.(next.length); return next })
+    try { await deleteComment(itemId, id) } catch { /* stays removed locally */ }
+  }
+
+  async function report(id: string) {
+    if (!signedIn) { window.location.assign('/sign-in'); return }
+    const reason = window.prompt('Report this comment to the moderators?\n\nOptional: what’s wrong with it (spam, offensive, harassment…)')
+    if (reason === null) return
+    try { await reportComment(itemId, id, reason); onToast('Reported — a moderator will take a look.') } catch { onToast('Report failed') }
+  }
+
+  return (
+    <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {comments === null ? (
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Loading comments…</span>
+      ) : comments.length === 0 ? (
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>No comments yet — be the first to help out or say what you think.</span>
+      ) : (
+        comments.map(c => {
+          const hue = avatarHue(c.authorName)
+          return (
+            <div key={c.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <div aria-hidden style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `hsl(${hue}, 45%, 26%)`, color: `hsl(${hue}, 70%, 78%)`, fontSize: 10, fontWeight: 800 }}>{c.authorName.slice(0, 1).toUpperCase()}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{c.authorName}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(c.createdAt)}</span>
+                  {c.mine
+                    ? <button onClick={() => remove(c.id)} title="Delete comment" style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}><Trash2 size={12} /></button>
+                    : <button onClick={() => report(c.id)} title="Report comment" style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}><Flag size={11} /></button>}
+                </div>
+                <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.body}</p>
+              </div>
+            </div>
+          )
+        })
+      )}
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <textarea
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit() } }}
+          placeholder={signedIn ? 'Add a comment… (⌘↵ to send)' : 'Sign in to comment'}
+          rows={1}
+          style={{ flex: 1, resize: 'vertical', minHeight: 34, maxHeight: 140, padding: '8px 10px', borderRadius: 9, fontSize: 12.5, lineHeight: 1.4, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'inherit' }}
+        />
+        <button onClick={submit} disabled={busy || !draft.trim()} aria-label="Send comment" style={{
+          display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, padding: '8px 14px', borderRadius: 9, fontSize: 12, fontWeight: 700,
+          cursor: busy || !draft.trim() ? 'default' : 'pointer', border: 'none', background: 'var(--accent)', color: '#fff', opacity: busy || !draft.trim() ? 0.5 : 1,
+        }}><Send size={13} /> Post</button>
+      </div>
+    </div>
   )
 }
 
@@ -326,8 +508,10 @@ function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
   const prePeaks = ((item.payload ?? {}) as ItemMeta).peaks
   const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [playing, setPlaying] = useState(false)
+  const [loop, setLoop] = useState(false)
   const [clock, setClock] = useState('0:00')
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const loopRef = useRef(loop); loopRef.current = loop
   const urlRef = useRef<string | null>(null)
   const peaksRef = useRef<number[] | null>(prePeaks ?? null)
   const durRef = useRef(((item.payload ?? {}) as ItemMeta).durationSec ?? 0)
@@ -342,15 +526,16 @@ function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
   const stop = () => stopRef.current()
 
   useEffect(() => {
-    const unregister = registerPlayer(item.id, () => { void toggle() })
     return () => {
-      unregister()
       cancelAnimationFrame(rafRef.current)
       audioRef.current?.pause()
       releasePlayback(stop)
       if (urlRef.current) URL.revokeObjectURL(urlRef.current)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Keep the live element's loop flag in step with the toggle.
+  useEffect(() => { if (audioRef.current) audioRef.current.loop = loop }, [loop])
 
   function paint() {
     const a = audioRef.current, c = canvasRef.current
@@ -380,14 +565,16 @@ function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
         }
       }
       const a = new Audio(objUrl)
+      a.loop = loopRef.current
       a.onloadedmetadata = () => {
         if (!durRef.current && isFinite(a.duration)) durRef.current = a.duration
       }
+      // Stop when the clip ends — no auto-advance to the next item. Playback
+      // only ever starts from a user pressing play (or loops if loop is on).
       a.onended = () => {
         setPlaying(false)
         releasePlayback(stop)
         requestAnimationFrame(paint)
-        playNextAfter(item.id)   // playlist feel: keep the feed going
       }
       audioRef.current = a
       setState('ready')
@@ -464,6 +651,16 @@ function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
           {state === 'error' ? 'Could not load audio.' : state === 'loading' ? 'Loading audio…' : 'Press play to listen'}
         </span>
       )}
+      <button
+        onClick={() => setLoop(l => !l)}
+        title={loop ? 'Looping — click to turn off' : 'Loop this clip'}
+        aria-label={loop ? 'Turn off loop' : 'Loop this clip'} aria-pressed={loop}
+        style={{
+          width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', background: loop ? `${color}22` : 'transparent',
+          border: loop ? `1px solid ${color}` : '1px solid var(--border)', color: loop ? color : 'var(--text-muted)',
+        }}
+      ><Repeat size={13} /></button>
     </div>
   )
 }

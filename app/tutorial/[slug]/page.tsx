@@ -27,8 +27,36 @@ export default async function TutorialPage({ params }: { params: Promise<{ slug:
   const t = getTutorial(slug)
   if (!t) notFound()
 
+  // Structured data: a tutorial IS a step-by-step guide → HowTo; plus a
+  // breadcrumb trail so search results show Home › Tutorials › <title>.
+  const jsonLd = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'HowTo',
+      name: t.title,
+      description: t.description,
+      url: `https://100lights.com/tutorial/${t.slug}`,
+      step: t.steps.map((s, i) => ({
+        '@type': 'HowToStep',
+        position: i + 1,
+        text: s.text,
+        ...(s.helpId ? { image: `https://100lights.com${stepImagePath(t.slug, i)}` } : {}),
+      })),
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://100lights.com' },
+        { '@type': 'ListItem', position: 2, name: 'Tutorials', item: 'https://100lights.com/tutorial' },
+        { '@type': 'ListItem', position: 3, name: t.title, item: `https://100lights.com/tutorial/${t.slug}` },
+      ],
+    },
+  ]
+
   return (
     <div style={{ minHeight: '100%', background: 'var(--bg-base)' }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <main style={{ maxWidth: 760, margin: '0 auto', padding: '44px 20px 80px' }}>
         <Link href="/tutorial" style={{ fontSize: 12.5, color: 'var(--text-muted)', textDecoration: 'none' }}>← All tutorials</Link>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent-light)', background: 'var(--accent-subtle, rgba(139,92,246,0.14))', border: '1px solid rgba(139,92,246,0.3)', marginTop: 22 }}>Feature tutorial</div>

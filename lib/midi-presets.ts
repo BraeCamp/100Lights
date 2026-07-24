@@ -163,12 +163,25 @@ export function addPreset(preset: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt
   const stored = load()
   const p: MidiPreset = { ...preset, group: preset.group ?? 'Custom', id: crypto.randomUUID(), builtIn: false, createdAt: new Date().toISOString() }
   save([...stored, p])
+  // Mirror to the account so it shows on the user's other devices (best-effort).
+  void import('./user-library-sync').then(m => m.pushLibraryItem('preset', p.id, p.name, p)).catch(() => {})
   return p
 }
 
 export function deletePreset(id: string): void {
   const stored = load()
   save(stored.filter(p => p.id !== id || p.builtIn))
+  void import('./user-library-sync').then(m => m.deleteLibraryItem(id)).catch(() => {})
+}
+
+/** Merge account-synced presets pulled from another device into local storage.
+ *  Additive: only inserts ids not already present, never re-pushes. */
+export function upsertSyncedPresets(items: MidiPreset[]): void {
+  if (typeof localStorage === 'undefined' || items.length === 0) return
+  const stored = load()
+  const have = new Set(stored.map(p => p.id))
+  const add = items.filter(p => p && p.id && !have.has(p.id)).map(p => ({ ...p, builtIn: false }))
+  if (add.length) save([...stored, ...add])
 }
 
 /** Clamp a MIDI note to the preset's covered range. */

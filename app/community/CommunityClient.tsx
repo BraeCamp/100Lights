@@ -4,8 +4,9 @@
 // Reading is public; voting, reacting, sharing, and importing need a session.
 
 import { useEffect, useRef, useState } from 'react'
+import posthog from 'posthog-js'
 import { Upload, Search, X } from 'lucide-react'
-import { listCommunity, toggleVote, importItem, shareSample, sharePreset, sharePack, shareKit, sharePattern, COMMUNITY_TAGS, type CommunityItem } from '@/lib/community'
+import { listCommunity, toggleVote, importItem, shareSample, sharePreset, sharePack, shareKit, sharePattern, sharePost, COMMUNITY_TAGS, type CommunityItem } from '@/lib/community'
 import { getPresets, noteRangeLabel, type MidiPreset } from '@/lib/midi-presets'
 import { getKits, getPatterns, type DrumKit, type DrumPattern } from '@/lib/drum-presets'
 import { libraryGetAll, initLibrary, CATEGORY_GROUPS, type LibraryEntry } from '@/lib/sound-library'
@@ -13,7 +14,7 @@ import { useUser } from '@clerk/nextjs'
 import { FeedCard, KIND_META, stopFeedPlayback } from './FeedCard'
 
 type Kind = 'all' | CommunityItem['kind']
-const KINDS: Kind[] = ['all', 'song', 'sample', 'preset', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme']
+const KINDS: Kind[] = ['all', 'post', 'song', 'sample', 'preset', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme']
 
 export default function CommunityClient({ initialItems }: { initialItems?: CommunityItem[] }) {
   const { user, isLoaded, isSignedIn } = useUser()
@@ -263,8 +264,9 @@ export default function CommunityClient({ initialItems }: { initialItems?: Commu
 // ── Upload modal ───────────────────────────────────────────────────────────────
 
 function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () => void }) {
-  const [mode, setMode] = useState<'sample' | 'preset' | 'kit' | 'pattern' | 'pack'>('sample')
+  const [mode, setMode] = useState<'sample' | 'preset' | 'kit' | 'pattern' | 'pack' | 'post'>('sample')
   const [description, setDescription] = useState('')
+  const [postTitle, setPostTitle] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [working, setWorking] = useState(false)
   const [err, setErr] = useState('')
@@ -303,11 +305,16 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
         const pattern = patterns.find(p => p.id === pickedPattern)
         if (!pattern) throw new Error('Pick one of your saved patterns')
         await sharePattern(pattern, description)
+      } else if (mode === 'post') {
+        if (!postTitle.trim()) throw new Error('Give your post a title')
+        if (!description.trim()) throw new Error('Write something in the body')
+        await sharePost(postTitle.trim(), description)
       } else {
         if (!packName.trim()) throw new Error('Name the pack')
         const picked = entries.filter(e => packPicks.has(e.id))
         await sharePack(picked, packName.trim(), description, tags)
       }
+      posthog.capture('community_shared', { kind: mode })
       onShared()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Share failed')
@@ -324,7 +331,7 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
         </div>
 
         <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-          {(['sample', 'preset', 'kit', 'pattern', 'pack'] as const).map(m => (
+          {(['sample', 'preset', 'kit', 'pattern', 'pack', 'post'] as const).map(m => (
             <button key={m} onClick={() => setMode(m)} style={{
               fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', textTransform: 'capitalize',
               background: mode === m ? 'var(--bg-card)' : 'transparent',
@@ -334,8 +341,15 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
           ))}
         </div>
         <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
-          Songs and project starters are shared from the editor’s Export dialog · recipes by right-clicking a MIDI clip.
+          {mode === 'post'
+            ? 'Post a tip, a question, or a mini-guide to help other producers — no audio needed.'
+            : 'Songs and project starters are shared from the editor’s Export dialog · recipes by right-clicking a MIDI clip.'}
         </p>
+
+        {mode === 'post' && (
+          <input value={postTitle} onChange={e => setPostTitle(e.target.value)} placeholder="Post title (e.g. How I sidechain a pad)"
+            style={{ ...selStyle, marginBottom: 8 }} maxLength={120} />
+        )}
 
         {mode === 'sample' && (
           <select value={pickedEntry} onChange={e => setPickedEntry(e.target.value)} style={selStyle} aria-label="Pick a sample">
@@ -396,21 +410,25 @@ function UploadModal({ onClose, onShared }: { onClose: () => void; onShared: () 
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>No shareable samples yet — record or import something first (built-ins are excluded).</p>
         )}
 
-        {/* Tags */}
-        <div style={{ display: 'flex', gap: 4, marginTop: 12, flexWrap: 'wrap' }}>
-          {COMMUNITY_TAGS.map(t => (
-            <button key={t} onClick={() => setTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : prev.length < 4 ? [...prev, t] : prev)} style={{
-              fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 999, cursor: 'pointer',
-              background: tags.includes(t) ? 'rgba(124,58,237,0.18)' : 'transparent',
-              border: tags.includes(t) ? '1px solid rgba(167,139,250,0.5)' : '1px solid var(--border)',
-              color: tags.includes(t) ? '#a78bfa' : 'var(--text-muted)',
-            }}>#{t}</button>
-          ))}
-        </div>
+        {/* Tags — not stored on plain text posts */}
+        {mode !== 'post' && (
+          <div style={{ display: 'flex', gap: 4, marginTop: 12, flexWrap: 'wrap' }}>
+            {COMMUNITY_TAGS.map(t => (
+              <button key={t} onClick={() => setTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : prev.length < 4 ? [...prev, t] : prev)} style={{
+                fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 999, cursor: 'pointer',
+                background: tags.includes(t) ? 'rgba(124,58,237,0.18)' : 'transparent',
+                border: tags.includes(t) ? '1px solid rgba(167,139,250,0.5)' : '1px solid var(--border)',
+                color: tags.includes(t) ? '#a78bfa' : 'var(--text-muted)',
+              }}>#{t}</button>
+            ))}
+          </div>
+        )}
 
         <textarea
-          value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description (what is it, how to use it)…"
-          style={{ width: '100%', marginTop: 12, height: 64, resize: 'none', background: '#101010', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-primary)', fontSize: 12, padding: '8px 10px', boxSizing: 'border-box', outline: 'none' }}
+          value={description} onChange={e => setDescription(e.target.value)}
+          placeholder={mode === 'post' ? 'Write your tip, question, or guide…' : 'Short description (what is it, how to use it)…'}
+          maxLength={mode === 'post' ? 4000 : 500}
+          style={{ width: '100%', marginTop: 12, height: mode === 'post' ? 160 : 64, resize: mode === 'post' ? 'vertical' : 'none', background: '#101010', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-primary)', fontSize: 12, padding: '8px 10px', boxSizing: 'border-box', outline: 'none' }}
         />
 
         {err && <p style={{ color: '#ef4444', fontSize: 11.5, margin: '8px 0 0' }}>{err}</p>}

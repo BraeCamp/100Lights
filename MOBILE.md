@@ -18,37 +18,42 @@ so a beat made on a phone is a normal project. Desktop stays the full DAW.
 `icon-maskable-512.png`, `apple-touch-icon.png`.
 
 ## App Store / Play Store via Capacitor
-`capacitor.config.json` is the scaffold. It's wrapped when you're ready — these
-steps run locally and need Xcode (iOS) / Android Studio, so they're yours to run:
+
+**Everything is pre-wired.** Capacitor 7 + the CLI + the native-value plugins
+(`app`, `haptics`, `status-bar`, `splash-screen`, `keyboard`, `share`,
+`preferences`) are already in `package.json`, and `capacitor.config.json` has the
+app id/name, dark theme, splash, and status-bar all configured. So the wrap is:
 
 ```bash
-npm i -D @capacitor/cli
-npm i @capacitor/core @capacitor/ios @capacitor/android
+npm install            # gets Capacitor + plugins (already declared)
+
+# One-time native scaffolding — needs Xcode (iOS) / Android Studio installed:
 npx cap add ios
 npx cap add android
-npx cap open ios      # build/sign/submit in Xcode
-npx cap open android  # build/submit in Android Studio
+
+# From then on, sync + open the native IDE with one command each:
+npm run cap:ios        # cap sync ios && cap open ios     → build/sign/submit in Xcode
+npm run cap:android    # cap sync android && cap open android → build/submit in Android Studio
 ```
 
-**Two ways to bundle the web app** (config currently uses the first):
+`npm run cap:sync` alone re-copies config/plugins after any change (run it before
+opening if the config changed).
 
-1. **Remote (fastest to test):** `server.url` points the native WebView at the
-   hosted `https://100lights.com/m`. Works immediately; needs network. Apple
-   guideline 4.2 can reject a *pure* remote wrapper, so before submission add
-   native value (see below).
-2. **Bundled (recommended for the stores):** ship `/m` as static assets inside
-   the app so it launches offline and reads as a real app. Because the rest of
-   the Next app is server-rendered, do this by exporting just the mobile bundle
-   (or a small standalone build of the `/m` UI) into `webDir`, keeping API calls
-   pointed at `https://100lights.com`. Then drop `server.url`.
+**How the web app loads** — the config uses `server.url = https://100lights.com/m`,
+so the native WebView shows the live hosted mobile studio. Works immediately and
+always ships the latest `/m`. Web Audio (drums, synths, recording) runs fine in
+the iOS/Android WebView.
 
-**Add native value (helps App Store review + the feel):**
-`@capacitor/haptics` (pad feedback), `@capacitor/status-bar`,
-`@capacitor/share`, `@capacitor/preferences` (local project cache), and a proper
-audio-session config so playback behaves like a music app. The audio already
-runs through Web Audio in the WebView, which works on iOS/Android.
+- Apple guideline **4.2** can reject a *pure* remote wrapper. The pre-installed
+  native plugins already add real device value (haptics on pads, native splash +
+  status bar, share sheet, on-device Preferences cache) — wire them into the
+  `/m` UI (behind a `Capacitor.isNativePlatform()` check) before submitting.
+- For a fully **offline/bundled** build later: export just the `/m` UI into
+  `webDir` (keeping API calls pointed at `https://100lights.com`) and drop
+  `server.url`. Not required for a first submission with the remote URL + native
+  plugins.
 
-`appId` (`com.hundredlights.studio`) is a placeholder — set it to your real
-reverse-DNS id before creating the native projects. (Avoid a leading digit in
-any segment — Android package names disallow it, which is why it isn't
+`appId` is `com.hundredlights.studio` — change it to your real reverse-DNS id
+before creating the native projects if you want a different one. (No leading
+digit in any segment — Android package names disallow it, which is why it isn't
 `com.100lights.*`.)

@@ -169,6 +169,28 @@ const jsonLd = {
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
 }
 
+// Brand entity (Knowledge Panel) + a site search box (sitelinks searchbox) that
+// points at the community search — the one real on-site search surface.
+const orgJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: '100Lights',
+  url: 'https://100lights.com',
+  logo: 'https://100lights.com/icon-512.png',
+}
+
+const websiteJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: '100Lights',
+  url: 'https://100lights.com',
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: { '@type': 'EntryPoint', urlTemplate: 'https://100lights.com/community?q={search_term_string}' },
+    'query-input': 'required name=search_term_string',
+  },
+}
+
 // Static + hourly ISR: the landing page is the top SEO surface, so it must
 // prerender. Sign-in state is resolved on the client via <SignedIn>/<SignedOut>
 // instead of auth() (which would force per-request dynamic rendering).
@@ -186,6 +208,14 @@ export default async function LandingPage() {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
       />
 
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>

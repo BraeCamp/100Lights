@@ -20,5 +20,20 @@ export async function GET() {
     ORDER BY report_count DESC, last_report DESC
     LIMIT 100
   `
-  return Response.json({ items: rows })
+  // Reported comments — grouped, most-reported first, with the offending text.
+  let comments: unknown[] = []
+  try {
+    comments = await sql`
+      SELECT c.id, c.item_id, c.author_name, c.body,
+             COUNT(cr.id)::int AS report_count,
+             MAX(cr.created_at) AS last_report,
+             ARRAY_AGG(cr.reason) FILTER (WHERE cr.reason <> '') AS reasons
+      FROM community_comment_reports cr
+      JOIN community_comments c ON c.id = cr.comment_id
+      GROUP BY c.id, c.item_id, c.author_name, c.body
+      ORDER BY report_count DESC, last_report DESC
+      LIMIT 100
+    `
+  } catch { /* table may not exist yet */ }
+  return Response.json({ items: rows, comments })
 }

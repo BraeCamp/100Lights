@@ -1,10 +1,19 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import PlatformHighlight from './PlatformHighlight'
 
-export const metadata = {
+export const metadata: Metadata = {
   title: 'Download the Desktop App',
   description: 'Get 100Lights for macOS and Windows — the full browser studio as a desktop app, with computer-audio capture and offline-friendly windows.',
   alternates: { canonical: 'https://100lights.com/download' },
+  openGraph: {
+    title: 'Download 100Lights for macOS & Windows',
+    description: 'The full browser studio as a desktop app — computer-audio capture and offline-friendly windows.',
+    type: 'website',
+    siteName: '100Lights',
+    url: 'https://100lights.com/download',
+  },
+  twitter: { card: 'summary_large_image', title: 'Download 100Lights for macOS & Windows', description: 'The full browser studio, as a desktop app.' },
 }
 
 // Static + ISR: the release info is already cached; platform highlighting moved

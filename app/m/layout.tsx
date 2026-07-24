@@ -14,8 +14,17 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: '100Lights — Make a Beat',
-  description: 'Make a beat in your browser, free — then finish the track on desktop.',
+  title: '100Lights — Make a Beat on Your Phone',
+  description: 'Make a beat in your browser, free — layer drums, melodies, and your own recordings on your phone, then finish the track on desktop.',
+  alternates: { canonical: 'https://100lights.com/m' },
+  openGraph: {
+    title: '100Lights — Make a Beat on Your Phone',
+    description: 'Make a beat in your browser, free — layer drums, melodies, and your own recordings on your phone, then finish the track on desktop.',
+    type: 'website',
+    siteName: '100Lights',
+    url: 'https://100lights.com/m',
+  },
+  twitter: { card: 'summary_large_image', title: '100Lights — Make a Beat on Your Phone', description: 'Make a beat in your browser, free — then finish the track on desktop.' },
 }
 
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
