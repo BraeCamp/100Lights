@@ -34,9 +34,21 @@ function seededDrums(): boolean[][] {
   return g
 }
 
+// A simple root-note bass pulse so the studio opens as a *multi-track* song
+// (drums + bass), not a lone drum grid — makes the full-DAW nature obvious.
+function seededBass(): boolean[][] {
+  const g = emptyGrid('instrument', STEPS_PER_BAR)
+  const low = rowsFor('instrument').length - 1  // lowest scale row (root A)
+  ;[0, 6, 8, 14].forEach(s => { g[low][s] = true })
+  return g
+}
+
 export default function MobileStudio() {
   const { isSignedIn, user } = useUser()
-  const [tracks, setTracks] = useState<MobileTrack[]>(() => [{ id: uid(), name: 'Drums', kind: 'drum', sound: 'boombap', grid: seededDrums(), volume: 0.85, muted: false }])
+  const [tracks, setTracks] = useState<MobileTrack[]>(() => [
+    { id: uid(), name: 'Drums', kind: 'drum', sound: 'boombap', grid: seededDrums(), volume: 0.85, muted: false },
+    { id: uid(), name: 'Bass', kind: 'instrument', sound: 'bass', grid: seededBass(), volume: 0.8, muted: false },
+  ])
   const [librarySounds, setLibrarySounds] = useState<LibraryEntry[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState<'grid' | 'sounds' | 'mix'>('grid')
