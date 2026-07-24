@@ -10,6 +10,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { DRUM_LANES, DRUM_KITS, STEPS_PER_BAR } from '@/lib/drum-presets'
 import { playInstrumentNote, preloadDrumInstrument } from '@/lib/daw-instruments'
 import type { TrackInstrument } from '@/lib/daw-types'
+import { useUser } from '@clerk/nextjs'
+import { buildBeatProject, beatToCfProj } from '@/lib/mobile-beat'
 
 // Kick at the bottom, like a drum machine. A compact, mobile-friendly lane set.
 const LANES = ['kick', 'snare', 'clap', 'closedHat', 'openHat', 'rim', 'tomLo', 'crash']
@@ -34,11 +36,47 @@ export default function MobileBeatMaker() {
   const instRef = useRef<TrackInstrument | null>(null)
   const gridRef = useRef(grid); gridRef.current = grid
   const bpmRef = useRef(bpm); bpmRef.current = bpm
+  const kitIdRef = useRef(kitId); kitIdRef.current = kitId
   const timerRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
   const nextTimeRef = useRef(0)
   const stepRef = useRef(0)
   const drawQueue = useRef<{ step: number; time: number }[]>([])
+
+  const { isSignedIn } = useUser()
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [savedId, setSavedId] = useState<string | null>(null)
+  const [saveMsg, setSaveMsg] = useState('')
+  const [linkCopied, setLinkCopied] = useState(false)
+
+  const postProject = useCallback(async (cf: unknown) => {
+    const res = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cf) })
+    if (!res.ok) { let m = 'Could not save.'; try { const b = await res.json(); if (b?.error) m = b.error } catch { /* ignore */ } throw new Error(m) }
+    return (cf as { id: string }).id
+  }, [])
+
+  // Sign in to keep a beat. Guests stash it and sign up; on return it saves.
+  const saveBeat = useCallback(async () => {
+    const cf = beatToCfProj(buildBeatProject(gridRef.current, LANES.map(l => l.pitch), kitIdRef.current, bpmRef.current))
+    if (!isSignedIn) {
+      try { localStorage.setItem('100lights-mobile-beat', JSON.stringify(cf)) } catch { /* ok */ }
+      window.location.assign('/sign-up?redirect_url=' + encodeURIComponent('/m'))
+      return
+    }
+    setSaveState('saving')
+    try { setSavedId(await postProject(cf)); setSaveState('saved') }
+    catch (e) { setSaveMsg((e as Error).message); setSaveState('error') }
+  }, [isSignedIn, postProject])
+
+  useEffect(() => {
+    if (!isSignedIn) return
+    let raw: string | null = null
+    try { raw = localStorage.getItem('100lights-mobile-beat') } catch { /* ok */ }
+    if (!raw) return
+    try { localStorage.removeItem('100lights-mobile-beat') } catch { /* ok */ }
+    setSaveState('saving')
+    postProject(JSON.parse(raw)).then(id => { setSavedId(id); setSaveState('saved') }).catch(e => { setSaveMsg(e.message); setSaveState('error') })
+  }, [isSignedIn, postProject])
 
   // Lazily create the AudioContext + load the kit on first interaction (mobile
   // browsers require a user gesture before audio can start).
@@ -121,7 +159,10 @@ export default function MobileBeatMaker() {
           </div>
           <button onClick={() => setBpm(b => Math.min(200, b + 5))} style={stepBtn}>+</button>
         </div>
-        <button onClick={clear} style={{ ...stepBtn, width: 'auto', padding: '0 12px', fontSize: 12, marginLeft: 'auto' }}>Clear</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button onClick={() => void saveBeat()} disabled={saveState === 'saving'} style={{ ...stepBtn, width: 'auto', padding: '0 15px', fontSize: 13, fontWeight: 800, background: 'var(--accent)', color: '#fff', border: 'none' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+          <button onClick={clear} style={{ ...stepBtn, width: 'auto', padding: '0 11px', fontSize: 12 }}>Clear</button>
+        </div>
       </div>
 
       {/* Kit picker */}
@@ -165,8 +206,35 @@ export default function MobileBeatMaker() {
           Tap cells to build a beat · pick a kit above · press ▶. Sign in on desktop to keep it and finish the track.
         </p>
       </div>
+
+      {(saveState === 'saved' || saveState === 'error') && (
+        <div onClick={() => setSaveState('idle')} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '24px 22px calc(20px + env(safe-area-inset-bottom))', textAlign: 'center' }}>
+            {saveState === 'saved' ? (
+              <>
+                <div style={{ fontSize: 30, marginBottom: 4 }}>🎉</div>
+                <h3 style={{ margin: '0 0 6px', fontSize: 16.5, fontWeight: 800, color: 'var(--text-primary)' }}>Beat saved to your account</h3>
+                <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>Open it on a computer to finish the track — it&apos;s waiting in your projects.</p>
+                <button onClick={() => { navigator.clipboard?.writeText('https://100lights.com/projects/' + savedId).catch(() => {}); setLinkCopied(true); window.setTimeout(() => setLinkCopied(false), 2200) }} style={{ ...bigBtn, background: 'var(--accent)', color: '#fff' }}>{linkCopied ? 'Desktop link copied ✓' : 'Copy the desktop link'}</button>
+                <button onClick={() => setSaveState('idle')} style={{ ...bigBtn, background: 'transparent', color: 'var(--text-muted)' }}>Keep making beats</button>
+              </>
+            ) : (
+              <>
+                <h3 style={{ margin: '0 0 6px', fontSize: 16.5, fontWeight: 800, color: 'var(--text-primary)' }}>Couldn&apos;t save</h3>
+                <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--text-secondary)' }}>{saveMsg}</p>
+                <button onClick={() => setSaveState('idle')} style={{ ...bigBtn, background: 'var(--accent)', color: '#fff' }}>OK</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+const bigBtn: React.CSSProperties = {
+  display: 'block', width: '100%', padding: 13, borderRadius: 12, fontSize: 14.5, fontWeight: 800,
+  border: 'none', cursor: 'pointer', marginTop: 8,
 }
 
 const stepBtn: React.CSSProperties = {
