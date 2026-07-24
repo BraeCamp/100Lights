@@ -1,0 +1,11 @@
+{
+  "appId": "com.hundredlights.studio",
+  "appName": "100Lights",
+  "webDir": "public",
+  "server": {
+    "url": "https://100lights.com/m",
+    "androidScheme": "https"
+  },
+  "ios": { "contentInset": "always" },
+  "backgroundColor": "#0e0d12"
+}

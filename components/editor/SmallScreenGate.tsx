@@ -40,16 +40,19 @@ export function SmallScreenGate() {
       padding: 28, textAlign: 'center', gap: 14,
     }}>
       <MonitorSmartphone size={34} color="#a78bfa" />
-      <h1 style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>The studio wants a bigger screen</h1>
+      <h1 style={{ fontSize: 19, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Make a beat right here</h1>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 340 }}>
-        Editing works best on a laptop or desktop browser. Save the link to pick up
-        on a computer — or on your phone, browse and listen to everything the
-        community has shared.
+        The full studio is built for a laptop — but you can tap out a beat on your
+        phone right now, then sign in on a computer to finish the track.
       </p>
+      <Link href="/m" style={{
+        marginTop: 6, padding: '12px 28px', borderRadius: 999, background: 'var(--accent, #8b5cf6)',
+        color: '#fff', fontSize: 14, fontWeight: 800, textDecoration: 'none',
+      }}>🎵 Open the beat maker →</Link>
       <button onClick={copyLink} style={{
-        marginTop: 6, padding: '11px 26px', borderRadius: 999, background: 'var(--accent, #8b5cf6)',
-        color: '#fff', fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
-      }}>{copied ? 'Link copied ✓' : 'Copy the link for your computer'}</button>
+        padding: '10px 24px', borderRadius: 999, background: 'transparent',
+        color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, border: '1px solid var(--border)', cursor: 'pointer',
+      }}>{copied ? 'Link copied ✓' : 'Copy the link for desktop'}</button>
       <Link href="/community" style={{
         padding: '10px 24px', borderRadius: 999, background: 'transparent',
         color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, textDecoration: 'none',
