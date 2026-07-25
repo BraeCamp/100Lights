@@ -878,6 +878,9 @@ export default function ArticlesPanel() {
           : filter === 'live' ? !r.draft
           : filter === 'draft' ? r.draft && !r.scheduledFor
           : !!r.scheduledFor,
+        ).sort((a, b) =>
+          // Scheduled tab: soonest publish first, latest last (chronological).
+          filter === 'scheduled' ? (a.scheduledFor ?? '').localeCompare(b.scheduledFor ?? '') : 0,
         ).map(r => (
           <button key={r.slug} onClick={() => { setSel(r); setPreview(false); setMsg('') }} style={{
             display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', padding: '10px 14px',
