@@ -12,9 +12,9 @@ import posthog from 'posthog-js'
 import { useUser } from '@clerk/nextjs'
 import { MobileDawProvider } from './MobileDawProvider'
 import { useDaw, makeMidiClip } from '@/lib/daw-state'
-import { beatToCfProj } from '@/lib/mobile-beat'
+import { projectToCfFile } from './daw/save-project'
 import { drumInstrument, polyInstrument } from './daw/seed'
-import Transport from '@/components/editor/daw/Transport'
+import { MobileTransport } from './daw/MobileTransport'
 import ArrangementView from '@/components/editor/daw/ArrangementView'
 import Mixer from '@/components/editor/daw/Mixer'
 import SessionView from '@/components/editor/daw/SessionView'
@@ -31,16 +31,16 @@ export default function MobileDaw() {
   )
 }
 
-const VIEW_TABS: { id: DawView; label: string }[] = [
-  { id: 'session', label: 'Clips' },
-  { id: 'arrangement', label: 'Song' },
-  { id: 'mixer', label: 'Mixer' },
+const VIEW_TABS: { id: DawView; label: string; icon: string }[] = [
+  { id: 'arrangement', label: 'Song', icon: '☰' },
+  { id: 'session', label: 'Clips', icon: '⊞' },
+  { id: 'mixer', label: 'Mix', icon: '🎚️' },
 ]
 
 function Shell() {
   const { project, dispatch, view, setView, selectedTrackId, setSelectedTrackId } = useDaw()
   const { isSignedIn } = useUser()
-  const [panel, setPanel] = useState<'sounds' | 'fx' | 'keys' | null>(null)
+  const [panel, setPanel] = useState<'sounds' | 'fx' | 'keys'>('sounds')
   const [adding, setAdding] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [savedId, setSavedId] = useState<string | null>(null)
@@ -59,7 +59,7 @@ function Shell() {
   }
 
   const save = useCallback(async () => {
-    const cf = beatToCfProj(project)
+    const cf = projectToCfFile(project)
     if (!isSignedIn) {
       try { localStorage.setItem('100lights-mobile-beat', JSON.stringify(cf)) } catch { /* ok */ }
       window.location.assign('/sign-up?redirect_url=' + encodeURIComponent('/m')); return
@@ -85,44 +85,49 @@ function Shell() {
         <Link href="/" style={{ fontSize: 11, color: 'var(--text-muted)', textDecoration: 'none' }}>Exit ↗</Link>
       </header>
 
-      {/* Real transport — scrolls horizontally if it overflows a narrow screen */}
-      <div style={{ overflowX: 'auto', overflowY: 'hidden', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-        <Transport />
-      </div>
+      <MobileTransport />
 
-      {/* View switch */}
-      <div style={{ display: 'flex', gap: 6, padding: '8px 12px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-        {VIEW_TABS.map(t => (
-          <button key={t.id} onClick={() => setView(t.id)} style={{ flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${view === t.id ? 'var(--accent)' : 'var(--border)'}`, background: view === t.id ? 'rgba(139,92,246,0.14)' : 'transparent', color: view === t.id ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{t.label}</button>
-        ))}
-        <button onClick={() => setAdding(true)} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px dashed var(--accent)', background: 'transparent', color: 'var(--accent-light)' }}>+</button>
-      </div>
-
-      {/* Main view — the real feature components */}
+      {/* Main view — the real feature components, full-screen */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', position: 'relative' }}>
         {view === 'session' && <SessionView />}
         {view === 'arrangement' && <ArrangementView />}
         {view === 'mixer' && <Mixer />}
       </div>
 
-      {/* Selected-track panel: Sounds / FX / Keys */}
+      {/* Bottom nav: views + add track */}
+      <nav style={{ display: 'flex', alignItems: 'stretch', gap: 6, padding: '7px 10px calc(7px + env(safe-area-inset-bottom))', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--bg-surface)' }}>
+        {VIEW_TABS.map(t => (
+          <button key={t.id} onClick={() => setView(t.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '7px 0', borderRadius: 10, cursor: 'pointer', border: 'none', background: view === t.id ? 'rgba(139,92,246,0.14)' : 'transparent', color: view === t.id ? 'var(--accent-light)' : 'var(--text-muted)' }}>
+            <span style={{ fontSize: 17, lineHeight: 1 }}>{t.icon}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700 }}>{t.label}</span>
+          </button>
+        ))}
+        <button onClick={() => setAdding(true)} aria-label="Add a track" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '7px 0', borderRadius: 10, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--accent-light)' }}>
+          <span style={{ fontSize: 17, lineHeight: 1 }}>＋</span>
+          <span style={{ fontSize: 10.5, fontWeight: 700 }}>Track</span>
+        </button>
+      </nav>
+
+      {/* Selected-track panel as an overlay bottom sheet: Sounds / FX / Keys */}
       {track && (
-        <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: track.color }} />
-            <strong style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</strong>
-            {(['sounds', 'fx', 'keys'] as const).map(p => (
-              <button key={p} onClick={() => setPanel(panel === p ? null : p)} style={{ padding: '5px 11px', borderRadius: 7, fontSize: 11, fontWeight: 700, textTransform: 'capitalize', cursor: 'pointer', border: `1px solid ${panel === p ? 'var(--accent)' : 'var(--border)'}`, background: panel === p ? 'rgba(139,92,246,0.14)' : 'transparent', color: panel === p ? 'var(--accent-light)' : 'var(--text-muted)' }}>{p}</button>
-            ))}
-            <button onClick={() => setSelectedTrackId(null)} aria-label="Close track panel" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 17, cursor: 'pointer', lineHeight: 1 }}>×</button>
-          </div>
-          {panel && (
-            <div style={{ maxHeight: '42vh', overflow: 'auto', borderTop: '1px solid var(--border)' }}>
+        <div onClick={() => setSelectedTrackId(null)} style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '68vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 8px' }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: track.color }} />
+              <strong style={{ fontSize: 13.5, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</strong>
+              <button onClick={() => setSelectedTrackId(null)} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ display: 'flex', gap: 6, padding: '0 14px 10px', borderBottom: '1px solid var(--border)' }}>
+              {(['sounds', 'fx', 'keys'] as const).map(p => (
+                <button key={p} onClick={() => setPanel(p)} style={{ flex: 1, padding: '9px 0', borderRadius: 8, fontSize: 12.5, fontWeight: 700, textTransform: 'capitalize', cursor: 'pointer', border: `1px solid ${panel === p ? 'var(--accent)' : 'var(--border)'}`, background: panel === p ? 'rgba(139,92,246,0.14)' : 'transparent', color: panel === p ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{p}</button>
+              ))}
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
               {panel === 'sounds' && <InstrumentPicker trackId={track.id} />}
               {panel === 'fx' && <DeviceChain trackId={track.id} />}
-              {panel === 'keys' && <PadInput trackId={track.id} onClose={() => setPanel(null)} />}
+              {panel === 'keys' && <PadInput trackId={track.id} onClose={() => setSelectedTrackId(null)} />}
             </div>
-          )}
+          </div>
         </div>
       )}
 
