@@ -442,7 +442,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   // ── New feature state
   const [chordType, setChordType] = useState<string | null>(null)
-  const [scaleLock, setScaleLock] = useState(false)
+  // Default scale-lock ON for melodic clips on a phone: taps snap to the key so
+  // beginners can't hit a wrong note (toggle is in the toolbar). Desktop off.
+  const [scaleLock, setScaleLock] = useState(mobileRoll && !clip.isDrumClip)
   const inScalePitches = getInScalePitches(project.key, project.scale)
 
   // Voice mapping: sung-pitch ribbon overlay + synced replay (pitched rolls only)

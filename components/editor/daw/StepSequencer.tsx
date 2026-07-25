@@ -89,6 +89,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   const [kits, setKits] = useState<DrumKit[]>(() => getKits())
   const [patterns, setPatterns] = useState<DrumPattern[]>(() => getPatterns())
   const [patternSel, setPatternSel] = useState('')
+  const lastDiceRef = useRef('')
   const refreshLibs = () => { setKits(getKits()); setPatterns(getPatterns()) }
 
   function applyKit(kitId: string) {
@@ -105,6 +106,20 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
     setPatternSel(p.builtIn ? '' : p.id)   // keep user patterns selected so they can be deleted
     const dur = Math.max(clip.durationBeats, p.bars * beatsPerBar)
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: patternToNotes(p), durationBeats: dur } })
+  }
+  // "Surprise me" — drop in a random built-in groove (with a little velocity
+  // humanising) so a beat appears in one tap. GarageBand's dice, our patterns.
+  function dicePattern() {
+    const builtIns = patterns.filter(p => p.builtIn)
+    if (!builtIns.length) return
+    const pool = builtIns.length > 1 ? builtIns.filter(p => p.id !== lastDiceRef.current) : builtIns
+    const p = pool[Math.floor(Math.random() * pool.length)]
+    lastDiceRef.current = p.id
+    setPatternSel('')
+    const dur = Math.max(clip.durationBeats, p.bars * beatsPerBar)
+    // Humanise velocities a touch so the dice feels alive, not stamped.
+    const notes = patternToNotes(p).map(nt => ({ ...nt, velocity: Math.max(55, Math.min(127, nt.velocity + Math.round((Math.random() - 0.5) * 26))) }))
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, durationBeats: dur } })
   }
   function saveKit() {
     if (!track || track.instrument.type !== 'drum') return
@@ -230,6 +245,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
           </select>
           <button onClick={savePattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Save the current hits as a pattern">＋</button>
           {userPatternSelected && <button onClick={delPattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved pattern">🗑</button>}
+          <button onClick={dicePattern} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 14, borderColor: 'var(--accent)', color: 'var(--accent-light)' }} title="Surprise me — drop in a random groove">🎲</button>
         </label>
 
         {/* Bars */}
