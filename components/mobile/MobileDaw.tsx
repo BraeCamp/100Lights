@@ -86,6 +86,39 @@ function FullMsg({ children }: { children: React.ReactNode }) {
   return <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 24 }}>{children}</div>
 }
 
+// One-time gesture hints — discoverability is the biggest touch-DAW battle.
+function CoachMarks() {
+  const [show, setShow] = useState(false)
+  useEffect(() => { try { if (!localStorage.getItem('100lights-mobile-coach')) setShow(true) } catch { /* ok */ } }, [])
+  if (!show) return null
+  const dismiss = () => { try { localStorage.setItem('100lights-mobile-coach', '1') } catch { /* ok */ } setShow(false) }
+  const tips: [string, string][] = [
+    ['🎵', 'Song: double-tap the empty lane to play/stop; drag it sideways to scrub.'],
+    ['🤏', 'Two fingers on the timeline pan; pinch to zoom the whole song.'],
+    ['✏️', 'Double-tap a clip to open its beat grid or piano roll.'],
+    ['🎛️', 'Sounds tab: pick an instrument, add FX, or tap Chords for in-key chords.'],
+    ['🎲', 'In a beat, hit 🎲 or Smart to generate a groove instantly.'],
+    ['⚡', 'Hold a ⚡ FX pad for a live filter/duck; ↩ undoes (hold to redo).'],
+  ]
+  return (
+    <div onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '18px 18px calc(20px + env(safe-area-inset-bottom))' }}>
+        <p style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 800 }}>Quick tips 👋</p>
+        <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-muted)' }}>A few gestures so the studio feels fast on your phone.</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginBottom: 16 }}>
+          {tips.map(([emoji, t]) => (
+            <div key={t} style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 18, lineHeight: 1.2, flexShrink: 0 }}>{emoji}</span>
+              <span style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.4 }}>{t}</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={dismiss} style={{ width: '100%', padding: '13px 0', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 800, background: 'var(--accent)', color: '#fff' }}>Got it</button>
+      </div>
+    </div>
+  )
+}
+
 // "Start from a beat" — a new project opens here so it's never a blank timeline.
 function TemplateChooser({ onPick, onBlank }: { onPick: (t: MobileTemplate) => void; onBlank: () => void }) {
   return (
@@ -238,6 +271,8 @@ function Shell({ projectId }: { projectId?: string }) {
 
       {/* Hamburger drawer */}
       {drawer && <SideDrawer onClose={() => setDrawer(false)} onOpenClips={() => { setTab('clips'); setDrawer(false) }} />}
+
+      <CoachMarks />
 
       {/* Add-track sheet */}
       {adding && (
