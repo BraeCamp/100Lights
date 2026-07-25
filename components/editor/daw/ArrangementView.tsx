@@ -366,7 +366,7 @@ export default function ArrangementView() {
   // 2 fingers pan (both axes) + pinch-zoom the timeline; double-tap the blank
   // lane plays. Mirrors the piano roll's touch model.
   const laneGesture = useRef<
-    | { mode: 'scrub' }
+    | { mode: 'scrub'; locked: 'scrub' | 'scroll' | null; startX: number; startY: number }
     | { mode: 'gesture'; locked: 'pan' | 'zoom' | null; startDist: number; startBeatW: number; midX: number; midY: number; startSL: number; startST: number }
     | null
   >(null)
@@ -1532,11 +1532,15 @@ export default function ArrangementView() {
       {/* Track rows */}
       <div
         ref={laneRef}
-        style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', position: 'relative', touchAction: isMobile ? 'none' : undefined }}
+        // pan-y lets the browser scroll the track list vertically with one
+        // finger (needed on short/landscape screens); horizontal + pinch are
+        // handled below, so they aren't swallowed by the browser.
+        style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', position: 'relative', touchAction: isMobile ? 'pan-y' : undefined }}
         onWheel={handleWheel}
         onMouseDown={isMobile ? undefined : onLaneMouseDown}
         // Mobile: double-tap the blank lane toggles play; 1 finger there scrubs
-        // the playhead; 2 fingers pan + pinch-zoom the whole timeline.
+        // the playhead (horizontal) OR scrolls the tracks (vertical, native);
+        // 2 fingers pan + pinch-zoom the whole timeline.
         onDoubleClick={isMobile ? (e => {
           if (e.target !== e.currentTarget) return
           if (engine.isPlaying) engine.stop(); else void engine.play()
@@ -1555,12 +1559,8 @@ export default function ArrangementView() {
             return
           }
           if (e.target !== e.currentTarget) { laneGesture.current = null; return }
-          const rect = lane.getBoundingClientRect()
-          const x = e.touches[0].clientX - rect.left
-          if (x < hdrW) { laneGesture.current = null; return }
-          const bb = Math.max(0, (x - hdrW + scrollLeft) / beatW)
-          engine.seek(bb); setPosition(bb)
-          laneGesture.current = { mode: 'scrub' }
+          const t = e.touches[0]
+          laneGesture.current = { mode: 'scrub', locked: null, startX: t.clientX, startY: t.clientY }
         }) : undefined}
         onTouchMove={isMobile ? (e => {
           const g = laneGesture.current; const lane = laneRef.current
@@ -1584,8 +1584,17 @@ export default function ArrangementView() {
               lane.scrollTop = Math.max(0, g.startST - (midY - g.midY))
             }
           } else if (g.mode === 'scrub' && e.touches.length === 1) {
+            const t = e.touches[0]
+            // Lock direction: a vertical drag is a native scroll (leave it to
+            // the browser); only a horizontal drag scrubs the playhead.
+            if (g.locked === null) {
+              const dx = Math.abs(t.clientX - g.startX), dy = Math.abs(t.clientY - g.startY)
+              if (dx < 8 && dy < 8) return
+              g.locked = dx > dy ? 'scrub' : 'scroll'
+            }
+            if (g.locked !== 'scrub') return
             const rect = lane.getBoundingClientRect()
-            const bb = Math.max(0, (e.touches[0].clientX - rect.left - hdrW + scrollLeft) / beatW)
+            const bb = Math.max(0, (t.clientX - rect.left - hdrW + scrollLeft) / beatW)
             engine.seek(bb); setPosition(bb)
           }
         }) : undefined}

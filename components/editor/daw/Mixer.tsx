@@ -671,7 +671,10 @@ export default function Mixer() {
 
   return (
     <div data-testid="mixer" style={{ display: 'flex', flex: 1, minHeight: 0, background: 'var(--bg-base)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', overflowX: 'auto', overflowY: 'hidden', flex: 1, alignItems: 'stretch' }}>
+      {/* On mobile the strips size to their content and the row scrolls both
+          ways — so on a short/landscape screen you can scroll down to reach the
+          fader / mute-solo instead of them being clipped. */}
+      <div style={{ display: 'flex', overflowX: 'auto', overflowY: isMobile ? 'auto' : 'hidden', flex: 1, alignItems: isMobile ? 'flex-start' : 'stretch' }}>
         {project.tracks.map(track => (
           <ChannelStrip key={track.id} track={track} onOpenDetail={setDetailId} />
         ))}
@@ -707,7 +710,7 @@ export default function Mixer() {
           </button>
         </div>
       </div>
-      <div style={{ flexShrink: 0, borderLeft: '2px solid var(--border-light)' }}>
+      <div style={{ flexShrink: 0, borderLeft: '2px solid var(--border-light)', overflowY: isMobile ? 'auto' : undefined, alignSelf: isMobile ? 'flex-start' : undefined, maxHeight: '100%' }}>
         <ChannelStrip isMaster />
       </div>
       {isMobile && detailId && <ChannelDetail trackId={detailId} onClose={() => setDetailId(null)} />}
