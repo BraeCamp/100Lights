@@ -6,7 +6,7 @@
 // Anthropic API. Repo articles are editable too: saving one writes a DB row
 // with the same slug, which overrides the file.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { renderMarkdown } from '@/lib/simple-markdown'
 import { initLibrary, libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
@@ -51,6 +51,91 @@ const input: React.CSSProperties = {
   background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none',
 }
 
+// ── Element parsing (for the right-click "edit its file" panel) ──────────────
+// Each widget marker becomes an editable element. Audio-bearing ones carry the
+// source URL + an in-place save target the studio can write back to.
+interface ElAudio { role?: string; src: string; name: string; saveTo: string | null }
+interface ArticleEl { key: string; type: string; icon: string; label: string; line: number; marker: string; audios: ElAudio[] }
+
+// Turn a served audio URL into the target the studio overwrites in place:
+// demo clips → the override store; learn-audio R2 objects → the same key.
+// Anything else (committed /learn-audio/*.mp3, external) has no in-place slot,
+// so the studio can only "save as new" — no source gets clobbered by accident.
+function saveTargetFor(src: string): string | null {
+  const demo = src.match(/\/api\/demo-audio\/([^/?#]+)/)
+  if (demo) return `demo:${decodeURIComponent(demo[1])}`
+  const q = src.indexOf('?')
+  if (src.startsWith('/api/learn-audio') && q >= 0) {
+    const key = new URLSearchParams(src.slice(q)).get('key')
+    if (key) return `r2:${key}`
+  }
+  return null
+}
+
+const FIGURE_TYPES = new Set(['audio', 'ab', 'mixer', 'progression', 'sound'])
+
+function parseElements(body: string): ArticleEl[] {
+  const els: ArticleEl[] = []
+  body.split('\n').forEach((raw, i) => {
+    const b = raw.trim()
+    if (!b) return
+    const push = (e: Omit<ArticleEl, 'line' | 'marker'>) => els.push({ ...e, line: i, marker: b })
+    let m: RegExpMatchArray | null
+    if ((m = b.match(/^@audio\(([^)]+)\)\s*(.*)$/))) {
+      const src = m[1].trim(), name = m[2].trim() || 'audio'
+      push({ key: `audio-${i}`, type: 'audio', icon: '🎵', label: name, audios: [{ src, name, saveTo: saveTargetFor(src) }] })
+    } else if ((m = b.match(/^@ab\(([^)]+)\)\s*(.*)$/))) {
+      const cap = m[2].trim() || 'A/B test'; const audios: ElAudio[] = []
+      try {
+        const o = JSON.parse(decodeURIComponent(m[1])) as { plainSrc?: string; treatedSrc?: string }
+        if (o.plainSrc) audios.push({ role: 'A (plain)', src: o.plainSrc, name: `${cap} A`, saveTo: saveTargetFor(o.plainSrc) })
+        if (o.treatedSrc) audios.push({ role: 'B (treated)', src: o.treatedSrc, name: `${cap} B`, saveTo: saveTargetFor(o.treatedSrc) })
+      } catch { /* malformed — still list it for marker editing */ }
+      push({ key: `ab-${i}`, type: 'ab', icon: '🔀', label: cap, audios })
+    } else if (b.startsWith('@mixer')) {
+      m = b.match(/^@mixer(?:\(([^)]*)\))?\s*(.*)$/)
+      const arg = (m?.[1] || '').trim() || 'mix-mud'
+      const src = /^(https?:)?\//.test(arg) ? arg : `/api/demo-audio/${arg}`
+      push({ key: `mixer-${i}`, type: 'mixer', icon: '🎚', label: m?.[2]?.trim() || 'Mixer', audios: [{ src, name: arg, saveTo: saveTargetFor(src) }] })
+    } else if ((m = b.match(/^@progression\(([^)]+)\)\s*(.*)$/))) {
+      const cap = m[2].trim() || 'Progression'; const audios: ElAudio[] = []
+      try { const o = JSON.parse(decodeURIComponent(m[1])) as { audioUrl?: string }; if (o.audioUrl) audios.push({ src: o.audioUrl, name: cap, saveTo: saveTargetFor(o.audioUrl) }) } catch { /* ignore */ }
+      push({ key: `prog-${i}`, type: 'progression', icon: '🎹', label: cap, audios })
+    } else if ((m = b.match(/^@sound\(([^)]+)\)\s*(.*)$/))) {
+      push({ key: `sound-${i}`, type: 'sound', icon: '♪', label: m[2].trim() || 'Community sound', audios: [] })
+    } else if ((m = b.match(/^@video\(([^)]+)\)\s*(.*)$/))) {
+      push({ key: `video-${i}`, type: 'video', icon: '🎬', label: m[2].trim() || 'Video', audios: [] })
+    } else if (b.startsWith('@grid')) {
+      push({ key: `grid-${i}`, type: 'grid', icon: '◼', label: 'Beat grid', audios: [] })
+    } else if (b.startsWith('@synth')) {
+      push({ key: `synth-${i}`, type: 'synth', icon: '🎛', label: 'Synth demo', audios: [] })
+    } else if (b.startsWith('@practice')) {
+      push({ key: `practice-${i}`, type: 'practice', icon: '🎼', label: 'Practice bench', audios: [] })
+    } else if ((m = b.match(/^!\[([^\]]*)\]\(([^)]+)\)/))) {
+      push({ key: `img-${i}`, type: 'image', icon: '🖼', label: m[1] || 'Image', audios: [] })
+    }
+  })
+  return els
+}
+
+// Open the real studio seeded with this clip; the saveTo target lets its export
+// modal write the finished edit straight back over the source (in place).
+function editInStudio(src: string, name: string) {
+  const abs = /^https?:/.test(src) ? src : window.location.origin + src
+  const u = new URL('/new', window.location.origin)
+  u.searchParams.set('modules', 'audio')
+  u.searchParams.set('importAudio', abs)
+  u.searchParams.set('importName', name)
+  const saveTo = saveTargetFor(src)
+  if (saveTo) u.searchParams.set('saveTo', saveTo)
+  window.open(u.toString(), '_blank', 'noopener')
+}
+
+const menuItem: React.CSSProperties = {
+  textAlign: 'left', fontSize: 12, padding: '7px 10px', borderRadius: 7,
+  border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', whiteSpace: 'nowrap',
+}
+
 export default function ArticlesPanel() {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [sel, setSel] = useState<Row | null>(null)
@@ -85,6 +170,49 @@ export default function ArticlesPanel() {
   const [trash, setTrash] = useState<TrashItem[] | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
   const { user } = useUser()
+
+  // Right-click-to-edit: parse the body into elements, and a floating menu.
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; el: ArticleEl } | null>(null)
+  const elements = useMemo(() => (sel ? parseElements(sel.body) : []), [sel])
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null) }
+    window.addEventListener('click', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); window.removeEventListener('keydown', onKey) }
+  }, [ctxMenu])
+
+  // Put the caret on a marker's line and reveal it in the (edit-mode) textarea.
+  function jumpToMarker(line: number) {
+    setPreview(false)
+    setTimeout(() => {
+      const ta = bodyRef.current
+      if (!ta || !sel) return
+      const lines = sel.body.split('\n')
+      const start = lines.slice(0, line).reduce((a, l) => a + l.length + 1, 0)
+      const end = start + (lines[line]?.length ?? 0)
+      ta.focus(); ta.setSelectionRange(start, end)
+      ta.scrollTop = Math.max(0, (line / Math.max(1, lines.length)) * ta.scrollHeight - ta.clientHeight / 2)
+    }, 0)
+  }
+
+  // Best-effort right-click straight on a rendered widget in Preview: map the
+  // clicked <figure> to its element by order among figure-rendering widgets.
+  function handlePreviewContext(e: React.MouseEvent) {
+    const fig = (e.target as HTMLElement).closest('figure')
+    if (!fig || !previewRef.current) return
+    const figs = Array.from(previewRef.current.querySelectorAll('figure'))
+    const idx = figs.indexOf(fig as HTMLElement)
+    const el = elements.filter(x => FIGURE_TYPES.has(x.type))[idx]
+    if (!el) return
+    e.preventDefault()
+    setCtxMenu({ x: e.clientX, y: e.clientY, el })
+  }
 
   const load = useCallback(async () => {
     const r = await fetch('/api/admin/articles').catch(() => null)
@@ -422,6 +550,60 @@ export default function ArticlesPanel() {
           )
         })()}
 
+        {elements.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-base)' }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>ELEMENTS</span>
+            {elements.map(el => (
+              <button
+                key={el.key}
+                onClick={() => jumpToMarker(el.line)}
+                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, el }) }}
+                title={el.audios.length ? 'Left-click: jump to marker · Right-click: edit its audio file' : 'Left-click: jump to marker · Right-click: options'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '4px 9px', borderRadius: 99, cursor: 'pointer',
+                  border: `1px solid ${el.audios.length ? 'rgba(56,189,248,0.5)' : 'var(--border)'}`,
+                  background: el.audios.length ? 'rgba(56,189,248,0.08)' : 'var(--bg-card)', color: 'var(--text-primary)',
+                }}
+              >
+                <span>{el.icon}</span>
+                <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{el.label}</span>
+                {el.audios.length > 0 && <span style={{ fontSize: 8, color: '#38bdf8' }}>▶</span>}
+              </button>
+            ))}
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>left-click to jump · right-click for options</span>
+          </div>
+        )}
+
+        {/* This article's own audio — every clip THIS body references, with a
+            player to hear it and a one-click open into the studio that saves
+            back over the source. Parsed from sel.body, so it's always the
+            current article (not the global "Existing audio files" list). */}
+        {(() => {
+          const audioList = elements.flatMap(el => el.audios.map(a => ({ el, a })))
+          if (!audioList.length) return null
+          return (
+            <div style={{ border: '1px solid rgba(56,189,248,0.4)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: 'rgba(56,189,248,0.05)' }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#38bdf8' }}>🎧 Audio in this article ({audioList.length}) — click “Fix in studio” to edit a clip and save it back in place</span>
+              {audioList.map(({ el, a }, i) => (
+                <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{el.icon} {el.label}{a.role ? ` · ${a.role}` : ''}</span>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 99, border: `1px solid ${a.saveTo ? 'rgba(52,211,153,0.45)' : 'rgba(245,158,11,0.45)'}`, color: a.saveTo ? '#34d399' : '#f59e0b' }}>
+                      {a.saveTo ? 'edits save in place' : 'saves as new'}
+                    </span>
+                    <button
+                      onClick={() => { editInStudio(a.src, a.name); setMsg('Opened in the studio — edit, then Export → “Save to article source” ↗') }}
+                      style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, padding: '5px 13px', borderRadius: 7, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >🎚 Fix in studio ↗</button>
+                  </div>
+                  <audio controls preload="none" src={a.src} style={{ width: '100%', height: 32, display: 'block' }} />
+                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.src}</span>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
+
         {!preview ? (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10 }}>
@@ -641,6 +823,7 @@ export default function ArticlesPanel() {
               </div>
               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>BODY — markdown. Use the buttons above to insert widgets (beat grid, synth, A/B, chords, audio, embeds) so the encoded markers are always valid.</label>
               <textarea
+                ref={bodyRef}
                 style={{ ...input, minHeight: 420, fontFamily: 'var(--font-geist-mono)', fontSize: 12.5, lineHeight: 1.6, resize: 'vertical' }}
                 value={sel.body}
                 onChange={e => setSel({ ...sel, body: e.target.value })}
@@ -651,8 +834,30 @@ export default function ArticlesPanel() {
             </div>
           </>
         ) : (
-          <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', background: 'var(--bg-base)', maxWidth: 760 }}>
+          <div ref={previewRef} onContextMenu={handlePreviewContext} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', background: 'var(--bg-base)', maxWidth: 760 }}>
             {renderMarkdown(sel.body)}
+          </div>
+        )}
+
+        {ctxMenu && (
+          <div
+            style={{ position: 'fixed', left: Math.min(ctxMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 9999) - 240), top: ctxMenu.y, zIndex: 100, minWidth: 210, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 34px rgba(0,0,0,0.45)', padding: 4, display: 'flex', flexDirection: 'column' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--text-muted)', padding: '5px 10px 2px', letterSpacing: '0.04em' }}>
+              {ctxMenu.el.icon} {ctxMenu.el.label}
+            </div>
+            {ctxMenu.el.audios.map((a, i) => (
+              <button key={i} onClick={() => { editInStudio(a.src, a.name); setCtxMenu(null); setMsg('Opened in the studio — edit, then “Save to article source” ↗') }} style={menuItem}>
+                🎚 Edit {a.role ? `${a.role} ` : ''}audio in studio ↗
+                {!a.saveTo && <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 6 }}>(save as new)</span>}
+              </button>
+            ))}
+            {ctxMenu.el.audios.length === 0 && (
+              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', padding: '4px 10px' }}>No editable audio file here.</div>
+            )}
+            <button onClick={() => { jumpToMarker(ctxMenu.el.line); setCtxMenu(null) }} style={menuItem}>✎ Edit marker text</button>
+            <button onClick={() => { void navigator.clipboard.writeText(ctxMenu.el.marker); setCtxMenu(null); setMsg('Marker copied ✓') }} style={menuItem}>⧉ Copy marker</button>
           </div>
         )}
       </div>

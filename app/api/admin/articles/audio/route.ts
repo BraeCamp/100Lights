@@ -16,13 +16,26 @@ export async function POST(req: Request) {
   const type = req.headers.get('content-type') || 'audio/mpeg'
   if (!/^audio\//.test(type)) return Response.json({ error: `Audio files only (got "${type}")` }, { status: 400 })
 
-  const name = (new URL(req.url).searchParams.get('name') || 'audio').replace(/[^\w.-]+/g, '_').slice(0, 80)
+  const params = new URL(req.url).searchParams
+  const name = (params.get('name') || 'audio').replace(/[^\w.-]+/g, '_').slice(0, 80)
   const buf = await req.arrayBuffer()
   if (buf.byteLength === 0) return Response.json({ error: 'Empty upload' }, { status: 400 })
   if (buf.byteLength > MAX_BYTES) return Response.json({ error: 'File too large (max 25 MB for article audio)' }, { status: 413 })
 
+  // In-place overwrite: when `key` names an existing learn-audio object, write
+  // back to it so an edit replaces the source instead of minting a new file.
+  // Guard the prefix + traversal so only the servable prefix can be targeted.
+  const targetKey = params.get('key')
   const ext = type.includes('wav') ? 'wav' : type.includes('webm') ? 'webm' : type.includes('ogg') ? 'ogg' : type.includes('mp4') || type.includes('m4a') ? 'm4a' : 'mp3'
-  const key = `learn-audio/${crypto.randomUUID()}-${name}.${ext}`
+  let key: string
+  if (targetKey) {
+    if (!targetKey.startsWith('learn-audio/') || targetKey.includes('..')) {
+      return Response.json({ error: 'Invalid target key' }, { status: 400 })
+    }
+    key = targetKey
+  } else {
+    key = `learn-audio/${crypto.randomUUID()}-${name}.${ext}`
+  }
   try {
     await putObject(key, buf, type)
   } catch (e) {

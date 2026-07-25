@@ -93,6 +93,38 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   const [starterState, setStarterState]   = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [starterId, setStarterId]         = useState<string | null>(null)
 
+  // Admin "edit this article clip in the studio" flow: the URL carries
+  // ?saveTo=demo:<clipId> or r2:<learn-audio key>, meaning the finished mixdown
+  // should overwrite that source in place rather than (only) download. Parsed
+  // once; when present we default to lossless WAV so the saved file isn't Opus.
+  const [saveTarget, setSaveTarget] = useState<{ kind: 'demo' | 'r2'; id: string; label: string } | null>(null)
+  const [saveToState, setSaveToState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('saveTo')
+    if (!raw) return
+    const i = raw.indexOf(':')
+    const kind = raw.slice(0, i), id = raw.slice(i + 1)
+    if ((kind === 'demo' || kind === 'r2') && id) {
+      setSaveTarget({ kind, id, label: kind === 'demo' ? id : id.replace(/^learn-audio\//, '') })
+      setFormat('wav')
+    }
+  }, [])
+
+  async function saveToSource() {
+    const blob = finalBlobRef.current
+    if (!blob || !saveTarget) return
+    setSaveToState('busy')
+    try {
+      const url = saveTarget.kind === 'demo'
+        ? `/api/admin/demo-audio/${encodeURIComponent(saveTarget.id)}`
+        : `/api/admin/articles/audio?key=${encodeURIComponent(saveTarget.id)}`
+      const type = /^audio\//.test(blob.type) ? blob.type : 'audio/wav'
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': type }, body: blob })
+      if (!r.ok) throw new Error(await r.text().catch(() => '') || 'save failed')
+      setSaveToState('done')
+    } catch { setSaveToState('error') }
+  }
+
   // Escape closes the modal — except mid-export, matching the overlay-click guard
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -397,6 +429,40 @@ style={{
 
           {phase === 'done' && downloadUrl && (
             <>
+              {/* Save back to the article source (admin edit-in-place flow) */}
+              {saveTarget && (
+                <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 8, background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.35)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', marginBottom: 6 }}>
+                    Editing article source · {saveTarget.kind === 'demo' ? 'demo clip' : 'uploaded file'}
+                  </div>
+                  {saveToState === 'done' ? (
+                    <p style={{ fontSize: 12, color: '#4ade80', margin: 0 }}>
+                      Saved in place ✓ — <strong style={{ color: 'var(--text-secondary)' }}>{saveTarget.label}</strong> now serves this edit. Give it a hard-refresh in the article to hear it.
+                    </p>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => void saveToSource()}
+                        disabled={saveToState === 'busy'}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                          width: '100%', padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                          background: '#7c3aed', color: '#fff', fontSize: 13, fontWeight: 700,
+                          opacity: saveToState === 'busy' ? 0.6 : 1,
+                        }}
+                      >
+                        {saveToState === 'busy' ? 'Saving…' : `Save to article source (in place)`}
+                      </button>
+                      <p style={{ fontSize: 10, color: saveToState === 'error' ? '#ef4444' : 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                        {saveToState === 'error'
+                          ? 'Save failed — are you still signed in as admin? Try again.'
+                          : `Overwrites ${saveTarget.label} — no new file. Export WAV above to keep a copy, or Download for a fresh one instead.`}
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Episode info card — shown in podcast mode */}
               {isPodcast && podcastMeta && (
                 <div style={{
