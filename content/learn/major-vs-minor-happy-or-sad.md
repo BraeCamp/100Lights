@@ -29,6 +29,8 @@ That middle note is the third, and it is the single most opinionated note in a c
 
 The higher version is a major chord. The lower one is minor. That gap — the distance from the root up to the third — is the only difference between them, and it's the width of one key.
 
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22root%20%2B%20fifth%22%2C%22pitches%22%3A%5B60%2C67%5D%2C%22beat%22%3A0%2C%22dur%22%3A2%7D%2C%7B%22name%22%3A%22C%20major%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A2%2C%22dur%22%3A2%7D%2C%7B%22name%22%3A%22C%20minor%22%2C%22pitches%22%3A%5B60%2C63%2C67%5D%2C%22beat%22%3A4%2C%22dur%22%3A2%7D%5D%2C%22originalKey%22%3A0%7D) Hear it here if you didn't build it: the hollow root-and-fifth, then the major third dropped in, then that same note moved down one key to the minor third. Tap each chord and watch which key changes.
+
 @math In semitones (one semitone = one key, black or white): the fifth is seven semitones above the root, identical in both chords. The major third is four semitones above the root; the minor third is three. So if your root is MIDI note 60, the major third is 64 and the minor third is 63 — a one-number change. Root and fifth stay put at 60 and 67 either way. That is the entire mechanical difference between "happy" and "sad": a single MIDI number.
 
 You can run this whole experiment in the free browser studio — no download, no plugins. Place a root, drop the third in at four semitones, then at three, and flip between them by ear.
@@ -59,7 +61,7 @@ Which makes the third the note a songwriter reaches for when they want to change
 
 Two chords. One held root, one third you slide up and down. That's the whole instrument for this experiment, and you already own it.
 
-@video A screen capture of one three-note chord in the piano roll, dragging only the middle note down a single semitone and back, so major and minor trade places without anything else moving.
+@progression(%7B%22chords%22%3A%5B%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A0%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22Cm%22%2C%22pitches%22%3A%5B60%2C63%2C67%5D%2C%22beat%22%3A1%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22C%22%2C%22pitches%22%3A%5B60%2C64%2C67%5D%2C%22beat%22%3A2%2C%22dur%22%3A1%7D%2C%7B%22name%22%3A%22Cm%22%2C%22pitches%22%3A%5B60%2C63%2C67%5D%2C%22beat%22%3A3%2C%22dur%22%3A1%7D%5D%2C%22originalKey%22%3A0%7D) Major and minor trading places — only the middle note moves, one key down and back. Hit play and watch the single key that flips while the root and fifth hold.
 
 Try it on songs you know cold. Find the root by ear, build the plain chord, and test whether the bright third or the dark third belongs. When you genuinely can't tell, that ambiguity is usually the interesting thing about the song, not a failure of your ear. And when you want to hear how other people are using it, pull a progression from the [community](/community) and lower a third or two on purpose — break a cheerful loop into something haunted, and notice how little you had to touch to do it.
 
