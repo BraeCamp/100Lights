@@ -273,7 +273,7 @@ export default async function LandingPage() {
               style={{ color: 'var(--text-primary)' }}
             >
               A studio that{' '}
-              <span style={{ background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <span style={{ color: '#8b5cf6', background: 'linear-gradient(135deg, #8b5cf6, #3b82f6)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 trains your ears
               </span>
             </h1>
