@@ -68,6 +68,10 @@ Then hunt. Sweep a narrow boost across a track until you find the frequency that
 
 The reliable method needs none of it: find the ugly frequency by ear, turn it down until it stops being ugly, move on.
 
+Here's that muddy mix, with the three moves in your hands. Do them in order — balance, pan, cut — and hold "hear it flat" whenever you want to know what a move actually bought you.
+
+@mixer(mix-mud) The article's own muddy mix — drums, bass, pad, and lead, all centred and full-range. Pull the volume down, pan the parts apart, high-pass everything off the bottom, then sweep the cut band to find the mud and pull it out.
+
 @studio(/tutorial/fx) Mix a track faders-first right now →
 
 ## Then, and only then

@@ -30,6 +30,8 @@ const LOADERS = {
   grid: () => import('@/components/ArticleGrid'),
   ab: () => import('@/components/ArticleAB'),
   synth: () => import('@/components/SynthPlayground'),
+  practice: () => import('@/components/ArticlePracticeBuilder'),
+  mixer: () => import('@/components/ArticleMixer'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -42,6 +44,8 @@ type WidgetSpec =
   | { kind: 'grid'; props: { spec: GridSpec } }
   | { kind: 'ab'; props: { spec: ABSpec } }
   | { kind: 'synth'; props: { config: SynthConfig } }
+  | { kind: 'practice'; props: { label?: string } }
+  | { kind: 'mixer'; props: { src: string; caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

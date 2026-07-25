@@ -105,6 +105,17 @@ function ProgressionFallback({ data }: { data: ProgressionData }) {
   )
 }
 
+/** Server-rendered stand-in for the interactive mixer — text a crawler and a
+ *  no-JS reader still get, describing what the tool does. */
+function MixerFallback({ caption }: { caption?: string }) {
+  return (
+    <figure style={{ margin: '24px 0', padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>🎚 Interactive mixer — set volume, panning, and a subtractive EQ over a demo mix.</p>
+      {caption && <figcaption style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.6 }}>{caption}</figcaption>}
+    </figure>
+  )
+}
+
 /** Server-rendered stand-in for a community sound embed — keeps the caption
  *  in the document even if the fetch never happens. */
 function SoundFallback({ caption }: { caption: string }) {
@@ -468,6 +479,33 @@ export function renderMarkdown(md: string): React.ReactNode {
           }
         } catch { /* malformed payload — skip */ }
       }
+      return
+    }
+    // @mixer(clipOrUrl) caption — interactive Volume/Pan/EQ channel strip over
+    // a demo clip. Bare clip ids resolve to /api/demo-audio/<id>; a leading / or
+    // http is used as-is. No arg defaults to the article's muddy mix.
+    if (b.startsWith('@mixer')) {
+      const m = b.match(/^@mixer(?:\(([^)]*)\))?\s*([\s\S]*)$/)
+      const arg = (m?.[1] || '').trim() || 'mix-mud'
+      const caption = m?.[2]?.trim() || undefined
+      const src = /^(https?:)?\//.test(arg) ? arg : `/api/demo-audio/${arg}`
+      out.push(
+        <LazyArticleWidget key={key} kind="mixer" props={{ src, caption }}>
+          <MixerFallback caption={caption} />
+        </LazyArticleWidget>
+      )
+      return
+    }
+    // @practice [button label] — slides an interactive progression-building
+    // bench up from the bottom of the screen. The @progression viewers above
+    // stay put; this is the hands-on twin, styled to match them.
+    if (b.startsWith('@practice')) {
+      const label = b.slice('@practice'.length).trim() || undefined
+      out.push(
+        <LazyArticleWidget key={key} kind="practice" props={{ label }}>
+          <span />
+        </LazyArticleWidget>
+      )
       return
     }
     if (/^#{1,3}\s/.test(b)) {

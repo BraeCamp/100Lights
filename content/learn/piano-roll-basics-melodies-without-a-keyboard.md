@@ -13,6 +13,10 @@ Don't read ahead. Open a project in [100Lights](https://100lights.com), add a tr
 
 I'm not going to tell you what makes a melody work. You're going to find out, and then I'll name it.
 
+No project open? Tap the button below — it slides a little bench up from the bottom of the screen where you can lay notes and chords onto steps and hear them back, without leaving the article. The read-only pianos above show you how a progression looks; this one lets you build your own.
+
+@practice Open the practice bench
+
 ## Experiment one: one note, five times
 
 Draw a single note. Any pitch, roughly in the middle of the vertical range. Make it one beat long. Copy it four more times so you have five identical notes in a row, one per beat, filling a bar and a quarter.
