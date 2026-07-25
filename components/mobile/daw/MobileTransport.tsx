@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Repeat, Music2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
+import type { DawEngine } from '@/lib/daw-engine'
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const SCALES: { id: string; label: string }[] = [
@@ -32,9 +33,23 @@ function HoldButton({ onStep, style, children, 'aria-label': ariaLabel, title }:
   )
 }
 
+// Momentary FX pad: hold to apply a master effect, release to reset.
+function FxPad({ label, mode, engine, color }: { label: string; mode: 'lp' | 'hp' | 'duck'; engine: DawEngine; color: string }) {
+  const [on, setOn] = useState(false)
+  const down = () => { setOn(true); engine.perfFX(mode) }
+  const up = () => { setOn(false); engine.perfFX('off') }
+  return (
+    <button onPointerDown={e => { e.preventDefault(); down() }} onPointerUp={up} onPointerLeave={up} onPointerCancel={up}
+      style={{ flex: 1, padding: '12px 0', borderRadius: 10, border: `1px solid ${on ? color : 'var(--border)'}`, background: on ? `${color}30` : 'var(--bg-card)', color: on ? color : 'var(--text-secondary)', fontSize: 11.5, fontWeight: 800, letterSpacing: '0.03em', cursor: 'pointer', touchAction: 'none' }}>
+      {label}
+    </button>
+  )
+}
+
 export function MobileTransport() {
   const { engine, playing, position, project, dispatch, metronome, setMetronome, undo, redo, canUndo, canRedo } = useDaw()
   const [settings, setSettings] = useState(false)
+  const [fxOpen, setFxOpen] = useState(false)
   const taps = useRef<number[]>([])
   // Undo button: tap = undo, long-press = redo (GarageBand pattern).
   const undoHold = useRef<{ timer?: number; long: boolean }>({ long: false })
@@ -73,6 +88,15 @@ export function MobileTransport() {
 
   return (
     <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+      {fxOpen && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', flexShrink: 0 }}>HOLD FX</span>
+          <FxPad label="LOW-PASS" mode="lp" engine={engine} color="#8b5cf6" />
+          <FxPad label="HIGH-PASS" mode="hp" engine={engine} color="#3b82f6" />
+          <FxPad label="DUCK" mode="duck" engine={engine} color="#f59e0b" />
+          <button onClick={() => setFxOpen(false)} aria-label="Close FX" style={{ ...tBtn, width: 30 }}>×</button>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: landscape ? 6 : 8, padding: landscape ? '3px 10px' : '9px 12px' }}>
         <button onClick={() => (engine.isPlaying ? engine.stop() : void engine.play())} aria-label={playing ? 'Stop' : 'Play'} style={{ width: landscape ? 58 : play, height: play, borderRadius: play / 2, border: 'none', flexShrink: 0, cursor: 'pointer', background: playing ? '#ef4444' : 'var(--accent)', color: '#fff', fontSize: landscape ? 15 : 18 }}>{playing ? '■' : '▶'}</button>
         <div style={{ textAlign: 'center', minWidth: 46 }}>
@@ -86,6 +110,7 @@ export function MobileTransport() {
         </div>
         <button onClick={() => setMetronome(!metronome)} aria-pressed={metronome} title="Metronome" style={{ ...tBtn, width: 34, color: metronome ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: metronome ? 'var(--accent)' : 'var(--border)', background: metronome ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Music2 size={15} /></button>
         <button onClick={toggleLoop} aria-pressed={project.loopEnabled} title="Loop the whole project" style={{ ...tBtn, width: 34, color: project.loopEnabled ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: project.loopEnabled ? 'var(--accent)' : 'var(--border)', background: project.loopEnabled ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Repeat size={15} /></button>
+        <button onClick={() => setFxOpen(o => !o)} aria-pressed={fxOpen} aria-label="Performance FX" title="Hold-to-play FX" style={{ ...tBtn, width: 34, fontSize: 15, color: fxOpen ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: fxOpen ? 'var(--accent)' : 'var(--border)', background: fxOpen ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}>⚡</button>
         <button
           onPointerDown={() => { undoHold.current.long = false; undoHold.current.timer = window.setTimeout(() => { undoHold.current.long = true; redo?.() }, 450) }}
           onPointerUp={() => { if (undoHold.current.timer) window.clearTimeout(undoHold.current.timer); if (!undoHold.current.long) undo?.() }}

@@ -97,6 +97,10 @@ export class DawEngine extends EventTarget {
   masterGain: GainNode
   masterAnalyser: AnalyserNode
   masterCompressor: DynamicsCompressorNode
+  // Momentary "performance FX" inserted after the master gain — hold a pad to
+  // sweep a filter / duck the mix, release to reset. Neutral by default.
+  perfFilter!: BiquadFilterNode
+  perfGain!: GainNode
 
   private trackNodes = new Map<string, TrackNodes>()
   private returnBuses = new Map<string, ReturnBus>()
@@ -192,9 +196,19 @@ export class DawEngine extends EventTarget {
     this.masterAnalyser.fftSize = 256
     this.masterAnalyser.connect(this.masterCompressor)
 
+    // Performance-FX insert: masterGain → perfFilter → perfGain → analyser.
+    this.perfFilter = this.ctx.createBiquadFilter()
+    this.perfFilter.type = 'lowpass'
+    this.perfFilter.frequency.value = 22000
+    this.perfFilter.Q.value = 0.7
+    this.perfGain = this.ctx.createGain()
+    this.perfGain.gain.value = 1
+    this.perfFilter.connect(this.perfGain)
+    this.perfGain.connect(this.masterAnalyser)
+
     this.masterGain = this.ctx.createGain()
     this.masterGain.gain.value = 0.85
-    this.masterGain.connect(this.masterAnalyser)
+    this.masterGain.connect(this.perfFilter)
 
     this._buildMetronomeBuffers()
 
@@ -535,6 +549,29 @@ export class DawEngine extends EventTarget {
 
   setMasterVolume(v: number) {
     this.masterGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02)
+  }
+
+  // Momentary performance FX (hold to apply, 'off' to reset). Ramps so it sweeps.
+  perfFX(mode: 'lp' | 'hp' | 'duck' | 'off') {
+    if (this.ctx.state === 'closed') return
+    const t = this.ctx.currentTime, ramp = 0.18
+    const f = this.perfFilter, g = this.perfGain
+    if (mode === 'lp') {
+      f.type = 'lowpass'; f.Q.setTargetAtTime(7, t, 0.02)
+      f.frequency.setTargetAtTime(360, t, ramp)
+      g.gain.setTargetAtTime(1, t, ramp)
+    } else if (mode === 'hp') {
+      f.type = 'highpass'; f.Q.setTargetAtTime(3, t, 0.02)
+      f.frequency.setTargetAtTime(1600, t, ramp)
+      g.gain.setTargetAtTime(1, t, ramp)
+    } else if (mode === 'duck') {
+      f.type = 'lowpass'; f.frequency.setTargetAtTime(22000, t, ramp); f.Q.setTargetAtTime(0.7, t, 0.02)
+      g.gain.setTargetAtTime(0.22, t, ramp)
+    } else { // off — return everything to transparent
+      f.frequency.setTargetAtTime(22000, t, ramp)
+      f.Q.setTargetAtTime(0.7, t, ramp)
+      g.gain.setTargetAtTime(1, t, ramp)
+    }
   }
 
   setMixerEq(trackId: string, low: number, mid: number, high: number) {
