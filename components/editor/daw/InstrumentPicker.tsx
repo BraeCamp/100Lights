@@ -15,6 +15,7 @@ import { defaultDrumInstrument, defaultFmInstrument, defaultPolyInstrument, defa
 import { previewNote } from '@/lib/daw-instruments'
 import { FM_ALGORITHMS, FM_PRESETS } from '@/lib/fm-synth'
 import { WAVETABLE_PRESETS } from '@/lib/wavetable-synth'
+import { useIsMobile } from '@/lib/use-is-mobile'
 
 const C = {
   bgBase:      '#141414',
@@ -47,6 +48,32 @@ const SliderRow = memo(function SliderRow({ label, value, min, max, step = 0.01,
     </div>
   )
 })
+
+// Native <select> menu — a large, single touch target that replaces walls of
+// tiny preset/type chips on mobile ("consolidate things into menus").
+function PresetMenu({ options, value, onPick, placeholder }: {
+  options: { value: string; label: string }[]
+  value?: string
+  onPick: (v: string) => void
+  placeholder?: string
+}) {
+  const has = value != null && options.some(o => o.value === value)
+  return (
+    <select
+      value={has ? value : ''}
+      onClick={e => e.stopPropagation()}
+      onChange={e => { e.stopPropagation(); if (e.target.value) onPick(e.target.value) }}
+      style={{
+        width: '100%', padding: '11px 12px', borderRadius: 8, fontSize: 15,
+        border: `1px solid ${C.border}`, background: C.bgCard, color: C.textPrimary,
+        WebkitAppearance: 'none', appearance: 'none', cursor: 'pointer',
+      }}
+    >
+      <option value="" disabled>{placeholder ?? 'Choose…'}</option>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  )
+}
 
 function TypeBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
@@ -328,6 +355,7 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
   onSet: (changes: Partial<PolyInstrumentParams>) => void
 }) {
   const { engine } = useDaw()
+  const isMobile = useIsMobile()
   const p = instrument.params as PolyInstrumentParams
   const FILTER_TYPES: BiquadFilterType[] = ['lowpass', 'highpass', 'bandpass', 'notch']
 
@@ -342,16 +370,20 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <Section title="Preset">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {Object.keys(POLY_PRESETS).map(k => (
-            <button key={k}
-              onClick={e => { e.stopPropagation(); onSet({ ...POLY_PRESETS[k] }) }}
-              style={{
-                padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
-                border: `1px solid ${C.border}`, background: C.bgCard, color: C.textMuted,
-              }}>{k}</button>
-          ))}
-        </div>
+        {isMobile ? (
+          <PresetMenu options={Object.keys(POLY_PRESETS).map(k => ({ value: k, label: k }))} onPick={k => onSet({ ...POLY_PRESETS[k] })} placeholder="Load preset…" />
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {Object.keys(POLY_PRESETS).map(k => (
+              <button key={k}
+                onClick={e => { e.stopPropagation(); onSet({ ...POLY_PRESETS[k] }) }}
+                style={{
+                  padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+                  border: `1px solid ${C.border}`, background: C.bgCard, color: C.textMuted,
+                }}>{k}</button>
+            ))}
+          </div>
+        )}
       </Section>
 
       <OscillatorStack layers={polyOscLayers(p)} onChange={next => onSet({ oscillators: next })} onWarm={id => void ensurePolySample(engine.ctx, id)} />
@@ -523,6 +555,7 @@ const Fm4OpPanel = memo(function Fm4OpPanel({ instrument, onSet }: {
   onSet: (changes: Partial<Fm4OpInstrumentParams>) => void
 }) {
   const { engine } = useDaw()
+  const isMobile = useIsMobile()
   const p = instrument.params as Fm4OpInstrumentParams
   const [selectedOp, setSelectedOp] = useState(0)
 
@@ -538,18 +571,22 @@ const Fm4OpPanel = memo(function Fm4OpPanel({ instrument, onSet }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Presets */}
       <Section title="Preset">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {Object.keys(FM_PRESETS).map(k => (
-            <button key={k}
-              onClick={e => { e.stopPropagation(); onSet({ ...FM_PRESETS[k] }) }}
-              style={{
-                padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
-                border: `1px solid ${p.name === k ? C.accent : C.border}`,
-                background: p.name === k ? `${C.accent}22` : C.bgCard,
-                color: p.name === k ? C.accent : C.textMuted,
-              }}>{k}</button>
-          ))}
-        </div>
+        {isMobile ? (
+          <PresetMenu options={Object.keys(FM_PRESETS).map(k => ({ value: k, label: k }))} value={p.name} onPick={k => onSet({ ...FM_PRESETS[k] })} placeholder="Load preset…" />
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {Object.keys(FM_PRESETS).map(k => (
+              <button key={k}
+                onClick={e => { e.stopPropagation(); onSet({ ...FM_PRESETS[k] }) }}
+                style={{
+                  padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+                  border: `1px solid ${p.name === k ? C.accent : C.border}`,
+                  background: p.name === k ? `${C.accent}22` : C.bgCard,
+                  color: p.name === k ? C.accent : C.textMuted,
+                }}>{k}</button>
+            ))}
+          </div>
+        )}
       </Section>
 
       {/* Algorithm */}
@@ -657,6 +694,7 @@ const WavetablePanel = memo(function WavetablePanel({ instrument, onSet }: {
   onSet: (changes: Partial<WavetableInstrumentParams>) => void
 }) {
   const { engine } = useDaw()
+  const isMobile = useIsMobile()
   const p = instrument.params as WavetableInstrumentParams
   const FILTER_TYPES: WavetableInstrumentParams['filterType'][] = ['lowpass', 'highpass', 'bandpass']
 
@@ -664,17 +702,21 @@ const WavetablePanel = memo(function WavetablePanel({ instrument, onSet }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Presets */}
       <Section title="Preset">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {Object.keys(WAVETABLE_PRESETS).map(k => (
-            <button key={k}
-              onClick={e => { e.stopPropagation(); onSet({ ...WAVETABLE_PRESETS[k] }) }}
-              style={{
-                padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
-                border: `1px solid ${C.border}`,
-                background: C.bgCard, color: C.textMuted,
-              }}>{k}</button>
-          ))}
-        </div>
+        {isMobile ? (
+          <PresetMenu options={Object.keys(WAVETABLE_PRESETS).map(k => ({ value: k, label: k }))} onPick={k => onSet({ ...WAVETABLE_PRESETS[k] })} placeholder="Load preset…" />
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {Object.keys(WAVETABLE_PRESETS).map(k => (
+              <button key={k}
+                onClick={e => { e.stopPropagation(); onSet({ ...WAVETABLE_PRESETS[k] }) }}
+                style={{
+                  padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
+                  border: `1px solid ${C.border}`,
+                  background: C.bgCard, color: C.textMuted,
+                }}>{k}</button>
+            ))}
+          </div>
+        )}
       </Section>
 
       {/* Oscillator A */}
@@ -798,6 +840,7 @@ const TYPE_BUTTONS: { label: string; value: InstrumentType }[] = [
 
 export default memo(function InstrumentPicker({ trackId }: { trackId: string }) {
   const { project, dispatch, engine } = useDaw()
+  const isMobile = useIsMobile()
 
   const track = project.tracks.find(t => t.id === trackId)
   if (!track) return null
@@ -848,13 +891,23 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
   return (
     <div style={{
       background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 6,
-      padding: 16, display: 'flex', flexDirection: 'column', gap: 16, minWidth: 380,
+      padding: 16, display: 'flex', flexDirection: 'column', gap: 16,
+      minWidth: isMobile ? 0 : 380,
     }}>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {TYPE_BUTTONS.map(btn => (
-          <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
-        ))}
-      </div>
+      {isMobile ? (
+        <PresetMenu
+          options={TYPE_BUTTONS.map(b => ({ value: b.value, label: b.label }))}
+          value={instrType}
+          onPick={v => setType(v as InstrumentType)}
+          placeholder="Instrument type"
+        />
+      ) : (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {TYPE_BUTTONS.map(btn => (
+            <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
+          ))}
+        </div>
+      )}
 
       {instrType === 'drum'      && <DrumPanel      instrument={instrument} onSet={setDrum} />}
       {instrType === 'fm'        && <FmPanel        instrument={instrument} trackId={trackId} onSet={setFm} />}

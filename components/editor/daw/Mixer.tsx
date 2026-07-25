@@ -180,7 +180,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
     <div
       onClick={() => { if (!isMaster && track) setSelectedTrackId(track.id) }}
       style={{
-        width: isMobile ? (isMaster ? 104 : 128) : (isMaster ? 80 : 72), flexShrink: 0,
+        width: isMobile ? (isMaster ? 104 : 156) : (isMaster ? 80 : 72), flexShrink: 0,
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         gap: isMobile ? 7 : 4, padding: isMobile ? '10px 8px 10px' : '8px 4px 6px',
         background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : isMaster ? '#202020' : '#2a2a2a',
@@ -232,14 +232,37 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
           dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } })
           engine.setTrackTone(track.id, next)
         }
+        const BANDS = [
+          ['sub', 'SUB', '#8b5cf6'], ['bass', 'BASS', '#22c55e'],
+          ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6'],
+        ] as const
+        // On a phone the 20px knobs are near-impossible to control, so the Tone
+        // EQ becomes a stack of labelled horizontal sliders (±12 dB each).
+        if (isMobile) return (
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Tone EQ</span>
+            {BANDS.map(([band, label, c]) => {
+              const val = tone[band] ?? 0
+              return (
+                <div key={band} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 32, fontSize: 9, fontWeight: 700, color: c, flexShrink: 0 }}>{label}</span>
+                  <input type="range" min={-12} max={12} step={0.5} value={val}
+                    onChange={e => setBand(band, parseFloat(e.target.value))}
+                    onDoubleClick={() => setBand(band, 0)}
+                    style={{ flex: 1, minWidth: 0, accentColor: c, height: 22 }} />
+                  <span style={{ width: 30, fontSize: 9, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', flexShrink: 0 }}>{val > 0 ? '+' : ''}{val}</span>
+                </div>
+              )
+            })}
+          </div>
+        )
         return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
             <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Tone EQ</span>
             <div style={{ display: 'flex', gap: 2 }}>
-              <Knob value={tone.sub ?? 0}    min={-12} max={12} defaultValue={0} size={20} color="#8b5cf6" label="SUB" onChange={v => setBand('sub', v)} />
-              <Knob value={tone.bass ?? 0}   min={-12} max={12} defaultValue={0} size={20} color="#22c55e" label="BASS" onChange={v => setBand('bass', v)} />
-              <Knob value={tone.mid ?? 0}    min={-12} max={12} defaultValue={0} size={20} color="#eab308" label="MID" onChange={v => setBand('mid', v)} />
-              <Knob value={tone.treble ?? 0} min={-12} max={12} defaultValue={0} size={20} color="#3b82f6" label="TREB" onChange={v => setBand('treble', v)} />
+              {BANDS.map(([band, label, c]) => (
+                <Knob key={band} value={tone[band] ?? 0} min={-12} max={12} defaultValue={0} size={20} color={c} label={label} onChange={v => setBand(band, v)} />
+              ))}
             </div>
           </div>
         )

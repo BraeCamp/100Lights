@@ -10,6 +10,7 @@ import { NoteFxSettings } from './NoteFxSettings'
 import { SaveRecipeButton } from '../SoundCreate'
 import type { MidiClip, MidiNote, RollFx, PitchGraph, PresetSound } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
+import { useIsMobile } from '@/lib/use-is-mobile'
 import { sharePreset } from '@/lib/community'
 import NewPresetModal from './NewPresetModal'
 import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
@@ -373,9 +374,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   const [tool, setTool]   = useState<Tool>('edit')
   const [quant, setQuant] = useState<Quant>(0.25)
+  const isMobile = useIsMobile()
+  const mobileRoll = typeof window !== 'undefined' && window.innerWidth < 760
   const [beatW, setBeatW] = useState(80)
-  const [noteH, setNoteH] = useState(NOTE_H)
-  const [scrollTop, setScrollTop]   = useState(clip.isDrumClip ? 0 : NUM_NOTES / 2 * NOTE_H - 80)
+  const [noteH, setNoteH] = useState(mobileRoll ? 22 : NOTE_H)
+  const [scrollTop, setScrollTop]   = useState(clip.isDrumClip ? 0 : NUM_NOTES / 2 * (mobileRoll ? 22 : NOTE_H) - 80)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
@@ -1029,6 +1032,130 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   // Two bars of headroom past the clip end: drawing there auto-extends the
   // clip (ADD_MIDI_NOTE grows durationBeats), so the canvas keeps growing.
+  // ---- Touch (mobile): 1 finger = add + drag-to-length / move / erase;
+  //      2 fingers = pan the roll + pinch-zoom. touchAction:'none' keeps the
+  //      page from scrolling/zooming so these gestures drive the roll only. ----
+  const touchRef = useRef<
+    | { mode: 'add'; noteId: string; startBeat: number }
+    | { mode: 'move'; noteId: string; sb: number; sp: number; spRow: number; startX: number; startY: number }
+    | { mode: 'gesture'; startDist: number; startBeatW: number; midX: number; midY: number; startSL: number; startST: number }
+    | null
+  >(null)
+
+  function gridPoint(t: { clientX: number; clientY: number }) {
+    const rect = gridRef.current!.getBoundingClientRect()
+    return {
+      rawBeat: (t.clientX - rect.left + scrollLeft) / beatW,
+      pitch: yToPitch(t.clientY - rect.top + scrollTop),
+    }
+  }
+
+  function onGridTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    if (!gridRef.current) return
+    if (e.touches.length >= 2) {
+      const a = e.touches[0], b = e.touches[1]
+      touchRef.current = {
+        mode: 'gesture',
+        startDist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+        startBeatW: beatW,
+        midX: (a.clientX + b.clientX) / 2,
+        midY: (a.clientY + b.clientY) / 2,
+        startSL: scrollLeft,
+        startST: scrollTop,
+      }
+      return
+    }
+    const t = e.touches[0]
+    const { rawBeat, pitch } = gridPoint(t)
+    if (pitch === null) return
+    const existing = noteAt(rawBeat, pitch)
+
+    if (tool === 'erase') {
+      if (existing) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: existing.id })
+      touchRef.current = null
+      return
+    }
+
+    if (existing) {
+      // Tap-drag an existing note to reposition it (pitch + start)
+      setSelectedNotes(new Set([existing.id]))
+      touchRef.current = {
+        mode: 'move', noteId: existing.id,
+        sb: existing.startBeat, sp: existing.pitch,
+        spRow: isDrum ? (DRUM_PITCH_TO_ROW.get(existing.pitch) ?? 0) : 0,
+        startX: t.clientX, startY: t.clientY,
+      }
+      return
+    }
+
+    // Empty cell → add a note, then drag right to set its length
+    const beat = snapBeat(rawBeat)
+    if (clip.loopEnabled && clip.loopLengthBeats && beat >= clip.loopLengthBeats) { touchRef.current = null; return }
+    const finalPitch = scaleLock && !isDrum ? snapToScale(pitch, project.key, project.scale) : pitch
+
+    if (chordType !== null) {
+      const intervals = CHORD_INTERVALS[chordType]
+      if (intervals) {
+        for (const interval of intervals) {
+          const np = finalPitch + interval
+          if (np < 0 || np > 127) continue
+          dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { id: crypto.randomUUID(), pitch: np, startBeat: beat, durationBeats: quant, velocity: 80 } })
+        }
+        void playNote(finalPitch)
+        touchRef.current = null
+        return
+      }
+    }
+
+    const id = crypto.randomUUID()
+    dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { id, pitch: finalPitch, startBeat: beat, durationBeats: quant, velocity: 100 } })
+    setSelectedNotes(new Set([id]))
+    void playNote(finalPitch)
+    touchRef.current = { mode: 'add', noteId: id, startBeat: beat }
+  }
+
+  function onGridTouchMove(e: React.TouchEvent<HTMLDivElement>) {
+    const st = touchRef.current
+    if (!st) return
+
+    if (st.mode === 'gesture' && e.touches.length >= 2) {
+      const a = e.touches[0], b = e.touches[1]
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1
+      const midX = (a.clientX + b.clientX) / 2
+      const midY = (a.clientY + b.clientY) / 2
+      setBeatW(Math.max(24, Math.min(320, st.startBeatW * (dist / st.startDist))))
+      setScrollLeft(Math.max(0, st.startSL - (midX - st.midX)))
+      const maxST = Math.max(0, rowCount * rowH - (gridRef.current?.clientHeight ?? 0))
+      setScrollTop(Math.max(0, Math.min(maxST, st.startST - (midY - st.midY))))
+      return
+    }
+
+    if (st.mode === 'add' && e.touches.length === 1) {
+      const { rawBeat } = gridPoint(e.touches[0])
+      const dur = Math.max(quant, snapBeat(rawBeat - st.startBeat))
+      dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: st.noteId, patch: { durationBeats: dur } })
+      return
+    }
+
+    if (st.mode === 'move' && e.touches.length === 1) {
+      const t = e.touches[0]
+      const db = (t.clientX - st.startX) / beatW
+      const dRow = Math.round((t.clientY - st.startY) / rowH)
+      const newPitch = isDrum
+        ? DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, st.spRow + dRow))].pitch
+        : Math.max(0, Math.min(127, st.sp - dRow))
+      dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: st.noteId, patch: {
+        startBeat: Math.max(0, snapBeat(st.sb + db)),
+        pitch: newPitch,
+      }})
+      return
+    }
+  }
+
+  function onGridTouchEnd(e: React.TouchEvent<HTMLDivElement>) {
+    if (e.touches.length === 0) touchRef.current = null
+  }
+
   const totalW = clip.durationBeats * beatW + (clip.loopEnabled ? 80 : 2 * (project.timeSignatureNum || 4) * beatW)
 
   return (
@@ -1353,10 +1480,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           {/* Note grid */}
           <div
             ref={gridRef}
-            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : 'cell' }}
+            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : 'cell', touchAction: isMobile ? 'none' : undefined }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={() => setHoverPitch(null)}
+            onTouchStart={isMobile ? onGridTouchStart : undefined}
+            onTouchMove={isMobile ? onGridTouchMove : undefined}
+            onTouchEnd={isMobile ? onGridTouchEnd : undefined}
             onWheel={e => {
               if (e.ctrlKey || e.metaKey) { setBeatW(w => Math.max(20, Math.min(200, w * (e.deltaY < 0 ? 1.15 : 0.87)))); e.preventDefault() }
               else if (e.altKey) { zoomVertical(e.deltaY < 0 ? 1.25 : 0.8); e.preventDefault() }

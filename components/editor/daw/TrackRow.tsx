@@ -279,10 +279,14 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, onReorderDrop, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, headWidth, compactHead, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, onReorderDrop, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
+  /** Header width, driven by ArrangementView's `hdrW` so heads + clip overlay stay aligned. */
+  headWidth?: number
+  /** Minimize the head to a thin strip (mobile horizontal collapse). */
+  compactHead?: boolean
   selectedTrackIds?: Set<string>
   onSelectTrack?: (ctrl: boolean) => void
   foldedGroups?: Set<string>
@@ -309,7 +313,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const msBtn = isMobile
     ? { fontSize: 12, width: 32, height: 30, borderRadius: 7 }
     : { fontSize: 8, width: 16, height: 14, borderRadius: 2 }
-  const headerW = isMobile ? 140 : HDR_W  // must match hdrW in ArrangementView
+  const headerW = headWidth ?? (isMobile ? 140 : HDR_W)  // must match hdrW in ArrangementView
   const workshopTheme = useWorkshopThemeOptional()
   const trackColors = workshopTheme?.theme.trackPalette ?? TRACK_COLORS
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
@@ -863,8 +867,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             boxSizing: 'border-box', overflow: 'hidden', cursor: 'pointer', transition: 'background 0.1s',
           }}
         >
+          {/* Compact (horizontally minimized) head — just name + mute/solo dots. */}
+          {compactHead && (
+            <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+              {track.mute && <span title="Muted" style={{ width: 6, height: 6, borderRadius: '50%', background: '#d97706', flexShrink: 0 }} />}
+              {track.solo && <span title="Solo" style={{ width: 6, height: 6, borderRadius: '50%', background: '#eab308', flexShrink: 0 }} />}
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</span>
+            </div>
+          )}
           {/* Name row — identity + transport controls */}
-          <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 2 }}>
+          <div style={{ display: compactHead ? 'none' : 'flex', alignItems: 'center', minWidth: 0, gap: 2 }}>
             {/* Collapse toggle — thins this track's row */}
             <button
               onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) }}

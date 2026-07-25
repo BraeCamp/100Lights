@@ -216,9 +216,10 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
             style={{ position: 'absolute', top: 0, left: mx, width: 1, height: RULER_H, background: marker.color ?? '#f59e0b', zIndex: 2, pointerEvents: 'none' }}
           >
             <div
-              title={`${marker.name || 'Cue'} — right-click to remove`}
-              style={{ position: 'absolute', top: 0, left: 0, background: marker.color ?? '#f59e0b', color: '#000', fontSize: 8, padding: '1px 3px', borderRadius: '0 2px 2px 0', whiteSpace: 'nowrap', fontWeight: 700, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'context-menu', pointerEvents: 'auto' }}
+              title={`${marker.name || 'Cue'} — double-click to remove`}
+              style={{ position: 'absolute', top: 0, left: 0, background: marker.color ?? '#f59e0b', color: '#000', fontSize: 8, padding: '1px 3px', borderRadius: '0 2px 2px 0', whiteSpace: 'nowrap', fontWeight: 700, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer', pointerEvents: 'auto' }}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_CUE_MARKER', markerId: marker.id }) }}
+              onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_CUE_MARKER', markerId: marker.id }) }}
             >
               {marker.name || '♦'}
             </div>
@@ -357,7 +358,10 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 export default function ArrangementView() {
   const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
-  const hdrW = isMobile ? 140 : HDR_W  // narrower track heads on a phone
+  // Mobile track heads can be minimized *horizontally* to a thin strip so the
+  // clip timeline (one overlay anchored at `hdrW`) gets the reclaimed width.
+  const [narrowHeads, setNarrowHeads] = useState(false)
+  const hdrW = isMobile ? (narrowHeads ? 52 : 140) : HDR_W  // narrower track heads on a phone
   const [mobMore, setMobMore] = useState(false)      // mobile toolbar "More" sheet
   const [mobSnapMenu, setMobSnapMenu] = useState(false)
 
@@ -1504,7 +1508,14 @@ export default function ArrangementView() {
 
       {/* Ruler row */}
       <div style={{ display: 'flex', flexShrink: 0 }} onWheel={handleWheel}>
-        <div style={{ width: hdrW, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
+        <div style={{ width: hdrW, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+          {isMobile && (
+            <button onClick={() => setNarrowHeads(v => !v)} title={narrowHeads ? 'Expand track heads' : 'Minimize track heads'} aria-label={narrowHeads ? 'Expand track heads' : 'Minimize track heads'}
+              style={{ width: 30, height: 26, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', marginRight: 4, flexShrink: 0 }}>
+              {narrowHeads ? '⟩' : '⟨'}
+            </button>
+          )}
+        </div>
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <Ruler beatW={beatW} scrollLeft={scrollLeft} snap={snap} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} onOpenComment={(id, x, y) => setOpenComment({ id, x, y })} />
         </div>
@@ -1562,6 +1573,8 @@ export default function ArrangementView() {
             beatW={beatW}
             scrollLeft={scrollLeft}
             viewWidth={viewWidth}
+            headWidth={hdrW}
+            compactHead={isMobile && narrowHeads}
             snap={snap}
             onScrollBy={delta => setScrollLeft(s => Math.max(0, s + delta))}
             waveformZoom={project.waveformZoom}

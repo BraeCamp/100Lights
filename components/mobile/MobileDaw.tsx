@@ -127,14 +127,23 @@ function Shell({ projectId }: { projectId?: string }) {
 
       <MobileTransport />
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', position: 'relative' }}>
-        {tab === 'song' && <ArrangementView />}
-        {tab === 'mix' && <Mixer />}
-        {tab === 'clips' && <SessionView />}
-        {tab === 'sounds' && <SoundsEditor onDoneClip={() => setTab('song')} />}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div style={{ position: 'absolute', inset: 0, overflow: 'auto' }}>
+          {tab === 'song' && <ArrangementView />}
+          {tab === 'mix' && <Mixer />}
+          {tab === 'clips' && <SessionView />}
+          {tab === 'sounds' && <SoundsEditor onDoneClip={() => setTab('song')} />}
+        </div>
+        {/* Add-track lives on the timeline (Song view) as a floating button. */}
+        {tab === 'song' && (
+          <button onClick={() => setAdding(true)} aria-label="Add a track"
+            style={{ position: 'absolute', right: 14, bottom: 14, display: 'flex', alignItems: 'center', gap: 6, padding: '11px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 800, boxShadow: '0 4px 14px rgba(0,0,0,0.45)', zIndex: 20 }}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>＋</span>Track
+          </button>
+        )}
       </div>
 
-      {/* Bottom nav — Song / Mix / Sounds + big add-track */}
+      {/* Bottom nav — Song / Mix / Sounds */}
       <nav style={{ display: 'flex', alignItems: 'stretch', gap: 4, padding: '6px 8px calc(6px + env(safe-area-inset-bottom))', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--bg-surface)' }}>
         {NAV.map(n => {
           const on = tab === n.id
@@ -145,10 +154,6 @@ function Shell({ projectId }: { projectId?: string }) {
             </button>
           )
         })}
-        <button onClick={() => setAdding(true)} aria-label="Add a track" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '8px 0', borderRadius: 10, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--accent-light)' }}>
-          <span style={{ fontSize: 18, lineHeight: 1 }}>＋</span>
-          <span style={{ fontSize: 10.5, fontWeight: 700 }}>Track</span>
-        </button>
       </nav>
 
       {/* Hamburger drawer */}
