@@ -1,7 +1,7 @@
 'use client'
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
-import { type MonitorFx } from '@/lib/daw-engine'
+import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown } from 'lucide-react'
@@ -34,6 +34,20 @@ const REC_FX_DEFS: Record<MonitorFx['type'], { label: string; min: number; max: 
   tremolo:    { label: 'Tremolo',    min: 0,   max: 1,     step: 0.01, def: 0.5,  fmt: v => `${Math.round(v * 100)}%` },
 }
 
+// Momentary performance-FX pad: hold to apply on the master, release to reset.
+// Shared engine.perfFX with the mobile transport, so both platforms match.
+function FxPad({ label, mode, engine, color }: { label: string; mode: 'lp' | 'hp' | 'duck'; engine: DawEngine; color: string }) {
+  const [on, setOn] = useState(false)
+  const down = () => { setOn(true); engine.perfFX(mode) }
+  const up = () => { setOn(false); engine.perfFX('off') }
+  return (
+    <button onPointerDown={e => { e.preventDefault(); down() }} onPointerUp={up} onPointerLeave={up} onPointerCancel={up}
+      style={{ padding: '4px 9px', borderRadius: 4, fontSize: 9, fontWeight: 800, letterSpacing: '0.04em', cursor: 'pointer', whiteSpace: 'nowrap', border: `1px solid ${on ? color : 'var(--border)'}`, background: on ? `${color}30` : 'var(--bg-card)', color: on ? color : 'var(--text-muted)' }}>
+      {label}
+    </button>
+  )
+}
+
 export default function Transport() {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed } = useDaw()
   const { padTrafficLights } = useElectronChrome()
@@ -51,6 +65,7 @@ export default function Transport() {
   // ── State (music mode only) ─────────────────────────────────────────────────
   const [editingBpm, setEditingBpm] = useState(false)
   const [bpmDraft, setBpmDraft] = useState('')
+  const [fxOpen, setFxOpen] = useState(false)
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [showRecorder, setShowRecorder] = useState(false)
@@ -739,6 +754,20 @@ export default function Transport() {
       >
         <Repeat size={13} />
       </button>
+
+      {/* Performance FX — parity with the mobile ⚡ hold-FX */}
+      <div style={{ position: 'relative' }}>
+        <button onClick={() => setFxOpen(o => !o)} style={fxOpen ? active : base} title="Performance FX — hold a pad to sweep the master" data-help-id="perf-fx">
+          <span style={{ fontSize: 13, lineHeight: 1 }}>⚡</span>
+        </button>
+        {fxOpen && (
+          <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, display: 'flex', gap: 5, padding: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
+            <FxPad label="LPF" mode="lp" engine={engine} color="#8b5cf6" />
+            <FxPad label="HPF" mode="hp" engine={engine} color="#3b82f6" />
+            <FxPad label="DUCK" mode="duck" engine={engine} color="#f59e0b" />
+          </div>
+        )}
+      </div>
 
       <div style={divider} />
 
