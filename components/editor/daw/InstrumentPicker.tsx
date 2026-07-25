@@ -51,6 +51,31 @@ const SliderRow = memo(function SliderRow({ label, value, min, max, step = 0.01,
 
 // Native <select> menu — a large, single touch target that replaces walls of
 // tiny preset/type chips on mobile ("consolidate things into menus").
+// Record the mic to a base64 data-URI so it can be baked onto a drum pad
+// (DrumPadSettings.sample). Returns a stop() that resolves the recorded audio.
+async function startMicRecording(): Promise<{ stop: () => Promise<string> }> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  const mime = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+    : typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+  const chunks: Blob[] = []
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+  rec.start()
+  return {
+    stop: () => new Promise<string>((resolve, reject) => {
+      rec.onstop = () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunks, { type: mime || 'audio/webm' })
+        const fr = new FileReader()
+        fr.onload = () => resolve(fr.result as string)
+        fr.onerror = () => reject(new Error('read failed'))
+        fr.readAsDataURL(blob)
+      }
+      try { rec.stop() } catch { reject(new Error('stop failed')) }
+    }),
+  }
+}
+
 function PresetMenu({ options, value, onPick, placeholder }: {
   options: { value: string; label: string }[]
   value?: string
@@ -142,7 +167,19 @@ const DrumPanel = memo(function DrumPanel({ instrument, onSet }: {
   const { engine } = useDaw()
   const p = instrument.params as DrumInstrumentParams
   const [selectedPad, setSelectedPad] = useState<number | null>(null)
+  const [recorder, setRecorder] = useState<{ stop: () => Promise<string> } | null>(null)
+  const [recErr, setRecErr] = useState('')
   const pads = p.pads ?? {}
+
+  async function toggleRecord(pitch: number) {
+    if (recorder) {
+      try { const data = await recorder.stop(); updatePad(pitch, { sample: { id: crypto.randomUUID(), name: 'Recording', data } }) } catch { /* ok */ }
+      setRecorder(null)
+    } else {
+      setRecErr('')
+      try { setRecorder(await startMicRecording()) } catch { setRecErr('Microphone permission is needed to record.') }
+    }
+  }
 
   function getPad(pitch: number): DrumPadSettings {
     return pads[pitch] ?? { volume: 0.8, pitch: 0, pan: 0, mute: false }
@@ -213,6 +250,21 @@ const DrumPanel = memo(function DrumPanel({ instrument, onSet }: {
               <option value="3">Group 3</option>
             </select>
           </label>
+          {/* Record a sample onto this pad from the mic (baked into the kit). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button onClick={e => { e.stopPropagation(); void toggleRecord(selectedPad) }}
+              style={{ flex: 1, padding: '6px 0', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                border: `1px solid ${recorder ? '#ef4444' : C.border}`, background: recorder ? 'rgba(239,68,68,0.16)' : C.bgCard, color: recorder ? '#ef4444' : C.textPrimary }}>
+              {recorder ? '● Stop & use' : sel.sample ? '🎤 Re-record' : '🎤 Record sample'}
+            </button>
+            {sel.sample && !recorder && (
+              <button onClick={e => { e.stopPropagation(); updatePad(selectedPad, { sample: undefined }) }}
+                title="Remove recorded sample (back to the synth pad)"
+                style={{ padding: '6px 10px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: `1px solid ${C.border}`, background: C.bgCard, color: C.textMuted }}>Clear</button>
+            )}
+          </div>
+          {recErr && <div style={{ fontSize: 10, color: '#ef4444' }}>{recErr}</div>}
+          {sel.sample && !recorder && <div style={{ fontSize: 9.5, color: C.textMuted }}>🎙 {sel.sample.name || 'Recorded sample'} plays on this pad.</div>}
         </div>
       )}
     </div>
