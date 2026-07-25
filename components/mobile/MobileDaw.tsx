@@ -16,6 +16,7 @@ import posthog from 'posthog-js'
 import { Menu, Home, FolderOpen, Plus, LayoutGrid, X } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { MobileDawProvider } from './MobileDawProvider'
+import { ForceMobileContext } from '@/lib/use-is-mobile'
 import { useDaw, makeMidiClip, migrateProject } from '@/lib/daw-state'
 import { projectToCfFile } from './daw/save-project'
 import { drumInstrument, polyInstrument, seedProject } from './daw/seed'
@@ -56,9 +57,14 @@ export default function MobileDaw({ projectId }: { projectId?: string }) {
   if (!loaded) return <FullMsg>Loading project…</FullMsg>
 
   return (
-    <MobileDawProvider key={projectId ?? 'new'} initialProject={loaded}>
-      <Shell projectId={projectId} />
-    </MobileDawProvider>
+    // Force mobile layout for everything inside the mobile studio, so the shared
+    // Mixer / ArrangementView / PadInput render their touch UI even when the
+    // window is wide (desktop, tablet) — not just under the 760px width check.
+    <ForceMobileContext.Provider value={true}>
+      <MobileDawProvider key={projectId ?? 'new'} initialProject={loaded}>
+        <Shell projectId={projectId} />
+      </MobileDawProvider>
+    </ForceMobileContext.Provider>
   )
 }
 

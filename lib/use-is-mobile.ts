@@ -4,10 +4,18 @@
 // reflowed layouts on a phone. SSR-safe: starts false, updates on mount, so
 // desktop rendering is untouched and only <breakpoint viewports get the mobile
 // branch. Changing to mobile only affects the studio when actually on a phone.
+//
+// ForceMobileContext lets a container (the mobile studio at /m, /new, and opened
+// projects) declare "everything inside me is mobile" so the shared components
+// (Mixer, ArrangementView, PadInput, …) render their mobile layout even when the
+// window happens to be ≥ breakpoint (desktop browser, tablet, wide window).
 
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
+
+export const ForceMobileContext = createContext(false)
 
 export function useIsMobile(breakpoint = 760): boolean {
+  const forced = useContext(ForceMobileContext)
   const [mobile, setMobile] = useState(false)
   useEffect(() => {
     const check = () => {
@@ -26,5 +34,5 @@ export function useIsMobile(breakpoint = 760): boolean {
       window.removeEventListener('orientationchange', check)
     }
   }, [breakpoint])
-  return mobile
+  return forced || mobile
 }
