@@ -6,7 +6,7 @@ import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, field
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
-import { playInstrumentNote } from './daw-instruments'
+import { playInstrumentNote, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { libraryGetAll } from './sound-library'
@@ -101,6 +101,8 @@ export class DawEngine extends EventTarget {
   // sweep a filter / duck the mix, release to reset. Neutral by default.
   perfFilter!: BiquadFilterNode
   perfGain!: GainNode
+  // Active choke-group voices: key `${trackId}:${group}` → the voice's flat gain.
+  private _chokeVoices = new Map<string, GainNode>()
 
   private trackNodes = new Map<string, TrackNodes>()
   private returnBuses = new Map<string, ReturnBus>()
@@ -549,6 +551,21 @@ export class DawEngine extends EventTarget {
 
   setMasterVolume(v: number) {
     this.masterGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02)
+  }
+
+  // When a drum voice with a choke group starts, fade the previous voice in the
+  // same (track, group) to silence at that moment — the classic hi-hat choke.
+  private _choke(trackId: string, handle: DrumVoiceHandle | undefined, when: number) {
+    if (!handle || !handle.chokeGroup) return
+    const key = `${trackId}:${handle.chokeGroup}`
+    const prev = this._chokeVoices.get(key)
+    if (prev && prev !== handle.gain) {
+      try {
+        prev.gain.cancelScheduledValues(when)
+        prev.gain.setTargetAtTime(0.0001, when, 0.004)  // ~12ms fade, click-free
+      } catch { /* node already finished */ }
+    }
+    this._chokeVoices.set(key, handle.gain)
   }
 
   // Momentary performance FX (hold to apply, 'off' to reset). Ramps so it sweeps.
@@ -1176,7 +1193,8 @@ export class DawEngine extends EventTarget {
             src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
           }
         } else {
-          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
+          const h = playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
+          this._choke(trackId, h, noteStartAt)
         }
       }
     }
@@ -1495,7 +1513,8 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, this.beatsToSeconds(maxDur) + sustainSec, noteOffsetSec)
+          const h = playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, this.beatsToSeconds(maxDur) + sustainSec, noteOffsetSec)
+          this._choke(track.id, h, startAt)
         }
 
         this._scheduledNoteKeys.add(noteKey)
@@ -2605,6 +2624,7 @@ export class DawEngine extends EventTarget {
   }
 
   private _killAllSources() {
+    this._chokeVoices.clear()  // voices are being killed; drop stale choke refs
     const now      = this.ctx.currentTime
     const stopAt   = now + 0.015  // 15 ms fade window — inaudible but click-free
     for (const { source, gainNode, tailNodes, tailOscs, tailTimerId } of this.scheduledSources) {

@@ -34,6 +34,14 @@ export function preloadDrumInstrument(ctx: AudioContext, instrument: TrackInstru
 }
 import { playWavetableNote } from './wavetable-synth'
 
+// Reserved implicit choke group so hi-hats cut each other by default without
+// the user configuring anything. Kept out of the 1..8 range users pick from.
+export const HAT_CHOKE_GROUP = 900
+
+/** Returned for a drum voice that belongs to a choke group. The engine fades
+ *  `gain` to silence when another pad in the same group fires. */
+export interface DrumVoiceHandle { chokeGroup: number; gain: GainNode }
+
 // General MIDI drum map (pitch → drum type)
 const GM_DRUM: Record<number, BeatType> = {
   35: '808', 36: 'kick',
@@ -325,6 +333,18 @@ export function playInstrumentNote(
       padPanner.connect(dest)
       effectiveDest = padGain
     }
+    // Choke insert: an explicit group, or hi-hats which auto-choke by default.
+    // The voice routes through a flat gain the engine can fade to silence when
+    // another pad in the same group fires (open hat cut by closed hat).
+    const group = pad?.chokeGroup ?? ((type === 'hihat' || type === 'open-hihat') ? HAT_CHOKE_GROUP : 0)
+    let handle: DrumVoiceHandle | undefined
+    if (group) {
+      const chokeGain = ctx.createGain()
+      chokeGain.gain.value = 1
+      chokeGain.connect(effectiveDest)
+      effectiveDest = chokeGain
+      handle = { chokeGroup: group, gain: chokeGain }
+    }
     // A baked sample on the pad plays instead of the synth voice.
     if (pad?.sample) {
       const buf = _drumSampleBuf.get(pad.sample.id)
@@ -336,13 +356,13 @@ export function playInstrumentNote(
         g.gain.value = velocity / 127          // pad volume/pan already in effectiveDest
         src.connect(g); g.connect(effectiveDest)
         src.start(when)
-        return
+        return handle
       }
       void _decodeDrumSample(ctx, pad.sample)  // warm cache; fall through to synth this hit
     }
     const vel = pad ? (velocity / 127) * pad.volume : velocity / 127
     playDrumHit(ctx, p.pack, type, when, vel, pad?.pitch ? pitch + pad.pitch : undefined, undefined, effectiveDest)
-    return
+    return handle
   }
 
   if (instrument.type === 'fm') {

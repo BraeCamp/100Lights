@@ -258,6 +258,10 @@ export interface DrumPadSettings {
   pitch: number       // semitones -24..24
   pan: number         // -1..1
   mute: boolean
+  /** Choke/cut group. Pads sharing the same non-zero group cut each other off
+   *  (a closed hi-hat silences a ringing open hi-hat). 0 = never chokes;
+   *  undefined = default (hi-hats auto-choke each other). */
+  chokeGroup?: number
   /** A one-shot sample baked into the pad — the audio travels WITH the kit
    *  (localStorage + community), so a sample kit is portable and independent of
    *  the sound library. `data` is a base64 audio data-URI; `id` is a stable key

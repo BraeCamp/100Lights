@@ -199,6 +199,20 @@ const DrumPanel = memo(function DrumPanel({ instrument, onSet }: {
             <input type="checkbox" checked={sel.mute} onChange={e => { e.stopPropagation(); updatePad(selectedPad, { mute: e.target.checked }) }} onClick={e => e.stopPropagation()} style={{ accentColor: C.accent }} />
             Mute
           </label>
+          {/* Choke group — pads sharing a group cut each other off (hi-hats). */}
+          <label onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.textMuted }}>
+            <span style={{ width: 72, flexShrink: 0 }}>Choke</span>
+            <select value={sel.chokeGroup === undefined ? 'auto' : String(sel.chokeGroup)}
+              onClick={e => e.stopPropagation()}
+              onChange={e => { e.stopPropagation(); const v = e.target.value; updatePad(selectedPad, { chokeGroup: v === 'auto' ? undefined : Number(v) }) }}
+              style={{ flex: 1, background: C.bgSurface, border: `1px solid ${C.border}`, color: C.textPrimary, borderRadius: 3, padding: '3px 6px', fontSize: 11, cursor: 'pointer' }}>
+              <option value="auto">Auto — hi-hats cut each other</option>
+              <option value="0">None — always rings out</option>
+              <option value="1">Group 1</option>
+              <option value="2">Group 2</option>
+              <option value="3">Group 3</option>
+            </select>
+          </label>
         </div>
       )}
     </div>
