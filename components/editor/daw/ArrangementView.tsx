@@ -367,7 +367,7 @@ export default function ArrangementView() {
   // lane plays. Mirrors the piano roll's touch model.
   const laneGesture = useRef<
     | { mode: 'scrub' }
-    | { mode: 'pan'; startDist: number; startBeatW: number; midX: number; midY: number; startSL: number; startST: number }
+    | { mode: 'gesture'; locked: 'pan' | 'zoom' | null; startDist: number; startBeatW: number; midX: number; midY: number; startSL: number; startST: number }
     | null
   >(null)
   const [mobMore, setMobMore] = useState(false)      // mobile toolbar "More" sheet
@@ -1546,7 +1546,7 @@ export default function ArrangementView() {
           if (e.touches.length >= 2) {
             const a = e.touches[0], b = e.touches[1]
             laneGesture.current = {
-              mode: 'pan',
+              mode: 'gesture', locked: null,
               startDist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
               startBeatW: beatW,
               midX: (a.clientX + b.clientX) / 2, midY: (a.clientY + b.clientY) / 2,
@@ -1565,13 +1565,24 @@ export default function ArrangementView() {
         onTouchMove={isMobile ? (e => {
           const g = laneGesture.current; const lane = laneRef.current
           if (!g || !lane) return
-          if (g.mode === 'pan' && e.touches.length >= 2) {
+          if (g.mode === 'gesture' && e.touches.length >= 2) {
             const a = e.touches[0], b = e.touches[1]
             const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1
             const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2
-            setBeatW(Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, g.startBeatW * (dist / g.startDist))))
-            setScrollLeft(Math.max(0, g.startSL - (midX - g.midX)))
-            lane.scrollTop = Math.max(0, g.startST - (midY - g.midY))
+            // Lock into pan OR zoom on first meaningful motion so scrolling
+            // (fingers together) never triggers incidental zoom → no jitter.
+            if (g.locked === null) {
+              const dDist = Math.abs(dist - g.startDist)
+              const dMid = Math.hypot(midX - g.midX, midY - g.midY)
+              if (dDist < 10 && dMid < 10) return // deadzone — wait for intent
+              g.locked = dDist > dMid ? 'zoom' : 'pan'
+            }
+            if (g.locked === 'zoom') {
+              setBeatW(Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, g.startBeatW * (dist / g.startDist))))
+            } else {
+              setScrollLeft(Math.max(0, g.startSL - (midX - g.midX)))
+              lane.scrollTop = Math.max(0, g.startST - (midY - g.midY))
+            }
           } else if (g.mode === 'scrub' && e.touches.length === 1) {
             const rect = lane.getBoundingClientRect()
             const bb = Math.max(0, (e.touches[0].clientX - rect.left - hdrW + scrollLeft) / beatW)

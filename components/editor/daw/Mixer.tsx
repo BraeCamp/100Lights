@@ -13,10 +13,11 @@ import { ReturnDeviceChain } from './DeviceChain'
 
 // ── Vertical fader ─────────────────────────────────────────────────────────
 
-function VerticalFader({ value, onChange, onCommit }: {
+function VerticalFader({ value, onChange, onCommit, color = 'var(--accent)' }: {
   value: number
   onChange: (v: number) => void
   onCommit?: (v: number) => void
+  color?: string
 }) {
   const isMobile = useIsMobile()
   const trackH = 110
@@ -57,16 +58,25 @@ function VerticalFader({ value, onChange, onCommit }: {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
+        {/* Filled level — bright, colored by the track so the fader reads at a glance */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0,
+          top: Math.round(pos) + thumbH / 2,
+          background: `linear-gradient(180deg, ${color}, color-mix(in srgb, ${color} 70%, #000))`,
+          borderRadius: `0 0 ${trackW / 2}px ${trackW / 2}px`, pointerEvents: 'none',
+          boxShadow: `0 0 8px color-mix(in srgb, ${color} 55%, transparent)`,
+        }} />
         <div style={{
           position: 'absolute', left: -3, right: -3,
           top: (1 - 0.8 / max) * (trackH - thumbH) + thumbH / 2,
-          height: 1, background: 'rgba(255,255,255,0.15)', pointerEvents: 'none',
+          height: 1, background: 'rgba(255,255,255,0.2)', pointerEvents: 'none',
         }} />
         <div style={{
           position: 'absolute', left: (trackW - thumbW) / 2, top: Math.round(pos),
           width: thumbW, height: thumbH,
-          background: 'linear-gradient(180deg,#555 0%,#3a3a3a 100%)',
-          borderRadius: 3, border: '1px solid var(--border-light)', cursor: 'ns-resize', pointerEvents: 'none',
+          background: 'linear-gradient(180deg,#f2f2f6 0%,#c4c4ce 100%)',
+          borderRadius: 3, border: '1px solid #ffffff', cursor: 'ns-resize', pointerEvents: 'none',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
         }} />
       </div>
       <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '0.04em' }}>
@@ -326,6 +336,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, flex: 1 }}>
         <VerticalFader
           value={volume}
+          color={isMaster ? 'var(--accent)' : color}
           onChange={v => {
             if (isMaster) { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }
             else if (track) { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }
@@ -460,6 +471,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flex: 1, justifyContent: 'flex-end' }}>
         <VerticalFader
           value={rt.volume}
+          color={rt.color}
           onChange={v => { dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { volume: v } }); engine.setReturnVolume(rt.id, v) }}
         />
         <span style={{ fontSize: 8, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{db}dB</span>
