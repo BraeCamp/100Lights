@@ -28,6 +28,7 @@ import SessionView from '@/components/editor/daw/SessionView'
 import InstrumentPicker from '@/components/editor/daw/InstrumentPicker'
 import DeviceChain from '@/components/editor/daw/DeviceChain'
 import PadInput from '@/components/editor/daw/PadInput'
+import ChordPad from './daw/ChordPad'
 import SoundLibraryPanel from '@/components/editor/SoundLibrary'
 import PolyCodePanel from '@/components/editor/daw/PolyCodePanel'
 import type { DawProject, TrackInstrument } from '@/lib/daw-types'
@@ -134,10 +135,10 @@ function Shell({ projectId }: { projectId?: string }) {
 
   // Double-tapping a track head fires this: focus the track and open its Sounds
   // sub-view (Effects / Sound / Keys) so effects etc. are reachable on mobile.
-  const [soundsFocus, setSoundsFocus] = useState<{ sub: 'sounds' | 'fx' | 'keys'; n: number }>({ sub: 'sounds', n: 0 })
+  const [soundsFocus, setSoundsFocus] = useState<{ sub: 'sounds' | 'fx' | 'keys' | 'chords'; n: number }>({ sub: 'sounds', n: 0 })
   useEffect(() => {
     const onOpen = (e: Event) => {
-      const d = (e as CustomEvent<{ trackId: string; sub: 'sounds' | 'fx' | 'keys' }>).detail
+      const d = (e as CustomEvent<{ trackId: string; sub: 'sounds' | 'fx' | 'keys' | 'chords' }>).detail
       if (d?.trackId) setSelectedTrackId(d.trackId)
       setSoundsFocus(f => ({ sub: d?.sub ?? 'sounds', n: f.n + 1 }))
       setTab('sounds')
@@ -310,9 +311,9 @@ function Shell({ projectId }: { projectId?: string }) {
 
 // ── Sounds editor: pick a track, edit its instrument / FX / keys, full-screen ──
 
-function SoundsEditor({ onDoneClip, focus }: { onDoneClip: () => void; focus?: { sub: 'sounds' | 'fx' | 'keys'; n: number } }) {
+function SoundsEditor({ onDoneClip, focus }: { onDoneClip: () => void; focus?: { sub: 'sounds' | 'fx' | 'keys' | 'chords'; n: number } }) {
   const { project, selectedTrackId, setSelectedTrackId, expandedPianoRollClipId, expandedStepSeqClipId, setExpandedPianoRollClipId, setExpandedStepSeqClipId } = useDaw()
-  const [sub, setSub] = useState<'sounds' | 'fx' | 'keys'>('sounds')
+  const [sub, setSub] = useState<'sounds' | 'fx' | 'keys' | 'chords'>('sounds')
   // Groups are included so a reference/bus track's FX is editable here.
   const tracks = project.tracks
 
@@ -373,13 +374,14 @@ function SoundsEditor({ onDoneClip, focus }: { onDoneClip: () => void; focus?: {
       ) : (<>
         {/* sub tabs */}
         <div style={{ display: 'flex', gap: 6, padding: '8px 12px', flexShrink: 0 }}>
-          {(['sounds', 'fx', 'keys'] as const).map(s => (
+          {(['sounds', 'fx', 'chords', 'keys'] as const).map(s => (
             <button key={s} onClick={() => setSub(s)} style={{ flex: 1, padding: '9px 0', borderRadius: 8, fontSize: 12.5, fontWeight: 700, textTransform: 'capitalize', cursor: 'pointer', border: `1px solid ${sub === s ? 'var(--accent)' : 'var(--border)'}`, background: sub === s ? 'rgba(139,92,246,0.14)' : 'transparent', color: sub === s ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{s}</button>
           ))}
         </div>
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
           {sub === 'sounds' && <InstrumentPicker trackId={track.id} />}
           {sub === 'fx' && <DeviceChain trackId={track.id} />}
+          {sub === 'chords' && <ChordPad trackId={track.id} />}
           {sub === 'keys' && <PadInput trackId={track.id} onClose={() => { /* stays open */ }} />}
         </div>
       </>)}
