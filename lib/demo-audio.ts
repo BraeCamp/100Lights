@@ -256,9 +256,25 @@ function renderSnareLayer(layered: boolean): Stereo {
 }
 
 function renderLoopClick(clean: boolean): Stereo {
-  const oneBar = Math.round(BAR * SR), reps = 4; const buf = new Float32Array(oneBar * reps + Math.round(0.2 * SR)); resetNoise()
-  const bar = new Float32Array(oneBar); let ph = 0
-  for (let n = 0; n < oneBar; n++) { const t = n / SR; let s = 0; for (const k of KICK) s += drum('kick', t - k * STEP) * 0.8; for (const sn of SNARE) s += drum('snare', t - sn * STEP) * 0.5; for (const h of HATS) s += drum('hat', t - h * STEP) * 0.12; ph += mtof(45) / SR; s += osc('sawtooth', ph) * 0.28; bar[n] = s }
+  const oneBar = Math.round(BAR * SR), reps = 4
+  const buf = new Float32Array(oneBar * reps + Math.round(0.2 * SR)); resetNoise()
+  // The bass is a 110 Hz sawtooth — exactly 220 cycles per 2 s bar, so it loops
+  // seamlessly. Band-limit it the way the mix bass is (highpass to drop the
+  // sub rumble, lowpass to tame the buzzy upper harmonics); the earlier version
+  // fed a RAW saw straight in, which stacked a sub-heavy, reedy drone on top of
+  // the kick and read as feedback/"broken" audio. Warm the filters over one bar
+  // first so the retained bar is at steady state and the loop seam stays clean.
+  const hpBass = biquad('highpass', 85, 0.7), lpBass = biquad('lowpass', 650, 0.8)
+  const bassBar = new Float32Array(oneBar); let ph = 0
+  for (let pass = 0; pass < 2; pass++) for (let n = 0; n < oneBar; n++) { ph += mtof(45) / SR; const b = lpBass(hpBass(osc('sawtooth', ph))) * 0.32; if (pass === 1) bassBar[n] = b }
+  const bar = new Float32Array(oneBar)
+  for (let n = 0; n < oneBar; n++) {
+    const t = n / SR; let s = bassBar[n]
+    for (const k of KICK) s += drum('kick', t - k * STEP) * 0.8
+    for (const sn of SNARE) s += drum('snare', t - sn * STEP) * 0.5
+    for (const h of HATS) s += drum('hat', t - h * STEP) * 0.12
+    bar[n] = Math.tanh(s * 0.9)   // soft-limit so stacked kick + bass never blares
+  }
   const fade = Math.round(0.004 * SR)
   if (clean) { for (let i = 0; i < fade; i++) { bar[i] *= i / fade; bar[oneBar - 1 - i] *= i / fade } } else bar[0] += 0.6
   for (let r = 0; r < reps; r++) buf.set(bar, r * oneBar)
@@ -290,7 +306,7 @@ export function renderClip(id: string, s?: Partial<DemoSettings> | null): Stereo
     case 'duck-off': case 'duck-on': { const [o, on] = pair(renderMix(4, {}, S), renderMix(4, { duck: true }, S)); return id === 'duck-off' ? o : on }
     case 'mix-mud': case 'mix-hp': { const [m, h] = pair(renderMix(4, { pad: true, lead: true }, S), renderMix(4, { pad: true, lead: true, highpass: true }, S)); return id === 'mix-mud' ? m : h }
     case 'mix-pan-center': case 'mix-pan-wide': { const [c, w] = pair(renderMix(4, { pad: true, lead: true }, S), renderMix(4, { pad: true, lead: true, pan: true }, S)); return id === 'mix-pan-center' ? c : w }
-    case 'loop-clean': case 'loop-click': { const [c, k] = pair(renderLoopClick(false), renderLoopClick(true)); return id === 'loop-clean' ? c : k }
+    case 'loop-clean': case 'loop-click': { const [c, k] = pair(renderLoopClick(true), renderLoopClick(false)); return id === 'loop-clean' ? c : k }
     case 'pedal-roots': case 'pedal-drone': { const [r, d] = pair(renderPedal(false), renderPedal(true)); return id === 'pedal-roots' ? r : d }
     case 'hook-identical': case 'hook-moved': { const [i, m] = pair(renderMelody([60, 61, 63, 64, 60, 61, 63, 64]), renderMelody([60, 61, 63, 64, 62, 63, 65, 66])); return id === 'hook-identical' ? i : m }
     case 'eight-static': case 'eight-developed': { const [st, dv] = pair(renderMix(16, { pad: true, lead: true }, S), renderMix(16, { pad: true, lead: true, dropBar: 7 }, S)); return id === 'eight-static' ? st : dv }
