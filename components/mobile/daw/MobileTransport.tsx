@@ -15,6 +15,23 @@ const SCALES: { id: string; label: string }[] = [
   { id: 'dorian', label: 'Dorian' }, { id: 'chromatic', label: 'Chromatic' },
 ]
 
+// A stepper that repeats (and accelerates) while held — fast BPM/value nudging.
+function HoldButton({ onStep, style, children, 'aria-label': ariaLabel, title }: { onStep: () => void; style: React.CSSProperties; children: React.ReactNode; 'aria-label'?: string; title?: string }) {
+  const timer = useRef<number | undefined>(undefined)
+  const stop = () => { if (timer.current) { window.clearTimeout(timer.current); timer.current = undefined } }
+  const start = () => {
+    onStep()
+    let delay = 340
+    const tick = () => { onStep(); delay = Math.max(40, delay * 0.8); timer.current = window.setTimeout(tick, delay) }
+    timer.current = window.setTimeout(tick, delay)
+  }
+  useEffect(() => stop, [])
+  return (
+    <button onPointerDown={e => { e.preventDefault(); start() }} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop}
+      style={{ ...style, touchAction: 'none' }} aria-label={ariaLabel} title={title}>{children}</button>
+  )
+}
+
 export function MobileTransport() {
   const { engine, playing, position, project, dispatch, metronome, setMetronome } = useDaw()
   const [settings, setSettings] = useState(false)
@@ -61,9 +78,9 @@ export function MobileTransport() {
           <div style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: 0.4 }}>BAR</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginLeft: 'auto' }}>
-          <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo - 1 })} style={tBtn}>−</button>
+          <HoldButton onStep={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo - 1 })} style={tBtn} aria-label="Slower">−</HoldButton>
           <div style={{ textAlign: 'center', minWidth: 42 }}><div style={{ fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{Math.round(project.tempo)}</div><div style={{ fontSize: 8, color: 'var(--text-muted)' }}>BPM</div></div>
-          <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo + 1 })} style={tBtn}>+</button>
+          <HoldButton onStep={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo + 1 })} style={tBtn} aria-label="Faster">+</HoldButton>
         </div>
         <button onClick={() => setMetronome(!metronome)} aria-pressed={metronome} title="Metronome" style={{ ...tBtn, width: 34, color: metronome ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: metronome ? 'var(--accent)' : 'var(--border)', background: metronome ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Music2 size={15} /></button>
         <button onClick={toggleLoop} aria-pressed={project.loopEnabled} title="Loop the whole project" style={{ ...tBtn, width: 34, color: project.loopEnabled ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: project.loopEnabled ? 'var(--accent)' : 'var(--border)', background: project.loopEnabled ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Repeat size={15} /></button>
@@ -83,9 +100,9 @@ export function MobileTransport() {
               <div>
                 <div style={label}>Tempo</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo - 1 })} style={roundBtn}>−</button>
+                  <HoldButton onStep={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo - 1 })} style={roundBtn} aria-label="Slower">−</HoldButton>
                   <div style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 54, textAlign: 'center' }}>{Math.round(project.tempo)}</div>
-                  <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo + 1 })} style={roundBtn}>+</button>
+                  <HoldButton onStep={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo + 1 })} style={roundBtn} aria-label="Faster">+</HoldButton>
                   <button onClick={tap} style={{ marginLeft: 'auto', padding: '10px 20px', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>TAP</button>
                 </div>
               </div>

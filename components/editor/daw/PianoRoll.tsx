@@ -69,6 +69,10 @@ const INSTRUMENT_LABELS: Record<string, string> = {
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 function isBlack(pitch: number) { return [1, 3, 6, 8, 10].includes(pitch % 12) }
+
+// Per-clip zoom/scroll memory (session-lived) so reopening a clip's editor
+// restores where you were, instead of resetting to default zoom every time.
+const rollViewCache = new Map<string, { beatW: number; noteH: number; scrollTop: number; scrollLeft: number }>()
 function octave(pitch: number)  { return Math.floor(pitch / 12) - 1 }
 
 // ── Chord stamp ───────────────────────────────────────────────────────────────
@@ -376,10 +380,14 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [quant, setQuant] = useState<Quant>(0.25)
   const isMobile = useIsMobile()
   const mobileRoll = typeof window !== 'undefined' && window.innerWidth < 760
-  const [beatW, setBeatW] = useState(80)
-  const [noteH, setNoteH] = useState(mobileRoll ? 22 : NOTE_H)
-  const [scrollTop, setScrollTop]   = useState(clip.isDrumClip ? 0 : NUM_NOTES / 2 * (mobileRoll ? 22 : NOTE_H) - 80)
-  const [scrollLeft, setScrollLeft] = useState(0)
+  // Restore this clip's last zoom/scroll so reopening lands where you left off
+  // (avoids the "zoom resets every time" flaw). Cache lives for the session.
+  const cached = rollViewCache.get(clip.id)
+  const [beatW, setBeatW] = useState(cached?.beatW ?? 80)
+  const [noteH, setNoteH] = useState(cached?.noteH ?? (mobileRoll ? 22 : NOTE_H))
+  const [scrollTop, setScrollTop]   = useState(cached?.scrollTop ?? (clip.isDrumClip ? 0 : NUM_NOTES / 2 * (mobileRoll ? 22 : NOTE_H) - 80))
+  const [scrollLeft, setScrollLeft] = useState(cached?.scrollLeft ?? 0)
+  useEffect(() => { rollViewCache.set(clip.id, { beatW, noteH, scrollTop, scrollLeft }) }, [clip.id, beatW, noteH, scrollTop, scrollLeft])
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
   const [hoverEdge, setHoverEdge]   = useState(false)

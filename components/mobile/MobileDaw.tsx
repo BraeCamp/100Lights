@@ -20,6 +20,7 @@ import { ForceMobileContext } from '@/lib/use-is-mobile'
 import { useDaw, makeMidiClip, migrateProject } from '@/lib/daw-state'
 import { projectToCfFile } from './daw/save-project'
 import { drumInstrument, polyInstrument, seedProject } from './daw/seed'
+import { MOBILE_TEMPLATES, buildTemplate, templateLabel, type MobileTemplate } from './daw/templates'
 import { MobileTransport } from './daw/MobileTransport'
 import ArrangementView from '@/components/editor/daw/ArrangementView'
 import Mixer from '@/components/editor/daw/Mixer'
@@ -37,6 +38,9 @@ const StepSequencer = dynamic(() => import('@/components/editor/daw/StepSequence
 export default function MobileDaw({ projectId }: { projectId?: string }) {
   const [loaded, setLoaded] = useState<DawProject | null>(projectId ? null : seedProject())
   const [error, setError] = useState(false)
+  // New projects open on a "start from a beat" chooser so the studio never
+  // starts blank; picking a genre loads a playable template.
+  const [chooserDone, setChooserDone] = useState(false)
 
   useEffect(() => {
     if (!projectId) return
@@ -56,6 +60,15 @@ export default function MobileDaw({ projectId }: { projectId?: string }) {
   if (error) return <FullMsg><>Couldn&apos;t load this project. <Link href="/dashboard" style={{ color: 'var(--accent-light)' }}>Back to projects →</Link></></FullMsg>
   if (!loaded) return <FullMsg>Loading project…</FullMsg>
 
+  if (!projectId && !chooserDone) {
+    return (
+      <TemplateChooser
+        onPick={t => { setLoaded(buildTemplate(t)); setChooserDone(true) }}
+        onBlank={() => { setLoaded(seedProject()); setChooserDone(true) }}
+      />
+    )
+  }
+
   return (
     // Force mobile layout for everything inside the mobile studio, so the shared
     // Mixer / ArrangementView / PadInput render their touch UI even when the
@@ -70,6 +83,36 @@ export default function MobileDaw({ projectId }: { projectId?: string }) {
 
 function FullMsg({ children }: { children: React.ReactNode }) {
   return <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 24 }}>{children}</div>
+}
+
+// "Start from a beat" — a new project opens here so it's never a blank timeline.
+function TemplateChooser({ onPick, onBlank }: { onPick: (t: MobileTemplate) => void; onBlank: () => void }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-base)', color: 'var(--text-primary)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: 'calc(28px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom))' }}>
+        <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent-light)' }}>New project</div>
+        <h1 style={{ fontSize: 24, fontWeight: 800, margin: '8px 0 4px', letterSpacing: '-0.02em' }}>Start from a beat</h1>
+        <p style={{ fontSize: 13.5, color: 'var(--text-muted)', margin: '0 0 20px' }}>Pick a groove to jam on — press play and it&apos;s already a song. You can change everything.</p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {MOBILE_TEMPLATES.map(t => (
+            <button key={t.id} onClick={() => onPick(t)}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '15px 14px', borderRadius: 14, cursor: 'pointer', textAlign: 'left', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+              <span style={{ fontSize: 26, lineHeight: 1 }}>{t.emoji}</span>
+              <span style={{ fontSize: 15, fontWeight: 800 }}>{t.name}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{t.blurb}</span>
+              <span style={{ fontSize: 10.5, color: 'var(--accent-light)', fontWeight: 600, marginTop: 2 }}>{templateLabel(t).split(' · ').slice(1).join(' · ')}</span>
+            </button>
+          ))}
+        </div>
+
+        <button onClick={onBlank}
+          style={{ width: '100%', marginTop: 14, padding: '13px 0', borderRadius: 12, cursor: 'pointer', fontSize: 13.5, fontWeight: 700, border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>
+          Start blank
+        </button>
+      </div>
+    </div>
+  )
 }
 
 type Tab = 'song' | 'mix' | 'sounds' | 'clips'
