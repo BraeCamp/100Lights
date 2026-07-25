@@ -357,6 +357,9 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 export default function ArrangementView() {
   const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
+  const hdrW = isMobile ? 140 : HDR_W  // narrower track heads on a phone
+  const [mobMore, setMobMore] = useState(false)      // mobile toolbar "More" sheet
+  const [mobSnapMenu, setMobSnapMenu] = useState(false)
 
   // The shared clip Sound panel — follows the current selection (retargets on
   // select) and closes when nothing is selected.
@@ -457,10 +460,10 @@ export default function ArrangementView() {
   const [prHint, setPrHint] = useState<string | null>(null)  // transient note under the PIANO ROLL button
 
   useEffect(() => {
-    const ro = new ResizeObserver(entries => setViewWidth(entries[0].contentRect.width - HDR_W))
+    const ro = new ResizeObserver(entries => setViewWidth(entries[0].contentRect.width - hdrW))
     if (outerRef.current) ro.observe(outerRef.current)
     return () => ro.disconnect()
-  }, [])
+  }, [hdrW])
 
   useEffect(() => {
     function frame() {
@@ -621,10 +624,10 @@ export default function ArrangementView() {
     const root = outerRef.current
     if (!root) return
     const rootRect = root.getBoundingClientRect()
-    if (e.clientX - rootRect.left < HDR_W) return  // headers stay interactive
+    if (e.clientX - rootRect.left < hdrW) return  // headers stay interactive
     e.preventDefault()
     e.stopPropagation()
-    const timelineLeft = rootRect.left + HDR_W
+    const timelineLeft = rootRect.left + hdrW
     const beatAt = (clientX: number) => Math.max(0, snapBeat((clientX - timelineLeft + scrollLeft) / beatW, snap, project.timeSignatureNum))
     const startBeat = beatAt(e.clientX)
     loopDrawRef.current = { startBeat }
@@ -812,14 +815,14 @@ export default function ArrangementView() {
     if (!laneEl) return
     const laneRect = laneEl.getBoundingClientRect()
     // Ignore clicks in the track header column
-    if (e.clientX < laneRect.left + HDR_W) return
+    if (e.clientX < laneRect.left + hdrW) return
 
     const sx = e.clientX
     const sy = e.clientY
     // The band snaps to the grid horizontally, so a drag-select IS a musical
     // region ("this bar"), not a pixel rectangle
-    const toBeat = (clientX: number) => Math.max(0, (clientX - laneRect.left - HDR_W + scrollLeft) / beatW)
-    const toX    = (beat: number) => laneRect.left + HDR_W + beat * beatW - scrollLeft
+    const toBeat = (clientX: number) => Math.max(0, (clientX - laneRect.left - hdrW + scrollLeft) / beatW)
+    const toX    = (beat: number) => laneRect.left + hdrW + beat * beatW - scrollLeft
     const snapX  = (clientX: number) => toX(snapBeat(toBeat(clientX), snap, project.timeSignatureNum))
     setRubberBand({ x1: snapX(sx), y1: sy, x2: snapX(sx), y2: sy })
 
@@ -869,7 +872,7 @@ export default function ArrangementView() {
       const newEffIds = new Set<string>()
       for (const el of Array.from(laneEl.querySelectorAll('[data-effect-id]'))) {
         const r = el.getBoundingClientRect()
-        if (r.right < laneRect.left + HDR_W) continue
+        if (r.right < laneRect.left + hdrW) continue
         if (r.right < selL || r.left > selR || r.bottom < selT || r.top > selB) continue
         newEffIds.add((el as HTMLElement).dataset.effectId!)
       }
@@ -1243,8 +1246,22 @@ export default function ArrangementView() {
         </div>
       )}
 
-      {/* Toolbar — on mobile it scrolls horizontally and sits taller for touch. */}
-      <div style={{ height: isMobile ? 40 : 30, display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0, overflowX: isMobile ? 'auto' : 'visible', overflowY: 'hidden' }}>
+      {/* Toolbar — mobile gets a consolidated version; the rest sits behind "More". */}
+      {isMobile ? (
+        <MobileToolbar
+          snap={snap} setSnap={setSnap} snapMenu={mobSnapMenu} setSnapMenu={setMobSnapMenu}
+          onZoomIn={() => setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))}
+          onZoomOut={() => setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))}
+          onFit={fitToWindow}
+          wfZoom={project.waveformZoom} onWf={(d: number) => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.max(1, Math.min(8, project.waveformZoom + d)) })}
+          ripple={rippleEdit} onRipple={() => setRippleEdit(r => !r)}
+          editorActive={!!(expandedPianoRollClipId || expandedStepSeqClipId)} onEditor={openEditor}
+          onExport={() => { if (isGuest && requireAccount) { requireAccount('export'); return } setShowExport(true) }}
+          onSave={onSave} isSaving={isSaving}
+          more={mobMore} setMore={setMobMore}
+        />
+      ) : (
+      <div style={{ height: 30, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <button onClick={() => setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))} style={toolBtn} title="Zoom in" data-help-id="zoom-in"><ZoomIn size={13} /></button>
         <button onClick={() => setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))} style={toolBtn} title="Zoom out" data-help-id="zoom-out"><ZoomOut size={13} /></button>
         <button onClick={fitToWindow} style={toolBtn} title="Fit to window" data-help-id="fit-window"><Maximize2 size={13} /></button>
@@ -1483,10 +1500,11 @@ export default function ArrangementView() {
         )}
         <VersionHistory />
       </div>
+      )}
 
       {/* Ruler row */}
       <div style={{ display: 'flex', flexShrink: 0 }} onWheel={handleWheel}>
-        <div style={{ width: HDR_W, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
+        <div style={{ width: hdrW, height: RULER_H, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }} />
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <Ruler beatW={beatW} scrollLeft={scrollLeft} snap={snap} onSeek={b => { engine.seek(b); setPosition(b) }} onEditTimeSig={handleEditTimeSig} onOpenComment={(id, x, y) => setOpenComment({ id, x, y })} />
         </div>
@@ -1502,7 +1520,7 @@ export default function ArrangementView() {
         {/* Music empty-state hint: point brand-new users at the library */}
         {audioMode !== 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (
           <div style={{
-            position: 'absolute', left: HDR_W, right: 0, top: 0, bottom: 0,
+            position: 'absolute', left: hdrW, right: 0, top: 0, bottom: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             pointerEvents: 'none', zIndex: 1,
           }}>
@@ -1522,7 +1540,7 @@ export default function ArrangementView() {
         {/* Podcast empty-state hint */}
         {audioMode === 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (
           <div style={{
-            position: 'absolute', left: HDR_W, right: 0, top: 0, bottom: 0,
+            position: 'absolute', left: hdrW, right: 0, top: 0, bottom: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             pointerEvents: 'none', zIndex: 1,
           }}>
@@ -1575,7 +1593,7 @@ export default function ArrangementView() {
         {project.returnTracks.length > 0 && (
           <>
             <div style={{ display: 'flex', height: 20, alignItems: 'center', background: 'rgba(100,60,150,0.08)', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ width: HDR_W, flexShrink: 0, paddingLeft: 8, borderRight: '1px solid var(--border)' }}>
+              <div style={{ width: hdrW, flexShrink: 0, paddingLeft: 8, borderRight: '1px solid var(--border)' }}>
                 <span style={{ fontSize: 8, fontWeight: 700, color: '#7c5fa8', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Returns</span>
               </div>
               <div style={{ flex: 1 }} />
@@ -1588,7 +1606,7 @@ export default function ArrangementView() {
 
         {/* Add track buttons — hidden on mobile (the bottom-nav "Track" covers it) */}
         <div style={{ display: isMobile ? 'none' : 'flex', height: 36 }}>
-          <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
+          <div style={{ width: hdrW, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
             <button onClick={() => dispatch({ type: 'ADD_TRACK' })}
               data-help-id="add-track"
               style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', animation: blinkIds.has('add-track') ? 'dawBlink 0.45s ease-in-out 3' : undefined }}>
@@ -1620,7 +1638,7 @@ export default function ArrangementView() {
       )}
 
       {/* Global playhead overlay — clipped to track content area so it stays behind the header */}
-      <div style={{ position: 'absolute', left: HDR_W, right: 0, top: 30 + RULER_H, bottom: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 10 }}>
+      <div style={{ position: 'absolute', left: hdrW, right: 0, top: 30 + RULER_H, bottom: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 10 }}>
         <div ref={playheadRef} style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: '#ff5a5a', boxShadow: '0 0 6px rgba(255,80,80,0.9), 0 0 1px rgba(255,255,255,0.6)', zIndex: 5, pointerEvents: 'none' }} />
         {/* Collaborators' playheads — where each of them is listening right now */}
         {collabPeers.filter(pr => pr.playheadBeat != null).map(pr => {
@@ -1877,4 +1895,60 @@ const toolBtn: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   width: 26, height: 22, borderRadius: 3, border: '1px solid transparent',
   background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer',
+}
+
+// ── Mobile arrangement toolbar — Zoom / Snap-menu / Editor inline, the rest in
+// a "More" sheet, all touch-sized. Desktop keeps the full inline toolbar above.
+function snapLabel(m: SnapMode) { return m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m }
+
+function MobileToolbar(p: {
+  snap: SnapMode; setSnap: (m: SnapMode) => void; snapMenu: boolean; setSnapMenu: (v: boolean) => void
+  onZoomIn: () => void; onZoomOut: () => void; onFit: () => void
+  wfZoom: number; onWf: (d: number) => void
+  ripple: boolean; onRipple: () => void
+  editorActive: boolean; onEditor: () => void
+  onExport: () => void; onSave?: () => void | Promise<void>; isSaving: boolean
+  more: boolean; setMore: (v: boolean) => void
+}) {
+  const mTool: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0, fontSize: 16 }
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }
+  const round: React.CSSProperties = { width: 34, height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 18, fontWeight: 700, cursor: 'pointer' }
+  return (
+    <div style={{ height: 46, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      <button onClick={p.onZoomOut} style={mTool} aria-label="Zoom out"><ZoomOut size={16} /></button>
+      <button onClick={p.onZoomIn} style={mTool} aria-label="Zoom in"><ZoomIn size={16} /></button>
+      <div style={{ position: 'relative' }}>
+        <button onClick={() => p.setSnapMenu(!p.snapMenu)} style={{ ...mTool, width: 'auto', padding: '0 12px', fontSize: 12.5, fontWeight: 700 }}>Snap: {snapLabel(p.snap)} ▾</button>
+        {p.snapMenu && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, overflow: 'hidden', minWidth: 130, boxShadow: '0 6px 18px rgba(0,0,0,0.5)' }}>
+            {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
+              <button key={m} onClick={() => { p.setSnap(m); p.setSnapMenu(false) }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 14px', fontSize: 13, background: p.snap === m ? 'rgba(139,92,246,0.14)' : 'transparent', border: 'none', color: p.snap === m ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{snapLabel(m)}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      <button onClick={p.onEditor} style={{ ...mTool, width: 'auto', padding: '0 14px', fontSize: 12.5, fontWeight: 800, background: p.editorActive ? 'rgba(124,58,237,0.18)' : 'var(--bg-card)', color: p.editorActive ? '#a78bfa' : 'var(--text-secondary)', border: `1px solid ${p.editorActive ? '#7c3aed' : 'var(--border)'}` }}>Editor</button>
+      <div style={{ flex: 1 }} />
+      <button onClick={() => p.setMore(true)} style={mTool} aria-label="More tools">⋯</button>
+      {p.more && (
+        <div onClick={() => p.setMore(false)} style={{ position: 'fixed', inset: 0, zIndex: 190, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '16px 16px calc(18px + env(safe-area-inset-bottom))' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}><strong style={{ fontSize: 14, flex: 1 }}>Tools</strong><button onClick={() => p.setMore(false)} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button onClick={() => { p.onFit(); p.setMore(false) }} style={row}><Maximize2 size={16} /> Fit to window</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 2px' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Waveform zoom</span>
+                <button onClick={() => p.onWf(-1)} style={round}>−</button>
+                <span style={{ minWidth: 22, textAlign: 'center', fontFamily: 'monospace', fontSize: 14 }}>{p.wfZoom}</span>
+                <button onClick={() => p.onWf(1)} style={round}>+</button>
+              </div>
+              <button onClick={p.onRipple} style={{ ...row, borderColor: p.ripple ? '#f59e0b' : 'var(--border)', color: p.ripple ? '#f59e0b' : 'var(--text-primary)' }}>{p.ripple ? '✓ ' : ''}Ripple edit</button>
+              <button onClick={() => { p.onExport(); p.setMore(false) }} style={row}>⇩ Export</button>
+              {p.onSave && <button onClick={() => { void p.onSave!(); p.setMore(false) }} style={{ ...row, justifyContent: 'center', background: 'var(--accent)', color: '#fff', border: 'none', fontWeight: 800 }}>{p.isSaving ? 'Saving…' : 'Save project'}</button>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }

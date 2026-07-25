@@ -309,6 +309,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const msBtn = isMobile
     ? { fontSize: 12, width: 32, height: 30, borderRadius: 7 }
     : { fontSize: 8, width: 16, height: 14, borderRadius: 2 }
+  const headerW = isMobile ? 140 : HDR_W  // must match hdrW in ArrangementView
   const workshopTheme = useWorkshopThemeOptional()
   const trackColors = workshopTheme?.theme.trackPalette ?? TRACK_COLORS
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
@@ -758,7 +759,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
             data-help-id="track-head" data-track-id={track.id} data-testid="group-head"
             style={{
-              width: HDR_W, height: GROUP_TRACK_HEIGHT, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3, padding: '0 8px',
+              width: headerW, height: GROUP_TRACK_HEIGHT, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3, padding: '0 8px',
               background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : `${track.color}22`,
               borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
               borderLeft: `4px solid ${track.color}`, boxSizing: 'border-box', overflow: 'hidden', cursor: 'grab',
@@ -854,7 +855,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           data-help-id="track-head"
           data-track-id={track.id}
           style={{
-            width: HDR_W, height: rowH, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: collapsed ? 0 : 4, padding: `${collapsed ? 2 : 4}px 8px`,
+            width: headerW, height: rowH, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: collapsed ? 0 : 4, padding: `${collapsed ? 2 : 4}px 8px`,
             paddingLeft: leftPad,
             background: isSelected ? 'rgb(var(--accent-rgb) / 0.10)' : isMultiSelected ? 'rgb(var(--accent-rgb) / 0.06)' : 'var(--bg-card)',
             borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
@@ -1606,7 +1607,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         <div key={lane.id} style={{ display: 'flex', height: TAKE_H, flexShrink: 0 }}>
           {/* Take lane header */}
           <div style={{
-            width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
+            width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
             background: 'var(--bg-surface)',
             borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
             borderLeft: `3px solid ${track.color}55`,
@@ -1708,7 +1709,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       {/* Effects lane */}
       {!collapsed && showFx && (
         <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
-          <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+          <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>FX</span>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {(project.clipEffects ?? []).filter(e => e.trackId === track.id).length === 0
@@ -1795,7 +1796,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           // (ArrangementView, zIndex 10) must not draw through the roll —
           // the roll has its own playhead, so it sits above the overlay.
           <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
-            <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+            <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>ROLL</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expandedClip.name}</span>
               {(() => {
@@ -1823,7 +1824,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         if (!seqClip) return null
         return (
           <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
-            <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
+            <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>BEAT</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{seqClip.name}</span>
               <button onClick={() => setExpandedStepSeqClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close step sequencer">✕</button>
