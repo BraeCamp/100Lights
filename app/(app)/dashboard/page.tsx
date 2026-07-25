@@ -12,6 +12,7 @@ import {
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import StarterCodeBanner from '@/components/StarterCodeBanner'
+import { useIsMobile } from '@/lib/use-is-mobile'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
@@ -148,6 +149,7 @@ function AppCard({ mod }: { mod: typeof MODULE_DEFS[number] }) {
 
 export default function DashboardPage() {
   const { user, isSignedIn, isLoaded } = useUser()
+  const isMobile = useIsMobile()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -213,7 +215,7 @@ export default function DashboardPage() {
   return (
     <>
     <main className="flex-1 overflow-y-auto">
-      <div style={{ padding: '40px 40px 60px', maxWidth: 1100 }}>
+      <div style={{ padding: isMobile ? '20px 16px 48px' : '40px 40px 60px', maxWidth: 1100 }}>
         <Suspense fallback={null}><UpgradeBanner /></Suspense>
 
         <StarterCodeBanner />

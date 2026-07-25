@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import type { ModuleKey } from '@/lib/editor-types'
+import { useIsMobile } from '@/lib/use-is-mobile'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
@@ -46,6 +47,7 @@ function formatDate(iso: string) {
 
 export default function AppPage() {
   const params = useParams()
+  const isMobile = useIsMobile()
   const moduleKey = params.module as string
 
   const mod = MODULE_DEFS.find(m => m.key === moduleKey)
@@ -121,7 +123,7 @@ export default function AppPage() {
       {/* ── Hero ── */}
       <div style={{
         position: 'relative',
-        padding: '52px 48px 44px',
+        padding: isMobile ? '26px 18px 22px' : '52px 48px 44px',
         background: `linear-gradient(135deg, color-mix(in srgb, ${mod.color} 18%, #0d0d0f) 0%, #0d0d0f 70%)`,
         borderBottom: `1px solid color-mix(in srgb, ${mod.color} 20%, var(--border))`,
         overflow: 'hidden',
@@ -133,7 +135,7 @@ export default function AppPage() {
           background: mod.color, opacity: 0.06, filter: 'blur(60px)', pointerEvents: 'none',
         }} />
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, position: 'relative' }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'flex-start', justifyContent: 'space-between', gap: isMobile ? 16 : 24, position: 'relative' }}>
           <div style={{ flex: 1 }}>
             {/* Module badge */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
@@ -153,7 +155,7 @@ export default function AppPage() {
               </div>
             </div>
 
-            <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 10, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+            <h1 style={{ fontSize: isMobile ? 24 : 32, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 10, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
               {copy.headline}
             </h1>
             <p style={{ fontSize: 14, color: 'var(--text-secondary)', maxWidth: 520, lineHeight: 1.6, marginBottom: 28 }}>
@@ -176,7 +178,7 @@ export default function AppPage() {
           </div>
 
           {/* CTA */}
-          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, alignItems: isMobile ? 'stretch' : 'flex-end' }}>
             {mod.key === 'audio' ? (
               <>
                 <Link
@@ -229,7 +231,7 @@ export default function AppPage() {
       </div>
 
       {/* ── Projects ── */}
-      <div style={{ flex: 1, padding: '36px 48px 60px' }}>
+      <div style={{ flex: 1, padding: isMobile ? '24px 16px 48px' : '36px 48px 60px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
             Recent {mod.label} Projects
