@@ -1790,7 +1790,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded */}
       {(() => {
         const expandedClip = clips.find(c => isMidiClip(c) && c.id === expandedPianoRollClipId)
-        if (!expandedClip) return null
+        if (!expandedClip || isMobile) return null   // on mobile the roll opens in the Sounds tab
         return (
           // position+zIndex+opaque bg: the arrangement playhead overlay
           // (ArrangementView, zIndex 10) must not draw through the roll —
@@ -1821,7 +1821,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       {/* Inline Step Sequencer — sibling to the roll, for a drum clip on this track */}
       {(() => {
         const seqClip = clips.find(c => isMidiClip(c) && c.id === expandedStepSeqClipId)
-        if (!seqClip) return null
+        if (!seqClip || isMobile) return null   // on mobile the beat editor opens in the Sounds tab
         return (
           <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
             <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>

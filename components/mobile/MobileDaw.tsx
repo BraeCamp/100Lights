@@ -10,6 +10,7 @@
 // since it's the live view), and a full-screen per-track Sounds editor.
 
 import { useCallback, useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import posthog from 'posthog-js'
 import { Menu, Home, FolderOpen, Plus, LayoutGrid, X } from 'lucide-react'
@@ -28,6 +29,9 @@ import PadInput from '@/components/editor/daw/PadInput'
 import SoundLibraryPanel from '@/components/editor/SoundLibrary'
 import PolyCodePanel from '@/components/editor/daw/PolyCodePanel'
 import type { DawProject, TrackInstrument } from '@/lib/daw-types'
+
+const PianoRoll = dynamic(() => import('@/components/editor/daw/PianoRoll'), { ssr: false })
+const StepSequencer = dynamic(() => import('@/components/editor/daw/StepSequencer'), { ssr: false })
 
 export default function MobileDaw({ projectId }: { projectId?: string }) {
   const [loaded, setLoaded] = useState<DawProject | null>(projectId ? null : seedProject())
@@ -70,9 +74,14 @@ const NAV: { id: Tab; label: string; icon: string }[] = [
 ]
 
 function Shell({ projectId }: { projectId?: string }) {
-  const { project, dispatch, setSelectedTrackId } = useDaw()
+  const { project, dispatch, setSelectedTrackId, expandedPianoRollClipId, expandedStepSeqClipId } = useDaw()
   const { isSignedIn } = useUser()
   const [tab, setTab] = useState<Tab>('song')
+
+  // Double-tapping a clip in the Song timeline opens its editor (piano roll /
+  // beat) — on mobile that lives in the Sounds tab, so jump there when one opens.
+  const editingClip = expandedPianoRollClipId || expandedStepSeqClipId
+  useEffect(() => { if (editingClip) setTab('sounds') }, [editingClip])
   const [drawer, setDrawer] = useState(false)
   const [adding, setAdding] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -122,7 +131,7 @@ function Shell({ projectId }: { projectId?: string }) {
         {tab === 'song' && <ArrangementView />}
         {tab === 'mix' && <Mixer />}
         {tab === 'clips' && <SessionView />}
-        {tab === 'sounds' && <SoundsEditor />}
+        {tab === 'sounds' && <SoundsEditor onDoneClip={() => setTab('song')} />}
       </div>
 
       {/* Bottom nav — Song / Mix / Sounds + big add-track */}
@@ -186,14 +195,35 @@ function Shell({ projectId }: { projectId?: string }) {
 
 // ── Sounds editor: pick a track, edit its instrument / FX / keys, full-screen ──
 
-function SoundsEditor() {
-  const { project, selectedTrackId, setSelectedTrackId } = useDaw()
+function SoundsEditor({ onDoneClip }: { onDoneClip: () => void }) {
+  const { project, selectedTrackId, setSelectedTrackId, expandedPianoRollClipId, expandedStepSeqClipId, setExpandedPianoRollClipId, setExpandedStepSeqClipId } = useDaw()
   const [sub, setSub] = useState<'sounds' | 'fx' | 'keys'>('sounds')
   const tracks = project.tracks.filter(t => t.kind !== 'group')
 
   useEffect(() => {
     if ((!selectedTrackId || !tracks.some(t => t.id === selectedTrackId)) && tracks[0]) setSelectedTrackId(tracks[0].id)
   }, [selectedTrackId, tracks, setSelectedTrackId])
+
+  // Editing a clip (double-tapped in Song): show the piano roll / beat editor
+  // full-screen with a Done button that returns to the timeline.
+  const editingClip = expandedPianoRollClipId || expandedStepSeqClipId
+  if (editingClip) {
+    const isBeat = !!expandedStepSeqClipId
+    const done = () => { setExpandedPianoRollClipId(null); setExpandedStepSeqClipId(null); onDoneClip() }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <strong style={{ fontSize: 13, flex: 1 }}>{isBeat ? 'Beat' : 'Piano roll'}</strong>
+          <button onClick={done} style={{ padding: '7px 18px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>Done</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          {isBeat
+            ? <StepSequencer clipId={expandedStepSeqClipId!} />
+            : <PianoRoll clipId={expandedPianoRollClipId!} />}
+        </div>
+      </div>
+    )
+  }
 
   const track = tracks.find(t => t.id === selectedTrackId) ?? tracks[0]
   if (!track) return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>Add a track, then edit its sound here.</div>
