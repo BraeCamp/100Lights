@@ -18,6 +18,7 @@ let _effectClipboard: import('@/lib/daw-types').ClipEffect[] | null = null
 let _lastCopied: 'clips' | 'effects' | null = null
 import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
+import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
 import VersionHistory from './VersionHistory'
 import { detectTransients } from './ClipView'
@@ -355,6 +356,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 
 export default function ArrangementView() {
   const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const isMobile = useIsMobile()
 
   // The shared clip Sound panel — follows the current selection (retargets on
   // select) and closes when nothing is selected.
@@ -1241,8 +1243,8 @@ export default function ArrangementView() {
         </div>
       )}
 
-      {/* Toolbar */}
-      <div style={{ height: 30, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      {/* Toolbar — on mobile it scrolls horizontally and sits taller for touch. */}
+      <div style={{ height: isMobile ? 40 : 30, display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0, overflowX: isMobile ? 'auto' : 'visible', overflowY: 'hidden' }}>
         <button onClick={() => setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))} style={toolBtn} title="Zoom in" data-help-id="zoom-in"><ZoomIn size={13} /></button>
         <button onClick={() => setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))} style={toolBtn} title="Zoom out" data-help-id="zoom-out"><ZoomOut size={13} /></button>
         <button onClick={fitToWindow} style={toolBtn} title="Fit to window" data-help-id="fit-window"><Maximize2 size={13} /></button>
@@ -1584,8 +1586,8 @@ export default function ArrangementView() {
           </>
         )}
 
-        {/* Add track buttons */}
-        <div style={{ display: 'flex', height: 36 }}>
+        {/* Add track buttons — hidden on mobile (the bottom-nav "Track" covers it) */}
+        <div style={{ display: isMobile ? 'none' : 'flex', height: 36 }}>
           <div style={{ width: HDR_W, flexShrink: 0, display: 'flex', gap: 4, padding: 8, borderRight: '1px solid var(--border)' }}>
             <button onClick={() => dispatch({ type: 'ADD_TRACK' })}
               data-help-id="add-track"

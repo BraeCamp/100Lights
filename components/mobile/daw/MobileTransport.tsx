@@ -4,7 +4,7 @@
 // tempo, metronome, loop. Everything advanced (tap tempo, time signature, swing,
 // key + scale) lives in a Settings sheet behind the gear, so it never overwhelms.
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDaw } from '@/lib/daw-state'
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -18,6 +18,14 @@ export function MobileTransport() {
   const { engine, playing, position, project, dispatch, metronome, setMetronome } = useDaw()
   const [settings, setSettings] = useState(false)
   const taps = useRef<number[]>([])
+
+  // Landscape phones are short — shrink the transport so tracks get the height.
+  const [landscape, setLandscape] = useState(false)
+  useEffect(() => {
+    const c = () => setLandscape(window.innerHeight < 500 && window.innerWidth > window.innerHeight)
+    c(); window.addEventListener('resize', c); return () => window.removeEventListener('resize', c)
+  }, [])
+  const play = landscape ? 34 : 44
 
   const sig = project.timeSignatureNum || 4
   const bar = Math.floor(position / sig) + 1
@@ -45,8 +53,8 @@ export function MobileTransport() {
 
   return (
     <div style={{ flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px' }}>
-        <button onClick={() => (engine.isPlaying ? engine.stop() : void engine.play())} aria-label={playing ? 'Stop' : 'Play'} style={{ width: 44, height: 44, borderRadius: 22, border: 'none', flexShrink: 0, cursor: 'pointer', background: playing ? '#ef4444' : 'var(--accent)', color: '#fff', fontSize: 18 }}>{playing ? '■' : '▶'}</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: landscape ? 6 : 8, padding: landscape ? '3px 10px' : '9px 12px' }}>
+        <button onClick={() => (engine.isPlaying ? engine.stop() : void engine.play())} aria-label={playing ? 'Stop' : 'Play'} style={{ width: landscape ? 58 : play, height: play, borderRadius: play / 2, border: 'none', flexShrink: 0, cursor: 'pointer', background: playing ? '#ef4444' : 'var(--accent)', color: '#fff', fontSize: landscape ? 15 : 18 }}>{playing ? '■' : '▶'}</button>
         <div style={{ textAlign: 'center', minWidth: 46 }}>
           <div style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{bar}:{beat}</div>
           <div style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: 0.4 }}>BAR</div>

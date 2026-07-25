@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Circle } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
+import { useIsMobile } from '@/lib/use-is-mobile'
 import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
 import { TRACK_COLORS } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
@@ -73,6 +74,7 @@ function VerticalFader({ value, onChange, onCommit }: {
 
 function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolean }) {
   const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
+  const isMobile = useIsMobile()
   const [editing, setEditing]   = useState(false)
   const [nameDraft, setNameDraft] = useState(track?.name ?? 'MASTER')
 
@@ -178,9 +180,9 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
     <div
       onClick={() => { if (!isMaster && track) setSelectedTrackId(track.id) }}
       style={{
-        width: isMaster ? 80 : 72, flexShrink: 0,
+        width: isMobile ? (isMaster ? 104 : 128) : (isMaster ? 80 : 72), flexShrink: 0,
         display: 'flex', flexDirection: 'column', alignItems: 'center',
-        gap: 4, padding: '8px 4px 6px',
+        gap: isMobile ? 7 : 4, padding: isMobile ? '10px 8px 10px' : '8px 4px 6px',
         background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : isMaster ? '#202020' : '#2a2a2a',
         borderRight: '1px solid var(--border-light)',
         outline: isSelected ? '1px solid rgb(var(--accent-rgb) / 0.5)' : 'none',

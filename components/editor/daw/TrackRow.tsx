@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
+import { useIsMobile } from '@/lib/use-is-mobile'
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { decodeAiff, encodeWav } from '@/lib/wav-codec'
@@ -303,6 +304,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers, notifyLocked } = useDaw()
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
+  const isMobile  = useIsMobile()
+  // Touch-sized M/S on a phone; the tiny desktop sizes are unusable there.
+  const msBtn = isMobile
+    ? { fontSize: 12, width: 32, height: 30, borderRadius: 7 }
+    : { fontSize: 8, width: 16, height: 14, borderRadius: 2 }
   const workshopTheme = useWorkshopThemeOptional()
   const trackColors = workshopTheme?.theme.trackPalette ?? TRACK_COLORS
   const autoLanes = project.automationLanes.filter(l => l.trackId === track.id)
@@ -704,8 +710,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
   const isSelected = selectedTrackId === track.id
   const leftPad = isIndented ? 24 : 8  // 16px extra indent for grouped tracks
-  // Effective row height: groups + collapsed tracks are thin.
-  const rowH = isGroup ? GROUP_TRACK_HEIGHT : (collapsed ? COLLAPSED_TRACK_HEIGHT : track.height)
+  // Effective row height: groups + collapsed tracks are thin. On a phone, use a
+  // compact fixed height so more tracks fit (the head is just name + M/S there).
+  const rowH = isGroup ? GROUP_TRACK_HEIGHT : (collapsed ? COLLAPSED_TRACK_HEIGHT : (isMobile ? 50 : track.height))
   const childCount = isGroup ? project.tracks.filter(t => t.groupId === track.id).length : 0
 
   // ── Drag-to-reorder (native HTML5 drag on the track head) ────────────────
@@ -899,11 +906,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {/* M / S / ● — transport controls sit at the right of the name row */}
             <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }) }}
               data-help-id="mute"
-              style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>M</button>
+              style={{ ...msBtn, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>M</button>
             <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) }}
               data-help-id="solo"
-              style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>S</button>
-            {track.instrument.type !== 'drum' && (
+              style={{ ...msBtn, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>S</button>
+            {track.instrument.type !== 'drum' && !isMobile && (
               <button
                 title={track.armed ? (recording ? 'Recording…' : 'Disarm track') : 'Arm for recording'}
                 data-help-id="arm"
@@ -913,8 +920,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               </button>
             )}
           </div>
-          {/* Tools row — routing + utilities (hidden when the track is collapsed) */}
-          <div style={{ display: collapsed ? 'none' : 'flex', gap: 2, alignItems: 'center' }}>
+          {/* Tools row — routing + utilities (hidden when collapsed; on mobile
+              these live in the Mix + Sounds tabs, so the head stays clean). */}
+          <div style={{ display: collapsed || isMobile ? 'none' : 'flex', gap: 2, alignItems: 'center' }}>
             {track.instrument.type !== 'drum' && (<>
               {/* Input source — opens settings card */}
               <button
