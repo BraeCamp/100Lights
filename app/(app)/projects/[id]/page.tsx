@@ -4,6 +4,7 @@ import { use, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import ProjectEditor from '@/components/editor/ProjectEditor'
+import MobileDawClient from '@/components/mobile/MobileDawClient'
 import PipelineView from '@/components/pipeline/PipelineView'
 import { createDemoPipeline, MOCK_CAPTIONS, MOCK_OUTPUTS, MOCK_CLIPS } from '@/lib/mock'
 import type { PipelineStep, Caption, Output, Clip } from '@/lib/types'
@@ -29,6 +30,17 @@ function delay(ms: number) {
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const isDemo = id === 'demo'
+
+  // Device-adaptive: on a phone, open the SAME project in the mobile DAW at the
+  // same URL (it loads the project's dawProject → sounds identical). Desktop
+  // gets the full editor. `null` until measured to avoid a wrong-first-paint.
+  const [isMobile, setIsMobile] = useState<boolean | null>(null)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 760)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   // Demo state
   const [pipeline, setPipeline] = useState<PipelineStep[]>(isDemo ? createDemoPipeline() : [])
@@ -100,6 +112,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     clips: [] as Clip[],
     outputs: [] as Output[],
   }
+
+  // Phones open a real saved project in the mobile DAW (same URL). Demo stays on
+  // the desktop editor. Wait for the measurement so we don't flash the wrong one.
+  if (!isDemo && isMobile === true) return <MobileDawClient projectId={id} />
+  if (!isDemo && isMobile === null) return null
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

@@ -10,15 +10,16 @@ import { DawContext, reducer, type DawContextValue } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
 import { getPresets } from '@/lib/midi-presets'
 import { seedProject } from './daw/seed'
-import type { DawView, EditTarget, CollabPeer } from '@/lib/daw-types'
+import type { DawProject, DawView, EditTarget, CollabPeer } from '@/lib/daw-types'
 
-export function MobileDawProvider({ children, onSave, isSaving, isGuest }: {
+export function MobileDawProvider({ children, initialProject, onSave, isSaving, isGuest }: {
   children: React.ReactNode
+  initialProject?: DawProject
   onSave?: () => void | Promise<void>
   isSaving?: boolean
   isGuest?: boolean
 }) {
-  const [project, dispatch] = useReducer(reducer, undefined, seedProject)
+  const [project, dispatch] = useReducer(reducer, undefined, () => initialProject ?? seedProject())
 
   const engineRef = useRef<DawEngine | null>(null)
   if (engineRef.current === null || engineRef.current.isClosed) engineRef.current = new DawEngine()

@@ -6,14 +6,15 @@
 // shared DawContext (see MobileDawProvider). We change the layout, not the
 // functions — so mobile gets the full DAW.
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import posthog from 'posthog-js'
 import { useUser } from '@clerk/nextjs'
 import { MobileDawProvider } from './MobileDawProvider'
-import { useDaw, makeMidiClip } from '@/lib/daw-state'
+import { useDaw, makeMidiClip, migrateProject } from '@/lib/daw-state'
 import { projectToCfFile } from './daw/save-project'
-import { drumInstrument, polyInstrument } from './daw/seed'
+import { drumInstrument, polyInstrument, seedProject } from './daw/seed'
+import type { DawProject } from '@/lib/daw-types'
 import { MobileTransport } from './daw/MobileTransport'
 import ArrangementView from '@/components/editor/daw/ArrangementView'
 import Mixer from '@/components/editor/daw/Mixer'
@@ -23,12 +24,39 @@ import DeviceChain from '@/components/editor/daw/DeviceChain'
 import PadInput from '@/components/editor/daw/PadInput'
 import type { DawView, TrackInstrument } from '@/lib/daw-types'
 
-export default function MobileDaw() {
+export default function MobileDaw({ projectId }: { projectId?: string }) {
+  // With a projectId, load the SAME project the desktop opens (its dawProject),
+  // so it sounds identical. Without one, start a fresh seeded session.
+  const [loaded, setLoaded] = useState<DawProject | null>(projectId ? null : seedProject())
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!projectId) return
+    let alive = true
+    fetch(`/api/projects/${projectId}`)
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('load'))))
+      .then((cf: { name?: string; dawProject?: DawProject }) => {
+        if (!alive) return
+        const dp = cf?.dawProject ? migrateProject(cf.dawProject) : seedProject()
+        if (cf?.name) dp.name = cf.name
+        setLoaded(dp)
+      })
+      .catch(() => { if (alive) setError(true) })
+    return () => { alive = false }
+  }, [projectId])
+
+  if (error) return <FullMsg><>Couldn&apos;t load this project. <Link href="/dashboard" style={{ color: 'var(--accent-light)' }}>Back to projects →</Link></></FullMsg>
+  if (!loaded) return <FullMsg>Loading project…</FullMsg>
+
   return (
-    <MobileDawProvider>
-      <Shell />
+    <MobileDawProvider key={projectId ?? 'new'} initialProject={loaded}>
+      <Shell projectId={projectId} />
     </MobileDawProvider>
   )
+}
+
+function FullMsg({ children }: { children: React.ReactNode }) {
+  return <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 24 }}>{children}</div>
 }
 
 const VIEW_TABS: { id: DawView; label: string; icon: string }[] = [
@@ -37,7 +65,7 @@ const VIEW_TABS: { id: DawView; label: string; icon: string }[] = [
   { id: 'mixer', label: 'Mix', icon: '🎚️' },
 ]
 
-function Shell() {
+function Shell({ projectId }: { projectId?: string }) {
   const { project, dispatch, view, setView, selectedTrackId, setSelectedTrackId } = useDaw()
   const { isSignedIn } = useUser()
   const [panel, setPanel] = useState<'sounds' | 'fx' | 'keys'>('sounds')
@@ -60,6 +88,7 @@ function Shell() {
 
   const save = useCallback(async () => {
     const cf = projectToCfFile(project)
+    if (projectId) cf.id = projectId  // save back to the same project (POST upserts by id)
     if (!isSignedIn) {
       try { localStorage.setItem('100lights-mobile-beat', JSON.stringify(cf)) } catch { /* ok */ }
       window.location.assign('/sign-up?redirect_url=' + encodeURIComponent('/m')); return
@@ -71,7 +100,7 @@ function Shell() {
       setSavedId(cf.id); setSaveState('saved')
       posthog.capture('mobile_daw_saved', { tracks: project.tracks.length, clips: project.arrangementClips.length })
     } catch (e) { setSaveMsg((e as Error).message); setSaveState('error') }
-  }, [project, isSignedIn])
+  }, [project, isSignedIn, projectId])
 
   const track = selectedTrackId ? project.tracks.find(t => t.id === selectedTrackId) : undefined
 

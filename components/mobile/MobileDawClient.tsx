@@ -2,7 +2,8 @@
 
 // The DAW instantiates a DawEngine (and its AudioContext) on mount, which only
 // exists in the browser — so load it client-only, never server-rendered. The
-// page's SEO metadata still comes from app/m/layout.tsx (server).
+// page's SEO metadata still comes from the layout (server). Pass a projectId to
+// open a saved project; omit it for a fresh session.
 
 import dynamic from 'next/dynamic'
 
@@ -15,6 +16,6 @@ const MobileDaw = dynamic(() => import('./MobileDaw'), {
   ),
 })
 
-export default function MobileDawClient() {
-  return <MobileDaw />
+export default function MobileDawClient({ projectId }: { projectId?: string }) {
+  return <MobileDaw projectId={projectId} />
 }
