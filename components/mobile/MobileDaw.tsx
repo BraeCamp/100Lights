@@ -9,7 +9,7 @@
 // a slim transport, a Song | Mix | Sounds bottom nav (Clips lives in the drawer
 // since it's the live view), and a full-screen per-track Sounds editor.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import posthog from 'posthog-js'
@@ -305,32 +305,65 @@ function Shell({ projectId }: { projectId?: string }) {
     setGroupPick(null); setAdding(false)
   }
 
-  const save = useCallback(async () => {
+  // Stable id so manual saves AND autosaves always upsert the SAME project row
+  // (never spawn duplicates), whether it started new or opened from a link.
+  const savedIdRef = useRef<string | null>(projectId ?? null)
+  const [autoState, setAutoState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const autoTimer = useRef<number | undefined>(undefined)
+
+  const persist = useCallback(async (manual: boolean): Promise<void> => {
     const cf = projectToCfFile(project)
-    if (projectId) cf.id = projectId
+    cf.id = savedIdRef.current ?? cf.id
+    savedIdRef.current = cf.id
     if (!isSignedIn) {
+      // Guests can't sync to the cloud — a manual Save routes to sign-up; auto
+      // just leaves the local stash so nothing is lost.
       try { localStorage.setItem('100lights-mobile-beat', JSON.stringify(cf)) } catch { /* ok */ }
-      window.location.assign('/sign-up?redirect_url=' + encodeURIComponent('/m')); return
+      if (manual) window.location.assign('/sign-up?redirect_url=' + encodeURIComponent('/m'))
+      return
     }
-    setSaveState('saving')
+    if (manual) setSaveState('saving'); else setAutoState('saving')
     try {
       const res = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cf) })
       if (!res.ok) { let m = 'Could not save.'; try { const b = await res.json(); if (b?.error) m = b.error } catch { /* ok */ } throw new Error(m) }
-      setSavedId(cf.id); setSaveState('saved')
-      posthog.capture('mobile_daw_saved', { tracks: project.tracks.length, clips: project.arrangementClips.length })
-    } catch (e) { setSaveMsg((e as Error).message); setSaveState('error') }
-  }, [project, isSignedIn, projectId])
+      setSavedId(cf.id); setAutoState('saved')
+      if (manual) { setSaveState('saved'); posthog.capture('mobile_daw_saved', { tracks: project.tracks.length, clips: project.arrangementClips.length }) }
+    } catch (e) { if (manual) { setSaveMsg((e as Error).message); setSaveState('error') } else setAutoState('idle') }
+  }, [project, isSignedIn])
+
+  const save = useCallback(() => { void persist(true) }, [persist])
+
+  // Autosave: debounce edits (signed-in only), skipping the initial mount so an
+  // untouched session never creates a project. Every edit resets the 3.5s timer.
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return }
+    if (!isSignedIn) return
+    if (autoTimer.current) window.clearTimeout(autoTimer.current)
+    autoTimer.current = window.setTimeout(() => { void persist(false) }, 3500)
+    return () => { if (autoTimer.current) window.clearTimeout(autoTimer.current) }
+  }, [project, isSignedIn, persist])
 
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', paddingTop: 'calc(8px + env(safe-area-inset-top))', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <button onClick={() => setDrawer(true)} aria-label="Menu" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 9, border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}><Menu size={20} /></button>
-        <strong style={{ fontSize: 13 }}>100Lights</strong>
+        <button onClick={() => setDrawer(true)} aria-label="Menu" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 11, border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}><Menu size={22} /></button>
+        <strong style={{ fontSize: 14 }}>100Lights</strong>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>· {tab === 'sounds' ? 'Sounds' : tab === 'mix' ? 'Mixer' : tab === 'clips' ? 'Clips' : 'Studio'}</span>
-        {projectId && (
-          <button onClick={() => setShareOpen(true)} aria-label="Share" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}><Share2 size={17} /></button>
+        {(projectId || savedId) && (
+          <button onClick={() => setShareOpen(true)} aria-label="Share" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 11, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}><Share2 size={18} /></button>
         )}
-        <button onClick={() => void save()} disabled={saveState === 'saving'} style={{ marginLeft: projectId ? 8 : 'auto', padding: '7px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+        {(() => {
+          const saving = saveState === 'saving' || autoState === 'saving'
+          const saved = autoState === 'saved' && saveState !== 'saving'
+          return (
+            <button onClick={() => void save()} disabled={saving} aria-label="Save"
+              title={saved ? 'Autosaved — tap to save now' : 'Save'}
+              style={{ marginLeft: (projectId || savedId) ? 8 : 'auto', minHeight: 44, padding: '0 18px', borderRadius: 11, fontSize: 13, fontWeight: 800, border: saved ? '1px solid var(--border)' : 'none', cursor: 'pointer', background: saved ? 'var(--bg-card)' : 'var(--accent)', color: saved ? 'var(--text-secondary)' : '#fff', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {saving ? 'Saving…' : saved ? <><Check size={15} color="var(--accent-light)" />Saved</> : 'Save'}
+            </button>
+          )
+        })()}
       </header>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
@@ -368,7 +401,7 @@ function Shell({ projectId }: { projectId?: string }) {
 
       {/* Hamburger drawer */}
       {drawer && <SideDrawer onClose={() => setDrawer(false)} onOpenClips={() => { setTab('clips'); setDrawer(false) }} />}
-      {shareOpen && projectId && <MobileShareSheet projectId={projectId} onClose={() => setShareOpen(false)} />}
+      {shareOpen && (projectId || savedId) && <MobileShareSheet projectId={(projectId ?? savedId)!} onClose={() => setShareOpen(false)} />}
 
       <CoachMarks />
 

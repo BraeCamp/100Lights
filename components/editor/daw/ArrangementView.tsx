@@ -1995,7 +1995,7 @@ function MobileToolbar(p: {
   onExport: () => void; onSave?: () => void | Promise<void>; isSaving: boolean
   more: boolean; setMore: (v: boolean) => void
 }) {
-  const mTool: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0, fontSize: 16 }
+  const mTool: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 42, height: 40, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0, fontSize: 16 }
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }
   const round: React.CSSProperties = { width: 34, height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 18, fontWeight: 700, cursor: 'pointer' }
   return (

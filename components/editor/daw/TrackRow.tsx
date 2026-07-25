@@ -311,7 +311,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const isMobile  = useIsMobile()
   // Touch-sized M/S on a phone; the tiny desktop sizes are unusable there.
   const msBtn = isMobile
-    ? { fontSize: 12, width: 32, height: 30, borderRadius: 7 }
+    ? { fontSize: 13, width: 38, height: 36, borderRadius: 8 }
     : { fontSize: 8, width: 16, height: 14, borderRadius: 2 }
   const headerW = headWidth ?? (isMobile ? 140 : HDR_W)  // must match hdrW in ArrangementView
   const workshopTheme = useWorkshopThemeOptional()
