@@ -33,9 +33,11 @@ function HoldButton({ onStep, style, children, 'aria-label': ariaLabel, title }:
 }
 
 export function MobileTransport() {
-  const { engine, playing, position, project, dispatch, metronome, setMetronome } = useDaw()
+  const { engine, playing, position, project, dispatch, metronome, setMetronome, undo, redo, canUndo, canRedo } = useDaw()
   const [settings, setSettings] = useState(false)
   const taps = useRef<number[]>([])
+  // Undo button: tap = undo, long-press = redo (GarageBand pattern).
+  const undoHold = useRef<{ timer?: number; long: boolean }>({ long: false })
 
   // Landscape phones are short — shrink the transport so tracks get the height.
   const [landscape, setLandscape] = useState(false)
@@ -84,6 +86,12 @@ export function MobileTransport() {
         </div>
         <button onClick={() => setMetronome(!metronome)} aria-pressed={metronome} title="Metronome" style={{ ...tBtn, width: 34, color: metronome ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: metronome ? 'var(--accent)' : 'var(--border)', background: metronome ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Music2 size={15} /></button>
         <button onClick={toggleLoop} aria-pressed={project.loopEnabled} title="Loop the whole project" style={{ ...tBtn, width: 34, color: project.loopEnabled ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: project.loopEnabled ? 'var(--accent)' : 'var(--border)', background: project.loopEnabled ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Repeat size={15} /></button>
+        <button
+          onPointerDown={() => { undoHold.current.long = false; undoHold.current.timer = window.setTimeout(() => { undoHold.current.long = true; redo?.() }, 450) }}
+          onPointerUp={() => { if (undoHold.current.timer) window.clearTimeout(undoHold.current.timer); if (!undoHold.current.long) undo?.() }}
+          onPointerLeave={() => { if (undoHold.current.timer) window.clearTimeout(undoHold.current.timer) }}
+          aria-label="Undo (hold to redo)" title="Tap: undo · Hold: redo"
+          style={{ ...tBtn, width: 34, fontSize: 15, touchAction: 'none', opacity: (canUndo || canRedo) ? 1 : 0.4, color: canUndo ? 'var(--text-primary)' : 'var(--text-muted)' }}>↩</button>
         <button onClick={() => setSettings(true)} aria-label="Transport settings" style={{ ...tBtn, width: 34, fontSize: 16 }}>⚙</button>
       </div>
 

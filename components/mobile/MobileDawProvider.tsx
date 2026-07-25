@@ -6,7 +6,7 @@
 // only change the layout around them. Owns the reducer + one DawEngine.
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { DawContext, reducer, type DawContextValue } from '@/lib/daw-state'
+import { DawContext, reducer, type DawContextValue, type DawAction } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
 import { getPresets } from '@/lib/midi-presets'
 import { seedProject } from './daw/seed'
@@ -20,6 +20,41 @@ export function MobileDawProvider({ children, initialProject, onSave, isSaving, 
   isGuest?: boolean
 }) {
   const [project, dispatch] = useReducer(reducer, undefined, () => initialProject ?? seedProject())
+
+  // ── Undo / redo ──────────────────────────────────────────────────────────
+  // The mobile provider had no history. Snapshot the project before each
+  // mutating dispatch (projects are immutable, so snapshots are cheap refs) and
+  // let undo/redo swap back via LOAD_PROJECT. Transport/UI state isn't in the
+  // reducer, so every dispatch here is a real project edit worth undoing.
+  const projectRef = useRef(project)
+  useEffect(() => { projectRef.current = project }, [project])
+  const undoRef = useRef<DawProject[]>([])
+  const redoRef = useRef<DawProject[]>([])
+  const [histTick, setHistTick] = useState(0)
+  const NO_HISTORY = useMemo(() => new Set<DawAction['type']>(['LOAD_PROJECT', 'SET_MASTER_VOLUME']), [])
+  const historyDispatch = useCallback((action: DawAction) => {
+    if (!NO_HISTORY.has(action.type)) {
+      undoRef.current.push(projectRef.current)
+      if (undoRef.current.length > 80) undoRef.current.shift()
+      redoRef.current = []
+      setHistTick(t => t + 1)
+    }
+    dispatch(action)
+  }, [NO_HISTORY])
+  const undo = useCallback(() => {
+    const prev = undoRef.current.pop()
+    if (!prev) return
+    redoRef.current.push(projectRef.current)
+    dispatch({ type: 'LOAD_PROJECT', project: prev })
+    setHistTick(t => t + 1)
+  }, [])
+  const redo = useCallback(() => {
+    const next = redoRef.current.pop()
+    if (!next) return
+    undoRef.current.push(projectRef.current)
+    dispatch({ type: 'LOAD_PROJECT', project: next })
+    setHistTick(t => t + 1)
+  }, [])
 
   const engineRef = useRef<DawEngine | null>(null)
   if (engineRef.current === null || engineRef.current.isClosed) engineRef.current = new DawEngine()
@@ -84,7 +119,8 @@ export function MobileDawProvider({ children, initialProject, onSave, isSaving, 
   const triggerBlink = useCallback(() => { /* no-op on mobile */ }, [])
 
   const ctx: DawContextValue = useMemo(() => ({
-    project, dispatch, engine,
+    project, dispatch: historyDispatch, engine,
+    undo, redo, canUndo: undoRef.current.length > 0, canRedo: redoRef.current.length > 0,
     view, setView, editTarget, setEditTarget,
     selectedTrackId, setSelectedTrackId, selectedReturnId, setSelectedReturnId,
     selectedClipId, setSelectedClipId, selectedClipIds, setSelectedClipIds,
@@ -100,7 +136,7 @@ export function MobileDawProvider({ children, initialProject, onSave, isSaving, 
     blinkIds, triggerBlink, collabPeers,
     mergeConflicts: null,
   }), [
-    project, dispatch, engine, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
+    project, historyDispatch, undo, redo, histTick, engine, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     soundPanel, selectedEffectIds, showPads, expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed,
     playing, recording, position, setPosition, metronome, setMetronome, onSave, isSaving, isGuest, blinkIds, triggerBlink, collabPeers,
   ])

@@ -684,6 +684,11 @@ export interface DawContextValue {
   project: DawProject
   dispatch: Dispatch<DawAction>
   engine: DawEngine
+  // Optional history (mobile provides these; the desktop editor has its own undo)
+  undo?: () => void
+  redo?: () => void
+  canUndo?: boolean
+  canRedo?: boolean
   // UI state (not in reducer — ephemeral)
   view: DawView
   setView: (v: DawView) => void
