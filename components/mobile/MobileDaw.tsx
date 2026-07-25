@@ -82,6 +82,20 @@ function Shell({ projectId }: { projectId?: string }) {
   // beat) — on mobile that lives in the Sounds tab, so jump there when one opens.
   const editingClip = expandedPianoRollClipId || expandedStepSeqClipId
   useEffect(() => { if (editingClip) setTab('sounds') }, [editingClip])
+
+  // Double-tapping a track head fires this: focus the track and open its Sounds
+  // sub-view (Effects / Sound / Keys) so effects etc. are reachable on mobile.
+  const [soundsFocus, setSoundsFocus] = useState<{ sub: 'sounds' | 'fx' | 'keys'; n: number }>({ sub: 'sounds', n: 0 })
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ trackId: string; sub: 'sounds' | 'fx' | 'keys' }>).detail
+      if (d?.trackId) setSelectedTrackId(d.trackId)
+      setSoundsFocus(f => ({ sub: d?.sub ?? 'sounds', n: f.n + 1 }))
+      setTab('sounds')
+    }
+    window.addEventListener('mobile-open-sounds', onOpen)
+    return () => window.removeEventListener('mobile-open-sounds', onOpen)
+  }, [setSelectedTrackId])
   const [drawer, setDrawer] = useState(false)
   const [adding, setAdding] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -125,14 +139,12 @@ function Shell({ projectId }: { projectId?: string }) {
         <button onClick={() => void save()} disabled={saveState === 'saving'} style={{ marginLeft: 'auto', padding: '7px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
       </header>
 
-      <MobileTransport />
-
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         <div style={{ position: 'absolute', inset: 0, overflow: 'auto' }}>
           {tab === 'song' && <ArrangementView />}
           {tab === 'mix' && <Mixer />}
           {tab === 'clips' && <SessionView />}
-          {tab === 'sounds' && <SoundsEditor onDoneClip={() => setTab('song')} />}
+          {tab === 'sounds' && <SoundsEditor onDoneClip={() => setTab('song')} focus={soundsFocus} />}
         </div>
         {/* Add-track lives on the timeline (Song view) as a floating button. */}
         {tab === 'song' && (
@@ -142,6 +154,10 @@ function Shell({ projectId }: { projectId?: string }) {
           </button>
         )}
       </div>
+
+      {/* Transport docked at the bottom — controls sit under the thumb, right
+          above the tabs (Brae: move all controls to the bottom). */}
+      <MobileTransport />
 
       {/* Bottom nav — Song / Mix / Sounds */}
       <nav style={{ display: 'flex', alignItems: 'stretch', gap: 4, padding: '6px 8px calc(6px + env(safe-area-inset-bottom))', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--bg-surface)' }}>
@@ -200,10 +216,13 @@ function Shell({ projectId }: { projectId?: string }) {
 
 // ── Sounds editor: pick a track, edit its instrument / FX / keys, full-screen ──
 
-function SoundsEditor({ onDoneClip }: { onDoneClip: () => void }) {
+function SoundsEditor({ onDoneClip, focus }: { onDoneClip: () => void; focus?: { sub: 'sounds' | 'fx' | 'keys'; n: number } }) {
   const { project, selectedTrackId, setSelectedTrackId, expandedPianoRollClipId, expandedStepSeqClipId, setExpandedPianoRollClipId, setExpandedStepSeqClipId } = useDaw()
   const [sub, setSub] = useState<'sounds' | 'fx' | 'keys'>('sounds')
   const tracks = project.tracks.filter(t => t.kind !== 'group')
+
+  // Track-head double-tap can request a specific sub-view (Effects / Sound / Keys).
+  useEffect(() => { if (focus && focus.n > 0) setSub(focus.sub) }, [focus])
 
   useEffect(() => {
     if ((!selectedTrackId || !tracks.some(t => t.id === selectedTrackId)) && tracks[0]) setSelectedTrackId(tracks[0].id)

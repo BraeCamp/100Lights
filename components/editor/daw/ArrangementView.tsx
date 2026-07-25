@@ -362,6 +362,8 @@ export default function ArrangementView() {
   // clip timeline (one overlay anchored at `hdrW`) gets the reclaimed width.
   const [narrowHeads, setNarrowHeads] = useState(false)
   const hdrW = isMobile ? (narrowHeads ? 52 : 140) : HDR_W  // narrower track heads on a phone
+  // Mobile: scrub the playhead by dragging the blank lane; double-tap it to play.
+  const scrubRef = useRef(false)
   const [mobMore, setMobMore] = useState(false)      // mobile toolbar "More" sheet
   const [mobSnapMenu, setMobSnapMenu] = useState(false)
 
@@ -1526,7 +1528,31 @@ export default function ArrangementView() {
         ref={laneRef}
         style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}
         onWheel={handleWheel}
-        onMouseDown={onLaneMouseDown}
+        onMouseDown={isMobile ? undefined : onLaneMouseDown}
+        // Mobile, blank lane only (target === container): double-tap toggles
+        // playback, drag scrubs the playhead — controls sit near the thumb.
+        onDoubleClick={isMobile ? (e => {
+          if (e.target !== e.currentTarget) return
+          if (engine.isPlaying) engine.stop(); else void engine.play()
+        }) : undefined}
+        onPointerDown={isMobile ? (e => {
+          if (e.target !== e.currentTarget) return
+          const rect = e.currentTarget.getBoundingClientRect()
+          const x = e.clientX - rect.left
+          if (x < hdrW) return
+          const b = Math.max(0, (x - hdrW + scrollLeft) / beatW)
+          engine.seek(b); setPosition(b)
+          e.currentTarget.setPointerCapture(e.pointerId)
+          scrubRef.current = true
+        }) : undefined}
+        onPointerMove={isMobile ? (e => {
+          if (!scrubRef.current) return
+          const rect = e.currentTarget.getBoundingClientRect()
+          const b = Math.max(0, (e.clientX - rect.left - hdrW + scrollLeft) / beatW)
+          engine.seek(b); setPosition(b)
+        }) : undefined}
+        onPointerUp={isMobile ? (() => { scrubRef.current = false }) : undefined}
+        onPointerCancel={isMobile ? (() => { scrubRef.current = false }) : undefined}
       >
         {/* Music empty-state hint: point brand-new users at the library */}
         {audioMode !== 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (

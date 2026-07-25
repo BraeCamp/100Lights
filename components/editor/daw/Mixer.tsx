@@ -18,29 +18,32 @@ function VerticalFader({ value, onChange, onCommit }: {
   onChange: (v: number) => void
   onCommit?: (v: number) => void
 }) {
+  const isMobile = useIsMobile()
   const trackH = 110
   const thumbH = 16
+  const trackW = isMobile ? 20 : 8   // wider bar = easier thumb grab on a phone
+  const thumbW = isMobile ? 30 : 18
   const max    = 1.2
   const pos    = (1 - value / max) * (trackH - thumbH)
   const dragRef = useRef<{ startY: number; startVal: number } | null>(null)
 
-  function onMouseDown(e: React.MouseEvent) {
+  // Pointer events cover mouse + touch + pen, so the fader drags on a phone too
+  // (the old mouse-only handler is why the master/track volume "didn't work" on
+  // mobile). touchAction:'none' keeps the page from scrolling while dragging.
+  function onPointerDown(e: React.PointerEvent) {
+    e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = { startY: e.clientY, startVal: value }
-    function onMove(ev: MouseEvent) {
-      if (!dragRef.current) return
-      const delta = (dragRef.current.startY - ev.clientY) / (trackH - thumbH) * max
-      onChange(Math.max(0, Math.min(max, dragRef.current.startVal + delta)))
-    }
-    function onUp(ev: MouseEvent) {
-      if (!dragRef.current) return
-      const delta = (dragRef.current.startY - ev.clientY) / (trackH - thumbH) * max
-      onCommit?.(Math.max(0, Math.min(max, dragRef.current.startVal + delta)))
-      dragRef.current = null
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    if (!dragRef.current) return
+    const delta = (dragRef.current.startY - e.clientY) / (trackH - thumbH) * max
+    onChange(Math.max(0, Math.min(max, dragRef.current.startVal + delta)))
+  }
+  function onPointerUp(e: React.PointerEvent) {
+    if (!dragRef.current) return
+    const delta = (dragRef.current.startY - e.clientY) / (trackH - thumbH) * max
+    onCommit?.(Math.max(0, Math.min(max, dragRef.current.startVal + delta)))
+    dragRef.current = null
   }
 
   const db = value > 0.0001 ? (20 * Math.log10(value)).toFixed(1) : '-∞'
@@ -48,8 +51,11 @@ function VerticalFader({ value, onChange, onCommit }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
       <div
-        style={{ width: 8, height: trackH, background: 'var(--bg-surface)', borderRadius: 4, position: 'relative', cursor: 'ns-resize', userSelect: 'none' }}
-        onMouseDown={onMouseDown}
+        style={{ width: trackW, height: trackH, background: 'var(--bg-surface)', borderRadius: 4, position: 'relative', cursor: 'ns-resize', userSelect: 'none', touchAction: 'none' }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <div style={{
           position: 'absolute', left: -3, right: -3,
@@ -57,10 +63,10 @@ function VerticalFader({ value, onChange, onCommit }: {
           height: 1, background: 'rgba(255,255,255,0.15)', pointerEvents: 'none',
         }} />
         <div style={{
-          position: 'absolute', left: -5, top: Math.round(pos),
-          width: 18, height: thumbH,
+          position: 'absolute', left: (trackW - thumbW) / 2, top: Math.round(pos),
+          width: thumbW, height: thumbH,
           background: 'linear-gradient(180deg,#555 0%,#3a3a3a 100%)',
-          borderRadius: 3, border: '1px solid var(--border-light)', cursor: 'ns-resize',
+          borderRadius: 3, border: '1px solid var(--border-light)', cursor: 'ns-resize', pointerEvents: 'none',
         }} />
       </div>
       <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '0.04em' }}>
@@ -72,7 +78,7 @@ function VerticalFader({ value, onChange, onCommit }: {
 
 // ── Channel strip ──────────────────────────────────────────────────────────
 
-function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolean }) {
+function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isMaster?: boolean; onOpenDetail?: (id: string) => void }) {
   const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
   const isMobile = useIsMobile()
   const [editing, setEditing]   = useState(false)
@@ -179,6 +185,7 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
   return (
     <div
       onClick={() => { if (!isMaster && track) setSelectedTrackId(track.id) }}
+      onDoubleClick={isMobile && !isMaster && track ? () => onOpenDetail?.(track.id) : undefined}
       style={{
         width: isMobile ? (isMaster ? 104 : 156) : (isMaster ? 80 : 72), flexShrink: 0,
         display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -268,8 +275,20 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         )
       })()}
 
-      {/* Pan */}
-      {!isMaster && (
+      {/* Pan — horizontal slider on mobile (the knob is too fiddly to touch) */}
+      {!isMaster && isMobile && track && (
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <div style={{ display: 'flex' }}>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1 }}>Pan</span>
+            <span style={{ fontSize: 9, color: 'var(--text-secondary)' }}>{panLabel}</span>
+          </div>
+          <input type="range" min={-1} max={1} step={0.02} value={pan}
+            onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+            onDoubleClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: 0 } }); engine.setTrackPan(track.id, 0) }}
+            style={{ width: '100%', accentColor: color, height: 22 }} />
+        </div>
+      )}
+      {!isMaster && !isMobile && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <Knob
             value={pan} min={-1} max={1} defaultValue={0} size={26} color={color}
@@ -280,17 +299,22 @@ function ChannelStrip({ track, isMaster }: { track?: DawTrack; isMaster?: boolea
         </div>
       )}
 
-      {/* Mute / Solo */}
-      {!isMaster && track && (
-        <div style={{ display: 'flex', gap: 2 }}>
-          <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !muted } })}
-            style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: muted ? '#d97706' : 'var(--bg-surface)', color: muted ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
-            title="Mute" data-help-id="mute">M</button>
-          <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !soloed } })}
-            style={{ width: 24, height: 18, fontSize: 9, borderRadius: 3, border: '1px solid var(--border)', background: soloed ? '#eab308' : 'var(--bg-surface)', color: soloed ? '#000' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
-            title="Solo" data-help-id="solo">S</button>
-        </div>
-      )}
+      {/* Mute / Solo — big touch targets on mobile */}
+      {!isMaster && track && (() => {
+        const ms: React.CSSProperties = isMobile
+          ? { flex: 1, height: 38, fontSize: 14, borderRadius: 9 }
+          : { width: 24, height: 18, fontSize: 9, borderRadius: 3 }
+        return (
+          <div style={{ display: 'flex', gap: isMobile ? 8 : 2, width: isMobile ? '100%' : undefined }}>
+            <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !muted } })}
+              style={{ ...ms, border: '1px solid var(--border)', background: muted ? '#d97706' : 'var(--bg-surface)', color: muted ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
+              title="Mute" data-help-id="mute">M</button>
+            <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !soloed } })}
+              style={{ ...ms, border: '1px solid var(--border)', background: soloed ? '#eab308' : 'var(--bg-surface)', color: soloed ? '#000' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
+              title="Solo" data-help-id="solo">S</button>
+          </div>
+        )
+      })()}
 
       {/* Fader + meter */}
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, flex: 1 }}>
@@ -507,8 +531,111 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
 
 // ── Mixer ──────────────────────────────────────────────────────────────────
 
+// Full-screen channel view — double-tapping a strip on mobile opens this so
+// every control is large and thumb-friendly (EQ, pan, volume, sends, effects).
+function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => void }) {
+  const { project, dispatch, engine } = useDaw()
+  const track = project.tracks.find(t => t.id === trackId)
+  if (!track) return null
+  const tone = track.tone ?? {}
+  const setBand = (band: 'sub' | 'bass' | 'mid' | 'treble', v: number) => {
+    const next = { ...tone, [band]: v || undefined }
+    dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } }); engine.setTrackTone(track.id, next)
+  }
+  const db = track.volume > 0.0001 ? (20 * Math.log10(track.volume)).toFixed(1) : '-∞'
+  const panLabel = track.pan === 0 ? 'Center' : track.pan < 0 ? `L${Math.round(-track.pan * 100)}` : `R${Math.round(track.pan * 100)}`
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
+  const lab: React.CSSProperties = { width: 46, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0, letterSpacing: '0.04em' }
+  const val: React.CSSProperties = { width: 52, fontSize: 11, textAlign: 'right', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
+  const BANDS = [['sub', 'SUB', '#8b5cf6'], ['bass', 'BASS', '#22c55e'], ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6']] as const
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 220, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '92vh', overflowY: 'auto', background: 'var(--bg-surface)', borderTop: `3px solid ${track.color ?? 'var(--accent)'}`, borderRadius: '18px 18px 0 0', padding: '16px 18px calc(20px + env(safe-area-inset-bottom))' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+          <strong style={{ fontSize: 17, flex: 1 }}>{track.name}</strong>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 24, cursor: 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Volume */}
+          <div style={row}>
+            <span style={lab}>Volume</span>
+            <input type="range" min={0} max={1.2} step={0.01} value={track.volume}
+              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
+              style={{ flex: 1, minWidth: 0, accentColor: track.color ?? 'var(--accent)', height: 30 }} />
+            <span style={val}>{db}dB</span>
+          </div>
+          {/* Pan */}
+          <div style={row}>
+            <span style={lab}>Pan</span>
+            <input type="range" min={-1} max={1} step={0.02} value={track.pan ?? 0}
+              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+              onDoubleClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: 0 } }); engine.setTrackPan(track.id, 0) }}
+              style={{ flex: 1, minWidth: 0, accentColor: track.color ?? 'var(--accent)', height: 30 }} />
+            <span style={val}>{panLabel}</span>
+          </div>
+
+          {/* Tone EQ */}
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Tone EQ</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {BANDS.map(([band, label, c]) => {
+                const v = tone[band] ?? 0
+                return (
+                  <div key={band} style={row}>
+                    <span style={{ ...lab, color: c }}>{label}</span>
+                    <input type="range" min={-12} max={12} step={0.5} value={v}
+                      onChange={e => setBand(band, parseFloat(e.target.value))}
+                      onDoubleClick={() => setBand(band, 0)}
+                      style={{ flex: 1, minWidth: 0, accentColor: c, height: 30 }} />
+                    <span style={val}>{v > 0 ? '+' : ''}{v}dB</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Sends */}
+          {project.returnTracks.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Sends</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {project.returnTracks.map(rt => {
+                  const sv = track.sendAmounts?.[rt.id] ?? 0
+                  return (
+                    <div key={rt.id} style={row}>
+                      <span style={{ ...lab, color: rt.color }}>{rt.name}</span>
+                      <input type="range" min={0} max={1} step={0.01} value={sv}
+                        onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } } }); engine.setSendAmount(track.id, rt.id, v) }}
+                        style={{ flex: 1, minWidth: 0, accentColor: rt.color, height: 30 }} />
+                      <span style={val}>{Math.round(sv * 100)}%</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Mute / Solo / Effects */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } })}
+              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-card)', color: track.mute ? '#fff' : 'var(--text-secondary)', fontWeight: 800, fontSize: 15, cursor: 'pointer' }}>Mute</button>
+            <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } })}
+              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-card)', color: track.solo ? '#000' : 'var(--text-secondary)', fontWeight: 800, fontSize: 15, cursor: 'pointer' }}>Solo</button>
+            <button onClick={() => { window.dispatchEvent(new CustomEvent('mobile-open-sounds', { detail: { trackId: track.id, sub: 'fx' } })); onClose() }}
+              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid #7c3aed', background: 'rgba(124,58,237,0.18)', color: '#a78bfa', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>🎚 Effects</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 export default function Mixer() {
   const { project, dispatch } = useDaw()
+  const isMobile = useIsMobile()
+  const [detailId, setDetailId] = useState<string | null>(null)
 
   function addReturnTrack() {
     const idx = project.returnTracks.length
@@ -528,7 +655,7 @@ export default function Mixer() {
     <div data-testid="mixer" style={{ display: 'flex', flex: 1, minHeight: 0, background: 'var(--bg-base)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', overflowX: 'auto', overflowY: 'hidden', flex: 1, alignItems: 'stretch' }}>
         {project.tracks.map(track => (
-          <ChannelStrip key={track.id} track={track} />
+          <ChannelStrip key={track.id} track={track} onOpenDetail={setDetailId} />
         ))}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 6px', justifyContent: 'flex-end' }}>
           <button
@@ -565,6 +692,7 @@ export default function Mixer() {
       <div style={{ flexShrink: 0, borderLeft: '2px solid var(--border-light)' }}>
         <ChannelStrip isMaster />
       </div>
+      {isMobile && detailId && <ChannelDetail trackId={detailId} onClose={() => setDetailId(null)} />}
     </div>
   )
 }

@@ -13,6 +13,7 @@ import { getPadPresets, savePadPreset, deletePadPreset, type PadPreset } from '@
 import { startWebMidi, onMidiNote, onMidiDevices, webMidiSupported } from '@/lib/web-midi'
 import type { MidiClip, MidiNote } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
+import { useIsMobile } from '@/lib/use-is-mobile'
 
 
 // ── Capture MIDI — rolling note memory (like the JAM buffer, but for notes) ────
@@ -840,6 +841,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 
 export default function PadInput({ trackId, onClose }: { trackId: string; onClose: () => void }) {
   const { project, dispatch, engine, metronome, setMetronome } = useDaw()
+  const isMobile = useIsMobile()
 
   const [tab,          setTab]          = useState<'pads' | 'keyboard'>('pads')
   const [pads,         setPads]         = useState<Pad[]>(DEFAULT_PADS)
@@ -1707,25 +1709,29 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>Z–M lower · Q–U upper</span>
               </div>
 
+              {/* Horizontal scroll so the (wider-than-phone) keyboard never runs
+                  off-screen; keys are larger + pointer-driven so they play on touch. */}
+              <div style={{ display: 'flex', overflowX: 'auto', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
               {[octave, octave + 1].map(oct => {
                 const base = (oct + 1) * 12
-                const WW = 30, WH = 90, BW = 18, BH = 56
+                const WW = isMobile ? 48 : 30, WH = isMobile ? 130 : 90, BW = isMobile ? 30 : 18, BH = isMobile ? 82 : 56
                 return (
-                  <div key={oct} style={{ display: 'inline-block', position: 'relative', width: WW * 7, height: WH, marginRight: 2 }}>
+                  <div key={oct} style={{ position: 'relative', width: WW * 7, height: WH, marginRight: 2, flexShrink: 0, touchAction: isMobile ? 'none' : undefined }}>
                     {WHITE_ST.map((st, i) => {
                       const pitch = base + st
                       const act = pressing.has(pitch)
                       return (
                         <div key={st}
-                          onMouseDown={e => {
+                          onPointerDown={e => {
                             e.stopPropagation()
+                            e.currentTarget.setPointerCapture(e.pointerId)
                             setActive(true)
                             startNote(pitch, inputVelocityRef.current)
                           }}
-                          onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
-                          onMouseLeave={() => endNote(pitch)}
-                          style={{ position: 'absolute', left: i * WW, top: 0, width: WW - 1, height: WH, background: act ? C.accent : '#d8d8d8', borderRadius: '0 0 4px 4px', border: '1px solid var(--border-light)', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4 }}>
-                          {st === 0 && <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>C{oct}</span>}
+                          onPointerUp={e => { e.stopPropagation(); endNote(pitch) }}
+                          onPointerCancel={() => endNote(pitch)}
+                          style={{ position: 'absolute', left: i * WW, top: 0, width: WW - 1, height: WH, background: act ? C.accent : '#d8d8d8', borderRadius: '0 0 4px 4px', borderLeft: '1px solid var(--border-light)', borderRight: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 4, touchAction: 'none' }}>
+                          {st === 0 && <span style={{ fontSize: isMobile ? 11 : 9, color: 'var(--text-muted)', fontWeight: 700 }}>C{oct}</span>}
                         </div>
                       )
                     })}
@@ -1734,19 +1740,21 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                       const act = pressing.has(pitch)
                       return (
                         <div key={st}
-                          onMouseDown={e => {
+                          onPointerDown={e => {
                             e.stopPropagation(); e.preventDefault()
+                            e.currentTarget.setPointerCapture(e.pointerId)
                             setActive(true)
                             startNote(pitch, inputVelocityRef.current)
                           }}
-                          onMouseUp={e => { e.stopPropagation(); endNote(pitch) }}
-                          onMouseLeave={() => endNote(pitch)}
-                          style={{ position: 'absolute', left: bpos * WW + (WW - BW) / 2, top: 0, width: BW, height: BH, zIndex: 1, background: act ? C.accent : '#222', borderRadius: '0 0 3px 3px', border: '1px solid var(--border)', borderTop: 'none', cursor: 'pointer', boxSizing: 'border-box' }} />
+                          onPointerUp={e => { e.stopPropagation(); endNote(pitch) }}
+                          onPointerCancel={() => endNote(pitch)}
+                          style={{ position: 'absolute', left: bpos * WW + (WW - BW) / 2, top: 0, width: BW, height: BH, zIndex: 1, background: act ? C.accent : '#222', borderRadius: '0 0 3px 3px', borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', cursor: 'pointer', boxSizing: 'border-box', touchAction: 'none' }} />
                       )
                     })}
                   </div>
                 )
               })}
+              </div>
 
               <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {Object.entries(pianoKeyMap).slice(0, 12).map(([k, p]) => (

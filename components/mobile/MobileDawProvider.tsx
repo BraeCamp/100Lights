@@ -25,6 +25,18 @@ export function MobileDawProvider({ children, initialProject, onSave, isSaving, 
   if (engineRef.current === null || engineRef.current.isClosed) engineRef.current = new DawEngine()
   const engine = engineRef.current
 
+  // StrictMode's throwaway unmount disposes the engine (see the dispose effect
+  // below), closing its AudioContext. The render-time guard above only revives
+  // it on the *next* render — but an idle provider never re-renders, so the
+  // closed engine lingers and playback stays silent ("play does nothing"). This
+  // effect runs after every commit: if the engine is closed, it makes a fresh
+  // one and forces a re-render so every consumer (and the effects below) rebind
+  // to the live engine.
+  const [, bumpEngine] = useReducer((x: number) => x + 1, 0)
+  useEffect(() => {
+    if (engineRef.current?.isClosed) { engineRef.current = new DawEngine(); bumpEngine() }
+  })
+
   // transport
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)

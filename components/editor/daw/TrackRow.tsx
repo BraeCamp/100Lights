@@ -856,6 +856,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             }
           }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }}
+          // Mobile has no right-click: double-tapping the head opens the same
+          // options menu (rename, duplicate, effects, new clip, colour, delete…).
+          onDoubleClick={isMobile ? (e => { e.stopPropagation(); setSelectedTrackId(track.id); setTrackCtxMenu({ x: e.clientX, y: e.clientY }) }) : undefined}
           data-help-id="track-head"
           data-track-id={track.id}
           style={{
@@ -899,7 +902,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
               />
             ) : (
-              <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
+              <span onDoubleClick={isMobile ? undefined : () => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none', cursor: 'default' }}>
                 {track.name}
               </span>
             )}
@@ -1070,6 +1073,18 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <span>❄</span>
               <span>{frozen ? 'Unfreeze Track' : 'Freeze Track'}</span>
             </button>
+
+            {/* Mobile: jump straight to this track's effects / sound editor.
+                (On desktop the FX chain lives inline + in the tools row.) */}
+            {isMobile && (<>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
+              {([['fx', '🎚', 'Effects'], ['sounds', '🎛', 'Sound'], ['keys', '🎹', 'Play / Keys']] as const).map(([sub, icon, label]) => (
+                <button key={sub} onClick={() => { window.dispatchEvent(new CustomEvent('mobile-open-sounds', { detail: { trackId: track.id, sub } })); setTrackCtxMenu(null) }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 14px', fontSize: 12, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                  <span>{icon}</span><span>{label}</span>
+                </button>
+              ))}
+            </>)}
 
             {/* Group selected tracks — show only when multiple tracks selected and this track is one of them */}
             {selectedTrackIds && selectedTrackIds.size > 1 && selectedTrackIds.has(track.id) && onGroupTracks && (

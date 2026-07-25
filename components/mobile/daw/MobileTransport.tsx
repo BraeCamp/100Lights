@@ -5,6 +5,7 @@
 // key + scale) lives in a Settings sheet behind the gear, so it never overwhelms.
 
 import { useEffect, useRef, useState } from 'react'
+import { Repeat, Music2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -52,7 +53,7 @@ export function MobileTransport() {
   }
 
   return (
-    <div style={{ flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+    <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: landscape ? 6 : 8, padding: landscape ? '3px 10px' : '9px 12px' }}>
         <button onClick={() => (engine.isPlaying ? engine.stop() : void engine.play())} aria-label={playing ? 'Stop' : 'Play'} style={{ width: landscape ? 58 : play, height: play, borderRadius: play / 2, border: 'none', flexShrink: 0, cursor: 'pointer', background: playing ? '#ef4444' : 'var(--accent)', color: '#fff', fontSize: landscape ? 15 : 18 }}>{playing ? '■' : '▶'}</button>
         <div style={{ textAlign: 'center', minWidth: 46 }}>
@@ -64,8 +65,8 @@ export function MobileTransport() {
           <div style={{ textAlign: 'center', minWidth: 42 }}><div style={{ fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{Math.round(project.tempo)}</div><div style={{ fontSize: 8, color: 'var(--text-muted)' }}>BPM</div></div>
           <button onClick={() => dispatch({ type: 'SET_TEMPO', tempo: project.tempo + 1 })} style={tBtn}>+</button>
         </div>
-        <button onClick={() => setMetronome(!metronome)} aria-pressed={metronome} title="Metronome" style={{ ...tBtn, width: 34, color: metronome ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: metronome ? 'var(--accent)' : 'var(--border)', background: metronome ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)', fontSize: 15 }}>♩</button>
-        <button onClick={toggleLoop} aria-pressed={project.loopEnabled} title="Loop" style={{ ...tBtn, width: 34, color: project.loopEnabled ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: project.loopEnabled ? 'var(--accent)' : 'var(--border)', background: project.loopEnabled ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)', fontSize: 15 }}>↻</button>
+        <button onClick={() => setMetronome(!metronome)} aria-pressed={metronome} title="Metronome" style={{ ...tBtn, width: 34, color: metronome ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: metronome ? 'var(--accent)' : 'var(--border)', background: metronome ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Music2 size={15} /></button>
+        <button onClick={toggleLoop} aria-pressed={project.loopEnabled} title="Loop the whole project" style={{ ...tBtn, width: 34, color: project.loopEnabled ? 'var(--accent-light)' : 'var(--text-muted)', borderColor: project.loopEnabled ? 'var(--accent)' : 'var(--border)', background: project.loopEnabled ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)' }}><Repeat size={15} /></button>
         <button onClick={() => setSettings(true)} aria-label="Transport settings" style={{ ...tBtn, width: 34, fontSize: 16 }}>⚙</button>
       </div>
 
