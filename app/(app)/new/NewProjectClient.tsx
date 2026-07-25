@@ -9,6 +9,8 @@ import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import ProjectEditor from '@/components/editor/ProjectEditor'
 import type { PlatformFlags } from '@/lib/platform-flags'
+import { useIsMobile } from '@/lib/use-is-mobile'
+import MobileDawClient from '@/components/mobile/MobileDawClient'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
@@ -21,6 +23,7 @@ interface Props {
 }
 
 export default function NewProjectClient({ flags }: Props) {
+  const isMobile = useIsMobile()
   const searchParams = useSearchParams()
   const starterParam = searchParams.get('starter')
   const communityItemParam = searchParams.get('communityItem')
@@ -47,6 +50,11 @@ export default function NewProjectClient({ flags }: Props) {
   function toggle(key: ModuleKey) {
     setSelected(prev => prev === key ? null : key)
   }
+
+  // On a phone, "New project" opens a FRESH mobile studio right here at /new
+  // (device-adaptive, same URL — no /m redirect, and no stale scratchpad: this
+  // remounts a new seeded project each time instead of reusing the /m session).
+  if (isMobile) return <MobileDawClient />
 
   if (phase === 'edit') {
     return (

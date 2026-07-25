@@ -362,8 +362,14 @@ export default function ArrangementView() {
   // clip timeline (one overlay anchored at `hdrW`) gets the reclaimed width.
   const [narrowHeads, setNarrowHeads] = useState(false)
   const hdrW = isMobile ? (narrowHeads ? 52 : 140) : HDR_W  // narrower track heads on a phone
-  // Mobile: scrub the playhead by dragging the blank lane; double-tap it to play.
-  const scrubRef = useRef(false)
+  // Mobile timeline gestures: 1 finger on the blank lane scrubs the playhead;
+  // 2 fingers pan (both axes) + pinch-zoom the timeline; double-tap the blank
+  // lane plays. Mirrors the piano roll's touch model.
+  const laneGesture = useRef<
+    | { mode: 'scrub' }
+    | { mode: 'pan'; startDist: number; startBeatW: number; midX: number; midY: number; startSL: number; startST: number }
+    | null
+  >(null)
   const [mobMore, setMobMore] = useState(false)      // mobile toolbar "More" sheet
   const [mobSnapMenu, setMobSnapMenu] = useState(false)
 
@@ -1526,33 +1532,53 @@ export default function ArrangementView() {
       {/* Track rows */}
       <div
         ref={laneRef}
-        style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}
+        style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', position: 'relative', touchAction: isMobile ? 'none' : undefined }}
         onWheel={handleWheel}
         onMouseDown={isMobile ? undefined : onLaneMouseDown}
-        // Mobile, blank lane only (target === container): double-tap toggles
-        // playback, drag scrubs the playhead — controls sit near the thumb.
+        // Mobile: double-tap the blank lane toggles play; 1 finger there scrubs
+        // the playhead; 2 fingers pan + pinch-zoom the whole timeline.
         onDoubleClick={isMobile ? (e => {
           if (e.target !== e.currentTarget) return
           if (engine.isPlaying) engine.stop(); else void engine.play()
         }) : undefined}
-        onPointerDown={isMobile ? (e => {
-          if (e.target !== e.currentTarget) return
-          const rect = e.currentTarget.getBoundingClientRect()
-          const x = e.clientX - rect.left
-          if (x < hdrW) return
-          const b = Math.max(0, (x - hdrW + scrollLeft) / beatW)
-          engine.seek(b); setPosition(b)
-          e.currentTarget.setPointerCapture(e.pointerId)
-          scrubRef.current = true
+        onTouchStart={isMobile ? (e => {
+          const lane = laneRef.current; if (!lane) return
+          if (e.touches.length >= 2) {
+            const a = e.touches[0], b = e.touches[1]
+            laneGesture.current = {
+              mode: 'pan',
+              startDist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+              startBeatW: beatW,
+              midX: (a.clientX + b.clientX) / 2, midY: (a.clientY + b.clientY) / 2,
+              startSL: scrollLeft, startST: lane.scrollTop,
+            }
+            return
+          }
+          if (e.target !== e.currentTarget) { laneGesture.current = null; return }
+          const rect = lane.getBoundingClientRect()
+          const x = e.touches[0].clientX - rect.left
+          if (x < hdrW) { laneGesture.current = null; return }
+          const bb = Math.max(0, (x - hdrW + scrollLeft) / beatW)
+          engine.seek(bb); setPosition(bb)
+          laneGesture.current = { mode: 'scrub' }
         }) : undefined}
-        onPointerMove={isMobile ? (e => {
-          if (!scrubRef.current) return
-          const rect = e.currentTarget.getBoundingClientRect()
-          const b = Math.max(0, (e.clientX - rect.left - hdrW + scrollLeft) / beatW)
-          engine.seek(b); setPosition(b)
+        onTouchMove={isMobile ? (e => {
+          const g = laneGesture.current; const lane = laneRef.current
+          if (!g || !lane) return
+          if (g.mode === 'pan' && e.touches.length >= 2) {
+            const a = e.touches[0], b = e.touches[1]
+            const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1
+            const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2
+            setBeatW(Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, g.startBeatW * (dist / g.startDist))))
+            setScrollLeft(Math.max(0, g.startSL - (midX - g.midX)))
+            lane.scrollTop = Math.max(0, g.startST - (midY - g.midY))
+          } else if (g.mode === 'scrub' && e.touches.length === 1) {
+            const rect = lane.getBoundingClientRect()
+            const bb = Math.max(0, (e.touches[0].clientX - rect.left - hdrW + scrollLeft) / beatW)
+            engine.seek(bb); setPosition(bb)
+          }
         }) : undefined}
-        onPointerUp={isMobile ? (() => { scrubRef.current = false }) : undefined}
-        onPointerCancel={isMobile ? (() => { scrubRef.current = false }) : undefined}
+        onTouchEnd={isMobile ? (e => { if (e.touches.length === 0) laneGesture.current = null }) : undefined}
       >
         {/* Music empty-state hint: point brand-new users at the library */}
         {audioMode !== 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (

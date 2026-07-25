@@ -1364,7 +1364,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   const isRecActive = engine.isRecording && engine.isPlaying
 
-  const containerStyle: React.CSSProperties = isFullscreen ? {
+  const containerStyle: React.CSSProperties = isMobile ? {
+    // Inline in the Keys tab — fill the panel, no floating window chrome.
+    position: 'relative', width: '100%', height: '100%',
+    background: C.bg, userSelect: 'none', display: 'flex', flexDirection: 'column',
+  } : isFullscreen ? {
     position: 'fixed', left: 0, top: 0, width: '100vw', height: '100vh',
     borderRadius: 0, background: C.bg, border: `1px solid ${C.accent}`,
     boxShadow: 'none', zIndex: 2000, userSelect: 'none',
@@ -1384,17 +1388,17 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
-  return createPortal(
+  const body = (
     <>
       <div ref={containerRef} className={isFullscreen ? 'electron-nodrag' : undefined} style={containerStyle}>
 
         {/* Header */}
-        <div onMouseDown={onHeaderMouseDown} style={{
+        <div onMouseDown={isMobile ? undefined : onHeaderMouseDown} style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexShrink: 0,
           background: active ? 'rgb(var(--accent-rgb) / 0.18)' : C.bgCard,
-          borderRadius: isFullscreen ? 0 : '10px 10px 0 0',
+          borderRadius: isFullscreen || isMobile ? 0 : '10px 10px 0 0',
           borderBottom: `1px solid ${active ? 'rgb(var(--accent-rgb) / 0.4)' : C.border}`,
-          cursor: isFullscreen ? 'default' : 'grab', transition: 'background 0.15s',
+          cursor: isFullscreen || isMobile ? 'default' : 'grab', transition: 'background 0.15s',
         }}>
           <span style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>⌨ Pad Input</span>
           {track && <span style={{ fontSize: 11, color: C.muted, borderLeft: `2px solid ${track.color ?? C.accent}`, paddingLeft: 6 }}>{track.name}</span>}
@@ -1501,14 +1505,14 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               style={{ background: metronome ? `${C.accent}22` : 'transparent', border: `1px solid ${metronome ? C.accent : C.border}`, color: metronome ? C.accent : C.muted, cursor: 'pointer', fontSize: 13, padding: '1px 5px', borderRadius: 3 }}>
               ♩
             </button>
-            <button onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
+            {!isMobile && <button onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
               title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
               style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 6px', borderRadius: 3 }}>
               {isFullscreen ? '⊡' : '⊞'}
-            </button>
-            {!isFullscreen && <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>}
-            <button onClick={e => { e.stopPropagation(); onClose() }}
-              style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>
+            </button>}
+            {!isFullscreen && !isMobile && <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>}
+            {!isMobile && <button onClick={e => { e.stopPropagation(); onClose() }}
+              style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>}
           </div>
         </div>
 
@@ -1778,7 +1782,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         </div>
 
         {/* Resize handles */}
-        {!isFullscreen && <>
+        {!isFullscreen && !isMobile && <>
           <div onMouseDown={onResizeDown('e')}  style={{ position: 'absolute', right: 0, top: 12, bottom: 12, width: 6, cursor: 'ew-resize' }} />
           <div onMouseDown={onResizeDown('s')}  style={{ position: 'absolute', bottom: 0, left: 12, right: 12, height: 6, cursor: 'ns-resize' }} />
           <div onMouseDown={onResizeDown('se')} style={{ position: 'absolute', right: 0, bottom: 0, width: 14, height: 14, cursor: 'nwse-resize' }} />
@@ -1799,7 +1803,8 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
         />
       )}
 
-    </>,
-    document.body
+    </>
   )
+  // Inline in the Keys tab on mobile; a floating portal window on desktop.
+  return isMobile ? body : createPortal(body, document.body)
 }

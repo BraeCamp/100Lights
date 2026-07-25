@@ -36,10 +36,20 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // gets the full editor. `null` until measured to avoid a wrong-first-paint.
   const [isMobile, setIsMobile] = useState<boolean | null>(null)
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 760)
+    // Matches useIsMobile: a touch phone rotated to landscape (wide but a short
+    // side) stays on the mobile DAW instead of flipping to the desktop editor.
+    const check = () => {
+      const w = window.innerWidth, h = window.innerHeight
+      const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+      setIsMobile(w < 760 || (coarse && Math.min(w, h) < 760))
+    }
     check()
     window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
+    window.addEventListener('orientationchange', check)
+    return () => {
+      window.removeEventListener('resize', check)
+      window.removeEventListener('orientationchange', check)
+    }
   }, [])
 
   // Demo state

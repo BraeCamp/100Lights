@@ -10,10 +10,21 @@ import { useEffect, useState } from 'react'
 export function useIsMobile(breakpoint = 760): boolean {
   const [mobile, setMobile] = useState(false)
   useEffect(() => {
-    const check = () => setMobile(window.innerWidth < breakpoint)
+    const check = () => {
+      const w = window.innerWidth, h = window.innerHeight
+      // A phone rotated to landscape is wide but has a short side — keep it on
+      // the mobile UI (a coarse/touch pointer + short side), not just width, so
+      // "widescreen" phones don't fall through to the desktop layout.
+      const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+      setMobile(w < breakpoint || (coarse && Math.min(w, h) < breakpoint))
+    }
     check()
     window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
+    window.addEventListener('orientationchange', check)
+    return () => {
+      window.removeEventListener('resize', check)
+      window.removeEventListener('orientationchange', check)
+    }
   }, [breakpoint])
   return mobile
 }

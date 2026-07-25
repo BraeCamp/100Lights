@@ -189,15 +189,21 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
       style={{
         width: isMobile ? (isMaster ? 104 : 156) : (isMaster ? 80 : 72), flexShrink: 0,
         display: 'flex', flexDirection: 'column', alignItems: 'center',
-        gap: isMobile ? 7 : 4, padding: isMobile ? '10px 8px 10px' : '8px 4px 6px',
-        background: isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : isMaster ? '#202020' : '#2a2a2a',
-        borderRight: '1px solid var(--border-light)',
-        outline: isSelected ? '1px solid rgb(var(--accent-rgb) / 0.5)' : 'none',
+        gap: isMobile ? 7 : 4, padding: isMobile ? `${isMobile ? 14 : 10}px 8px 10px` : '8px 4px 6px',
+        // Mobile mixer is themed + tinted by each track's colour (the old strips
+        // were flat grey, clashing with the rest of the new UI).
+        background: isMobile
+          ? (isMaster ? 'var(--bg-surface)'
+            : isSelected ? `color-mix(in srgb, ${color} 26%, var(--bg-card))`
+            : `color-mix(in srgb, ${color} 11%, var(--bg-card))`)
+          : (isSelected ? 'rgb(var(--accent-rgb) / 0.12)' : isMaster ? '#202020' : '#2a2a2a'),
+        borderRight: isMobile ? `1px solid color-mix(in srgb, ${color} 22%, var(--border))` : '1px solid var(--border-light)',
+        outline: isSelected ? `1px solid ${isMobile ? `color-mix(in srgb, ${color} 60%, transparent)` : 'rgb(var(--accent-rgb) / 0.5)'}` : 'none',
         outlineOffset: '-1px',
         opacity: dimmed ? 0.4 : 1, transition: 'background 0.1s, opacity 0.15s',
         position: 'relative', cursor: isMaster ? 'default' : 'pointer',
       }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: color, borderRadius: '2px 2px 0 0' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: isMobile ? 5 : 3, background: color, borderRadius: '2px 2px 0 0' }} />
 
       {/* Name */}
       {editing && track ? (
@@ -214,7 +220,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
       ) : (
         <div
           onDoubleClick={() => { if (track) { setEditing(true); setNameDraft(track.name) } }}
-          style={{ fontSize: 10, color: 'var(--text-secondary)', textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default', userSelect: 'none', marginTop: 4 }}
+          style={{ fontSize: isMobile ? 12 : 10, fontWeight: isMobile ? 700 : 400, color: isMobile && !isMaster ? color : 'var(--text-secondary)', textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default', userSelect: 'none', marginTop: 4 }}
           title={track?.name ?? 'MASTER'}
         >
           {track?.name ?? 'MASTER'}
