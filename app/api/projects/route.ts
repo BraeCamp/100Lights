@@ -4,6 +4,7 @@ import { deleteObjects } from '@/lib/r2'
 import { getSubscription, getPlanLimits } from '@/lib/subscription'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 import { slugify } from '@/lib/slugify'
+import { ensureSharingSchema } from '@/lib/project-access'
 
 // Add slug + owner_username columns on first cold start (idempotent)
 let columnsReady = false
@@ -73,6 +74,26 @@ export async function GET() {
     ORDER BY ${starred ? sql`starred DESC,` : sql``} saved_at DESC
   `
 
+  // Projects shared WITH this user (they're a member but not the owner) — so a
+  // shared project is reachable from the app on every platform, not only via
+  // the raw link. Match by bound user_id OR the invite email.
+  const email = (await currentUser())?.primaryEmailAddress?.emailAddress?.toLowerCase() ?? null
+  async function sharedRows() {
+    await ensureSharingSchema()
+    return sql`
+      SELECT
+        p.id, p.name, p.saved_at, p.owner_username, m.role,
+        CASE WHEN jsonb_typeof(p.data->'clips') = 'array' THEN jsonb_array_length(p.data->'clips') ELSE 0 END AS clip_count,
+        CASE WHEN jsonb_typeof(p.data->'media') = 'array' THEN jsonb_array_length(p.data->'media') ELSE 0 END AS media_count,
+        CASE WHEN length(p.data->'media'->0->>'thumbnail') <= 262144 THEN p.data->'media'->0->>'thumbnail' ELSE NULL END AS thumbnail,
+        p.data->'modules' AS modules
+      FROM projects p
+      JOIN project_members m ON m.project_id = p.id
+      WHERE p.deleted_at IS NULL AND p.user_id <> ${userId}
+        AND ( m.user_id = ${userId} OR (${email}::text IS NOT NULL AND LOWER(m.email) = ${email}) )
+      ORDER BY p.saved_at DESC`
+  }
+
   try {
     let rows
     try {
@@ -80,16 +101,22 @@ export async function GET() {
     } catch {
       rows = await cols(false) // pre-migration: no starred column
     }
-    return Response.json(rows.map(r => ({
-      id:        r.id,
-      name:      r.name,
-      savedAt:   r.saved_at,
-      starred:   r.starred ?? false,
-      clips:     Number(r.clip_count) || 0,
-      media:     Number(r.media_count) || 0,
-      thumbnail: r.thumbnail ?? null,
-      modules:   Array.isArray(r.modules) ? r.modules : null,
-    })))
+    let shared: Awaited<ReturnType<typeof sharedRows>> = []
+    try { shared = await sharedRows() } catch { /* sharing schema not ready — skip */ }
+
+    const owned = rows.map(r => ({
+      id: r.id, name: r.name, savedAt: r.saved_at, starred: r.starred ?? false,
+      clips: Number(r.clip_count) || 0, media: Number(r.media_count) || 0,
+      thumbnail: r.thumbnail ?? null, modules: Array.isArray(r.modules) ? r.modules : null,
+      shared: false as const, role: null, owner: null,
+    }))
+    const sharedList = shared.map(r => ({
+      id: r.id, name: r.name, savedAt: r.saved_at, starred: false,
+      clips: Number(r.clip_count) || 0, media: Number(r.media_count) || 0,
+      thumbnail: r.thumbnail ?? null, modules: Array.isArray(r.modules) ? r.modules : null,
+      shared: true as const, role: (r.role as string) ?? 'view', owner: (r.owner_username as string) ?? null,
+    }))
+    return Response.json([...owned, ...sharedList])
   } catch (err) {
     console.error('[GET /api/projects] query failed for user', userId, err)
     return Response.json({ error: 'Failed to load projects' }, { status: 500 })

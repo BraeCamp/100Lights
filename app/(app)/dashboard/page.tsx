@@ -28,6 +28,9 @@ interface ProjectSummary {
   clips: number
   media: number
   thumbnail: string | null
+  shared?: boolean
+  role?: string | null
+  owner?: string | null
 }
 
 function formatDate(iso: string) {
@@ -210,7 +213,9 @@ export default function DashboardPage() {
   }, [ctxMenu])
 
   const firstName = user?.firstName ?? user?.username ?? null
-  const recentProjects = projects.slice(0, 6)
+  const ownedProjects = projects.filter(p => !p.shared)
+  const sharedProjects = projects.filter(p => p.shared)
+  const recentProjects = ownedProjects.slice(0, 6)
 
   return (
     <>
@@ -412,6 +417,33 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+
+        {/* ── Shared with me ── */}
+        {sharedProjects.length > 0 && (
+          <section style={{ marginTop: 52 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <Users size={13} color="var(--accent-light)" />
+              <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Shared with me</h2>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+              {sharedProjects.map(project => (
+                <Link key={project.id} href={`/projects/${project.id}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, border: '1px solid rgba(139,92,246,0.28)', background: 'var(--bg-card)', textDecoration: 'none' }}>
+                  <div style={{ width: 40, height: 28, borderRadius: 6, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--border)', overflow: 'hidden' }}>
+                    {project.thumbnail ? <img src={project.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : <AudioLines size={14} color="var(--text-secondary)" />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                      {project.owner ? `from ${project.owner}` : 'Shared'} · {project.role === 'owner' ? 'Co-owner' : project.role === 'edit' ? 'Can edit' : 'Can view'}
+                    </div>
+                  </div>
+                  <ArrowRight size={13} color="var(--accent-light)" style={{ flexShrink: 0 }} />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </main>
 

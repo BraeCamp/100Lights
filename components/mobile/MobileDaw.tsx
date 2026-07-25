@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import posthog from 'posthog-js'
-import { Menu, Home, FolderOpen, Plus, LayoutGrid, X } from 'lucide-react'
+import { Menu, Home, FolderOpen, Plus, LayoutGrid, X, Share2, Check, Copy } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { MobileDawProvider } from './MobileDawProvider'
 import { ForceMobileContext } from '@/lib/use-is-mobile'
@@ -84,6 +84,99 @@ export default function MobileDaw({ projectId }: { projectId?: string }) {
 
 function FullMsg({ children }: { children: React.ReactNode }) {
   return <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 24 }}>{children}</div>
+}
+
+// Mobile share sheet — link + visibility + invite, over /api/projects/:id/sharing.
+type ShareMember = { email: string; role: string }
+function MobileShareSheet({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private')
+  const [members, setMembers] = useState<ShareMember[]>([])
+  const [email, setEmail] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [canManage, setCanManage] = useState(true)
+  const link = typeof window !== 'undefined' ? `${window.location.origin}/projects/${projectId}` : ''
+
+  const load = useCallback(() => {
+    fetch(`/api/projects/${projectId}/sharing`).then(async r => {
+      if (r.status === 403) { setCanManage(false); return }
+      if (!r.ok) return
+      const d = await r.json()
+      setVisibility(d.visibility === 'public' ? 'public' : 'private')
+      setMembers(Array.isArray(d.members) ? d.members : [])
+    }).catch(() => {})
+  }, [projectId])
+  useEffect(() => { load() }, [load])
+
+  async function patch(body: Record<string, unknown>) {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch(`/api/projects/${projectId}/sharing`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b?.error || 'Failed') }
+      load()
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* ok */ } }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '86vh', overflowY: 'auto', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '18px 18px calc(20px + env(safe-area-inset-bottom))' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+          <strong style={{ fontSize: 16, flex: 1 }}>Share project</strong>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 22, cursor: 'pointer' }}>×</button>
+        </div>
+
+        {/* Copy link */}
+        <button onClick={copy} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 14px', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', marginBottom: 12 }}>
+          {copied ? <Check size={16} color="var(--accent-light)" /> : <Copy size={16} />}
+          <span style={{ flex: 1, textAlign: 'left', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{copied ? 'Link copied!' : link.replace(/^https?:\/\//, '')}</span>
+        </button>
+
+        {canManage ? (<>
+          {/* Visibility */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            {(['private', 'public'] as const).map(v => (
+              <button key={v} onClick={() => patch({ visibility: v })} disabled={busy}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, border: `1px solid ${visibility === v ? 'var(--accent)' : 'var(--border)'}`, background: visibility === v ? 'rgba(139,92,246,0.14)' : 'var(--bg-card)', color: visibility === v ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                {v === 'private' ? '🔒 Private' : '🌐 Anyone with link'}
+              </button>
+            ))}
+          </div>
+
+          {/* Invite */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="Invite by email"
+              style={{ flex: 1, boxSizing: 'border-box', fontSize: 13.5, padding: '11px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }} />
+            <button onClick={() => { if (email.trim()) { patch({ addEmail: email.trim() }); setEmail('') } }} disabled={busy || !email.trim()}
+              style={{ padding: '0 16px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 800, background: 'var(--accent)', color: '#fff', opacity: email.trim() ? 1 : 0.5 }}>Invite</button>
+          </div>
+          {err && <p style={{ fontSize: 11.5, color: '#f87171', margin: '0 0 10px' }}>{err}</p>}
+
+          {/* Members */}
+          {members.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {members.map(m => (
+                <div key={m.email} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 10, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                  <span style={{ flex: 1, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</span>
+                  <select value={m.role} onChange={e => patch({ setRole: { email: m.email, role: e.target.value } })}
+                    style={{ fontSize: 11.5, padding: '4px 6px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)' }}>
+                    <option value="view">Can view</option>
+                    <option value="edit">Can edit</option>
+                    <option value="owner">Co-owner</option>
+                  </select>
+                  <button onClick={() => patch({ removeEmail: m.email })} aria-label="Remove" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 16, cursor: 'pointer' }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '12px 0 0' }}>Editors and co-owners need their own Pro plan to make live edits. Invited people also see this project under <b style={{ color: 'var(--text-secondary)' }}>Shared with me</b> — on web, desktop, and the apps.</p>
+        </>) : (
+          <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Only the owner can change who can access this project. You can still copy the link above.</p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // One-time gesture hints — discoverability is the biggest touch-DAW battle.
@@ -181,6 +274,7 @@ function Shell({ projectId }: { projectId?: string }) {
   }, [setSelectedTrackId])
   const [drawer, setDrawer] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [savedId, setSavedId] = useState<string | null>(null)
   const [saveMsg, setSaveMsg] = useState('')
@@ -233,7 +327,10 @@ function Shell({ projectId }: { projectId?: string }) {
         <button onClick={() => setDrawer(true)} aria-label="Menu" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 9, border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}><Menu size={20} /></button>
         <strong style={{ fontSize: 13 }}>100Lights</strong>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>· {tab === 'sounds' ? 'Sounds' : tab === 'mix' ? 'Mixer' : tab === 'clips' ? 'Clips' : 'Studio'}</span>
-        <button onClick={() => void save()} disabled={saveState === 'saving'} style={{ marginLeft: 'auto', padding: '7px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+        {projectId && (
+          <button onClick={() => setShareOpen(true)} aria-label="Share" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}><Share2 size={17} /></button>
+        )}
+        <button onClick={() => void save()} disabled={saveState === 'saving'} style={{ marginLeft: projectId ? 8 : 'auto', padding: '7px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 800, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>{saveState === 'saving' ? 'Saving…' : 'Save'}</button>
       </header>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
@@ -271,6 +368,7 @@ function Shell({ projectId }: { projectId?: string }) {
 
       {/* Hamburger drawer */}
       {drawer && <SideDrawer onClose={() => setDrawer(false)} onOpenClips={() => { setTab('clips'); setDrawer(false) }} />}
+      {shareOpen && projectId && <MobileShareSheet projectId={projectId} onClose={() => setShareOpen(false)} />}
 
       <CoachMarks />
 
