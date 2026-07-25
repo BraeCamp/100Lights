@@ -10,7 +10,7 @@
  *    are never touched
  */
 
-const VERSION = 'v2'
+const VERSION = 'v3'
 const STATIC_CACHE = `100l-static-${VERSION}`
 const PAGE_CACHE = `100l-pages-${VERSION}`
 const ASSET_CACHE = `100l-assets-${VERSION}`
