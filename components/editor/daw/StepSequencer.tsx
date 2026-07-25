@@ -16,7 +16,7 @@ import { playInstrumentNote, preloadDrumInstrument } from '@/lib/daw-instruments
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import {
-  DRUM_LANES, STEP_BEATS, kitIdForInstrument, patternToNotes, notesToHits,
+  DRUM_LANES, STEP_BEATS, kitIdForInstrument, patternToNotes, notesToHits, generateGroove,
   getKits, getPatterns, addKit, addPattern, deleteKit, deletePattern,
   type DrumKit, type DrumPattern,
 } from '@/lib/drum-presets'
@@ -90,6 +90,19 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   const [patterns, setPatterns] = useState<DrumPattern[]>(() => getPatterns())
   const [patternSel, setPatternSel] = useState('')
   const lastDiceRef = useRef('')
+  const [smartOpen, setSmartOpen] = useState(false)
+  const [smart, setSmart] = useState({ d: 0.5, i: 0.6 })
+  function applyGroove(d: number, i: number) {
+    setSmart({ d, i })
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: generateGroove(d, i) } })
+  }
+  function handleSmart(e: React.PointerEvent) {
+    const r = e.currentTarget.getBoundingClientRect()
+    applyGroove(
+      Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height)),
+    )
+  }
   const refreshLibs = () => { setKits(getKits()); setPatterns(getPatterns()) }
 
   function applyKit(kitId: string) {
@@ -246,6 +259,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
           <button onClick={savePattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Save the current hits as a pattern">＋</button>
           {userPatternSelected && <button onClick={delPattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved pattern">🗑</button>}
           <button onClick={dicePattern} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 14, borderColor: 'var(--accent)', color: 'var(--accent-light)' }} title="Surprise me — drop in a random groove">🎲</button>
+          <button onClick={() => setSmartOpen(o => !o)} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 11, fontWeight: 700, borderColor: smartOpen ? 'var(--accent)' : 'var(--border)', color: smartOpen ? 'var(--accent-light)' : 'var(--text-muted)' }} title="Smart Drums — drag to sculpt density × loudness">Smart</button>
         </label>
 
         {/* Bars */}
@@ -261,6 +275,19 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
         <button onClick={() => setTall(t => !t)} style={{ ...miniBtn, width: 'auto', padding: '0 8px' }} title="Taller rows">{tall ? '▤' : '▥'}</button>
         <button onClick={() => setExpandedStepSeqClipId(null)} style={{ ...miniBtn, width: 'auto', padding: '0 8px' }} title="Close">✕</button>
       </div>
+
+      {smartOpen && (
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>SMART DRUMS — drag: → busier · ↑ louder</div>
+          <div onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ok */ } handleSmart(e) }} onPointerMove={e => { if (e.buttons) handleSmart(e) }}
+            style={{ position: 'relative', width: '100%', maxWidth: 300, height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(59,130,246,0.06))', touchAction: 'none', cursor: 'crosshair', margin: '0 auto' }}>
+            <span style={{ position: 'absolute', left: 8, bottom: 5, fontSize: 8, color: 'var(--text-muted)' }}>sparse</span>
+            <span style={{ position: 'absolute', right: 8, bottom: 5, fontSize: 8, color: 'var(--text-muted)' }}>busy</span>
+            <span style={{ position: 'absolute', left: 8, top: 5, fontSize: 8, color: 'var(--text-muted)' }}>loud</span>
+            <div style={{ position: 'absolute', left: `calc(${smart.d * 100}% - 10px)`, top: `calc(${(1 - smart.i) * 100}% - 10px)`, width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', border: '2px solid #fff', boxShadow: '0 0 12px rgba(139,92,246,0.7)', pointerEvents: 'none' }} />
+          </div>
+        </div>
+      )}
 
       {!isDrum && (
         <div style={{ padding: '6px 12px', fontSize: 10, color: '#f59e0b' }}>

@@ -164,6 +164,35 @@ export const DRUM_PATTERNS: DrumPattern[] = [
     hits: { kick: [0, 7, 10], snare: [8], closedHat: [0, 3, 6, 8, 11, 14] } },
 ]
 
+/** Smart-Drums groove: density (0=sparse…1=busy) × intensity (0=soft…1=loud)
+ *  → clip notes. Kick/snare/hats scale with density; velocity with intensity. */
+export function generateGroove(density: number, intensity: number): MidiNote[] {
+  const d = Math.max(0, Math.min(1, density)), i = Math.max(0, Math.min(1, intensity))
+  const kick = [0, 8]
+  if (d > 0.28) kick.push(4, 12)
+  if (d > 0.55) kick.push(10)
+  if (d > 0.78) kick.push(6, 14)
+  const snare = [4, 12]
+  if (d > 0.7) snare.push(7)
+  let hat: number[]
+  if (d < 0.3) hat = [0, 4, 8, 12]
+  else if (d < 0.62) hat = [0, 2, 4, 6, 8, 10, 12, 14]
+  else hat = [0, 1, 2, 3, 4, 6, 8, 10, 11, 12, 14, 15]
+  const hits: Record<string, number[]> = { kick: [...new Set(kick)], snare, closedHat: hat }
+  const vBase = 52 + i * 62
+  const notes: MidiNote[] = []
+  for (const key of Object.keys(hits)) {
+    const lane = laneByKey.get(key)
+    if (!lane) continue
+    for (const s of hits[key]) {
+      const accent = (s % 4 === 0) ? 12 : 0
+      notes.push({ id: crypto.randomUUID(), pitch: lane.pitch, startBeat: s * STEP_BEATS, durationBeats: STEP_BEATS,
+        velocity: Math.max(40, Math.min(127, Math.round(vBase + accent + (Math.random() - 0.5) * 14))) })
+    }
+  }
+  return notes
+}
+
 /** Materialise a pattern into fresh clip notes. */
 export function patternToNotes(p: DrumPattern): MidiNote[] {
   const notes: MidiNote[] = []
