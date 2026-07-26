@@ -261,8 +261,8 @@ export default async function AdminPage() {
           content: (
             <>
               <PanelIntro
-                title="Sound Library"
-                description="Upload samples, rename entries, change categories and folders, or delete anything. These are the same samples that appear in the editor's Sound Library panel. Stored in your browser's IndexedDB."
+                title="Sound Library (this device)"
+                description="Manage the sound library stored in THIS browser's IndexedDB — the samples the editor shows here. Upload, rename, re-folder, or delete your own additions; built-in catalog sounds (100L) are protected. Note: changes are local to this device and aren't pushed to users or your other machines."
               />
               <SoundLibraryPanel />
             </>

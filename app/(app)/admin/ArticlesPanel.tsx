@@ -518,6 +518,16 @@ export default function ArticlesPanel() {
     else setAudioFiles([])
   }
 
+  // Remove an uploaded (R2) audio orphan no article references anymore.
+  async function deleteAudioFile(f: AudioFile) {
+    if (!f.key) return
+    if (!window.confirm(`Delete "${f.name}" from storage? Any article still pointing at it will lose its audio.`)) return
+    const r = await fetch(`/api/admin/articles/audio?key=${encodeURIComponent(f.key)}`, { method: 'DELETE' }).catch(() => null)
+    if (!r?.ok) { setMsg(`Delete failed${r ? ` (${r.status})` : ''}.`); return }
+    setAudioFiles(prev => (prev ?? []).filter(x => x.key !== f.key))
+    setMsg('Audio file deleted ✓')
+  }
+
   async function searchSounds(q: string) {
     setSoundQuery(q)
     const r = await fetch(`/api/community?q=${encodeURIComponent(q)}&sort=new`).catch(() => null)
@@ -721,6 +731,13 @@ export default function ArticlesPanel() {
                           onClick={() => { void navigator.clipboard.writeText(f.url); setMsg(`Copied ${f.name} URL ✓`) }}
                           style={{ fontSize: 10.5, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
                         >Copy URL</button>
+                        {f.source === 'uploaded' && f.key && (
+                          <button
+                            onClick={() => void deleteAudioFile(f)}
+                            title="Delete this uploaded file from storage"
+                            style={{ fontSize: 10.5, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.4)', background: 'transparent', color: '#ef4444', cursor: 'pointer' }}
+                          >Delete</button>
+                        )}
                       </div>
                     </div>
                   ))}

@@ -57,3 +57,20 @@ export async function listObjects(prefix: string, maxKeys = 200) {
     .filter(o => o.Key && !o.Key.endsWith('/'))
     .map(o => ({ key: o.Key!, size: o.Size ?? 0, modified: o.LastModified?.toISOString() ?? null }))
 }
+
+/** Every object under a prefix, following pagination — so an admin asset list
+ *  doesn't silently stop at 200 keys once the prefix grows past one page. */
+export async function listAllObjects(prefix: string) {
+  const out: { key: string; size: number; modified: string | null }[] = []
+  let token: string | undefined
+  do {
+    const res = await client().send(new ListObjectsV2Command({
+      Bucket: BUCKET(), Prefix: prefix, MaxKeys: 1000, ContinuationToken: token,
+    }))
+    for (const o of res.Contents ?? []) {
+      if (o.Key && !o.Key.endsWith('/')) out.push({ key: o.Key, size: o.Size ?? 0, modified: o.LastModified?.toISOString() ?? null })
+    }
+    token = res.IsTruncated ? res.NextContinuationToken : undefined
+  } while (token)
+  return out
+}

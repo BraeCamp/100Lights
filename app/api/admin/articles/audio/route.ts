@@ -1,5 +1,5 @@
 import { isAdmin } from '@/lib/admin-auth'
-import { putObject } from '@/lib/r2'
+import { putObject, deleteObject } from '@/lib/r2'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -42,4 +42,20 @@ export async function POST(req: Request) {
     return Response.json({ error: `R2 upload failed: ${e instanceof Error ? e.message : 'unknown'}` }, { status: 502 })
   }
   return Response.json({ key, url: `/api/learn-audio?key=${encodeURIComponent(key)}` })
+}
+
+// DELETE /api/admin/articles/audio?key=learn-audio/… — remove an uploaded clip
+// (e.g. an orphan no article references anymore). Guarded to the servable prefix.
+export async function DELETE(req: Request) {
+  if (!await isAdmin()) return Response.json({ error: 'Not signed in as admin' }, { status: 401 })
+  const key = new URL(req.url).searchParams.get('key')
+  if (!key || !key.startsWith('learn-audio/') || key.includes('..')) {
+    return Response.json({ error: 'Invalid key' }, { status: 400 })
+  }
+  try {
+    await deleteObject(key)
+  } catch (e) {
+    return Response.json({ error: `Delete failed: ${e instanceof Error ? e.message : 'unknown'}` }, { status: 502 })
+  }
+  return Response.json({ ok: true })
 }

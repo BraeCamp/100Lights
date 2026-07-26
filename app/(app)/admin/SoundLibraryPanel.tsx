@@ -168,12 +168,14 @@ function EntryRow({ entry, folders, isPlaying, hasPrev, hasNext, onPlay, onPrev,
         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{entry.duration.toFixed(2)}s</span>
       </td>
 
-      {/* Delete */}
+      {/* Delete — built-in catalog sounds are protected */}
       <td style={{ padding: '5px 8px', width: 34 }}>
-        <button onClick={() => onDelete(entry.id)}
-          style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 4, padding: '3px 5px', cursor: 'pointer', color: '#ef4444', display: 'flex' }}>
-          <Trash2 size={10} />
-        </button>
+        {!isCatalog && (
+          <button onClick={() => onDelete(entry.id)}
+            style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 4, padding: '3px 5px', cursor: 'pointer', color: '#ef4444', display: 'flex' }}>
+            <Trash2 size={10} />
+          </button>
+        )}
       </td>
     </tr>
   )
@@ -326,15 +328,20 @@ export default function SoundLibraryPanel() {
   }
 
   async function deleteEntry(id: string) {
+    // Built-in catalog sounds re-seed themselves and are shared everywhere —
+    // don't let a stray delete wipe one from this device.
+    if (id.startsWith('100l_')) return
     if (!confirm('Delete this sample?')) return
     if (playingId === id) { audioRef.current?.pause(); setPlayingId(null) }
     await libraryDelete(id); await load()
   }
 
   async function clearAll() {
-    if (!confirm('Delete ALL sound library entries? This cannot be undone.')) return
+    const removable = entries.filter(e => !e.id.startsWith('100l_'))
+    if (removable.length === 0) { return }
+    if (!confirm(`Delete your ${removable.length} added sound${removable.length === 1 ? '' : 's'} from this device? Built-in catalog sounds are kept. This cannot be undone.`)) return
     audioRef.current?.pause(); setPlayingId(null)
-    for (const e of entries) await libraryDelete(e.id)
+    for (const e of removable) await libraryDelete(e.id)
     await load()
   }
 

@@ -1,7 +1,7 @@
 import { readdir, stat } from 'fs/promises'
 import path from 'path'
 import { isAdmin } from '@/lib/admin-auth'
-import { listObjects } from '@/lib/r2'
+import { listAllObjects } from '@/lib/r2'
 
 export const runtime = 'nodejs'
 
@@ -22,6 +22,8 @@ export interface AudioFile {
   url: string
   bytes: number
   source: 'repo' | 'uploaded'
+  /** R2 object key — present for uploaded files so the admin can delete them. */
+  key?: string
 }
 
 export async function GET() {
@@ -42,12 +44,13 @@ export async function GET() {
   } catch { /* directory may not exist — nothing to add */ }
 
   try {
-    for (const o of await listObjects('learn-audio/')) {
+    for (const o of await listAllObjects('learn-audio/')) {
       files.push({
         name: o.key.slice('learn-audio/'.length),
         url: `/api/learn-audio?key=${encodeURIComponent(o.key)}`,
         bytes: o.size,
         source: 'uploaded',
+        key: o.key,
       })
     }
   } catch {
