@@ -46,6 +46,8 @@ interface Detail {
 interface TimelineEvent { at: string; kind: string; label: string; detail?: string }
 interface NoteEntry { id: number; body: string; author: string; createdAt: string }
 interface TaskItem { id: number; userId: string; body: string; dueAt: string | null; doneAt: string | null; author: string; createdAt: string }
+interface SegCriteria { stage?: string | null; access?: string | null; minProjects?: number | null; savedWithinDays?: number | null; notSavedWithinDays?: number | null; tag?: string | null }
+interface SavedSegment { id: number; name: string; criteria: SegCriteria; count: number }
 
 const TL_COLOR: Record<string, string> = {
   signup: '#34d399', project: '#a78bfa', code: '#34d399', community: '#38bdf8',
@@ -76,6 +78,7 @@ const STAGE_META = [
 ] as const
 const stageMeta = (id: string) => STAGE_META.find(s => s.id === id)
 const healthColor = (h: number) => h >= 70 ? '#34d399' : h >= 40 ? '#fbbf24' : '#f87171'
+const selStyle: React.CSSProperties = { fontSize: 12, padding: '5px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }
 // Compact relative time, e.g. "3d ago", "2mo ago".
 function rel(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
@@ -117,6 +120,13 @@ export default function UsersPanel() {
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [stage, setStage] = useState('')
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({})
+  const [savedSegment, setSavedSegment] = useState('')
+  const [savedSegments, setSavedSegments] = useState<SavedSegment[]>([])
+  const [builderOpen, setBuilderOpen] = useState(false)
+  const [segName, setSegName] = useState('')
+  const [segCrit, setSegCrit] = useState<SegCriteria>({})
+  const [segPreview, setSegPreview] = useState<number | null>(null)
+  const [segSaving, setSegSaving] = useState(false)
   const [bulkDays, setBulkDays] = useState('30')
   const [bulkBusy, setBulkBusy] = useState(false)
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
@@ -139,10 +149,10 @@ export default function UsersPanel() {
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
-  const load = useCallback(async (query: string, pg: number, seg = 'all', stg = '') => {
+  const load = useCallback(async (query: string, pg: number, seg = 'all', stg = '', saved = '') => {
     setLoading(true); setFetchErr(null)
     try {
-      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&page=${pg}&segment=${seg}&stage=${stg}`)
+      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&page=${pg}&segment=${seg}&stage=${stg}&savedSegment=${saved}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { users: UserRow[]; hasMore: boolean; searched: boolean }
       setUsers(data.users); setHasMore(!!data.hasMore); setSearched(!!data.searched)
@@ -153,19 +163,59 @@ export default function UsersPanel() {
 
   useEffect(() => { void load('', 0, 'all') }, [load])
 
-  // Live segment + lifecycle counts for the chips / pipeline.
+  const loadSavedSegments = useCallback(() => {
+    fetch('/api/admin/segments').then(r => r.ok ? r.json() : null).then(d => { if (d?.segments) setSavedSegments(d.segments) }).catch(() => {})
+  }, [])
+
+  // Live segment + lifecycle counts for the chips / pipeline, plus saved segments.
   useEffect(() => {
     fetch('/api/admin/users/segments').then(r => r.ok ? r.json() : null).then(d => { if (d?.counts) setCounts(d.counts) }).catch(() => {})
     fetch('/api/admin/lifecycle').then(r => r.ok ? r.json() : null).then(d => { if (d?.counts) setStageCounts(d.counts) }).catch(() => {})
-  }, [])
+    loadSavedSegments()
+  }, [loadSavedSegments])
 
   function pickSegment(seg: string) {
-    setSegment(seg); setStage(''); setQ(''); setPage(0); void load('', 0, seg, '')
+    setSegment(seg); setStage(''); setSavedSegment(''); setQ(''); setPage(0); void load('', 0, seg, '', '')
   }
 
   function pickStage(stg: string) {
     const next = stage === stg ? '' : stg  // click active stage to clear
-    setStage(next); setSegment('all'); setQ(''); setPage(0); void load('', 0, 'all', next)
+    setStage(next); setSegment('all'); setSavedSegment(''); setQ(''); setPage(0); void load('', 0, 'all', next, '')
+  }
+
+  function pickSavedSegment(id: string) {
+    const next = savedSegment === id ? '' : id
+    setSavedSegment(next); setSegment('all'); setStage(''); setQ(''); setPage(0); void load('', 0, 'all', '', next)
+  }
+
+  async function deleteSavedSegment(id: number) {
+    if (!window.confirm('Delete this saved segment?')) return
+    await fetch(`/api/admin/segments/${id}`, { method: 'DELETE' }).catch(() => {})
+    if (savedSegment === String(id)) pickSavedSegment(String(id))  // clears it
+    loadSavedSegments()
+  }
+
+  // Live preview of how many users match the builder criteria (debounced).
+  useEffect(() => {
+    if (!builderOpen) return
+    const t = setTimeout(() => {
+      fetch('/api/admin/segments?preview=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ criteria: segCrit }) })
+        .then(r => r.ok ? r.json() : null).then(d => setSegPreview(d?.count ?? null)).catch(() => setSegPreview(null))
+    }, 350)
+    return () => clearTimeout(t)
+  }, [segCrit, builderOpen])
+
+  async function saveSegment() {
+    if (!segName.trim()) { showToast('Name the segment'); return }
+    setSegSaving(true)
+    try {
+      const r = await fetch('/api/admin/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: segName.trim(), criteria: segCrit }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setBuilderOpen(false); setSegName(''); setSegCrit({}); setSegPreview(null)
+      loadSavedSegments()
+      pickSavedSegment(String(d.segment.id))
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Save failed') } finally { setSegSaving(false) }
   }
 
   async function bulkGift() {
@@ -182,7 +232,7 @@ export default function UsersPanel() {
       showToast(`Gifted ${days}d to ${d.count} user${d.count === 1 ? '' : 's'}${d.capped ? ' (hit the 200 cap)' : ''} ✓`)
       // refresh counts + list — comped/at-risk membership just shifted
       fetch('/api/admin/users/segments').then(x => x.ok ? x.json() : null).then(dd => { if (dd?.counts) setCounts(dd.counts) }).catch(() => {})
-      await load('', 0, segment, stage)
+      await load('', 0, segment, stage, savedSegment)
     } catch (e) { showToast(e instanceof Error ? e.message : 'Bulk gift failed') } finally { setBulkBusy(false) }
   }
 
@@ -204,7 +254,7 @@ export default function UsersPanel() {
   useEffect(() => {
     const term = q.trim()
     if (!term) return
-    const t = setTimeout(() => { setSegment('all'); setStage(''); setPage(0); void load(term, 0, 'all', '') }, 300)
+    const t = setTimeout(() => { setSegment('all'); setStage(''); setSavedSegment(''); setPage(0); void load(term, 0, 'all', '', '') }, 300)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q])
@@ -348,14 +398,14 @@ export default function UsersPanel() {
             placeholder="Search by email, name, or user ID…"
             style={{ width: '100%', fontSize: 13, padding: '8px 30px 8px 32px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
           />
-          {q && <button onClick={() => { setQ(''); void load('', 0, segment, stage) }} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>}
+          {q && <button onClick={() => { setQ(''); void load('', 0, segment, stage, savedSegment) }} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>}
         </div>
         {!searched && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            <button onClick={() => { const p = Math.max(0, page - 1); setPage(p); void load('', p, segment, stage) }} disabled={page === 0 || loading}
+            <button onClick={() => { const p = Math.max(0, page - 1); setPage(p); void load('', p, segment, stage, savedSegment) }} disabled={page === 0 || loading}
               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: page === 0 ? 'default' : 'pointer', opacity: page === 0 ? 0.5 : 1 }}>‹ Prev</button>
             <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 48, textAlign: 'center' }}>Page {page + 1}</span>
-            <button onClick={() => { const p = page + 1; setPage(p); void load('', p, segment, stage) }} disabled={!hasMore || loading}
+            <button onClick={() => { const p = page + 1; setPage(p); void load('', p, segment, stage, savedSegment) }} disabled={!hasMore || loading}
               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: hasMore ? 'pointer' : 'default', opacity: hasMore ? 1 : 0.5 }}>Next ›</button>
           </div>
         )}
@@ -424,6 +474,77 @@ export default function UsersPanel() {
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* Smart segments — saved, reusable criteria filters */}
+      {!searched && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', color: 'var(--text-muted)' }}>SMART SEGMENTS</span>
+            {savedSegments.map(sg => {
+              const active = savedSegment === String(sg.id)
+              return (
+                <span key={sg.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 99, border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent', paddingRight: 4 }}>
+                  <button onClick={() => pickSavedSegment(String(sg.id))}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 4px 4px 10px', background: 'none', border: 'none', cursor: 'pointer', color: active ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                    {sg.name} <span style={{ opacity: 0.7 }}>{sg.count}</span>
+                  </button>
+                  <button onClick={() => void deleteSavedSegment(sg.id)} title="Delete segment" aria-label="Delete segment"
+                    style={{ display: 'flex', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px' }}><X size={11} /></button>
+                </span>
+              )
+            })}
+            <button onClick={() => { setBuilderOpen(o => !o); setSegPreview(null) }}
+              style={{ fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 99, cursor: 'pointer', border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>
+              {builderOpen ? '× Cancel' : '+ New segment'}
+            </button>
+          </div>
+
+          {builderOpen && (
+            <div style={{ padding: 12, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input value={segName} onChange={e => setSegName(e.target.value)} placeholder="Segment name (e.g. Free power users)"
+                  style={{ flex: '1 1 200px', fontSize: 12.5, padding: '6px 10px', borderRadius: 7, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{segPreview == null ? 'matches: …' : <><b style={{ color: 'var(--text-primary)' }}>{segPreview}</b> match{segPreview === 1 ? '' : 'es'}</>}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>Stage
+                  <select value={segCrit.stage ?? ''} onChange={e => setSegCrit(c => ({ ...c, stage: e.target.value || null }))} style={selStyle}>
+                    <option value="">Any</option>
+                    {STAGE_META.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>Access
+                  <select value={segCrit.access ?? ''} onChange={e => setSegCrit(c => ({ ...c, access: e.target.value || null }))} style={selStyle}>
+                    <option value="">Any</option>
+                    <option value="paying">Paying</option>
+                    <option value="comped">Comped</option>
+                    <option value="free">Free</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>Min projects
+                  <input type="number" min={0} value={segCrit.minProjects ?? ''} onChange={e => setSegCrit(c => ({ ...c, minProjects: e.target.value ? Number(e.target.value) : null }))} style={{ ...selStyle, width: 80 }} />
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>Active within (days)
+                  <input type="number" min={1} value={segCrit.savedWithinDays ?? ''} onChange={e => setSegCrit(c => ({ ...c, savedWithinDays: e.target.value ? Number(e.target.value) : null }))} style={{ ...selStyle, width: 100 }} />
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>Quiet for ≥ (days)
+                  <input type="number" min={1} value={segCrit.notSavedWithinDays ?? ''} onChange={e => setSegCrit(c => ({ ...c, notSavedWithinDays: e.target.value ? Number(e.target.value) : null }))} style={{ ...selStyle, width: 100 }} />
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>Has tag
+                  <input value={segCrit.tag ?? ''} onChange={e => setSegCrit(c => ({ ...c, tag: e.target.value || null }))} placeholder="e.g. VIP" style={{ ...selStyle, width: 110 }} />
+                </label>
+              </div>
+              <div>
+                <button onClick={() => void saveSegment()} disabled={segSaving || !segName.trim()}
+                  style={{ fontSize: 12, fontWeight: 700, padding: '6px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: segSaving || !segName.trim() ? 0.5 : 1 }}>
+                  {segSaving ? 'Saving…' : 'Save segment'}
+                </button>
+                <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginLeft: 10 }}>Leave a field blank to ignore it. Combine any of them.</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

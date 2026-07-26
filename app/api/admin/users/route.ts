@@ -2,6 +2,7 @@ import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
 import { LIFECYCLE_CTE, STAGE_CASE, STAGES } from '@/lib/lifecycle'
+import { getSegment, segmentPageRows } from '@/lib/saved-segments'
 
 export const runtime = 'nodejs'
 
@@ -16,6 +17,7 @@ export async function GET(req: Request) {
   const q = url.searchParams.get('q')?.trim() ?? ''
   const segment = url.searchParams.get('segment') ?? 'all'
   const stage = url.searchParams.get('stage') ?? ''
+  const savedSegment = url.searchParams.get('savedSegment') ?? ''
   const page = Math.max(0, parseInt(url.searchParams.get('page') ?? '0', 10) || 0)
 
   let idOrder: string[] = []
@@ -37,7 +39,11 @@ export async function GET(req: Request) {
     // Segment filter (or the plain recent list). A single CASE keeps the
     // predicate parameterized — no conditional SQL fragments.
     let rows: Record<string, unknown>[] = []
-    if (STAGE_IDS.includes(stage)) {
+    if (savedSegment) {
+      // Saved smart segment — load its criteria and filter by it.
+      const seg = await getSegment(Number(savedSegment))
+      rows = seg ? await segmentPageRows(seg.criteria, PAGE + 1, page * PAGE) : []
+    } else if (STAGE_IDS.includes(stage)) {
       // Lifecycle-stage filter — reuses the shared CTE + stage expression.
       try {
         rows = await sql`
@@ -122,5 +128,5 @@ export async function GET(req: Request) {
     }
   })
 
-  return Response.json({ users, page, hasMore, searched: !!q, segment, stage })
+  return Response.json({ users, page, hasMore, searched: !!q, segment, stage, savedSegment })
 }
