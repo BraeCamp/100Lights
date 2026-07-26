@@ -277,6 +277,7 @@ export default async function AdminPage() {
       subtabs: [
         {
           id: 'brief',
+          group: 'Business',
           label: 'Daily Brief',
           content: (
             <>
@@ -290,6 +291,7 @@ export default async function AdminPage() {
         },
         {
           id: 'overview',
+          group: 'Business',
           label: 'Overview',
           content: (
             <>
@@ -344,6 +346,7 @@ export default async function AdminPage() {
         },
         {
           id: 'users',
+          group: 'People',
           label: 'Users',
           content: (
             <>
@@ -354,6 +357,7 @@ export default async function AdminPage() {
         },
         {
           id: 'revenue',
+          group: 'Business',
           label: 'Revenue',
           content: (
             <>
@@ -404,20 +408,8 @@ export default async function AdminPage() {
           ),
         },
         {
-          id: 'visibility',
-          label: 'Module Visibility',
-          content: (
-            <>
-              <PanelIntro
-                title="Module Visibility"
-                description="Control which modules are live for all users. Hidden modules disappear from the launcher, dashboard sidebar, and the new-project page — use this to ship modules one at a time."
-              />
-              <PlatformFlagsPanel initial={flags} />
-            </>
-          ),
-        },
-        {
           id: 'announcements',
+          group: 'Content & comms',
           label: 'Announcements',
           content: (
             <>
@@ -431,6 +423,7 @@ export default async function AdminPage() {
         },
         {
           id: 'articles',
+          group: 'Content & comms',
           label: 'Articles',
           content: (
             <>
@@ -444,6 +437,7 @@ export default async function AdminPage() {
         },
         {
           id: 'codes',
+          group: 'People',
           label: 'Codes',
           content: (
             <>
@@ -457,6 +451,7 @@ export default async function AdminPage() {
         },
         {
           id: 'feedback',
+          group: 'Content & comms',
           label: 'Feedback',
           content: (
             <>
@@ -470,6 +465,7 @@ export default async function AdminPage() {
         },
         {
           id: 'community-moderation',
+          group: 'Content & comms',
           label: 'Community',
           content: (
             <>
@@ -482,7 +478,22 @@ export default async function AdminPage() {
           ),
         },
         {
+          id: 'visibility',
+          group: 'System',
+          label: 'Module Visibility',
+          content: (
+            <>
+              <PanelIntro
+                title="Module Visibility"
+                description="Control which modules are live for all users. Hidden modules disappear from the launcher, dashboard sidebar, and the new-project page — use this to ship modules one at a time."
+              />
+              <PlatformFlagsPanel initial={flags} />
+            </>
+          ),
+        },
+        {
           id: 'status',
+          group: 'System',
           label: 'Status',
           content: (
             <>
@@ -496,6 +507,7 @@ export default async function AdminPage() {
         },
         {
           id: 'webhooks',
+          group: 'System',
           label: 'Webhooks',
           content: (
             <>
@@ -509,6 +521,7 @@ export default async function AdminPage() {
         },
         {
           id: 'storage',
+          group: 'System',
           label: 'Storage',
           content: (
             <>
@@ -522,6 +535,7 @@ export default async function AdminPage() {
         },
         {
           id: 'audit',
+          group: 'System',
           label: 'Audit Log',
           content: (
             <>
@@ -535,6 +549,7 @@ export default async function AdminPage() {
         },
         {
           id: 'links',
+          group: 'System',
           label: 'Quick Links',
           content: (
             <>
@@ -643,23 +658,36 @@ export default async function AdminPage() {
     },
   ]
 
+  // Live attention counts surfaced directly in the sidebar nav, so what needs
+  // you is visible without opening Overview first.
+  const badges = {
+    feedback: ops.openFeedback,
+    'community-moderation': ops.reportedItems + ops.reportedComments,
+    revenue: revenue.dunning.length,
+  }
+
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="p-8 max-w-5xl">
+      <div className="p-8 max-w-6xl">
 
         {/* Page title */}
-        <div className="mb-8">
+        <div className="mb-6">
           <div className="flex items-center gap-2 mb-1">
             <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Admin</h1>
             <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.3)' }}>
               Dev only
             </span>
+            {needs > 0 && (
+              <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.35)' }}>
+                {needs} need{needs === 1 ? 's' : ''} you
+              </span>
+            )}
             <span className="text-xs" style={{ color: 'var(--text-muted)', marginLeft: 4 }}>Press <kbd style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', fontSize: 11 }}>⌘K</kbd> to search</span>
             <AdminLogout />
           </div>
         </div>
 
-        <AdminTabs tabs={tabs} />
+        <AdminTabs tabs={tabs} badges={badges} />
 
       </div>
     </div>

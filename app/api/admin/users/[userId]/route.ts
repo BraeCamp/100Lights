@@ -31,7 +31,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
     safe(sql`SELECT plan, status, stripe_customer_id, stripe_sub_id, current_period_end, gift_plan, gift_until, updated_at, created_at
         FROM subscriptions WHERE user_id = ${userId}`, []),
     safe(sql`SELECT code, kind, grant_days, grant_until, redeemed_at FROM code_redemptions WHERE user_id = ${userId} ORDER BY redeemed_at DESC`, []),
-    safe<{ n: number }>(sql`SELECT COUNT(*)::int AS n FROM projects WHERE user_id = ${userId} AND deleted_at IS NULL`, [{ n: 0 }]),
+    safe<{ n: number; last_saved: string | null }>(sql`SELECT COUNT(*)::int AS n, MAX(saved_at) AS last_saved FROM projects WHERE user_id = ${userId} AND deleted_at IS NULL`, [{ n: 0, last_saved: null }]),
     safe<{ n: number }>(sql`SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = ${userId} AND removed_at IS NULL`, [{ n: 0 }]),
     (async () => {
       try { const u = await (await clerkClient()).users.getUser(userId); return u.emailAddresses?.[0]?.emailAddress ?? '' }
@@ -47,7 +47,34 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
     .filter(d => d > now)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? null
 
+  // "At risk" explanation — mirrors the atrisk segment predicate (a Pro account
+  // that's gone quiet) plus payment/dunning risk, and puts the *reason* in
+  // words so the admin doesn't have to reverse-engineer the flag.
+  const lastSavedRaw = (projects as { last_saved: string | null }[])[0]?.last_saved ?? null
+  const lastSaved = lastSavedRaw ? new Date(lastSavedRaw) : null
+  const giftPlanVal = s?.gift_plan ? String(s.gift_plan) : null
+  const giftUntilVal = s?.gift_until ? new Date(String(s.gift_until)) : null
+  const paying = !!s && String(s.plan) === 'pro' && String(s.status) === 'active' && !!s.stripe_sub_id
+  const gifted = giftPlanVal === 'pro' && (giftUntilVal === null || giftUntilVal > now)
+  const coded = !!codeUntil
+  const hasPro = paying || gifted || coded
+  const status = s ? String(s.status) : 'none'
+  const paymentRisk = !!s && !!s.stripe_sub_id && status !== 'active' && status !== 'trialing' && status !== 'none'
+  const daysSinceSave = lastSaved ? Math.floor((now.getTime() - lastSaved.getTime()) / 86_400_000) : null
+  const engagementRisk = hasPro && (lastSaved === null || (daysSinceSave ?? 0) >= 30)
+
+  const source = paying ? 'a paying subscription' : gifted ? 'an admin gift' : coded ? 'a redeemed code' : 'Pro'
+  const reasons: string[] = []
+  if (paymentRisk) reasons.push(`Their Stripe subscription is "${status}" — the payment is failing or the plan is lapsing.`)
+  if (engagementRisk) {
+    reasons.push(lastSaved === null
+      ? `They have Pro (${source}) but have never saved a project — they aren't using what they're paying for.`
+      : `They have Pro (${source}) but haven't saved a project in ${daysSinceSave} days (last on ${lastSaved.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}) — likely to churn.`)
+  }
+  const risk = { atRisk: reasons.length > 0, reasons, lastSaved: lastSaved?.toISOString() ?? null, daysSinceSave }
+
   return Response.json({
+    risk,
     userId,
     email,
     hasRecord: !!s,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, X, ChevronRight, ExternalLink } from 'lucide-react'
+import { Search, X, ChevronRight, ExternalLink, AlertTriangle } from 'lucide-react'
 
 interface UserRow {
   userId: string
@@ -35,6 +35,7 @@ interface Detail {
   communityCount: number
   note: string
   tags: string[]
+  risk: { atRisk: boolean; reasons: string[]; lastSaved: string | null; daysSinceSave: number | null }
 }
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -322,10 +323,25 @@ export default function UsersPanel() {
 
             {!detail ? <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 14 }}>Loading…</p> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+                {/* Why this account is At Risk — spelled out, not just a flag */}
+                {detail.risk?.atRisk && (
+                  <div style={{ borderRadius: 10, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)', padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <AlertTriangle size={13} style={{ color: '#f59e0b' }} />
+                      <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.04em', color: '#f59e0b' }}>WHY THIS USER IS AT RISK</span>
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {detail.risk.reasons.map((r, i) => (
+                        <li key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <Field label="Effective plan" value={detailUser.effectivePlan} accent={detailUser.effectivePlan === 'pro'} />
                   <Field label="Stripe status" value={detail.subscription?.status ?? 'no record'} />
                   <Field label="Projects" value={String(detail.projectCount)} />
+                  <Field label="Last saved" value={detail.risk?.lastSaved ? `${fmt(detail.risk.lastSaved)}${detail.risk.daysSinceSave != null ? ` · ${detail.risk.daysSinceSave}d ago` : ''}` : 'never'} warn={!!detail.risk?.atRisk && (detail.risk?.lastSaved === null || (detail.risk?.daysSinceSave ?? 0) >= 30)} />
                   <Field label="Community shares" value={String(detail.communityCount)} />
                   {detail.subscription?.currentPeriodEnd && <Field label="Renews / ends" value={fmt(detail.subscription.currentPeriodEnd)} />}
                   {detail.subscription?.createdAt && <Field label="Signed up" value={fmt(detail.subscription.createdAt)} />}
@@ -434,11 +450,11 @@ export default function UsersPanel() {
   )
 }
 
-function Field({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Field({ label, value, accent, warn }: { label: string; value: string; accent?: boolean; warn?: boolean }) {
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px' }}>
+    <div style={{ background: 'var(--bg-card)', border: `1px solid ${warn ? 'rgba(245,158,11,0.4)' : 'var(--border)'}`, borderRadius: 8, padding: '7px 10px' }}>
       <div style={{ fontSize: 9.5, color: 'var(--text-muted)', letterSpacing: '0.03em', textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: accent ? 'var(--accent-light)' : 'var(--text-primary)' }}>{value}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: warn ? '#f59e0b' : accent ? 'var(--accent-light)' : 'var(--text-primary)' }}>{value}</div>
     </div>
   )
 }
