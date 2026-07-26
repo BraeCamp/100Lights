@@ -49,6 +49,8 @@ export default function UsersPanel() {
   const [searched, setSearched] = useState(false)
   const [segment, setSegment] = useState('all')
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [bulkDays, setBulkDays] = useState('30')
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
   const [showCustom, setShowCustom] = useState(false)
   const [customDays, setCustomDays] = useState('')
@@ -82,6 +84,24 @@ export default function UsersPanel() {
 
   function pickSegment(seg: string) {
     setSegment(seg); setQ(''); setPage(0); void load('', 0, seg)
+  }
+
+  async function bulkGift() {
+    const n = counts[segment] ?? 0
+    const days = parseInt(bulkDays, 10)
+    if (!(days > 0)) { showToast('Enter a valid number of days'); return }
+    if (n === 0) { showToast('No users in this segment'); return }
+    if (!window.confirm(`Gift ${days} days of Pro to all ${n} “${segment}” user${n === 1 ? '' : 's'}? (capped at 200 per action)`)) return
+    setBulkBusy(true)
+    try {
+      const r = await fetch('/api/admin/gift/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segment, days }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      showToast(`Gifted ${days}d to ${d.count} user${d.count === 1 ? '' : 's'}${d.capped ? ' (hit the 200 cap)' : ''} ✓`)
+      // refresh counts + list — comped/at-risk membership just shifted
+      fetch('/api/admin/users/segments').then(x => x.ok ? x.json() : null).then(dd => { if (dd?.counts) setCounts(dd.counts) }).catch(() => {})
+      await load('', 0, segment)
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Bulk gift failed') } finally { setBulkBusy(false) }
   }
 
   // The ⌘K command palette can hand us a user to open directly — via a live
@@ -208,6 +228,21 @@ export default function UsersPanel() {
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* Bulk gift to the active segment */}
+      {!searched && segment !== 'all' && (counts[segment] ?? 0) > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(124,58,237,0.35)', background: 'rgba(124,58,237,0.06)' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Gift Pro to all <b style={{ color: 'var(--text-primary)' }}>{counts[segment]}</b> “{segment}” users —</span>
+          <input type="number" min={1} value={bulkDays} onChange={e => setBulkDays(e.target.value)}
+            style={{ width: 62, fontSize: 12, padding: '4px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>days</span>
+          <button onClick={() => void bulkGift()} disabled={bulkBusy}
+            style={{ fontSize: 12, fontWeight: 700, padding: '5px 13px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: bulkBusy ? 0.6 : 1 }}>
+            {bulkBusy ? 'Gifting…' : `🎁 Gift ${counts[segment]}`}
+          </button>
+          <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>capped at 200 · logged</span>
         </div>
       )}
 
