@@ -67,6 +67,12 @@ export async function segmentPageRows(c: SegmentCriteria, limit: number, offset:
   } catch { return [] }
 }
 
+// Matching user_ids up to a cap — for bulk actions on a segment.
+export async function segmentUserIds(c: SegmentCriteria, cap: number): Promise<string[]> {
+  const rows = await segmentPageRows(c, cap, 0)
+  return rows.map(r => String(r.user_id))
+}
+
 export async function segmentCount(c: SegmentCriteria): Promise<number> {
   const p = norm(c)
   try {

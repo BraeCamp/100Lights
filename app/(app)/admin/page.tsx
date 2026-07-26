@@ -19,6 +19,7 @@ import AnnouncementsPanel from './AnnouncementsPanel'
 import DigestPanel from './DigestPanel'
 import GrowthPanel from './GrowthPanel'
 import ArticleProjectsPanel from './ArticleProjectsPanel'
+import TasksInboxPanel from './TasksInboxPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -448,6 +449,20 @@ export default async function AdminPage() {
                 description="The editorial desk for 100lights.com/learn. Edit anything, publish instantly with the toggle, or generate a new draft — repo-based drafts (written by Claude in dev sessions) appear here too and become editable database copies when saved."
               />
               <ArticlesPanel />
+            </>
+          ),
+        },
+        {
+          id: 'tasks',
+          group: 'People',
+          label: 'Follow-ups',
+          content: (
+            <>
+              <PanelIntro
+                title="Follow-ups"
+                description="Every open follow-up across all accounts — your CRM work queue, grouped by overdue / today / upcoming. Add them from a user's record; check them off here."
+              />
+              <TasksInboxPanel />
             </>
           ),
         },

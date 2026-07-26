@@ -109,6 +109,15 @@ export async function deleteTask(userId: string, id: number): Promise<void> {
   await sql`DELETE FROM user_tasks WHERE id = ${id} AND user_id = ${userId}`
 }
 
+// Every open task across all accounts, soonest due first — the tasks inbox.
+export async function allOpenTasks(limit = 200): Promise<Task[]> {
+  await ensureTasks()
+  const rows = await safe(sql`
+    SELECT id, user_id, body, due_at, done_at, author, created_at FROM user_tasks
+    WHERE done_at IS NULL ORDER BY due_at NULLS LAST, created_at DESC LIMIT ${limit}`, [] as Record<string, unknown>[])
+  return rows.map(asTask)
+}
+
 // Open, dated tasks that are overdue or due within ~36h — for the Daily Brief.
 export async function dueTasks(limit = 25): Promise<DueTask[]> {
   await ensureTasks()

@@ -1,7 +1,7 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
-import { LIFECYCLE_CTE, STAGE_CASE, STAGES } from '@/lib/lifecycle'
+import { LIFECYCLE_CTE, STAGE_CASE, STAGES, healthOf } from '@/lib/lifecycle'
 import { getSegment, segmentPageRows } from '@/lib/saved-segments'
 
 export const runtime = 'nodejs'
@@ -104,6 +104,33 @@ export async function GET(req: Request) {
     } catch { /* no code table yet */ }
   }
 
+  // Per-row lifecycle stage + 0–100 health, so the table triages at a glance.
+  const lc = new Map<string, { stage: string; health: number }>()
+  if (idOrder.length > 0) {
+    try {
+      const nowMs = Date.now()
+      const rows = await sql`
+        WITH ${LIFECYCLE_CTE}, staged AS (SELECT base.*, ${STAGE_CASE} AS stage FROM base)
+        SELECT user_id, stage, paying, gifted, coded, pc, last_saved, cc, status, stripe_sub_id, created_at
+        FROM staged WHERE user_id = ANY(${idOrder}::text[])`
+      for (const r of rows) {
+        const lastSaved = r.last_saved ? new Date(String(r.last_saved)).getTime() : null
+        const created = r.created_at ? new Date(String(r.created_at)).getTime() : nowMs
+        const st = String(r.status)
+        const health = healthOf({
+          paying: !!r.paying, gifted: !!r.gifted, coded: !!r.coded,
+          hasStripeSub: !!r.stripe_sub_id,
+          statusHealthy: st === 'active' || st === 'trialing' || st === 'none',
+          projectCount: Number(r.pc ?? 0),
+          lastSavedDays: lastSaved ? Math.floor((nowMs - lastSaved) / 86_400_000) : null,
+          signupDays: Math.floor((nowMs - created) / 86_400_000),
+          communityCount: Number(r.cc ?? 0),
+        })
+        lc.set(String(r.user_id), { stage: String(r.stage), health })
+      }
+    } catch { /* enrichment is best-effort */ }
+  }
+
   const now = new Date()
   const users = idOrder.map((id, i) => {
     const r = subRows[i]
@@ -113,6 +140,7 @@ export async function GET(req: Request) {
     const codeUntil = codeMap.get(id) ?? null
     const stripePlan = r ? String(r.plan) : 'free'
     const effectivePlan = hasActiveGift ? giftPlan : (codeUntil ? 'pro' : stripePlan)
+    const life = lc.get(id)
     return {
       userId: id,
       email: emailMap.get(id) ?? '',
@@ -125,6 +153,8 @@ export async function GET(req: Request) {
       status: r ? String(r.status) : 'none',
       updatedAt: r?.updated_at ? String(r.updated_at) : '',
       hasRecord: !!r,
+      stage: life?.stage ?? null,
+      health: life?.health ?? null,
     }
   })
 

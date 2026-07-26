@@ -15,6 +15,8 @@ interface UserRow {
   status: string
   updatedAt: string
   hasRecord?: boolean
+  stage?: string | null
+  health?: number | null
 }
 
 interface CtxMenu { x: number; y: number; user: UserRow }
@@ -135,6 +137,7 @@ export default function UsersPanel() {
   const [toast, setToast] = useState<string | null>(null)
   const [detailUser, setDetailUser] = useState<UserRow | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  const [detailTab, setDetailTab] = useState<'overview' | 'timeline' | 'notes' | 'contact'>('overview')
   const [noteDraft, setNoteDraft] = useState('')
   const [tagsDraft, setTagsDraft] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
@@ -219,19 +222,23 @@ export default function UsersPanel() {
   }
 
   async function bulkGift() {
-    const n = counts[segment] ?? 0
     const days = parseInt(bulkDays, 10)
     if (!(days > 0)) { showToast('Enter a valid number of days'); return }
+    const activeSaved = savedSegment ? savedSegments.find(s => String(s.id) === savedSegment) : null
+    const n = activeSaved ? activeSaved.count : (counts[segment] ?? 0)
+    const label = activeSaved ? activeSaved.name : segment
     if (n === 0) { showToast('No users in this segment'); return }
-    if (!window.confirm(`Gift ${days} days of Pro to all ${n} “${segment}” user${n === 1 ? '' : 's'}? (capped at 200 per action)`)) return
+    if (!window.confirm(`Gift ${days} days of Pro to all ${n} “${label}” user${n === 1 ? '' : 's'}? (capped at 200 per action)`)) return
     setBulkBusy(true)
     try {
-      const r = await fetch('/api/admin/gift/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segment, days }) })
+      const body = activeSaved ? { savedSegment: activeSaved.id, days } : { segment, days }
+      const r = await fetch('/api/admin/gift/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       showToast(`Gifted ${days}d to ${d.count} user${d.count === 1 ? '' : 's'}${d.capped ? ' (hit the 200 cap)' : ''} ✓`)
       // refresh counts + list — comped/at-risk membership just shifted
       fetch('/api/admin/users/segments').then(x => x.ok ? x.json() : null).then(dd => { if (dd?.counts) setCounts(dd.counts) }).catch(() => {})
+      loadSavedSegments()
       await load('', 0, segment, stage, savedSegment)
     } catch (e) { showToast(e instanceof Error ? e.message : 'Bulk gift failed') } finally { setBulkBusy(false) }
   }
@@ -288,7 +295,7 @@ export default function UsersPanel() {
   }
 
   async function openDetail(u: UserRow) {
-    setDetailUser(u); setDetail(null); setNoteDraft(''); setTagsDraft(''); setEmailSubject(''); setEmailBody(''); setTaskDraft(''); setTaskDue('')
+    setDetailUser(u); setDetail(null); setDetailTab('overview'); setNoteDraft(''); setTagsDraft(''); setEmailSubject(''); setEmailBody(''); setTaskDraft(''); setTaskDue('')
     try {
       const r = await fetch(`/api/admin/users/${encodeURIComponent(u.userId)}`)
       if (r.ok) { const d = await r.json() as Detail; setDetail(d); setNoteDraft(d.note ?? ''); setTagsDraft((d.tags ?? []).join(', ')) }
@@ -548,20 +555,27 @@ export default function UsersPanel() {
         </div>
       )}
 
-      {/* Bulk gift to the active segment */}
-      {!searched && segment !== 'all' && (counts[segment] ?? 0) > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(124,58,237,0.35)', background: 'rgba(124,58,237,0.06)' }}>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Gift Pro to all <b style={{ color: 'var(--text-primary)' }}>{counts[segment]}</b> “{segment}” users —</span>
-          <input type="number" min={1} value={bulkDays} onChange={e => setBulkDays(e.target.value)}
-            style={{ width: 62, fontSize: 12, padding: '4px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>days</span>
-          <button onClick={() => void bulkGift()} disabled={bulkBusy}
-            style={{ fontSize: 12, fontWeight: 700, padding: '5px 13px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: bulkBusy ? 0.6 : 1 }}>
-            {bulkBusy ? 'Gifting…' : `🎁 Gift ${counts[segment]}`}
-          </button>
-          <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>capped at 200 · logged</span>
-        </div>
-      )}
+      {/* Bulk gift to the active segment or saved segment */}
+      {(() => {
+        if (searched) return null
+        const activeSaved = savedSegment ? savedSegments.find(s => String(s.id) === savedSegment) : null
+        const bulkLabel = activeSaved ? activeSaved.name : (segment !== 'all' ? segment : null)
+        const bulkCount = activeSaved ? activeSaved.count : (segment !== 'all' ? (counts[segment] ?? 0) : 0)
+        if (!bulkLabel || bulkCount <= 0) return null
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(124,58,237,0.35)', background: 'rgba(124,58,237,0.06)' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Gift Pro to all <b style={{ color: 'var(--text-primary)' }}>{bulkCount}</b> “{bulkLabel}” users —</span>
+            <input type="number" min={1} value={bulkDays} onChange={e => setBulkDays(e.target.value)}
+              style={{ width: 62, fontSize: 12, padding: '4px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>days</span>
+            <button onClick={() => void bulkGift()} disabled={bulkBusy}
+              style={{ fontSize: 12, fontWeight: 700, padding: '5px 13px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: bulkBusy ? 0.6 : 1 }}>
+              {bulkBusy ? 'Gifting…' : `🎁 Gift ${bulkCount}`}
+            </button>
+            <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>capped at 200 · logged</span>
+          </div>
+        )
+      })()}
 
       {loading ? <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading users…</p>
       : fetchErr ? <p style={{ fontSize: 12, color: 'var(--error)' }}>{fetchErr}</p>
@@ -571,7 +585,7 @@ export default function UsersPanel() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-                  {['Email / User', 'Plan', 'Gift', 'Status', 'Updated', ''].map((h, i) => (
+                  {['Email / User', 'Plan', 'Lifecycle', 'Gift', 'Status', 'Updated', ''].map((h, i) => (
                     <th key={i} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{h}</th>
                   ))}
                 </tr>
@@ -602,6 +616,19 @@ export default function UsersPanel() {
                         {isGifted && <span style={{ marginLeft: 4, fontSize: 10, color: '#f97316' }}>↑ gifted</span>}
                         {isCode && <span style={{ marginLeft: 4, fontSize: 10, color: '#34d399' }} title={u.codeUntil ? `Code Pro until ${fmt(u.codeUntil)}` : undefined}>↑ code</span>}
                       </td>
+                      <td className="px-4 py-2.5">
+                        {u.stage ? (() => { const m = stageMeta(u.stage); return (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title={`${m?.label ?? u.stage} · health ${u.health ?? '—'}/100`}>
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: m?.color ?? 'var(--text-muted)', flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 52 }}>{m?.label ?? u.stage}</span>
+                            {u.health != null && (
+                              <span style={{ width: 34, height: 4, borderRadius: 99, background: 'var(--bg-base)', overflow: 'hidden', flexShrink: 0 }}>
+                                <span style={{ display: 'block', width: `${u.health}%`, height: '100%', background: healthColor(u.health) }} />
+                              </span>
+                            )}
+                          </div>
+                        ) })() : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>}
+                      </td>
                       <td className="px-4 py-2.5 text-xs">
                         {gift ? <span style={{ color: gift === 'Expired' ? 'var(--text-muted)' : '#f97316' }}>{gift}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                       </td>
@@ -628,7 +655,7 @@ export default function UsersPanel() {
         <div onClick={() => { setDetailUser(null); setDetail(null) }}
           style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()}
-            style={{ width: 460, maxWidth: '100%', maxHeight: '86vh', overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
+            style={{ width: 560, maxWidth: '100%', maxHeight: '86vh', overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
               {detail?.identity?.imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -651,8 +678,23 @@ export default function UsersPanel() {
               <button onClick={() => { setDetailUser(null); setDetail(null) }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 4 }}><X size={16} /></button>
             </div>
 
+            {/* Tabbed contact record */}
+            {detail && (
+              <div style={{ display: 'flex', gap: 4, marginTop: 14, borderBottom: '1px solid var(--border)' }}>
+                {([['overview', 'Overview'], ['timeline', 'Timeline'], ['notes', 'Notes & tasks'], ['contact', 'Contact']] as const).map(([id, lbl]) => (
+                  <button key={id} onClick={() => setDetailTab(id)}
+                    style={{ fontSize: 12, fontWeight: detailTab === id ? 700 : 500, padding: '6px 11px', background: 'none', border: 'none', cursor: 'pointer',
+                      color: detailTab === id ? 'var(--text-primary)' : 'var(--text-muted)',
+                      borderBottom: `2px solid ${detailTab === id ? 'var(--accent)' : 'transparent'}`, marginBottom: -1 }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {!detail ? <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 14 }}>Loading…</p> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+                {detailTab === 'overview' && (<>
                 {/* Lifecycle stage + health score */}
                 {detail.lifecycle && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -736,6 +778,9 @@ export default function UsersPanel() {
                   {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
                 </div>
 
+                </>)}
+
+                {detailTab === 'notes' && (<>
                 {/* Follow-ups — reminders pinned to this account, due dates surface in the Daily Brief */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>FOLLOW-UPS</div>
@@ -769,6 +814,9 @@ export default function UsersPanel() {
                   )}
                 </div>
 
+                </>)}
+
+                {detailTab === 'contact' && (<>
                 {/* Contact — one-off outreach email, logged to the timeline */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -800,6 +848,9 @@ export default function UsersPanel() {
                   </div>
                 </div>
 
+                </>)}
+
+                {detailTab === 'timeline' && (<>
                 {/* Activity timeline — the account's story, merged from every source */}
                 {detail.timeline?.length > 0 && (
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
@@ -824,6 +875,9 @@ export default function UsersPanel() {
                   </div>
                 )}
 
+                </>)}
+
+                {detailTab === 'notes' && (<>
                 {/* Notes & tags — a pinned summary that stays put */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -869,6 +923,7 @@ export default function UsersPanel() {
                     </div>
                   )}
                 </div>
+                </>)}
               </div>
             )}
           </div>
