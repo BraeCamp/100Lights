@@ -18,8 +18,12 @@ async function ensureTable() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
+  // Triage state so the inbox is workable past beta.
+  await sql`ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`
   tableReady = true
 }
+
+const PAGE = 25
 
 // POST /api/feedback — anyone signed in can send; message required
 export async function POST(req: Request) {
@@ -40,10 +44,52 @@ export async function POST(req: Request) {
   return Response.json({ ok: true })
 }
 
-// GET /api/feedback — admin reads the inbox
-export async function GET() {
+// GET /api/feedback — admin inbox, paged and filterable by triage state.
+export async function GET(req: Request) {
   if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   await ensureTable()
-  const rows = await sql`SELECT * FROM feedback ORDER BY created_at DESC LIMIT 200`
-  return Response.json({ items: rows })
+  const url = new URL(req.url)
+  const filter = url.searchParams.get('filter') ?? 'open' // open | resolved | all
+  const page = Math.max(0, parseInt(url.searchParams.get('page') ?? '0', 10) || 0)
+  const cond = filter === 'open' ? sql`resolved_at IS NULL`
+    : filter === 'resolved' ? sql`resolved_at IS NOT NULL`
+    : sql`TRUE`
+
+  const rows = await sql`
+    SELECT * FROM feedback WHERE ${cond}
+    ORDER BY created_at DESC LIMIT ${PAGE + 1} OFFSET ${page * PAGE}
+  `
+  const hasMore = rows.length > PAGE
+  const [counts] = await sql`
+    SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE resolved_at IS NULL)::int AS open
+    FROM feedback
+  `
+  return Response.json({
+    items: rows.slice(0, PAGE), hasMore, page, filter,
+    counts: { total: Number(counts?.total ?? 0), open: Number(counts?.open ?? 0) },
+  })
+}
+
+// PATCH /api/feedback — { id, resolved: boolean } toggle triage state.
+export async function PATCH(req: Request) {
+  if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  await ensureTable()
+  const { id, resolved } = await req.json().catch(() => ({})) as { id?: string; resolved?: boolean }
+  if (!id) return Response.json({ error: 'id required' }, { status: 400 })
+  const rows = resolved
+    ? await sql`UPDATE feedback SET resolved_at = NOW() WHERE id = ${id} RETURNING id`
+    : await sql`UPDATE feedback SET resolved_at = NULL WHERE id = ${id} RETURNING id`
+  if (rows.length === 0) return Response.json({ error: 'Not found' }, { status: 404 })
+  return Response.json({ ok: true })
+}
+
+// DELETE /api/feedback?id=… — remove an entry.
+export async function DELETE(req: Request) {
+  if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  await ensureTable()
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return Response.json({ error: 'id required' }, { status: 400 })
+  await sql`DELETE FROM feedback WHERE id = ${id}`
+  return Response.json({ ok: true })
 }

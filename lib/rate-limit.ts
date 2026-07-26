@@ -6,6 +6,29 @@ interface RateLimitResult {
   resetAt: Date
 }
 
+/**
+ * Generic fixed-window attempt limiter over the `usage` counter table. Returns
+ * allowed=false once `max` hits accrue within `windowSec` for a (key, action).
+ * Used for abuse protection on public endpoints (e.g. code redemption) to stop
+ * brute-force guessing. The caller decides whether to fail open on error.
+ */
+export async function checkAttemptLimit(
+  key: string, action: string, max: number, windowSec: number,
+): Promise<{ allowed: boolean; retryAfterSec: number }> {
+  const resetAt = new Date(Date.now() + windowSec * 1000).toISOString()
+  const rows = await sql`
+    INSERT INTO usage (user_id, action, count, reset_at)
+    VALUES (${key}, ${action}, 1, ${resetAt})
+    ON CONFLICT (user_id, action) DO UPDATE
+      SET count    = CASE WHEN usage.reset_at <= NOW() THEN 1        ELSE usage.count + 1 END,
+          reset_at = CASE WHEN usage.reset_at <= NOW() THEN ${resetAt} ELSE usage.reset_at END
+    RETURNING count, reset_at
+  `
+  const count = Number(rows[0].count)
+  const reset = new Date(rows[0].reset_at as string)
+  return { allowed: count <= max, retryAfterSec: Math.max(1, Math.ceil((reset.getTime() - Date.now()) / 1000)) }
+}
+
 export async function checkRateLimit(
   userId: string,
   action: 'transcribe',

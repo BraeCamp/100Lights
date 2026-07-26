@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { redeemCode, hasUsedStarterCode } from '@/lib/codes'
 import { getSubscription } from '@/lib/subscription'
+import { checkAttemptLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -23,6 +24,15 @@ export async function GET() {
 export async function POST(req: Request) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Sign in to redeem a code.' }, { status: 401 })
+
+  // Abuse guard: cap redemption attempts so guessable codes can't be brute-
+  // forced. Fail open if the limiter itself errors — never block a legit user.
+  try {
+    const rl = await checkAttemptLimit(userId, 'code_redeem', 20, 600) // 20 tries / 10 min
+    if (!rl.allowed) {
+      return Response.json({ error: 'Too many attempts — try again in a few minutes.' }, { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } })
+    }
+  } catch { /* limiter unavailable — allow */ }
 
   const body = await req.json().catch(() => ({})) as { code?: string }
   const result = await redeemCode(userId, body.code ?? '')

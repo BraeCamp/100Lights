@@ -37,7 +37,11 @@ export type RedeemResult =
 
 export type RedeemFailReason =
   | 'empty' | 'not_found' | 'disabled' | 'expired'
-  | 'exhausted' | 'already_used' | 'starter_used'
+  | 'exhausted' | 'already_used' | 'starter_used' | 'cap'
+
+// Ceiling on how far into the future a single user's stacked promo time can
+// reach, so redeemable promos can't be chained into unlimited free Pro.
+const MAX_PROMO_HORIZON_DAYS = 400
 
 // ── Table provisioning (lazy, idempotent — mirrors the codebase convention) ─
 let tablesReady = false
@@ -134,6 +138,16 @@ export async function redeemCode(userId: string, rawCode: string): Promise<Redee
     `
     if (used.length > 0) {
       return { ok: false, reason: 'starter_used', error: 'You’ve already used a starter code.' }
+    }
+  }
+
+  // Promo stacking cap — don't let a user chain promos into unlimited free Pro.
+  if (kind === 'promo') {
+    const [cur] = await sql`SELECT MAX(grant_until) AS until FROM code_redemptions WHERE user_id = ${userId} AND grant_until > NOW()`
+    const baseMs = Math.max(Date.now(), cur?.until ? new Date(cur.until as string).getTime() : 0)
+    const newUntilMs = baseMs + grantDays * 86_400_000
+    if (newUntilMs > Date.now() + MAX_PROMO_HORIZON_DAYS * 86_400_000) {
+      return { ok: false, reason: 'cap', error: `You’ve reached the maximum stacked free time — codes can extend Pro up to ${MAX_PROMO_HORIZON_DAYS} days out.` }
     }
   }
 

@@ -198,7 +198,7 @@ export default async function AdminPage() {
             <>
               <PanelIntro
                 title="Feedback Inbox"
-                description="Everything users send through the sidebar's Send feedback button, newest first, with their email and the page they were on."
+                description="Everything users send through the sidebar's Send feedback button, newest first, with their email and the page they were on. Mark items resolved to work down to inbox zero; filter by state and page through the archive."
               />
               <FeedbackPanel />
             </>
