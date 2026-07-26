@@ -16,6 +16,7 @@ import StoragePanel from './StoragePanel'
 import StatusPanel from './StatusPanel'
 import WebhooksPanel from './WebhooksPanel'
 import AnnouncementsPanel from './AnnouncementsPanel'
+import DigestPanel from './DigestPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -274,6 +275,19 @@ export default async function AdminPage() {
       id: 'general',
       label: 'General',
       subtabs: [
+        {
+          id: 'brief',
+          label: 'Daily Brief',
+          content: (
+            <>
+              <PanelIntro
+                title="Daily Brief"
+                description="Your morning read on the whole business in one glance — growth, revenue, activity, and everything that needs you. Copy the headlines or email yourself a copy; a weekly digest can go out automatically."
+              />
+              <DigestPanel />
+            </>
+          ),
+        },
         {
           id: 'overview',
           label: 'Overview',
