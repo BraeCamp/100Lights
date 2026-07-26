@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/nextjs"
 import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
+import AnnouncementBanner from "@/components/AnnouncementBanner"
 import "./globals.css"
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
@@ -72,6 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <PostHogProvider />
           </Suspense>
           {children}
+          <AnnouncementBanner />
         </body>
       </html>
     </ClerkProvider>

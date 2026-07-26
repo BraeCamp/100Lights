@@ -15,6 +15,7 @@ import CatalogPanel from './CatalogPanel'
 import StoragePanel from './StoragePanel'
 import StatusPanel from './StatusPanel'
 import WebhooksPanel from './WebhooksPanel'
+import AnnouncementsPanel from './AnnouncementsPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -398,6 +399,19 @@ export default async function AdminPage() {
                 description="Control which modules are live for all users. Hidden modules disappear from the launcher, dashboard sidebar, and the new-project page — use this to ship modules one at a time."
               />
               <PlatformFlagsPanel initial={flags} />
+            </>
+          ),
+        },
+        {
+          id: 'announcements',
+          label: 'Announcements',
+          content: (
+            <>
+              <PanelIntro
+                title="Announcements"
+                description="Broadcast a message to everyone (or just free / Pro users) as a dismissible banner across the app — desktop and mobile. Launches, maintenance windows, offers. No deploy required; toggle a banner off to pause it."
+              />
+              <AnnouncementsPanel />
             </>
           ),
         },
