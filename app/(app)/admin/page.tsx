@@ -178,7 +178,7 @@ export default async function AdminPage() {
             <>
               <PanelIntro
                 title="Community Moderation"
-                description="The latest community shares. Remove anything that shouldn't be public — deletion is immediate and takes the item's votes and reactions with it."
+                description="The latest community shares plus the reported queue. Removing an item hides it everywhere but keeps it restorable (with its votes and comments); dismiss a report to clear the flag on something you've reviewed and want to keep."
               />
               <CommunityModerationPanel />
             </>

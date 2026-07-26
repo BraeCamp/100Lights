@@ -30,7 +30,7 @@ async function ensureStreamLog() {
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
-  const rows = await sql`SELECT kind, r2_key, payload FROM community_items WHERE id = ${id}`
+  const rows = await sql`SELECT kind, r2_key, payload FROM community_items WHERE id = ${id} AND removed_at IS NULL`
   if (rows.length === 0) return Response.json({ error: 'Not found' }, { status: 404 })
 
   const { kind, r2_key, payload } = rows[0] as { kind: string; r2_key: string | null; payload: { samples?: Array<{ r2Key?: string }> } | null }

@@ -56,7 +56,8 @@ export async function GET(req: Request) {
         OR name ILIKE ${like ?? ''} OR description ILIKE ${like ?? ''} OR author_name ILIKE ${like ?? ''}
         OR payload->>'key' ILIKE ${like ?? ''}
         OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(payload->'tags', '[]'::jsonb)) t WHERE t ILIKE ${like ?? ''})
-        OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'samples', '[]'::jsonb)) elem WHERE elem->>'name' ILIKE ${like ?? ''}))`
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'samples', '[]'::jsonb)) elem WHERE elem->>'name' ILIKE ${like ?? ''}))
+      AND removed_at IS NULL`
 
   const rows = await sql`
     SELECT * FROM community_items
@@ -77,7 +78,7 @@ export async function GET(req: Request) {
   const comments = await commentCounts(pageRows.map(r => r.id as string))
 
   // Community pulse for the feed header — makes a small feed feel alive
-  const statRows = await sql`SELECT COUNT(*)::int AS items, COUNT(DISTINCT author_name)::int AS authors FROM community_items`
+  const statRows = await sql`SELECT COUNT(*)::int AS items, COUNT(DISTINCT author_name)::int AS authors FROM community_items WHERE removed_at IS NULL`
 
   const res = Response.json({
     items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine, comments)),

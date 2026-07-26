@@ -13,7 +13,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const { id } = await params
   if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
-  const rows = await sql`SELECT * FROM community_items WHERE id = ${id}`
+  const rows = await sql`SELECT * FROM community_items WHERE id = ${id} AND removed_at IS NULL`
   if (rows.length === 0) return Response.json({ error: 'Not found' }, { status: 404 })
 
   const votedIds = new Set<string>()
@@ -150,16 +150,28 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
   const { isAdmin } = await import('@/lib/admin-auth')
   const admin = await isAdmin()
-  const rows = await sql`DELETE FROM community_items WHERE id = ${id} AND (user_id = ${userId} OR ${admin}) RETURNING id, user_id`
-  if (rows.length === 0) return Response.json({ error: 'Not found or not yours' }, { status: 404 })
-  await sql`DELETE FROM community_votes WHERE item_id = ${id}`
-  await sql`DELETE FROM community_reactions WHERE item_id = ${id}`
-  await sql`DELETE FROM community_reports WHERE item_id = ${id}`
-  await sql`DELETE FROM community_comments WHERE item_id = ${id}`
-  // Record admin takedowns of someone else's content (not self-deletes).
-  if (admin && String(rows[0].user_id) !== userId) {
-    const { logAdmin } = await import('@/lib/admin-audit')
-    await logAdmin('community.remove_item', id, { owner: String(rows[0].user_id) })
+
+  const [item] = await sql`SELECT user_id FROM community_items WHERE id = ${id} AND removed_at IS NULL`
+  if (!item) return Response.json({ error: 'Not found or not yours' }, { status: 404 })
+  const owner = String(item.user_id)
+  const isOwner = owner === userId
+  if (!isOwner && !admin) return Response.json({ error: 'Not found or not yours' }, { status: 404 })
+
+  if (isOwner) {
+    // The author removing their own item — hard delete, as before.
+    await sql`DELETE FROM community_items WHERE id = ${id}`
+    await sql`DELETE FROM community_votes WHERE item_id = ${id}`
+    await sql`DELETE FROM community_reactions WHERE item_id = ${id}`
+    await sql`DELETE FROM community_reports WHERE item_id = ${id}`
+    await sql`DELETE FROM community_comments WHERE item_id = ${id}`
+    return Response.json({ ok: true })
   }
-  return Response.json({ ok: true })
+
+  // Admin moderation — soft remove so it can be restored. Votes/reactions/
+  // comments are kept; the item just disappears from every public read.
+  const reason = new URL(req.url).searchParams.get('reason')?.slice(0, 500) || null
+  await sql`UPDATE community_items SET removed_at = NOW(), removed_by = ${userId}, removed_reason = ${reason} WHERE id = ${id}`
+  const { logAdmin } = await import('@/lib/admin-audit')
+  await logAdmin('community.remove_item', id, { owner, reason })
+  return Response.json({ ok: true, softRemoved: true })
 }

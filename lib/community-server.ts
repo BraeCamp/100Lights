@@ -29,6 +29,12 @@ export async function ensureTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
+  // Soft removal for admin moderation — a takedown hides the item everywhere but
+  // keeps its row (and votes/reactions/comments) so it can be restored. Public
+  // reads filter on `removed_at IS NULL`.
+  await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS removed_at     TIMESTAMPTZ`
+  await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS removed_by     TEXT`
+  await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS removed_reason TEXT`
   // Older tables carry a narrower kind constraint — rebuild it only when it
   // actually differs, and tolerate the race where two requests migrate at
   // once (page render + generateMetadata run ensureTables in parallel).
@@ -162,7 +168,7 @@ export async function reactionMaps(itemIds: string[], userId: string | null): Pr
 export async function getInitialCommunityItems(limit = 30) {
   await ensureTables()
   try {
-    const rows = await sql`SELECT * FROM community_items ORDER BY created_at DESC LIMIT ${limit}`
+    const rows = await sql`SELECT * FROM community_items WHERE removed_at IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     return rows.map(r => rowToItem(r, null, new Set<string>(), new Map(), new Map()))
   } catch { return [] }
 }

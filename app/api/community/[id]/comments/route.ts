@@ -65,7 +65,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await ensureTables()
   // The item must exist (and isn't deleted) before we hang a comment off it.
-  const item = await sql`SELECT user_id, name FROM community_items WHERE id = ${id}`
+  const item = await sql`SELECT user_id, name FROM community_items WHERE id = ${id} AND removed_at IS NULL`
   if (item.length === 0) return Response.json({ error: 'Not found' }, { status: 404 })
 
   // Anti-spam: cap comments per user per hour (always on — comments are cheap
