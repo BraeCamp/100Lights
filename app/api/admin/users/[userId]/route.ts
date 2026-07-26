@@ -2,8 +2,16 @@ import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
 import { logAdmin } from '@/lib/admin-audit'
+import { buildTimeline, listNoteEntries } from '@/lib/user-crm'
 
 export const runtime = 'nodejs'
+
+// Human-readable signup method from a Clerk user's connected accounts.
+function signupMethod(u: { externalAccounts?: { provider?: string }[]; passwordEnabled?: boolean }): string {
+  const prov = u.externalAccounts?.[0]?.provider
+  if (prov) return prov.replace(/^oauth_/, '').replace(/\b\w/g, c => c.toUpperCase())
+  return u.passwordEnabled ? 'Email + password' : 'Email link'
+}
 
 // The sql tag returns a composable thenable (no `.catch`), so guard optional
 // queries — a table that doesn't exist yet shouldn't 500 the whole endpoint.
@@ -27,18 +35,31 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
   const { userId } = await params
   if (!userId) return Response.json({ error: 'userId required' }, { status: 400 })
 
-  const [subRows, redemptions, projects, community, email, noteRows] = await Promise.all([
+  const [subRows, redemptions, projects, community, identity, noteRows, timeline, noteEntries] = await Promise.all([
     safe(sql`SELECT plan, status, stripe_customer_id, stripe_sub_id, current_period_end, gift_plan, gift_until, updated_at, created_at
         FROM subscriptions WHERE user_id = ${userId}`, []),
     safe(sql`SELECT code, kind, grant_days, grant_until, redeemed_at FROM code_redemptions WHERE user_id = ${userId} ORDER BY redeemed_at DESC`, []),
     safe<{ n: number; last_saved: string | null }>(sql`SELECT COUNT(*)::int AS n, MAX(saved_at) AS last_saved FROM projects WHERE user_id = ${userId} AND deleted_at IS NULL`, [{ n: 0, last_saved: null }]),
     safe<{ n: number }>(sql`SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = ${userId} AND removed_at IS NULL`, [{ n: 0 }]),
+    // Richer Clerk identity — name, avatar, last sign-in, how they signed up.
     (async () => {
-      try { const u = await (await clerkClient()).users.getUser(userId); return u.emailAddresses?.[0]?.emailAddress ?? '' }
-      catch { return '' }
+      try {
+        const u = await (await clerkClient()).users.getUser(userId)
+        return {
+          email: u.emailAddresses?.[0]?.emailAddress ?? '',
+          firstName: u.firstName ?? '', lastName: u.lastName ?? '',
+          imageUrl: u.imageUrl ?? '',
+          lastSignInAt: u.lastSignInAt ?? null,
+          clerkCreatedAt: u.createdAt ?? null,
+          signupMethod: signupMethod(u),
+        }
+      } catch { return null }
     })(),
     (async () => { await ensureNotes(); return safe(sql`SELECT note, tags FROM user_notes WHERE user_id = ${userId}`, []) })(),
+    buildTimeline(userId),
+    listNoteEntries(userId),
   ])
+  const email = identity?.email ?? ''
 
   const s = subRows[0] as Record<string, unknown> | undefined
   const now = new Date()
@@ -77,6 +98,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
     risk,
     userId,
     email,
+    identity: identity ? {
+      firstName: identity.firstName, lastName: identity.lastName, imageUrl: identity.imageUrl,
+      lastSignInAt: identity.lastSignInAt ? new Date(identity.lastSignInAt).toISOString() : null,
+      clerkCreatedAt: identity.clerkCreatedAt ? new Date(identity.clerkCreatedAt).toISOString() : null,
+      signupMethod: identity.signupMethod,
+    } : null,
+    timeline,
+    noteEntries,
     hasRecord: !!s,
     subscription: s ? {
       plan: String(s.plan), status: String(s.status),

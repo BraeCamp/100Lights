@@ -36,6 +36,26 @@ interface Detail {
   note: string
   tags: string[]
   risk: { atRisk: boolean; reasons: string[]; lastSaved: string | null; daysSinceSave: number | null }
+  identity: { firstName: string; lastName: string; imageUrl: string; lastSignInAt: string | null; clerkCreatedAt: string | null; signupMethod: string } | null
+  timeline: TimelineEvent[]
+  noteEntries: NoteEntry[]
+}
+interface TimelineEvent { at: string; kind: string; label: string; detail?: string }
+interface NoteEntry { id: number; body: string; author: string; createdAt: string }
+
+const TL_COLOR: Record<string, string> = {
+  signup: '#34d399', project: '#a78bfa', code: '#34d399', community: '#38bdf8',
+  feedback: '#fbbf24', admin: '#f97316', gift: '#f97316',
+}
+// Compact relative time, e.g. "3d ago", "2mo ago".
+function rel(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 60) return 'just now'
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`
+  const mo = Math.floor(d / 30); if (mo < 12) return `${mo}mo ago`
+  return `${Math.floor(mo / 12)}y ago`
 }
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -61,6 +81,8 @@ export default function UsersPanel() {
   const [noteDraft, setNoteDraft] = useState('')
   const [tagsDraft, setTagsDraft] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
+  const [entryDraft, setEntryDraft] = useState('')
+  const [entrySaving, setEntrySaving] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
@@ -176,6 +198,26 @@ export default function UsersPanel() {
       showToast('Notes saved ✓')
       setDetail(d => d ? { ...d, note: noteDraft, tags } : d)
     } catch (e) { showToast(e instanceof Error ? e.message : 'Save failed') } finally { setNoteSaving(false) }
+  }
+
+  async function addEntry() {
+    if (!detailUser || !entryDraft.trim()) return
+    setEntrySaving(true)
+    try {
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/notes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: entryDraft.trim() }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setDetail(prev => prev ? { ...prev, noteEntries: [d.entry, ...prev.noteEntries] } : prev)
+      setEntryDraft('')
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Failed') } finally { setEntrySaving(false) }
+  }
+
+  async function deleteEntry(id: number) {
+    if (!detailUser) return
+    setDetail(prev => prev ? { ...prev, noteEntries: prev.noteEntries.filter(e => e.id !== id) } : prev)
+    try { await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/notes?entryId=${id}`, { method: 'DELETE' }) } catch { /* optimistic */ }
   }
 
   const giftLabel = (u: UserRow) => {
@@ -313,10 +355,24 @@ export default function UsersPanel() {
           style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ width: 460, maxWidth: '100%', maxHeight: '86vh', overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              {detail?.identity?.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={detail.identity.imageUrl} alt="" width={40} height={40} style={{ borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }} />
+              ) : (
+                <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: 'var(--text-muted)' }}>
+                  {(detail?.identity?.firstName?.[0] || detailUser.email?.[0] || '?').toUpperCase()}
+                </div>
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detailUser.email || 'No email'}</div>
-                <div style={{ fontSize: 10.5, color: 'var(--text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detailUser.userId}</div>
+                {detail?.identity && (detail.identity.firstName || detail.identity.lastName) && (
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${detail.identity.firstName} ${detail.identity.lastName}`.trim()}</div>
+                )}
+                <div style={{ fontSize: detail?.identity && (detail.identity.firstName || detail.identity.lastName) ? 12 : 14, fontWeight: detail?.identity && (detail.identity.firstName || detail.identity.lastName) ? 500 : 700, color: detail?.identity && (detail.identity.firstName || detail.identity.lastName) ? 'var(--text-secondary)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detailUser.email || 'No email'}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {detail?.identity?.signupMethod && <span>via {detail.identity.signupMethod}</span>}
+                  {detail?.identity?.lastSignInAt && <span>· last seen {rel(detail.identity.lastSignInAt)}</span>}
+                </div>
               </div>
               <button onClick={() => { setDetailUser(null); setDetail(null) }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 4 }}><X size={16} /></button>
             </div>
@@ -387,17 +443,41 @@ export default function UsersPanel() {
                   {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
                 </div>
 
-                {/* Notes & tags — private admin CRM memory */}
+                {/* Activity timeline — the account's story, merged from every source */}
+                {detail.timeline?.length > 0 && (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 8 }}>TIMELINE</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, position: 'relative' }}>
+                      {detail.timeline.map((e, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 9, alignItems: 'flex-start', paddingBottom: i === detail.timeline.length - 1 ? 0 : 10 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, alignSelf: 'stretch' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: TL_COLOR[e.kind] ?? 'var(--text-muted)', marginTop: 4, flexShrink: 0 }} />
+                            {i !== detail.timeline.length - 1 && <span style={{ width: 1, flex: 1, background: 'var(--border)', marginTop: 2 }} />}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0, marginTop: -1 }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{e.label}</span>
+                              <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }} title={new Date(e.at).toLocaleString()}>{rel(e.at)}</span>
+                            </div>
+                            {e.detail && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.detail}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes & tags — a pinned summary that stays put */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>NOTES &amp; TAGS</span>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>PINNED NOTE &amp; TAGS</span>
                     <button onClick={() => void saveNote()} disabled={noteSaving}
                       style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: noteSaving ? 0.6 : 1 }}>
                       {noteSaving ? 'Saving…' : 'Save'}
                     </button>
                   </div>
-                  <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)} placeholder="Private notes about this account — why they're VIP, a support thread, a promise you made…"
-                    style={{ width: '100%', minHeight: 60, fontSize: 12.5, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', lineHeight: 1.5 }} />
+                  <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)} placeholder="A pinned summary — why they're VIP, the one thing to remember…"
+                    style={{ width: '100%', minHeight: 48, fontSize: 12.5, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', lineHeight: 1.5 }} />
                   <input value={tagsDraft} onChange={e => setTagsDraft(e.target.value)} placeholder="tags, comma-separated (e.g. VIP, press, refund-risk)"
                     style={{ width: '100%', marginTop: 6, fontSize: 12, padding: '6px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
                   {detail.tags?.length ? (
@@ -405,6 +485,32 @@ export default function UsersPanel() {
                       {detail.tags.map(t => <span key={t} style={{ fontSize: 10, fontWeight: 700, padding: '1px 8px', borderRadius: 99, background: 'rgba(124,58,237,0.14)', color: 'var(--accent-light)' }}>{t}</span>)}
                     </div>
                   ) : null}
+                </div>
+
+                {/* Dated notes log — CRM activity notes that accumulate over time */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>NOTES LOG</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input value={entryDraft} onChange={e => setEntryDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void addEntry() } }}
+                      placeholder="Log a note — a call, a promise, an observation…"
+                      style={{ flex: 1, fontSize: 12.5, padding: '7px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+                    <button onClick={() => void addEntry()} disabled={entrySaving || !entryDraft.trim()}
+                      style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: entrySaving || !entryDraft.trim() ? 0.5 : 1 }}>Add</button>
+                  </div>
+                  {detail.noteEntries?.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                      {detail.noteEntries.map(en => (
+                        <div key={en.id} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px' }}>
+                          <div style={{ fontSize: 12.5, color: 'var(--text-primary)', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{en.body}</div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 3 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }} title={new Date(en.createdAt).toLocaleString()}>{rel(en.createdAt)}{en.author && en.author !== 'admin' ? ` · ${en.author.split('@')[0]}` : ''}</span>
+                            <button onClick={() => void deleteEntry(en.id)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, padding: 0 }}>delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
