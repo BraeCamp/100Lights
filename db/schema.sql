@@ -95,3 +95,23 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS admin_audit_id_desc_idx ON admin_audit (id DESC);
+
+-- Official sound catalog — global, admin-curated sounds that ship to every
+-- user's editor library (distinct from per-user user_sounds). Audio in R2 under
+-- catalog/; served publicly via /api/catalog/audio. Managed by lib/catalog.ts.
+CREATE TABLE IF NOT EXISTS catalog_sounds (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  category      TEXT NOT NULL DEFAULT 'custom',
+  r2_key        TEXT NOT NULL,
+  duration      DOUBLE PRECISION NOT NULL DEFAULT 0,
+  content_type  TEXT NOT NULL DEFAULT '',
+  folder        TEXT,
+  parent_folder TEXT DEFAULT '100Lights Catalog',
+  tags          JSONB,
+  musical_key   TEXT,
+  bpm           DOUBLE PRECISION,
+  sort          INTEGER NOT NULL DEFAULT 0,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

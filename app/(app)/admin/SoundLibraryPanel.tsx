@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Play, Square, ChevronRight, ChevronDown, Upload, Trash2, Pencil, Check, X, FolderPlus, SkipBack, SkipForward } from 'lucide-react'
 import {
-  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
+  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound,
   CATEGORY_LABELS, LIBRARY_CATEGORIES,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
@@ -80,7 +80,8 @@ function EntryRow({ entry, folders, isPlaying, hasPrev, hasNext, onPlay, onPrev,
     await libraryUpdate(entry.id, { folder: f }); setEditingFolder(false); onChanged()
   }
 
-  const isCatalog = entry.id.startsWith('100l_')
+  const isBuiltin = entry.id.startsWith('100l_')
+  const isCatalog = isProtectedSound(entry.id)
   const bg = isPlaying ? 'rgba(61,143,239,0.08)' : 'transparent'
 
   return (
@@ -120,7 +121,8 @@ function EntryRow({ entry, folders, isPlaying, hasPrev, hasNext, onPlay, onPrev,
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <span style={{ fontSize: 11, color: isPlaying ? 'var(--accent-light)' : 'var(--text-primary)', flex: 1, fontWeight: isPlaying ? 600 : 400 }}>{entry.name}</span>
-            {isCatalog && <span style={{ fontSize: 8, padding: '1px 4px', borderRadius: 3, background: 'rgba(139,92,246,0.1)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.2)', flexShrink: 0 }}>100L</span>}
+            {isBuiltin && <span style={{ fontSize: 8, padding: '1px 4px', borderRadius: 3, background: 'rgba(139,92,246,0.1)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.2)', flexShrink: 0 }}>100L</span>}
+            {isCatalog && !isBuiltin && <span style={{ fontSize: 8, padding: '1px 4px', borderRadius: 3, background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid rgba(52,211,153,0.2)', flexShrink: 0 }}>CATALOG</span>}
             <button onClick={() => setEditingName(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, opacity: 0.4 }}><Pencil size={10} /></button>
           </div>
         )}
@@ -330,14 +332,14 @@ export default function SoundLibraryPanel() {
   async function deleteEntry(id: string) {
     // Built-in catalog sounds re-seed themselves and are shared everywhere —
     // don't let a stray delete wipe one from this device.
-    if (id.startsWith('100l_')) return
+    if (isProtectedSound(id)) return
     if (!confirm('Delete this sample?')) return
     if (playingId === id) { audioRef.current?.pause(); setPlayingId(null) }
     await libraryDelete(id); await load()
   }
 
   async function clearAll() {
-    const removable = entries.filter(e => !e.id.startsWith('100l_'))
+    const removable = entries.filter(e => !isProtectedSound(e.id))
     if (removable.length === 0) { return }
     if (!confirm(`Delete your ${removable.length} added sound${removable.length === 1 ? '' : 's'} from this device? Built-in catalog sounds are kept. This cannot be undone.`)) return
     audioRef.current?.pause(); setPlayingId(null)

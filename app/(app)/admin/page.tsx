@@ -11,6 +11,7 @@ import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
 import CodesPanel from './CodesPanel'
 import AuditLogPanel from './AuditLogPanel'
+import CatalogPanel from './CatalogPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -255,6 +256,19 @@ export default async function AdminPage() {
       label: 'Audio',
       color: '#8b5cf6',
       subtabs: [
+        {
+          id: 'catalog',
+          label: 'Catalog',
+          content: (
+            <>
+              <PanelIntro
+                title="Sound Catalog (ships to everyone)"
+                description="The official sound library that appears in every user's editor. Upload samples here and they sync to all accounts within ~1 minute; edit metadata or remove a sound for everyone. This is the shared catalog — the panel next to it (Sound Library) only edits this device."
+              />
+              <CatalogPanel />
+            </>
+          ),
+        },
         {
           id: 'sound-library',
           label: 'Sound Library',

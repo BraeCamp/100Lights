@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
 import {
-  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete,
+  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound,
   initLibrary,
   getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
@@ -371,7 +371,7 @@ function EntryRow({
           }}
         />
       )}
-      {!onPick && (
+      {!onPick && !isProtectedSound(entry.id) && (
         <button onClick={() => onDelete(entry.id)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5 }}>
           <Trash2 size={10} />
         </button>
@@ -1233,6 +1233,9 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
 
 
   async function handleDelete(id: string) {
+    // Official catalog / built-in sounds are shared and re-sync on reload —
+    // don't let a delete here fight the catalog.
+    if (isProtectedSound(id)) return
     await libraryDelete(id)
     setEntries(prev => prev.filter(e => e.id !== id))
   }

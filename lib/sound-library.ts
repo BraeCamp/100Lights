@@ -45,11 +45,22 @@ export interface LibraryEntry {
    *  library-sync below). Set on entries pulled down from another device, and
    *  on local entries after a successful push — gates re-pushing. */
   synced?:      boolean
+  /** Materialised from the official global catalog (admin-curated). Read-only:
+   *  the user can't delete it (a delete would just re-sync), and it's shared
+   *  across every account. Local id is `catalog_<catalogId>`. */
+  catalog?:     boolean
+}
+
+/** Built-in/official entries a user must not delete — deterministic synth seeds
+ *  (`100l_`) and materialised catalog sounds (`catalog_`). */
+export function isProtectedSound(id: string): boolean {
+  return id.startsWith('100l_') || id.startsWith('catalog_')
 }
 
 // ── User scoping ──────────────────────────────────────────────────────────────
 
 let _userId: string | null = null
+let _catalogPulled = false
 
 /** Call once when the authenticated user is known. Scopes the IndexedDB to that
  *  user and pulls any sounds they added on other devices into this one. */
@@ -61,6 +72,8 @@ export function initLibrary(userId: string | null) {
     // Presets / kits / patterns sync too (dynamic import avoids a static cycle).
     import('./user-library-sync').then(m => m.setLibraryUser(userId)).catch(() => {})
   }
+  // The official catalog ships to everyone, signed in or not — pull it once.
+  if (!_catalogPulled) { _catalogPulled = true; void syncCatalog() }
 }
 export function getLibraryUserId(): string | null { return _userId }
 
@@ -242,6 +255,51 @@ export async function syncLibrary(): Promise<void> {
       if (!e.synced && isSyncable(e) && !remoteIds.has(e.id)) await pushSound(e)
     }
   } catch { /* offline — no problem, local library is untouched */ }
+}
+
+interface CatalogItem {
+  id: string; name: string; category: string; url: string; duration?: number
+  folder?: string; parentFolder?: string; tags?: string[]; key?: string; bpm?: number
+}
+
+/** Pull the official global catalog into this device's library: download each
+ *  new entry's audio once (id `catalog_<id>`), and drop any the admin removed.
+ *  Runs for every user, signed in or not. Idempotent. */
+export async function syncCatalog(): Promise<void> {
+  if (typeof window === 'undefined') return
+  try {
+    // no-store so this background sync always sees the current catalog —
+    // otherwise a browser-cached list would delay additions/removals ~a minute.
+    const res = await fetch('/api/catalog', { cache: 'no-store' })
+    if (!res.ok) return
+    const { items } = await res.json() as { items: CatalogItem[] }
+    const local = await libraryGetAll()
+    const localIds = new Set(local.map(e => e.id))
+    const wantIds = new Set(items.map(it => `catalog_${it.id}`))
+
+    for (const it of items) {
+      const lid = `catalog_${it.id}`
+      if (localIds.has(lid)) continue
+      try {
+        const audio = await fetch(it.url)
+        if (!audio.ok) continue
+        const audioBlob = await audio.blob()
+        await libraryAdd({
+          id: lid, name: it.name, category: (it.category as LibraryCategory) || 'custom', audioBlob,
+          duration: it.duration ?? 0, addedAt: new Date().toISOString(),
+          folder: it.folder, parentFolder: it.parentFolder ?? '100Lights Catalog',
+          tags: it.tags, key: it.key, bpm: it.bpm, catalog: true,
+        })
+      } catch { /* skip this one, keep going */ }
+    }
+
+    // Reconcile removals: drop local catalog entries the admin took down.
+    for (const e of local) {
+      if (e.catalog && e.id.startsWith('catalog_') && !wantIds.has(e.id)) {
+        try { await libraryDelete(e.id) } catch { /* keep going */ }
+      }
+    }
+  } catch { /* offline — keep local library untouched */ }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
