@@ -13,6 +13,7 @@ import CodesPanel from './CodesPanel'
 import AuditLogPanel from './AuditLogPanel'
 import CatalogPanel from './CatalogPanel'
 import StoragePanel from './StoragePanel'
+import StatusPanel from './StatusPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -448,6 +449,19 @@ export default async function AdminPage() {
                 description="The latest community shares plus the reported queue. Removing an item hides it everywhere but keeps it restorable (with its votes and comments); dismiss a report to clear the flag on something you've reviewed and want to keep."
               />
               <CommunityModerationPanel />
+            </>
+          ),
+        },
+        {
+          id: 'status',
+          label: 'Status',
+          content: (
+            <>
+              <PanelIntro
+                title="System Status"
+                description="A live health probe of the services 100Lights runs on — database, storage, billing, auth — with round-trip latency. Answers &ldquo;is anything broken?&rdquo; at a glance."
+              />
+              <StatusPanel />
             </>
           ),
         },
