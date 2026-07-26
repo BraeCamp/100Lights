@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import CommandPalette from './CommandPalette'
 import {
-  Sunrise, LayoutDashboard, Users, TrendingUp, Eye, Megaphone, BookOpen, Ticket,
+  Sunrise, LayoutDashboard, Users, TrendingUp, BarChart3, Eye, Megaphone, BookOpen, Ticket,
   MessageSquare, Flag, Activity, Webhook, HardDrive, ScrollText, Link as LinkIcon,
   Library, Music, Piano, Package, Drum, Film, Image as ImageIcon, Circle,
   type LucideIcon,
@@ -26,7 +26,7 @@ export interface AdminTab {
 
 // One icon per panel, resolved by id — keeps page.tsx free of client imports.
 const ICONS: Record<string, LucideIcon> = {
-  brief: Sunrise, overview: LayoutDashboard, users: Users, revenue: TrendingUp,
+  brief: Sunrise, overview: LayoutDashboard, users: Users, revenue: TrendingUp, growth: BarChart3,
   visibility: Eye, announcements: Megaphone, articles: BookOpen, codes: Ticket,
   feedback: MessageSquare, 'community-moderation': Flag, status: Activity,
   webhooks: Webhook, storage: HardDrive, audit: ScrollText, links: LinkIcon,

@@ -17,6 +17,7 @@ import StatusPanel from './StatusPanel'
 import WebhooksPanel from './WebhooksPanel'
 import AnnouncementsPanel from './AnnouncementsPanel'
 import DigestPanel from './DigestPanel'
+import GrowthPanel from './GrowthPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -404,6 +405,20 @@ export default async function AdminPage() {
                   </table>
                 </div>
               )}
+            </>
+          ),
+        },
+        {
+          id: 'growth',
+          group: 'Business',
+          label: 'Growth',
+          content: (
+            <>
+              <PanelIntro
+                title="Growth & Retention"
+                description="The signup → paying funnel and monthly signup cohorts — where you're leaking and whether each month's cohort is sticking better than the last."
+              />
+              <GrowthPanel />
             </>
           ),
         },
