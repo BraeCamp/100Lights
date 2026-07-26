@@ -18,6 +18,7 @@ import WebhooksPanel from './WebhooksPanel'
 import AnnouncementsPanel from './AnnouncementsPanel'
 import DigestPanel from './DigestPanel'
 import GrowthPanel from './GrowthPanel'
+import ArticleProjectsPanel from './ArticleProjectsPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -598,6 +599,19 @@ export default async function AdminPage() {
                 description="The official sound library that appears in every user's editor. Upload samples here and they sync to all accounts within ~1 minute; edit metadata or remove a sound for everyone. This is the shared catalog — the panel next to it (Sound Library) only edits this device."
               />
               <CatalogPanel />
+            </>
+          ),
+        },
+        {
+          id: 'article-projects',
+          label: 'Article Audio Projects',
+          content: (
+            <>
+              <PanelIntro
+                title="Article Audio → Studio Projects"
+                description="Turn the learn-article demo clips into editable multi-track studio projects — one track per part (drums / bass / pad / lead) instead of a single bounced waveform. Generate one, open it in the studio to edit, then export a WAV and upload it as the clip's override to ship the change."
+              />
+              <ArticleProjectsPanel />
             </>
           ),
         },
