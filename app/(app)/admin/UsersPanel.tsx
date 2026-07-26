@@ -37,6 +37,7 @@ interface Detail {
   tags: string[]
   risk: { atRisk: boolean; reasons: string[]; lastSaved: string | null; daysSinceSave: number | null }
   lifecycle: { stage: string; health: number }
+  emailConfigured: boolean
   identity: { firstName: string; lastName: string; imageUrl: string; lastSignInAt: string | null; clerkCreatedAt: string | null; signupMethod: string } | null
   timeline: TimelineEvent[]
   noteEntries: NoteEntry[]
@@ -46,8 +47,19 @@ interface NoteEntry { id: number; body: string; author: string; createdAt: strin
 
 const TL_COLOR: Record<string, string> = {
   signup: '#34d399', project: '#a78bfa', code: '#34d399', community: '#38bdf8',
-  feedback: '#fbbf24', admin: '#f97316', gift: '#f97316',
+  feedback: '#fbbf24', admin: '#f97316', gift: '#f97316', email: '#ec4899',
 }
+
+// Quick-start outreach templates. {name} is filled from the account.
+const EMAIL_TEMPLATES: { id: string; label: string; subject: string; body: string }[] = [
+  { id: 'blank', label: 'Blank', subject: '', body: '' },
+  { id: 'welcome', label: 'Welcome', subject: 'Welcome to 100Lights 🎶',
+    body: 'Hi{name},\n\nThanks for joining 100Lights — I\'m Brae, the person behind it. If you ever have a question or something feels off, just reply to this email; it comes straight to me.\n\nHappy making,\nBrae' },
+  { id: 'upgrade', label: 'Upgrade nudge', subject: 'A little more room to build',
+    body: 'Hi{name},\n\nLooks like you\'ve been getting good use out of 100Lights. Pro unlocks 20 GB of storage, unlimited projects, and live collaboration — if that\'d help, it\'s $19/mo and cancel anytime.\n\nEither way, glad you\'re here.\n\nBrae' },
+  { id: 'winback', label: 'Win-back', subject: 'Still here whenever you want to jam',
+    body: 'Hi{name},\n\nNoticed it\'s been a while since your last session. We\'ve shipped a bunch since then. If there was something that got in your way, I\'d genuinely love to hear it — just reply.\n\nBrae' },
+]
 
 // Lifecycle stage display metadata — mirrors lib/lifecycle.ts STAGES. Kept
 // local so this client bundle never imports the server-only lifecycle module.
@@ -100,6 +112,9 @@ export default function UsersPanel() {
   const [noteSaving, setNoteSaving] = useState(false)
   const [entryDraft, setEntryDraft] = useState('')
   const [entrySaving, setEntrySaving] = useState(false)
+  const [emailSubject, setEmailSubject] = useState('')
+  const [emailBody, setEmailBody] = useState('')
+  const [emailSending, setEmailSending] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
@@ -202,7 +217,7 @@ export default function UsersPanel() {
   }
 
   async function openDetail(u: UserRow) {
-    setDetailUser(u); setDetail(null); setNoteDraft(''); setTagsDraft('')
+    setDetailUser(u); setDetail(null); setNoteDraft(''); setTagsDraft(''); setEmailSubject(''); setEmailBody('')
     try {
       const r = await fetch(`/api/admin/users/${encodeURIComponent(u.userId)}`)
       if (r.ok) { const d = await r.json() as Detail; setDetail(d); setNoteDraft(d.note ?? ''); setTagsDraft((d.tags ?? []).join(', ')) }
@@ -241,6 +256,30 @@ export default function UsersPanel() {
     if (!detailUser) return
     setDetail(prev => prev ? { ...prev, noteEntries: prev.noteEntries.filter(e => e.id !== id) } : prev)
     try { await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/notes?entryId=${id}`, { method: 'DELETE' }) } catch { /* optimistic */ }
+  }
+
+  function applyTemplate(id: string) {
+    const t = EMAIL_TEMPLATES.find(x => x.id === id); if (!t) return
+    const first = detail?.identity?.firstName?.trim()
+    const name = first ? ` ${first}` : ''
+    setEmailSubject(t.subject)
+    setEmailBody(t.body.replace(/\{name\}/g, name))
+  }
+
+  async function sendUserEmail() {
+    if (!detailUser || !emailSubject.trim() || !emailBody.trim()) return
+    if (!window.confirm(`Send this email to ${detailUser.email || 'this user'}?`)) return
+    setEmailSending(true)
+    try {
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/email`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject: emailSubject.trim(), body: emailBody.trim() }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      showToast(`Emailed ${d.to} ✓`)
+      setEmailSubject(''); setEmailBody('')
+      if (detailUser) void openDetail(detailUser)  // refresh timeline + notes log
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Send failed') } finally { setEmailSending(false) }
   }
 
   const giftLabel = (u: UserRow) => {
@@ -526,6 +565,37 @@ export default function UsersPanel() {
                     )}
                   </div>
                   {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
+                </div>
+
+                {/* Contact — one-off outreach email, logged to the timeline */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>CONTACT</span>
+                    {detailUser.email && <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>→ {detailUser.email}</span>}
+                    <select onChange={e => { applyTemplate(e.target.value); e.currentTarget.selectedIndex = 0 }} defaultValue=""
+                      style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer' }}>
+                      <option value="" disabled>Template…</option>
+                      {EMAIL_TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  {!detail.emailConfigured ? (
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>Email sending is off. Set <code style={{ color: 'var(--text-secondary)' }}>RESEND_API_KEY</code> to email users from here — the composer stays ready.</p>
+                  ) : !detailUser.email ? (
+                    <p style={{ fontSize: 11, color: '#f59e0b', margin: 0 }}>No email on this account — can&rsquo;t send.</p>
+                  ) : null}
+                  <input value={emailSubject} onChange={e => setEmailSubject(e.target.value)} placeholder="Subject"
+                    disabled={!detail.emailConfigured || !detailUser.email}
+                    style={{ width: '100%', marginTop: 6, fontSize: 12.5, padding: '7px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', opacity: detail.emailConfigured && detailUser.email ? 1 : 0.55 }} />
+                  <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} placeholder="Write a message…"
+                    disabled={!detail.emailConfigured || !detailUser.email}
+                    style={{ width: '100%', minHeight: 90, marginTop: 6, fontSize: 12.5, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', lineHeight: 1.5, opacity: detail.emailConfigured && detailUser.email ? 1 : 0.55 }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    <button onClick={() => void sendUserEmail()} disabled={emailSending || !detail.emailConfigured || !detailUser.email || !emailSubject.trim() || !emailBody.trim()}
+                      style={{ fontSize: 12, fontWeight: 700, padding: '6px 16px', borderRadius: 8, border: 'none', background: '#ec4899', color: '#fff', cursor: 'pointer', opacity: (emailSending || !detail.emailConfigured || !detailUser.email || !emailSubject.trim() || !emailBody.trim()) ? 0.45 : 1 }}>
+                      {emailSending ? 'Sending…' : '📧 Send email'}
+                    </button>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>logged to the timeline</span>
+                  </div>
                 </div>
 
                 {/* Activity timeline — the account's story, merged from every source */}

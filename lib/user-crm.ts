@@ -82,9 +82,16 @@ export async function buildTimeline(userId: string): Promise<TimelineEvent[]> {
   for (const c of community) push(c.created_at, 'community', `Published “${c.name}”`, String(c.kind))
   for (const f of feedback) push(f.created_at, 'feedback', 'Sent feedback', String(f.message).slice(0, 120))
   for (const a of audit) {
+    const action = String(a.action)
+    // Outreach emails get a first-class timeline entry.
+    if (action === 'user.email') {
+      const subj = (a.detail as { subject?: string } | null)?.subject
+      push(a.created_at, 'email', 'Emailed this user', subj ? `“${subj}”` : undefined)
+      continue
+    }
     let d = ''
     try { d = a.detail ? JSON.stringify(a.detail) : '' } catch { d = '' }
-    push(a.created_at, 'admin', `Admin action: ${a.action}`, d && d !== '{}' ? d.slice(0, 120) : undefined)
+    push(a.created_at, 'admin', `Admin action: ${action}`, d && d !== '{}' ? d.slice(0, 120) : undefined)
   }
 
   return ev.sort((x, y) => y.at.localeCompare(x.at)).slice(0, 50)

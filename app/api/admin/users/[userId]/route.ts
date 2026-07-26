@@ -4,6 +4,7 @@ import { clerkClient } from '@clerk/nextjs/server'
 import { logAdmin } from '@/lib/admin-audit'
 import { buildTimeline, listNoteEntries } from '@/lib/user-crm'
 import { stageOf, healthOf } from '@/lib/lifecycle'
+import { emailEnabled } from '@/lib/email'
 
 export const runtime = 'nodejs'
 
@@ -111,6 +112,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
   return Response.json({
     risk,
     lifecycle,
+    emailConfigured: emailEnabled(),
     userId,
     email,
     identity: identity ? {
