@@ -33,6 +33,8 @@ interface Detail {
   redemptions: Redemption[]
   projectCount: number
   communityCount: number
+  note: string
+  tags: string[]
 }
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -53,6 +55,9 @@ export default function UsersPanel() {
   const [toast, setToast] = useState<string | null>(null)
   const [detailUser, setDetailUser] = useState<UserRow | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [tagsDraft, setTagsDraft] = useState('')
+  const [noteSaving, setNoteSaving] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
@@ -131,11 +136,25 @@ export default function UsersPanel() {
   }
 
   async function openDetail(u: UserRow) {
-    setDetailUser(u); setDetail(null)
+    setDetailUser(u); setDetail(null); setNoteDraft(''); setTagsDraft('')
     try {
       const r = await fetch(`/api/admin/users/${encodeURIComponent(u.userId)}`)
-      if (r.ok) setDetail(await r.json())
+      if (r.ok) { const d = await r.json() as Detail; setDetail(d); setNoteDraft(d.note ?? ''); setTagsDraft((d.tags ?? []).join(', ')) }
     } catch { /* modal shows the row basics regardless */ }
+  }
+
+  async function saveNote() {
+    if (!detailUser) return
+    setNoteSaving(true)
+    try {
+      const tags = tagsDraft.split(',').map(t => t.trim()).filter(Boolean)
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: noteDraft, tags }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      showToast('Notes saved ✓')
+      setDetail(d => d ? { ...d, note: noteDraft, tags } : d)
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Save failed') } finally { setNoteSaving(false) }
   }
 
   const giftLabel = (u: UserRow) => {
@@ -315,6 +334,26 @@ export default function UsersPanel() {
                     )}
                   </div>
                   {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
+                </div>
+
+                {/* Notes & tags — private admin CRM memory */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>NOTES &amp; TAGS</span>
+                    <button onClick={() => void saveNote()} disabled={noteSaving}
+                      style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: noteSaving ? 0.6 : 1 }}>
+                      {noteSaving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)} placeholder="Private notes about this account — why they're VIP, a support thread, a promise you made…"
+                    style={{ width: '100%', minHeight: 60, fontSize: 12.5, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', lineHeight: 1.5 }} />
+                  <input value={tagsDraft} onChange={e => setTagsDraft(e.target.value)} placeholder="tags, comma-separated (e.g. VIP, press, refund-risk)"
+                    style={{ width: '100%', marginTop: 6, fontSize: 12, padding: '6px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+                  {detail.tags?.length ? (
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+                      {detail.tags.map(t => <span key={t} style={{ fontSize: 10, fontWeight: 700, padding: '1px 8px', borderRadius: 99, background: 'rgba(124,58,237,0.14)', color: 'var(--accent-light)' }}>{t}</span>)}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}

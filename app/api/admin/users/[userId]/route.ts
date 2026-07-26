@@ -1,6 +1,7 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
+import { logAdmin } from '@/lib/admin-audit'
 
 export const runtime = 'nodejs'
 
@@ -10,6 +11,15 @@ async function safe<T = Record<string, unknown>>(p: Promise<unknown>, fallback: 
   try { return (await p) as T[] } catch { return fallback }
 }
 
+// Admin CRM notes/tags — institutional memory that travels with an account,
+// separate from anything the user sees.
+let notesReady = false
+async function ensureNotes() {
+  if (notesReady) return
+  await sql`CREATE TABLE IF NOT EXISTS user_notes (user_id TEXT PRIMARY KEY, note TEXT NOT NULL DEFAULT '', tags JSONB, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
+  notesReady = true
+}
+
 // GET /api/admin/users/[userId] — everything about one account, so "why does
 // this person have Pro / how much have they built" is answerable in one place.
 export async function GET(_req: Request, { params }: { params: Promise<{ userId: string }> }) {
@@ -17,7 +27,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
   const { userId } = await params
   if (!userId) return Response.json({ error: 'userId required' }, { status: 400 })
 
-  const [subRows, redemptions, projects, community, email] = await Promise.all([
+  const [subRows, redemptions, projects, community, email, noteRows] = await Promise.all([
     safe(sql`SELECT plan, status, stripe_customer_id, stripe_sub_id, current_period_end, gift_plan, gift_until, updated_at, created_at
         FROM subscriptions WHERE user_id = ${userId}`, []),
     safe(sql`SELECT code, kind, grant_days, grant_until, redeemed_at FROM code_redemptions WHERE user_id = ${userId} ORDER BY redeemed_at DESC`, []),
@@ -27,6 +37,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
       try { const u = await (await clerkClient()).users.getUser(userId); return u.emailAddresses?.[0]?.emailAddress ?? '' }
       catch { return '' }
     })(),
+    (async () => { await ensureNotes(); return safe(sql`SELECT note, tags FROM user_notes WHERE user_id = ${userId}`, []) })(),
   ])
 
   const s = subRows[0] as Record<string, unknown> | undefined
@@ -57,5 +68,24 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
     })),
     projectCount: Number((projects as { n: number }[])[0]?.n ?? 0),
     communityCount: Number((community as { n: number }[])[0]?.n ?? 0),
+    note: noteRows[0] ? String((noteRows[0] as Record<string, unknown>).note ?? '') : '',
+    tags: (noteRows[0] as Record<string, unknown> | undefined)?.tags as string[] ?? [],
   })
+}
+
+// PATCH /api/admin/users/[userId] — save admin CRM notes + tags for the account.
+export async function PATCH(req: Request, { params }: { params: Promise<{ userId: string }> }) {
+  if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
+  const { userId } = await params
+  if (!userId) return Response.json({ error: 'userId required' }, { status: 400 })
+  const b = await req.json().catch(() => ({})) as { note?: string; tags?: string[] }
+  const note = (b.note ?? '').slice(0, 4000)
+  const tags = Array.isArray(b.tags) ? b.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 20) : []
+  await ensureNotes()
+  await sql`
+    INSERT INTO user_notes (user_id, note, tags, updated_at)
+    VALUES (${userId}, ${note}, ${tags.length ? JSON.stringify(tags) : null}, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET note = EXCLUDED.note, tags = EXCLUDED.tags, updated_at = NOW()`
+  await logAdmin('user.note', userId, { tags })
+  return Response.json({ ok: true })
 }
