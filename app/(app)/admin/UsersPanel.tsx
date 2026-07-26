@@ -45,6 +45,8 @@ export default function UsersPanel() {
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [searched, setSearched] = useState(false)
+  const [segment, setSegment] = useState('all')
+  const [counts, setCounts] = useState<Record<string, number>>({})
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
   const [showCustom, setShowCustom] = useState(false)
   const [customDays, setCustomDays] = useState('')
@@ -54,10 +56,10 @@ export default function UsersPanel() {
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
-  const load = useCallback(async (query: string, pg: number) => {
+  const load = useCallback(async (query: string, pg: number, seg = 'all') => {
     setLoading(true); setFetchErr(null)
     try {
-      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&page=${pg}`)
+      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&page=${pg}&segment=${seg}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { users: UserRow[]; hasMore: boolean; searched: boolean }
       setUsers(data.users); setHasMore(!!data.hasMore); setSearched(!!data.searched)
@@ -66,7 +68,16 @@ export default function UsersPanel() {
     } finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { void load('', 0) }, [load])
+  useEffect(() => { void load('', 0, 'all') }, [load])
+
+  // Live segment counts for the chips.
+  useEffect(() => {
+    fetch('/api/admin/users/segments').then(r => r.ok ? r.json() : null).then(d => { if (d?.counts) setCounts(d.counts) }).catch(() => {})
+  }, [])
+
+  function pickSegment(seg: string) {
+    setSegment(seg); setQ(''); setPage(0); void load('', 0, seg)
+  }
 
   // The ⌘K command palette can hand us a user to open directly — via a live
   // event (panel already mounted) or a stashed global (panel mounts lazily
@@ -81,9 +92,12 @@ export default function UsersPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Debounced search — a new query resets to page 0.
+  // Debounced search — only fires for a non-empty query (empty is owned by
+  // segment selection / clear), and a search always resets to the All segment.
   useEffect(() => {
-    const t = setTimeout(() => { setPage(0); void load(q.trim(), 0) }, 300)
+    const term = q.trim()
+    if (!term) return
+    const t = setTimeout(() => { setSegment('all'); setPage(0); void load(term, 0, 'all') }, 300)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q])
@@ -142,18 +156,41 @@ export default function UsersPanel() {
             placeholder="Search by email, name, or user ID…"
             style={{ width: '100%', fontSize: 13, padding: '8px 30px 8px 32px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
           />
-          {q && <button onClick={() => setQ('')} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>}
+          {q && <button onClick={() => { setQ(''); void load('', 0, segment) }} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>}
         </div>
         {!searched && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            <button onClick={() => { const p = Math.max(0, page - 1); setPage(p); void load('', p) }} disabled={page === 0 || loading}
+            <button onClick={() => { const p = Math.max(0, page - 1); setPage(p); void load('', p, segment) }} disabled={page === 0 || loading}
               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: page === 0 ? 'default' : 'pointer', opacity: page === 0 ? 0.5 : 1 }}>‹ Prev</button>
             <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 48, textAlign: 'center' }}>Page {page + 1}</span>
-            <button onClick={() => { const p = page + 1; setPage(p); void load('', p) }} disabled={!hasMore || loading}
+            <button onClick={() => { const p = page + 1; setPage(p); void load('', p, segment) }} disabled={!hasMore || loading}
               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: hasMore ? 'pointer' : 'default', opacity: hasMore ? 1 : 0.5 }}>Next ›</button>
           </div>
         )}
       </div>
+
+      {/* Segment chips */}
+      {!searched && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {([
+            ['all', 'All'], ['paying', 'Paying'], ['comped', 'Comped'], ['power', 'Power users'],
+            ['upsell', 'Upsell (free, heavy)'], ['atrisk', 'At-risk'], ['free', 'Free'],
+          ] as const).map(([id, label]) => {
+            const active = segment === id
+            const n = counts[id]
+            const tone = id === 'atrisk' ? '#f59e0b' : id === 'upsell' ? '#38bdf8' : id === 'paying' ? '#34d399' : 'var(--accent)'
+            return (
+              <button key={id} onClick={() => pickSegment(id)}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 99, cursor: 'pointer',
+                  border: `1px solid ${active ? tone : 'var(--border)'}`,
+                  background: active ? 'color-mix(in srgb, ' + tone + ' 15%, transparent)' : 'transparent',
+                  color: active ? tone : 'var(--text-muted)' }}>
+                {label}{n != null && <span style={{ opacity: 0.7 }}> {n}</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {loading ? <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading users…</p>
       : fetchErr ? <p style={{ fontSize: 12, color: 'var(--error)' }}>{fetchErr}</p>
