@@ -584,6 +584,7 @@ export default async function AdminPage() {
             <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.3)' }}>
               Dev only
             </span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)', marginLeft: 4 }}>Press <kbd style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', fontSize: 11 }}>⌘K</kbd> to search</span>
             <AdminLogout />
           </div>
         </div>

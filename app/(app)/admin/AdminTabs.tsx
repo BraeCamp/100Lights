@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
+import CommandPalette from './CommandPalette'
 
 export interface AdminSubtab {
   id: string
@@ -61,6 +62,7 @@ export default function AdminTabs({ tabs }: { tabs: AdminTab[] }) {
 
   return (
     <div>
+      <CommandPalette tabs={tabs} />
       {/* Top-level module tabs */}
       <div className="flex gap-1 mb-4" style={{ borderBottom: '1px solid var(--border)' }}>
         {tabs.map(t => (

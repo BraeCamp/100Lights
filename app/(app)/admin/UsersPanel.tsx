@@ -68,6 +68,19 @@ export default function UsersPanel() {
 
   useEffect(() => { void load('', 0) }, [load])
 
+  // The ⌘K command palette can hand us a user to open directly — via a live
+  // event (panel already mounted) or a stashed global (panel mounts lazily
+  // after the event fired on first tab open).
+  useEffect(() => {
+    const openUser = (u: UserRow | undefined) => { if (u?.userId) { setQ(u.email || ''); void openDetail(u) } }
+    const onOpen = (e: Event) => openUser((e as CustomEvent<UserRow>).detail)
+    window.addEventListener('admin:open-user', onOpen)
+    const w = window as unknown as { __adminPendingUser?: UserRow }
+    if (w.__adminPendingUser) { const u = w.__adminPendingUser; w.__adminPendingUser = undefined; openUser(u) }
+    return () => window.removeEventListener('admin:open-user', onOpen)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Debounced search — a new query resets to page 0.
   useEffect(() => {
     const t = setTimeout(() => { setPage(0); void load(q.trim(), 0) }, 300)
