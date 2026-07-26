@@ -60,7 +60,7 @@ Two plans; feature gates live in `lib/stripe.ts` (`PLAN_LIMITS`), prices live in
 
 ## Repository Structure (`/Users/brae/100lights`)
 
-> The `package.json` `"name"` is still literally `"contentforge"` — a harmless leftover from the old product.
+> Note: IndexedDB store names and the saved-project file type still use a `contentforge-*` / `contentforge-project` prefix (e.g. `contentforge-sound-library-<userId>`). These are **load-bearing identifiers** — renaming them would orphan users' local data and break saved `.cf` project files, so they stay as-is despite the old name.
 
 ```
 app/
