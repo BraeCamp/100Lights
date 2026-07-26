@@ -16,8 +16,26 @@ import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
 import { getProPrice } from '@/lib/stripe'
+import { listAudit, type AuditEntry } from '@/lib/admin-audit'
 
 export const dynamic = 'force-dynamic'
+
+// Operational signals for the Command Center — "what needs you today". Each
+// group is best-effort so a table that doesn't exist yet never breaks the home.
+async function getOps() {
+  const one = async (q: Promise<Record<string, unknown>[]>): Promise<number> => {
+    try { const r = await q; return Number(r[0]?.n ?? 0) } catch { return 0 }
+  }
+  const [newToday, openFeedback, reportedItems, reportedComments] = await Promise.all([
+    one(sql`SELECT COUNT(*)::int AS n FROM subscriptions WHERE created_at >= date_trunc('day', NOW())`),
+    one(sql`SELECT COUNT(*)::int AS n FROM feedback WHERE resolved_at IS NULL`),
+    one(sql`SELECT COUNT(DISTINCT r.item_id)::int AS n FROM community_reports r JOIN community_items i ON i.id = r.item_id WHERE i.removed_at IS NULL`),
+    one(sql`SELECT COUNT(DISTINCT comment_id)::int AS n FROM community_comment_reports`),
+  ])
+  let recent: AuditEntry[] = []
+  try { recent = await listAudit(8) } catch { /* audit table may not exist yet */ }
+  return { newToday, openFeedback, reportedItems, reportedComments, recent }
+}
 
 async function getStats() {
   // `created_at` is real signup time; count new users on it, not `updated_at`
@@ -69,6 +87,44 @@ function Stat({ label, value, sub, warn }: { label: string; value: number | stri
   )
 }
 
+// An actionable "needs you" tile. When count > 0 it glows and links to the
+// panel that clears it; at zero it reads calm (inbox-zero).
+function NeedsTile({ label, count, href, clearLabel, cta }: { label: string; count: number; href: string; clearLabel: string; cta: string }) {
+  const hot = count > 0
+  return (
+    <a href={href} className="p-4 rounded-xl border block" style={{
+      background: hot ? 'rgba(245,158,11,0.06)' : 'var(--bg-card)',
+      borderColor: hot ? 'rgba(245,158,11,0.4)' : 'var(--border)', textDecoration: 'none',
+    }}>
+      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
+      <p className="text-2xl font-bold" style={{ color: hot ? '#f59e0b' : '#34d399' }}>{hot ? count : '✓'}</p>
+      <p className="text-xs mt-0.5" style={{ color: hot ? 'var(--accent-light)' : 'var(--text-muted)' }}>{hot ? cta : clearLabel}</p>
+    </a>
+  )
+}
+
+function ActivityFeed({ entries }: { entries: AuditEntry[] }) {
+  const color = (a: string) => a.startsWith('gift') || a.startsWith('code') ? '#f97316'
+    : a.startsWith('article') || a.startsWith('catalog') ? '#a78bfa'
+    : a.startsWith('community') ? '#ef4444' : a.startsWith('flags') ? '#38bdf8' : 'var(--text-secondary)'
+  const when = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  if (entries.length === 0) {
+    return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No admin actions recorded yet.</p>
+  }
+  return (
+    <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+      {entries.map((e, i) => (
+        <div key={e.id} className="flex items-center gap-3 px-4 py-2 text-xs" style={{ borderTop: i ? '1px solid var(--border)' : 'none', background: i % 2 ? 'var(--bg-surface)' : 'var(--bg-card)' }}>
+          <span style={{ color: 'var(--text-muted)', minWidth: 96, fontVariantNumeric: 'tabular-nums' }}>{when(e.created_at)}</span>
+          <span style={{ color: color(e.action), fontWeight: 600, minWidth: 150 }}>{e.action}</span>
+          <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.target ?? ''}</span>
+          <span style={{ color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>{e.actor}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function PanelIntro({ title, description }: { title: string; description?: string }) {
   return (
     <div className="mb-5">
@@ -100,7 +156,8 @@ const QUICK_LINKS = [
 ]
 
 export default async function AdminPage() {
-  const [stats, flags] = await Promise.all([getStats(), getFlags()])
+  const [stats, flags, ops] = await Promise.all([getStats(), getFlags(), getOps()])
+  const needs = ops.openFeedback + ops.reportedItems + ops.reportedComments
   const conversionRate = stats.totalUsers > 0
     ? ((stats.proUsers / stats.totalUsers) * 100).toFixed(1)
     : '0'
@@ -115,7 +172,26 @@ export default async function AdminPage() {
           label: 'Overview',
           content: (
             <>
-              <PanelIntro title="Platform Overview" description="Signups, revenue, subscriptions, and project activity. Refreshes on page load." />
+              <PanelIntro title="Command Center" description={needs > 0 ? `${needs} thing${needs === 1 ? ' needs' : 's need'} your attention today.` : 'All clear — nothing needs you right now. Here are the numbers.'} />
+
+              {/* Needs your attention */}
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Needs you today</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <NeedsTile label="Open feedback"    count={ops.openFeedback} href="#general/feedback" clearLabel="inbox zero" cta="triage them →" />
+                <NeedsTile label="Reported content" count={ops.reportedItems + ops.reportedComments} href="#general/community-moderation" clearLabel="queue clear" cta="review the queue →" />
+                <a href="#general/users" className="p-4 rounded-xl border block" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', textDecoration: 'none' }}>
+                  <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>New signups today</p>
+                  <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{ops.newToday}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>see who →</p>
+                </a>
+                <a href="#general/audit" className="p-4 rounded-xl border block" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', textDecoration: 'none' }}>
+                  <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Recent admin actions</p>
+                  <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{ops.recent.length}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>full log →</p>
+                </a>
+              </div>
+
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Audience</p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <Stat label="Total users"      value={stats.totalUsers} />
                 <Stat label="Pro subscribers"  value={stats.proUsers}  sub={`${conversionRate}% conversion`} />
@@ -136,10 +212,16 @@ export default async function AdminPage() {
                 <Stat label="Code Pro"     value={stats.codePro}   sub="redeemed codes, active" />
               </div>
               <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Projects</p>
-              <div className="grid grid-cols-2 gap-4" style={{ maxWidth: 480 }}>
+              <div className="grid grid-cols-2 gap-4 mb-6" style={{ maxWidth: 480 }}>
                 <Stat label="Total projects"      value={stats.totalProjects} />
                 <Stat label="Projects this week"  value={stats.projectsThisWeek} />
               </div>
+
+              <div className="flex items-baseline gap-3 mb-2">
+                <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Recent admin activity</p>
+                <a href="#general/audit" className="text-xs" style={{ color: 'var(--accent-light)' }}>full log →</a>
+              </div>
+              <ActivityFeed entries={ops.recent} />
             </>
           ),
         },
