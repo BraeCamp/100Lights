@@ -14,6 +14,7 @@ import AuditLogPanel from './AuditLogPanel'
 import CatalogPanel from './CatalogPanel'
 import StoragePanel from './StoragePanel'
 import StatusPanel from './StatusPanel'
+import WebhooksPanel from './WebhooksPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -462,6 +463,19 @@ export default async function AdminPage() {
                 description="A live health probe of the services 100Lights runs on — database, storage, billing, auth — with round-trip latency. Answers &ldquo;is anything broken?&rdquo; at a glance."
               />
               <StatusPanel />
+            </>
+          ),
+        },
+        {
+          id: 'webhooks',
+          label: 'Webhooks',
+          content: (
+            <>
+              <PanelIntro
+                title="Webhooks"
+                description="Every Stripe and Clerk event we receive, with its outcome — and one-click replay of the stored payload through the same idempotent handler. The fix for &ldquo;the webhook fired but the account didn&rsquo;t update.&rdquo;"
+              />
+              <WebhooksPanel />
             </>
           ),
         },
