@@ -17,8 +17,70 @@ import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
 import { getProPrice } from '@/lib/stripe'
 import { listAudit, type AuditEntry } from '@/lib/admin-audit'
+import { clerkClient } from '@clerk/nextjs/server'
 
 export const dynamic = 'force-dynamic'
+
+interface Snapshot { day: string; mrrCents: number; paying: number }
+interface DunningRow { userId: string; email: string; plan: string; status: string; stripeCustomerId: string; updatedAt: string }
+
+// Revenue intelligence — a self-populating MRR trend (a snapshot is stamped on
+// every admin load, so a trend accumulates with zero infra), the comp-cost
+// run-rate (free Pro you're giving away), and the failed-payment / at-risk
+// subscription queue. All best-effort so a missing table never breaks the page.
+async function getRevenue() {
+  const one = async (q: Promise<Record<string, unknown>[]>): Promise<number> => {
+    try { const r = await q; return Number(r[0]?.n ?? 0) } catch { return 0 }
+  }
+  const [paying, gifted, code, users] = await Promise.all([
+    one(sql`SELECT COUNT(*)::int AS n FROM subscriptions WHERE plan = 'pro' AND status = 'active' AND stripe_sub_id IS NOT NULL`),
+    one(sql`SELECT COUNT(*)::int AS n FROM subscriptions WHERE gift_plan = 'pro' AND (gift_until IS NULL OR gift_until > NOW())`),
+    one(sql`SELECT COUNT(DISTINCT user_id)::int AS n FROM code_redemptions WHERE grant_until > NOW()`),
+    one(sql`SELECT COUNT(*)::int AS n FROM subscriptions`),
+  ])
+  let priceCents = 0, currency = 'usd'
+  try { const p = await getProPrice('monthly'); priceCents = p.amount; currency = p.currency } catch { /* Stripe down — no $ */ }
+  const mrrCents = paying * priceCents
+
+  // Stamp today's snapshot (idempotent — one row per day) and read the trend.
+  let snapshots: Snapshot[] = []
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS mrr_snapshots (
+        day DATE PRIMARY KEY, mrr_cents BIGINT NOT NULL DEFAULT 0,
+        paying INT, gifted INT, code INT, total_users INT,
+        captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`
+    await sql`
+      INSERT INTO mrr_snapshots (day, mrr_cents, paying, gifted, code, total_users)
+      VALUES (CURRENT_DATE, ${mrrCents}, ${paying}, ${gifted}, ${code}, ${users})
+      ON CONFLICT (day) DO UPDATE SET mrr_cents = EXCLUDED.mrr_cents, paying = EXCLUDED.paying,
+        gifted = EXCLUDED.gifted, code = EXCLUDED.code, total_users = EXCLUDED.total_users, captured_at = NOW()`
+    const rows = await sql`SELECT day, mrr_cents, paying FROM mrr_snapshots ORDER BY day DESC LIMIT 30`
+    snapshots = rows.map(r => ({ day: String(r.day), mrrCents: Number(r.mrr_cents), paying: Number(r.paying ?? 0) })).reverse()
+  } catch { /* snapshot table unavailable */ }
+
+  // Failed / at-risk payments: real Stripe subs whose status isn't healthy.
+  let dunning: DunningRow[] = []
+  try {
+    const rows = await sql`
+      SELECT user_id, plan, status, stripe_customer_id, updated_at FROM subscriptions
+      WHERE stripe_sub_id IS NOT NULL AND status IS NOT NULL AND status NOT IN ('active','trialing')
+      ORDER BY updated_at DESC LIMIT 50`
+    const ids = rows.map(r => String(r.user_id))
+    let emails = new Map<string, string>()
+    if (ids.length) {
+      try { const c = await clerkClient(); emails = new Map((await c.users.getUserList({ userId: ids, limit: 100 })).data.map(u => [u.id, u.emailAddresses[0]?.emailAddress ?? ''])) } catch { /* Clerk down */ }
+    }
+    dunning = rows.map(r => ({
+      userId: String(r.user_id), email: emails.get(String(r.user_id)) ?? '',
+      plan: String(r.plan), status: String(r.status),
+      stripeCustomerId: String(r.stripe_customer_id ?? ''), updatedAt: r.updated_at ? String(r.updated_at) : '',
+    }))
+  } catch { /* subscriptions table shape differs */ }
+
+  return { mrrCents, currency, paying, gifted, code, comped: gifted + code, compMonthlyCents: (gifted + code) * priceCents, snapshots, dunning }
+}
 
 // Operational signals for the Command Center — "what needs you today". Each
 // group is best-effort so a table that doesn't exist yet never breaks the home.
@@ -125,6 +187,47 @@ function ActivityFeed({ entries }: { entries: AuditEntry[] }) {
   )
 }
 
+function money(cents: number, currency: string) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), maximumFractionDigits: 0 }).format(cents / 100)
+}
+
+// Tiny inline-SVG MRR trend. Renders once ≥2 daily snapshots exist.
+function Sparkline({ snapshots, currency }: { snapshots: Snapshot[]; currency: string }) {
+  const W = 460, H = 90, pad = 6
+  const pts = snapshots.map(s => s.mrrCents)
+  const hasTrend = pts.length >= 2
+  const first = pts[0] ?? 0, last = pts[pts.length - 1] ?? 0
+  const delta = last - first
+  const max = Math.max(...pts, 1), min = Math.min(...pts, 0)
+  const span = Math.max(1, max - min)
+  const path = pts.map((v, i) => {
+    const x = pad + (i / Math.max(1, pts.length - 1)) * (W - pad * 2)
+    const y = H - pad - ((v - min) / span) * (H - pad * 2)
+    return `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return (
+    <div className="rounded-xl border p-4" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+      <div className="flex items-baseline gap-3 mb-2">
+        <span className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{money(last, currency)}</span>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>current MRR</span>
+        {hasTrend && delta !== 0 && (
+          <span className="text-xs font-semibold" style={{ color: delta > 0 ? '#34d399' : '#ef4444', marginLeft: 'auto' }}>
+            {delta > 0 ? '▲' : '▼'} {money(Math.abs(delta), currency)} over {snapshots.length} day{snapshots.length === 1 ? '' : 's'}
+          </span>
+        )}
+      </div>
+      {hasTrend ? (
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: 'block' }} aria-hidden="true">
+          <path d={`${path} L${W - pad},${H - pad} L${pad},${H - pad} Z`} fill="rgba(124,92,255,0.10)" stroke="none" />
+          <path d={path} fill="none" stroke="var(--accent-light)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        </svg>
+      ) : (
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Trend builds as the days pass — a snapshot is recorded each time this page loads. Come back tomorrow to see the line.</p>
+      )}
+    </div>
+  )
+}
+
 function PanelIntro({ title, description }: { title: string; description?: string }) {
   return (
     <div className="mb-5">
@@ -156,8 +259,8 @@ const QUICK_LINKS = [
 ]
 
 export default async function AdminPage() {
-  const [stats, flags, ops] = await Promise.all([getStats(), getFlags(), getOps()])
-  const needs = ops.openFeedback + ops.reportedItems + ops.reportedComments
+  const [stats, flags, ops, revenue] = await Promise.all([getStats(), getFlags(), getOps(), getRevenue()])
+  const needs = ops.openFeedback + ops.reportedItems + ops.reportedComments + revenue.dunning.length
   const conversionRate = stats.totalUsers > 0
     ? ((stats.proUsers / stats.totalUsers) * 100).toFixed(1)
     : '0'
@@ -177,17 +280,13 @@ export default async function AdminPage() {
               {/* Needs your attention */}
               <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Needs you today</p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <NeedsTile label="Open feedback"    count={ops.openFeedback} href="#general/feedback" clearLabel="inbox zero" cta="triage them →" />
-                <NeedsTile label="Reported content" count={ops.reportedItems + ops.reportedComments} href="#general/community-moderation" clearLabel="queue clear" cta="review the queue →" />
+                <NeedsTile label="Open feedback"     count={ops.openFeedback} href="#general/feedback" clearLabel="inbox zero" cta="triage them →" />
+                <NeedsTile label="Reported content"  count={ops.reportedItems + ops.reportedComments} href="#general/community-moderation" clearLabel="queue clear" cta="review the queue →" />
+                <NeedsTile label="Payments to fix"   count={revenue.dunning.length} href="#general/revenue" clearLabel="all paid" cta="chase them →" />
                 <a href="#general/users" className="p-4 rounded-xl border block" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', textDecoration: 'none' }}>
                   <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>New signups today</p>
                   <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{ops.newToday}</p>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>see who →</p>
-                </a>
-                <a href="#general/audit" className="p-4 rounded-xl border block" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', textDecoration: 'none' }}>
-                  <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Recent admin actions</p>
-                  <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{ops.recent.length}</p>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>full log →</p>
                 </a>
               </div>
 
@@ -232,6 +331,57 @@ export default async function AdminPage() {
             <>
               <PanelIntro title="Users" description="Search users, manage plans, and gift Pro time." />
               <UsersPanel />
+            </>
+          ),
+        },
+        {
+          id: 'revenue',
+          label: 'Revenue',
+          content: (
+            <>
+              <PanelIntro title="Revenue Intelligence" description="MRR trend, the free Pro you're giving away, and the payments that need chasing." />
+
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>MRR trend</p>
+              <div className="mb-6"><Sparkline snapshots={revenue.snapshots} currency={revenue.currency} /></div>
+
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Comped Pro — free access you're giving away</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <Stat label="Comp run-rate" value={revenue.compMonthlyCents ? `${money(revenue.compMonthlyCents, revenue.currency)}/mo` : '—'} sub={`${revenue.comped} active free seat${revenue.comped === 1 ? '' : 's'}`} warn={revenue.comped > 0} />
+                <Stat label="Gifted Pro" value={revenue.gifted} sub="admin gifts, active" />
+                <Stat label="Code Pro"   value={revenue.code}   sub="redeemed codes, active" />
+                <Stat label="Paying Pro" value={revenue.paying} sub="real Stripe subs" />
+              </div>
+
+              <div className="flex items-baseline gap-3 mb-2">
+                <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Payments to fix</p>
+                <span className="text-xs" style={{ color: revenue.dunning.length ? '#f59e0b' : 'var(--text-muted)' }}>{revenue.dunning.length} at-risk subscription{revenue.dunning.length === 1 ? '' : 's'}</span>
+              </div>
+              {revenue.dunning.length === 0 ? (
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No failed or past-due subscriptions — every paying account is current. ✓</p>
+              ) : (
+                <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
+                        {['Email / User', 'Status', 'Plan', 'Since', ''].map((h, i) => (
+                          <th key={i} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {revenue.dunning.map((d, i) => (
+                        <tr key={d.userId} style={{ borderBottom: '1px solid var(--border)', background: i % 2 ? 'var(--bg-surface)' : 'var(--bg-card)' }}>
+                          <td className="px-4 py-2 text-xs" style={{ color: 'var(--text-primary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.email || <span className="font-mono" style={{ color: 'var(--text-muted)' }}>{d.userId}</span>}</td>
+                          <td className="px-4 py-2 text-xs" style={{ color: '#f59e0b', fontWeight: 600 }}>{d.status}</td>
+                          <td className="px-4 py-2 text-xs" style={{ color: 'var(--text-secondary)' }}>{d.plan}</td>
+                          <td className="px-4 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>{d.updatedAt ? new Date(d.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
+                          <td className="px-4 py-2 text-xs">{d.stripeCustomerId && <a href={`https://dashboard.stripe.com/customers/${d.stripeCustomerId}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-light)' }}>Stripe ↗</a>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           ),
         },
