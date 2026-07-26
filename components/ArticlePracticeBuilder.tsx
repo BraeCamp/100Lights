@@ -34,8 +34,11 @@ const noteName = (m: number) => `${PC_NAMES[((m % 12) + 12) % 12]}${octaveOf(m)}
 // every diatonic triad in any key fits on screen.
 const LO = 48
 const HI = 84 // exclusive
-const STEPS = 8
-const BPM = 100
+const INITIAL_STEPS = 8
+const MIN_STEPS = 1
+const MAX_STEPS = 16
+const MIN_BPM = 40
+const MAX_BPM = 220
 
 // Major scale, laid out across three octaves so a triad is just three tones
 // two scale-steps apart (degree, degree+2, degree+4).
@@ -77,8 +80,9 @@ export default function ArticlePracticeBuilder({ label }: { label?: string }) {
 
 function Bench({ onClose }: { onClose: () => void }) {
   const [keyPc, setKeyPc] = useState(0)
+  const [bpm, setBpm] = useState(100)
   // Each step holds a set of MIDI notes (a chord, a single note, or empty).
-  const [steps, setSteps] = useState<number[][]>(() => Array.from({ length: STEPS }, () => []))
+  const [steps, setSteps] = useState<number[][]>(() => Array.from({ length: INITIAL_STEPS }, () => []))
   const [editStep, setEditStep] = useState(0)
   const [playStep, setPlayStep] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -138,7 +142,7 @@ function Bench({ onClose }: { onClose: () => void }) {
     setTimeout(() => g.disconnect(), 1600)
     setPressed(new Set(triad))
     setTimeout(() => setPressed(new Set()), 240)
-    setEdit(Math.min(STEPS - 1, cur + 1))
+    setEdit(Math.min(steps.length - 1, cur + 1))
   }
 
   function clearStep() {
@@ -146,8 +150,37 @@ function Bench({ onClose }: { onClose: () => void }) {
     setSteps(prev => { const next = prev.map(s => s.slice()); next[cur] = []; return next })
   }
   function clearAll() {
-    setSteps(Array.from({ length: STEPS }, () => []))
+    setSteps(prev => Array.from({ length: prev.length }, () => []))
     setEdit(0)
+  }
+
+  // Add a step at the end; remove the current step (keeping at least one).
+  function addStep() {
+    setSteps(prev => prev.length >= MAX_STEPS ? prev : [...prev, []])
+  }
+  function removeStep() {
+    setSteps(prev => {
+      if (prev.length <= MIN_STEPS) return prev
+      const cur = stepRef.current
+      const next = prev.filter((_, i) => i !== cur)
+      setEdit(Math.min(cur, next.length - 1))
+      return next
+    })
+  }
+
+  // Shift the current step's notes by an octave, but only while every note
+  // stays on the visible keyboard (so a shifted note is never invisible).
+  function shiftOctave(dir: 1 | -1) {
+    const cur = stepRef.current
+    setSteps(prev => {
+      const s = prev[cur]
+      if (!s.length) return prev
+      const shifted = s.map(n => n + dir * 12)
+      if (Math.min(...shifted) < LO || Math.max(...shifted) >= HI) return prev
+      const next = prev.map(x => x.slice())
+      next[cur] = shifted
+      return next
+    })
   }
 
   function play() {
@@ -157,7 +190,7 @@ function Bench({ onClose }: { onClose: () => void }) {
     const g = c.createGain()
     g.gain.value = 0.7
     g.connect(c.destination)
-    const spb = 60 / BPM
+    const spb = 60 / bpm
     const t0 = c.currentTime + 0.06
     const timers: number[] = []
     steps.forEach((notes, i) => {
@@ -166,7 +199,7 @@ function Bench({ onClose }: { onClose: () => void }) {
       timers.push(window.setTimeout(() => setPlayStep(i), i * spb * 1000))
     })
     setPlaying(true)
-    const done = window.setTimeout(() => stopRef.current(), STEPS * spb * 1000 + 400)
+    const done = window.setTimeout(() => stopRef.current(), steps.length * spb * 1000 + 400)
     stopRef.current = () => {
       timers.forEach(clearTimeout); clearTimeout(done)
       g.gain.setTargetAtTime(0, c.currentTime, 0.03)
@@ -180,7 +213,7 @@ function Bench({ onClose }: { onClose: () => void }) {
     const notes = steps.flatMap((s, i) => s.map(p => ({ pitch: p, startBeat: i, durationBeats: 1, velocity: 100 })))
     if (!notes.length) return
     const name = `my-progression-${KEY_NAMES[keyPc]}`
-    const blob = writeMidiFile(notes, BPM, name)
+    const blob = writeMidiFile(notes, bpm, name)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = `${name}.mid`
@@ -251,8 +284,26 @@ function Bench({ onClose }: { onClose: () => void }) {
             ))}
           </div>
 
+          {/* Tempo + step-count controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>TEMPO</span>
+              <input type="range" min={MIN_BPM} max={MAX_BPM} value={bpm} onChange={e => setBpm(Number(e.target.value))}
+                aria-label="Tempo (BPM)" style={{ width: 120, accentColor: '#a78bfa', cursor: 'pointer' }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', minWidth: 58 }}>{bpm} BPM</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>STEPS</span>
+              <button onClick={removeStep} disabled={steps.length <= MIN_STEPS} aria-label="Remove step"
+                style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', cursor: steps.length <= MIN_STEPS ? 'default' : 'pointer', opacity: steps.length <= MIN_STEPS ? 0.4 : 1, fontSize: 15, lineHeight: 1 }}>−</button>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', minWidth: 18, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{steps.length}</span>
+              <button onClick={addStep} disabled={steps.length >= MAX_STEPS} aria-label="Add step"
+                style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', cursor: steps.length >= MAX_STEPS ? 'default' : 'pointer', opacity: steps.length >= MAX_STEPS ? 0.4 : 1, fontSize: 15, lineHeight: 1 }}>+</button>
+            </div>
+          </div>
+
           {/* Step timeline — the progression you're building */}
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${STEPS}, 1fr)`, gap: 5, marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))`, gap: 5, marginBottom: 12 }}>
             {steps.map((notes, i) => {
               const isEdit = i === editStep
               const isPlay = i === playStep
@@ -289,6 +340,14 @@ function Bench({ onClose }: { onClose: () => void }) {
               }}>
               {playing ? <Square size={12} fill="currentColor" /> : <Play size={13} />} {playing ? 'Stop' : 'Play'}
             </button>
+            {/* Octave shift for the current step */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border)', borderRadius: 9, padding: '3px 4px 3px 8px', background: 'var(--bg-base)' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)' }}>OCT</span>
+              <button onClick={() => shiftOctave(-1)} disabled={!steps[editStep]?.length} title={`Step ${editStep + 1} down an octave`} aria-label="Octave down"
+                style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: steps[editStep]?.length ? 'pointer' : 'default', opacity: steps[editStep]?.length ? 1 : 0.4, fontSize: 14, lineHeight: 1 }}>▽</button>
+              <button onClick={() => shiftOctave(1)} disabled={!steps[editStep]?.length} title={`Step ${editStep + 1} up an octave`} aria-label="Octave up"
+                style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: steps[editStep]?.length ? 'pointer' : 'default', opacity: steps[editStep]?.length ? 1 : 0.4, fontSize: 14, lineHeight: 1 }}>△</button>
+            </div>
             <button onClick={clearStep}
               style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
               <Eraser size={12} /> Clear step {editStep + 1}
@@ -304,7 +363,7 @@ function Bench({ onClose }: { onClose: () => void }) {
           </div>
 
           <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.6 }}>
-            Tap a <strong style={{ color: 'var(--text-secondary)' }}>chord</strong> to drop it on the highlighted step, or tap piano keys to place notes one at a time. Pick a step to edit it, then hit Play. Try <strong style={{ color: 'var(--text-secondary)' }}>I – V – vi – IV</strong> to start.
+            Tap a <strong style={{ color: 'var(--text-secondary)' }}>chord</strong> to drop it on the highlighted step, or tap piano keys to place notes one at a time. Pick a step to edit it, nudge its <strong style={{ color: 'var(--text-secondary)' }}>octave</strong> up or down, add or remove steps, set the <strong style={{ color: 'var(--text-secondary)' }}>tempo</strong>, then hit Play. Try <strong style={{ color: 'var(--text-secondary)' }}>I – V – vi – IV</strong> to start.
           </p>
         </div>
       </div>
