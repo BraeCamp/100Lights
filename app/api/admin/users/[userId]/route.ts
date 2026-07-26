@@ -2,7 +2,7 @@ import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
 import { logAdmin } from '@/lib/admin-audit'
-import { buildTimeline, listNoteEntries } from '@/lib/user-crm'
+import { buildTimeline, listNoteEntries, listTasks } from '@/lib/user-crm'
 import { stageOf, healthOf } from '@/lib/lifecycle'
 import { emailEnabled } from '@/lib/email'
 
@@ -37,7 +37,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
   const { userId } = await params
   if (!userId) return Response.json({ error: 'userId required' }, { status: 400 })
 
-  const [subRows, redemptions, projects, community, identity, noteRows, timeline, noteEntries] = await Promise.all([
+  const [subRows, redemptions, projects, community, identity, noteRows, timeline, noteEntries, tasks] = await Promise.all([
     safe(sql`SELECT plan, status, stripe_customer_id, stripe_sub_id, current_period_end, gift_plan, gift_until, updated_at, created_at
         FROM subscriptions WHERE user_id = ${userId}`, []),
     safe(sql`SELECT code, kind, grant_days, grant_until, redeemed_at FROM code_redemptions WHERE user_id = ${userId} ORDER BY redeemed_at DESC`, []),
@@ -60,6 +60,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
     (async () => { await ensureNotes(); return safe(sql`SELECT note, tags FROM user_notes WHERE user_id = ${userId}`, []) })(),
     buildTimeline(userId),
     listNoteEntries(userId),
+    listTasks(userId),
   ])
   const email = identity?.email ?? ''
 
@@ -123,6 +124,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
     } : null,
     timeline,
     noteEntries,
+    tasks,
     hasRecord: !!s,
     subscription: s ? {
       plan: String(s.plan), status: String(s.status),

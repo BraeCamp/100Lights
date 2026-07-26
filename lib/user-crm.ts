@@ -13,6 +13,8 @@ export interface TimelineEvent {
 }
 
 export interface NoteEntry { id: number; body: string; author: string; createdAt: string }
+export interface Task { id: number; userId: string; body: string; dueAt: string | null; doneAt: string | null; author: string; createdAt: string }
+export interface DueTask { id: number; userId: string; body: string; dueAt: string; overdue: boolean }
 
 async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   try { return await p } catch { return fallback }
@@ -49,6 +51,72 @@ export async function addNoteEntry(userId: string, body: string, author: string)
 export async function deleteNoteEntry(userId: string, id: number): Promise<void> {
   await ensureNoteLog()
   await sql`DELETE FROM user_note_entries WHERE id = ${id} AND user_id = ${userId}`
+}
+
+// ── Follow-up tasks ─────────────────────────────────────────────────────────
+// A lightweight reminder pinned to an account ("check in about upgrade Friday").
+// Open tasks with a due date surface in the Daily Brief when they come due.
+let tasksReady = false
+async function ensureTasks() {
+  if (tasksReady) return
+  await sql`CREATE TABLE IF NOT EXISTS user_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    due_at TIMESTAMPTZ,
+    done_at TIMESTAMPTZ,
+    author TEXT NOT NULL DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`
+  await sql`CREATE INDEX IF NOT EXISTS user_tasks_open_idx ON user_tasks (user_id) WHERE done_at IS NULL`
+  await sql`CREATE INDEX IF NOT EXISTS user_tasks_due_idx ON user_tasks (due_at) WHERE done_at IS NULL`
+  tasksReady = true
+}
+
+const asTask = (r: Record<string, unknown>): Task => ({
+  id: Number(r.id), userId: String(r.user_id), body: String(r.body),
+  dueAt: r.due_at ? String(r.due_at) : null, doneAt: r.done_at ? String(r.done_at) : null,
+  author: String(r.author), createdAt: String(r.created_at),
+})
+
+// Open tasks first (soonest due), then the last few completed for context.
+export async function listTasks(userId: string): Promise<Task[]> {
+  await ensureTasks()
+  const rows = await safe(sql`
+    SELECT id, user_id, body, due_at, done_at, author, created_at FROM user_tasks
+    WHERE user_id = ${userId} AND (done_at IS NULL OR done_at > NOW() - INTERVAL '7 days')
+    ORDER BY done_at IS NOT NULL, due_at NULLS LAST, created_at DESC
+    LIMIT 50`, [] as Record<string, unknown>[])
+  return rows.map(asTask)
+}
+
+export async function addTask(userId: string, body: string, dueAt: string | null, author: string): Promise<Task> {
+  await ensureTasks()
+  const rows = await sql`INSERT INTO user_tasks (user_id, body, due_at, author) VALUES (${userId}, ${body.slice(0, 500)}, ${dueAt || null}, ${author}) RETURNING id, user_id, body, due_at, done_at, author, created_at`
+  return asTask(rows[0])
+}
+
+export async function setTaskDone(userId: string, id: number, done: boolean): Promise<void> {
+  await ensureTasks()
+  // Two statements rather than a conditional SQL fragment (the local adapter
+  // can't compose a fragment in a value slot).
+  if (done) await sql`UPDATE user_tasks SET done_at = NOW() WHERE id = ${id} AND user_id = ${userId}`
+  else await sql`UPDATE user_tasks SET done_at = NULL WHERE id = ${id} AND user_id = ${userId}`
+}
+
+export async function deleteTask(userId: string, id: number): Promise<void> {
+  await ensureTasks()
+  await sql`DELETE FROM user_tasks WHERE id = ${id} AND user_id = ${userId}`
+}
+
+// Open, dated tasks that are overdue or due within ~36h — for the Daily Brief.
+export async function dueTasks(limit = 25): Promise<DueTask[]> {
+  await ensureTasks()
+  const rows = await safe(sql`
+    SELECT id, user_id, body, due_at, (due_at < NOW()) AS overdue FROM user_tasks
+    WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at <= NOW() + INTERVAL '36 hours'
+    ORDER BY due_at ASC LIMIT ${limit}`, [] as Record<string, unknown>[])
+  return rows.map(r => ({ id: Number(r.id), userId: String(r.user_id), body: String(r.body), dueAt: String(r.due_at), overdue: !!r.overdue }))
 }
 
 // ── Activity timeline ───────────────────────────────────────────────────────

@@ -41,9 +41,11 @@ interface Detail {
   identity: { firstName: string; lastName: string; imageUrl: string; lastSignInAt: string | null; clerkCreatedAt: string | null; signupMethod: string } | null
   timeline: TimelineEvent[]
   noteEntries: NoteEntry[]
+  tasks: TaskItem[]
 }
 interface TimelineEvent { at: string; kind: string; label: string; detail?: string }
 interface NoteEntry { id: number; body: string; author: string; createdAt: string }
+interface TaskItem { id: number; userId: string; body: string; dueAt: string | null; doneAt: string | null; author: string; createdAt: string }
 
 const TL_COLOR: Record<string, string> = {
   signup: '#34d399', project: '#a78bfa', code: '#34d399', community: '#38bdf8',
@@ -87,6 +89,22 @@ function rel(iso: string): string {
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
+// Open tasks first (soonest due), completed last.
+const taskSort = (a: TaskItem, b: TaskItem) => {
+  const ad = !!a.doneAt, bd = !!b.doneAt
+  if (ad !== bd) return ad ? 1 : -1
+  const at = a.dueAt ? new Date(a.dueAt).getTime() : Infinity
+  const bt = b.dueAt ? new Date(b.dueAt).getTime() : Infinity
+  if (at !== bt) return at - bt
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+}
+// "due in 2d" / "3d overdue" for a task's due date.
+function dueBadge(iso: string): { text: string; overdue: boolean } {
+  const h = Math.round((new Date(iso).getTime() - Date.now()) / 3_600_000)
+  if (h < 0) { const a = Math.abs(h); return { text: a < 24 ? `${a}h overdue` : `${Math.floor(a / 24)}d overdue`, overdue: true } }
+  return { text: h < 24 ? `due in ${h}h` : `due in ${Math.floor(h / 24)}d`, overdue: false }
+}
+
 export default function UsersPanel() {
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -115,6 +133,9 @@ export default function UsersPanel() {
   const [emailSubject, setEmailSubject] = useState('')
   const [emailBody, setEmailBody] = useState('')
   const [emailSending, setEmailSending] = useState(false)
+  const [taskDraft, setTaskDraft] = useState('')
+  const [taskDue, setTaskDue] = useState('')
+  const [taskSaving, setTaskSaving] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
@@ -217,7 +238,7 @@ export default function UsersPanel() {
   }
 
   async function openDetail(u: UserRow) {
-    setDetailUser(u); setDetail(null); setNoteDraft(''); setTagsDraft(''); setEmailSubject(''); setEmailBody('')
+    setDetailUser(u); setDetail(null); setNoteDraft(''); setTagsDraft(''); setEmailSubject(''); setEmailBody(''); setTaskDraft(''); setTaskDue('')
     try {
       const r = await fetch(`/api/admin/users/${encodeURIComponent(u.userId)}`)
       if (r.ok) { const d = await r.json() as Detail; setDetail(d); setNoteDraft(d.note ?? ''); setTagsDraft((d.tags ?? []).join(', ')) }
@@ -256,6 +277,33 @@ export default function UsersPanel() {
     if (!detailUser) return
     setDetail(prev => prev ? { ...prev, noteEntries: prev.noteEntries.filter(e => e.id !== id) } : prev)
     try { await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/notes?entryId=${id}`, { method: 'DELETE' }) } catch { /* optimistic */ }
+  }
+
+  async function addTaskUI() {
+    if (!detailUser || !taskDraft.trim()) return
+    setTaskSaving(true)
+    try {
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/tasks`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: taskDraft.trim(), dueAt: taskDue || null }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setDetail(prev => prev ? { ...prev, tasks: [...prev.tasks, d.task].sort(taskSort) } : prev)
+      setTaskDraft(''); setTaskDue('')
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Failed') } finally { setTaskSaving(false) }
+  }
+
+  async function toggleTask(t: TaskItem) {
+    if (!detailUser) return
+    const done = !t.doneAt
+    setDetail(prev => prev ? { ...prev, tasks: prev.tasks.map(x => x.id === t.id ? { ...x, doneAt: done ? new Date().toISOString() : null } : x).sort(taskSort) } : prev)
+    try { await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/tasks`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: t.id, done }) }) } catch { /* optimistic */ }
+  }
+
+  async function removeTask(id: number) {
+    if (!detailUser) return
+    setDetail(prev => prev ? { ...prev, tasks: prev.tasks.filter(x => x.id !== id) } : prev)
+    try { await fetch(`/api/admin/users/${encodeURIComponent(detailUser.userId)}/tasks?taskId=${id}`, { method: 'DELETE' }) } catch { /* optimistic */ }
   }
 
   function applyTemplate(id: string) {
@@ -565,6 +613,39 @@ export default function UsersPanel() {
                     )}
                   </div>
                   {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
+                </div>
+
+                {/* Follow-ups — reminders pinned to this account, due dates surface in the Daily Brief */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>FOLLOW-UPS</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <input value={taskDraft} onChange={e => setTaskDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void addTaskUI() } }}
+                      placeholder="Add a follow-up — e.g. check in about upgrade"
+                      style={{ flex: '1 1 200px', minWidth: 0, fontSize: 12.5, padding: '7px 10px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+                    <input type="date" value={taskDue} onChange={e => setTaskDue(e.target.value)} title="Optional due date"
+                      style={{ fontSize: 12, padding: '6px 8px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)', outline: 'none' }} />
+                    <button onClick={() => void addTaskUI()} disabled={taskSaving || !taskDraft.trim()}
+                      style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: taskSaving || !taskDraft.trim() ? 0.5 : 1 }}>Add</button>
+                  </div>
+                  {detail.tasks?.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+                      {detail.tasks.map(t => {
+                        const done = !!t.doneAt
+                        const badge = t.dueAt && !done ? dueBadge(t.dueAt) : null
+                        return (
+                          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, border: `1px solid ${badge?.overdue ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`, background: badge?.overdue ? 'rgba(239,68,68,0.06)' : 'var(--bg-card)', opacity: done ? 0.55 : 1 }}>
+                            <button onClick={() => void toggleTask(t)} title={done ? 'Reopen' : 'Mark done'}
+                              style={{ flexShrink: 0, width: 16, height: 16, borderRadius: 5, cursor: 'pointer', border: `1.5px solid ${done ? '#34d399' : 'var(--border-light)'}`, background: done ? '#34d399' : 'transparent', color: '#04150d', fontSize: 11, fontWeight: 900, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{done ? '✓' : ''}</button>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--text-primary)', textDecoration: done ? 'line-through' : 'none' }}>{t.body}</span>
+                            {badge && <span style={{ fontSize: 10.5, fontWeight: 700, color: badge.overdue ? '#f87171' : 'var(--text-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>{badge.text}</span>}
+                            {t.dueAt && done && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', flexShrink: 0 }}>done</span>}
+                            <button onClick={() => void removeTask(t.id)} style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, padding: 0 }}>✕</button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Contact — one-off outreach email, logged to the timeline */}
