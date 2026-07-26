@@ -23,6 +23,7 @@ const fmt = (s: number) => {
 export default function ArticleAudio({ src, caption }: { src: string; caption?: string }) {
   const ref = useRef<HTMLAudioElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
+  const probing = useRef(false)
   const [playing, setPlaying] = useState(false)
   const [t, setT] = useState(0)
   const [dur, setDur] = useState(0)
@@ -31,16 +32,38 @@ export default function ArticleAudio({ src, caption }: { src: string; caption?: 
     const a = ref.current
     if (!a) return
     const onTime = () => setT(a.currentTime)
-    const onMeta = () => setDur(a.duration)
+    const applyDur = () => { if (isFinite(a.duration) && a.duration > 0) setDur(a.duration) }
+    // WebM clips recorded/exported in-browser (e.g. from the admin audio editor)
+    // omit a duration header, so `a.duration` is Infinity until the browser
+    // scans to the end. That leaves the progress bar and end time dead. Nudge it
+    // to compute the real length by seeking past the end, then rewind — done
+    // once, silently, before playback so there's no audible jump.
+    const onMeta = () => {
+      if (isFinite(a.duration) && a.duration > 0) { setDur(a.duration); return }
+      if (probing.current) return
+      probing.current = true
+      const onFix = () => {
+        if (isFinite(a.duration) && a.duration > 0) {
+          setDur(a.duration)
+          a.removeEventListener('timeupdate', onFix)
+          a.currentTime = 0
+          probing.current = false
+        }
+      }
+      a.addEventListener('timeupdate', onFix)
+      try { a.currentTime = 1e101 } catch { probing.current = false }
+    }
     const onEnd = () => { setPlaying(false); setT(0) }
     a.addEventListener('timeupdate', onTime)
     a.addEventListener('loadedmetadata', onMeta)
+    a.addEventListener('durationchange', applyDur)
     a.addEventListener('ended', onEnd)
     a.addEventListener('play', () => setPlaying(true))
     a.addEventListener('pause', () => setPlaying(false))
     return () => {
       a.removeEventListener('timeupdate', onTime)
       a.removeEventListener('loadedmetadata', onMeta)
+      a.removeEventListener('durationchange', applyDur)
       a.removeEventListener('ended', onEnd)
     }
   }, [])
