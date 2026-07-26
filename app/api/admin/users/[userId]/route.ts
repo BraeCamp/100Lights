@@ -3,6 +3,7 @@ import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
 import { logAdmin } from '@/lib/admin-audit'
 import { buildTimeline, listNoteEntries } from '@/lib/user-crm'
+import { stageOf, healthOf } from '@/lib/lifecycle'
 
 export const runtime = 'nodejs'
 
@@ -94,8 +95,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
   }
   const risk = { atRisk: reasons.length > 0, reasons, lastSaved: lastSaved?.toISOString() ?? null, daysSinceSave }
 
+  // Lifecycle stage + 0–100 health score for this account.
+  const createdAt = s?.created_at ? new Date(String(s.created_at)) : null
+  const facts = {
+    paying, gifted, coded,
+    hasStripeSub: !!s?.stripe_sub_id,
+    statusHealthy: status === 'active' || status === 'trialing' || status === 'none',
+    projectCount: Number((projects as { n: number }[])[0]?.n ?? 0),
+    lastSavedDays: daysSinceSave,
+    signupDays: createdAt ? Math.floor((now.getTime() - createdAt.getTime()) / 86_400_000) : 0,
+    communityCount: Number((community as { n: number }[])[0]?.n ?? 0),
+  }
+  const lifecycle = { stage: stageOf(facts), health: healthOf(facts) }
+
   return Response.json({
     risk,
+    lifecycle,
     userId,
     email,
     identity: identity ? {

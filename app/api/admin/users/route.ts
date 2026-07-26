@@ -1,18 +1,21 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
+import { LIFECYCLE_CTE, STAGE_CASE, STAGES } from '@/lib/lifecycle'
 
 export const runtime = 'nodejs'
 
 const PAGE = 50
 const COLS = sql`user_id, stripe_customer_id, plan, status, current_period_end, gift_plan, gift_until, updated_at`
 const SEGMENTS = ['paying', 'comped', 'free', 'power', 'upsell', 'atrisk'] as const
+const STAGE_IDS = STAGES.map(s => s.id) as string[]
 
 export async function GET(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
   const url = new URL(req.url)
   const q = url.searchParams.get('q')?.trim() ?? ''
   const segment = url.searchParams.get('segment') ?? 'all'
+  const stage = url.searchParams.get('stage') ?? ''
   const page = Math.max(0, parseInt(url.searchParams.get('page') ?? '0', 10) || 0)
 
   let idOrder: string[] = []
@@ -34,7 +37,16 @@ export async function GET(req: Request) {
     // Segment filter (or the plain recent list). A single CASE keeps the
     // predicate parameterized — no conditional SQL fragments.
     let rows: Record<string, unknown>[] = []
-    if ((SEGMENTS as readonly string[]).includes(segment)) {
+    if (STAGE_IDS.includes(stage)) {
+      // Lifecycle-stage filter — reuses the shared CTE + stage expression.
+      try {
+        rows = await sql`
+          WITH ${LIFECYCLE_CTE}
+          SELECT user_id, stripe_customer_id, plan, status, current_period_end, gift_plan, gift_until, updated_at
+          FROM base WHERE ${STAGE_CASE} = ${stage}
+          ORDER BY updated_at DESC LIMIT ${PAGE + 1} OFFSET ${page * PAGE}`
+      } catch { rows = [] }
+    } else if ((SEGMENTS as readonly string[]).includes(segment)) {
       try {
         rows = await sql`
           WITH base AS (
@@ -110,5 +122,5 @@ export async function GET(req: Request) {
     }
   })
 
-  return Response.json({ users, page, hasMore, searched: !!q, segment })
+  return Response.json({ users, page, hasMore, searched: !!q, segment, stage })
 }

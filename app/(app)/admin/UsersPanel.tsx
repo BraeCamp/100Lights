@@ -36,6 +36,7 @@ interface Detail {
   note: string
   tags: string[]
   risk: { atRisk: boolean; reasons: string[]; lastSaved: string | null; daysSinceSave: number | null }
+  lifecycle: { stage: string; health: number }
   identity: { firstName: string; lastName: string; imageUrl: string; lastSignInAt: string | null; clerkCreatedAt: string | null; signupMethod: string } | null
   timeline: TimelineEvent[]
   noteEntries: NoteEntry[]
@@ -47,6 +48,20 @@ const TL_COLOR: Record<string, string> = {
   signup: '#34d399', project: '#a78bfa', code: '#34d399', community: '#38bdf8',
   feedback: '#fbbf24', admin: '#f97316', gift: '#f97316',
 }
+
+// Lifecycle stage display metadata — mirrors lib/lifecycle.ts STAGES. Kept
+// local so this client bundle never imports the server-only lifecycle module.
+const STAGE_META = [
+  { id: 'new',       label: 'New',       color: '#94a3b8', hint: 'Signed up, nothing built yet',            track: 'funnel' },
+  { id: 'activated', label: 'Activated', color: '#38bdf8', hint: 'Saved at least one project',              track: 'funnel' },
+  { id: 'engaged',   label: 'Engaged',   color: '#22d3ee', hint: 'Active recently, a few projects',         track: 'funnel' },
+  { id: 'power',     label: 'Power',     color: '#a78bfa', hint: '5+ projects, active in the last 2 weeks',  track: 'funnel' },
+  { id: 'paying',    label: 'Paying',    color: '#34d399', hint: 'Active Stripe subscriber, engaged',        track: 'funnel' },
+  { id: 'at-risk',   label: 'At-risk',   color: '#f59e0b', hint: 'Has Pro but gone quiet / payment failing', track: 'off' },
+  { id: 'churned',   label: 'Churned',   color: '#ef4444', hint: 'Went cold — no activity in 60+ days',      track: 'off' },
+] as const
+const stageMeta = (id: string) => STAGE_META.find(s => s.id === id)
+const healthColor = (h: number) => h >= 70 ? '#34d399' : h >= 40 ? '#fbbf24' : '#f87171'
 // Compact relative time, e.g. "3d ago", "2mo ago".
 function rel(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
@@ -70,6 +85,8 @@ export default function UsersPanel() {
   const [searched, setSearched] = useState(false)
   const [segment, setSegment] = useState('all')
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [stage, setStage] = useState('')
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({})
   const [bulkDays, setBulkDays] = useState('30')
   const [bulkBusy, setBulkBusy] = useState(false)
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
@@ -86,10 +103,10 @@ export default function UsersPanel() {
   const menuRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
 
-  const load = useCallback(async (query: string, pg: number, seg = 'all') => {
+  const load = useCallback(async (query: string, pg: number, seg = 'all', stg = '') => {
     setLoading(true); setFetchErr(null)
     try {
-      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&page=${pg}&segment=${seg}`)
+      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}&page=${pg}&segment=${seg}&stage=${stg}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { users: UserRow[]; hasMore: boolean; searched: boolean }
       setUsers(data.users); setHasMore(!!data.hasMore); setSearched(!!data.searched)
@@ -100,13 +117,19 @@ export default function UsersPanel() {
 
   useEffect(() => { void load('', 0, 'all') }, [load])
 
-  // Live segment counts for the chips.
+  // Live segment + lifecycle counts for the chips / pipeline.
   useEffect(() => {
     fetch('/api/admin/users/segments').then(r => r.ok ? r.json() : null).then(d => { if (d?.counts) setCounts(d.counts) }).catch(() => {})
+    fetch('/api/admin/lifecycle').then(r => r.ok ? r.json() : null).then(d => { if (d?.counts) setStageCounts(d.counts) }).catch(() => {})
   }, [])
 
   function pickSegment(seg: string) {
-    setSegment(seg); setQ(''); setPage(0); void load('', 0, seg)
+    setSegment(seg); setStage(''); setQ(''); setPage(0); void load('', 0, seg, '')
+  }
+
+  function pickStage(stg: string) {
+    const next = stage === stg ? '' : stg  // click active stage to clear
+    setStage(next); setSegment('all'); setQ(''); setPage(0); void load('', 0, 'all', next)
   }
 
   async function bulkGift() {
@@ -123,7 +146,7 @@ export default function UsersPanel() {
       showToast(`Gifted ${days}d to ${d.count} user${d.count === 1 ? '' : 's'}${d.capped ? ' (hit the 200 cap)' : ''} ✓`)
       // refresh counts + list — comped/at-risk membership just shifted
       fetch('/api/admin/users/segments').then(x => x.ok ? x.json() : null).then(dd => { if (dd?.counts) setCounts(dd.counts) }).catch(() => {})
-      await load('', 0, segment)
+      await load('', 0, segment, stage)
     } catch (e) { showToast(e instanceof Error ? e.message : 'Bulk gift failed') } finally { setBulkBusy(false) }
   }
 
@@ -145,7 +168,7 @@ export default function UsersPanel() {
   useEffect(() => {
     const term = q.trim()
     if (!term) return
-    const t = setTimeout(() => { setSegment('all'); setPage(0); void load(term, 0, 'all') }, 300)
+    const t = setTimeout(() => { setSegment('all'); setStage(''); setPage(0); void load(term, 0, 'all', '') }, 300)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q])
@@ -238,27 +261,70 @@ export default function UsersPanel() {
             placeholder="Search by email, name, or user ID…"
             style={{ width: '100%', fontSize: 13, padding: '8px 30px 8px 32px', borderRadius: 8, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
           />
-          {q && <button onClick={() => { setQ(''); void load('', 0, segment) }} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>}
+          {q && <button onClick={() => { setQ(''); void load('', 0, segment, stage) }} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>}
         </div>
         {!searched && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            <button onClick={() => { const p = Math.max(0, page - 1); setPage(p); void load('', p, segment) }} disabled={page === 0 || loading}
+            <button onClick={() => { const p = Math.max(0, page - 1); setPage(p); void load('', p, segment, stage) }} disabled={page === 0 || loading}
               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: page === 0 ? 'default' : 'pointer', opacity: page === 0 ? 0.5 : 1 }}>‹ Prev</button>
             <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 48, textAlign: 'center' }}>Page {page + 1}</span>
-            <button onClick={() => { const p = page + 1; setPage(p); void load('', p, segment) }} disabled={!hasMore || loading}
+            <button onClick={() => { const p = page + 1; setPage(p); void load('', p, segment, stage) }} disabled={!hasMore || loading}
               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: hasMore ? 'pointer' : 'default', opacity: hasMore ? 1 : 0.5 }}>Next ›</button>
           </div>
         )}
       </div>
 
-      {/* Segment chips */}
+      {/* Lifecycle pipeline — the whole base at a glance, clickable to filter */}
+      {!searched && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', color: 'var(--text-muted)' }}>LIFECYCLE PIPELINE</span>
+            {stage && <button onClick={() => pickStage(stage)} style={{ fontSize: 10, color: 'var(--accent-light)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>clear ✕</button>}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 4, flex: '1 1 380px', minWidth: 0 }}>
+              {STAGE_META.filter(s => s.track === 'funnel').map(s => {
+                const active = stage === s.id
+                const n = stageCounts[s.id] ?? 0
+                return (
+                  <button key={s.id} onClick={() => pickStage(s.id)} title={s.hint}
+                    style={{ flex: '1 1 0', minWidth: 62, display: 'flex', flexDirection: 'column', gap: 1, padding: '7px 6px', borderRadius: 9, cursor: 'pointer', textAlign: 'left',
+                      border: `1px solid ${active ? s.color : 'var(--border)'}`,
+                      background: active ? `color-mix(in srgb, ${s.color} 16%, transparent)` : 'var(--bg-card)',
+                      boxShadow: `inset 0 2px 0 ${s.color}` }}>
+                    <span style={{ fontSize: 17, fontWeight: 800, color: active ? s.color : 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{n}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: 5, alignItems: 'stretch' }}>
+              {STAGE_META.filter(s => s.track === 'off').map(s => {
+                const active = stage === s.id
+                const n = stageCounts[s.id] ?? 0
+                return (
+                  <button key={s.id} onClick={() => pickStage(s.id)} title={s.hint}
+                    style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: '7px 12px', borderRadius: 9, cursor: 'pointer', textAlign: 'left',
+                      border: `1px solid ${active ? s.color : `color-mix(in srgb, ${s.color} 40%, var(--border))`}`,
+                      background: active ? `color-mix(in srgb, ${s.color} 16%, transparent)` : `color-mix(in srgb, ${s.color} 7%, transparent)` }}>
+                    <span style={{ fontSize: 17, fontWeight: 800, color: s.color, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{n}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: s.color, opacity: 0.85 }}>{s.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Segment chips — quick plan filters */}
       {!searched && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {([
             ['all', 'All'], ['paying', 'Paying'], ['comped', 'Comped'], ['power', 'Power users'],
             ['upsell', 'Upsell (free, heavy)'], ['atrisk', 'At-risk'], ['free', 'Free'],
           ] as const).map(([id, label]) => {
-            const active = segment === id
+            const active = segment === id && !stage
             const n = counts[id]
             const tone = id === 'atrisk' ? '#f59e0b' : id === 'upsell' ? '#38bdf8' : id === 'paying' ? '#34d399' : 'var(--accent)'
             return (
@@ -379,6 +445,25 @@ export default function UsersPanel() {
 
             {!detail ? <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 14 }}>Loading…</p> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+                {/* Lifecycle stage + health score */}
+                {detail.lifecycle && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {(() => { const m = stageMeta(detail.lifecycle.stage); return (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, padding: '4px 11px', borderRadius: 99, border: `1px solid ${m?.color ?? 'var(--border)'}`, background: `color-mix(in srgb, ${m?.color ?? '#888'} 14%, transparent)`, color: m?.color ?? 'var(--text-primary)' }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: m?.color ?? '#888' }} />
+                        {m?.label ?? detail.lifecycle.stage}
+                      </span>
+                    ) })()}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>
+                        <span>HEALTH</span><span style={{ fontWeight: 700, color: healthColor(detail.lifecycle.health) }}>{detail.lifecycle.health}/100</span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 99, background: 'var(--bg-base)', overflow: 'hidden' }}>
+                        <div style={{ width: `${detail.lifecycle.health}%`, height: '100%', background: healthColor(detail.lifecycle.health), borderRadius: 99 }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Why this account is At Risk — spelled out, not just a flag */}
                 {detail.risk?.atRisk && (
                   <div style={{ borderRadius: 10, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)', padding: '10px 12px' }}>
