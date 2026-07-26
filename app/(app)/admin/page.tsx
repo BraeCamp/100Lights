@@ -14,6 +14,7 @@ import AuditLogPanel from './AuditLogPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
+import { getProPrice } from '@/lib/stripe'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,23 @@ async function getStats() {
     sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL`,
     sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND saved_at > NOW() - INTERVAL '7 days'`,
   ])
+
+  // Revenue breakdown — best-effort so a missing code table or a Stripe hiccup
+  // never breaks the dashboard. "Paying" = a real Stripe sub (not gift/code).
+  let payingPro = 0, giftedPro = 0, codePro = 0
+  let mrrCents: number | null = null, currency = 'usd'
+  try {
+    const [pay, gift, code] = await Promise.all([
+      sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'pro' AND status = 'active' AND stripe_sub_id IS NOT NULL`,
+      sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE gift_plan = 'pro' AND (gift_until IS NULL OR gift_until > NOW())`,
+      sql`SELECT COUNT(DISTINCT user_id)::int AS cnt FROM code_redemptions WHERE grant_until > NOW()`,
+    ])
+    payingPro = Number(pay[0]?.cnt ?? 0)
+    giftedPro = Number(gift[0]?.cnt ?? 0)
+    codePro   = Number(code[0]?.cnt ?? 0)
+    try { const price = await getProPrice('monthly'); mrrCents = payingPro * price.amount; currency = price.currency } catch { /* Stripe unavailable — show counts, no $ */ }
+  } catch { /* code_redemptions may not exist yet — leave breakdown at 0 */ }
+
   return {
     totalUsers:       Number(users[0]?.cnt ?? 0),
     proUsers:         Number(proUsers[0]?.cnt ?? 0),
@@ -36,6 +54,7 @@ async function getStats() {
     newThisMonth:     Number(newThisMonth[0]?.cnt ?? 0),
     totalProjects:    Number(projects[0]?.cnt ?? 0),
     projectsThisWeek: Number(projectsThisWeek[0]?.cnt ?? 0),
+    payingPro, giftedPro, codePro, mrrCents, currency,
   }
 }
 
@@ -95,13 +114,27 @@ export default async function AdminPage() {
           label: 'Overview',
           content: (
             <>
-              <PanelIntro title="Platform Overview" description="Signups, subscriptions, and project activity. Refreshes on page load." />
+              <PanelIntro title="Platform Overview" description="Signups, revenue, subscriptions, and project activity. Refreshes on page load." />
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <Stat label="Total users"      value={stats.totalUsers} />
                 <Stat label="Pro subscribers"  value={stats.proUsers}  sub={`${conversionRate}% conversion`} />
                 <Stat label="New this week"    value={stats.newThisWeek} />
                 <Stat label="New this month"   value={stats.newThisMonth} />
               </div>
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Revenue</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <Stat
+                  label="Est. MRR"
+                  value={stats.mrrCents != null
+                    ? new Intl.NumberFormat('en-US', { style: 'currency', currency: stats.currency.toUpperCase(), maximumFractionDigits: 0 }).format(stats.mrrCents / 100)
+                    : '—'}
+                  sub={stats.mrrCents != null ? `${stats.payingPro} paying × monthly` : 'Stripe price unavailable'}
+                />
+                <Stat label="Paying Pro"   value={stats.payingPro} sub="real Stripe subs" />
+                <Stat label="Gifted Pro"   value={stats.giftedPro} sub="admin gifts, active" />
+                <Stat label="Code Pro"     value={stats.codePro}   sub="redeemed codes, active" />
+              </div>
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Projects</p>
               <div className="grid grid-cols-2 gap-4" style={{ maxWidth: 480 }}>
                 <Stat label="Total projects"      value={stats.totalProjects} />
                 <Stat label="Projects this week"  value={stats.projectsThisWeek} />
