@@ -12,6 +12,7 @@ import ArticlesPanel from './ArticlesPanel'
 import CodesPanel from './CodesPanel'
 import AuditLogPanel from './AuditLogPanel'
 import CatalogPanel from './CatalogPanel'
+import StoragePanel from './StoragePanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -447,6 +448,19 @@ export default async function AdminPage() {
                 description="The latest community shares plus the reported queue. Removing an item hides it everywhere but keeps it restorable (with its votes and comments); dismiss a report to clear the flag on something you've reviewed and want to keep."
               />
               <CommunityModerationPanel />
+            </>
+          ),
+        },
+        {
+          id: 'storage',
+          label: 'Storage',
+          content: (
+            <>
+              <PanelIntro
+                title="Storage &amp; Cost"
+                description="What's living in object storage, by category, plus the biggest files — so R2 cost is visible and orphans are findable. Scans on open."
+              />
+              <StoragePanel />
             </>
           ),
         },
