@@ -117,9 +117,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const rows = await sql`
     DELETE FROM community_comments
     WHERE id = ${commentId} AND item_id = ${id} AND (user_id = ${userId} OR ${admin})
-    RETURNING id
+    RETURNING id, user_id
   `
   if (rows.length === 0) return Response.json({ error: 'Not found or not yours' }, { status: 404 })
   await sql`DELETE FROM community_comment_reports WHERE comment_id = ${commentId}`
+  if (admin && String(rows[0].user_id) !== userId) {
+    const { logAdmin } = await import('@/lib/admin-audit')
+    await logAdmin('community.remove_comment', commentId, { itemId: id, owner: String(rows[0].user_id) })
+  }
   return Response.json({ ok: true })
 }

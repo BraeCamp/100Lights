@@ -1,5 +1,6 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { listCodes, createCode, type CodeKind } from '@/lib/codes'
+import { logAdmin } from '@/lib/admin-audit'
 
 export const runtime = 'nodejs'
 
@@ -32,5 +33,6 @@ export async function POST(req: Request) {
     note: body.note ?? null,
   })
   if (!result.ok) return Response.json({ error: result.error }, { status: 400 })
+  await logAdmin('code.create', result.code?.code ?? body.code ?? null, { kind, grantDays: Number(body.grantDays), expiresAt: body.expiresAt ?? null, maxRedemptions: body.maxRedemptions ?? null })
   return Response.json({ code: result.code })
 }

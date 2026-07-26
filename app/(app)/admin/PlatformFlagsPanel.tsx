@@ -43,8 +43,10 @@ function Toggle({ on, onChange, label, color }: { on: boolean; onChange: (v: boo
 
 export default function PlatformFlagsPanel({ initial }: Props) {
   const [flags, setFlags]   = useState<PlatformFlags>(initial)
+  const [savedFlags, setSavedFlags] = useState<PlatformFlags>(initial)  // last persisted, for confirm diff
   const [saving, setSaving] = useState(false)
   const [saved, setSaved]   = useState(false)
+  const [err, setErr]       = useState<string | null>(null)
 
   function toggleModule(key: ModuleKey, on: boolean) {
     setFlags(f => ({
@@ -68,14 +70,31 @@ export default function PlatformFlagsPanel({ initial }: Props) {
   }
 
   async function save() {
+    setErr(null)
+    // Guard: never let a save leave every user with an empty module picker.
+    if (flags.enabledModules.length === 0) {
+      setErr('At least one module must stay enabled — an empty list would hide every module for all users.')
+      return
+    }
+    // Confirm before turning OFF a module that's currently live for everyone.
+    const nowOff = savedFlags.enabledModules.filter(m => !flags.enabledModules.includes(m))
+    if (nowOff.length > 0 && !window.confirm(`Disable ${nowOff.join(', ')} for ALL users within ~60s? They'll disappear from the launcher, sidebar, and new-project page.`)) {
+      return
+    }
     setSaving(true)
-    await fetch('/api/admin/platform-flags', {
-      method:  'POST',
-      headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify(flags),
-    })
-    setSaving(false)
-    setSaved(true)
+    try {
+      const r = await fetch('/api/admin/platform-flags', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify(flags),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setSavedFlags(flags)
+      setSaved(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Save failed')
+    } finally { setSaving(false) }
   }
 
   return (
@@ -157,6 +176,7 @@ export default function PlatformFlagsPanel({ initial }: Props) {
           {saving ? 'Saving…' : 'Save changes'}
         </button>
         {saved && <span style={{ fontSize: 11, color: 'var(--success)' }}>Saved — takes effect within 60s</span>}
+        {err && <span style={{ fontSize: 11, color: '#f87171' }}>{err}</span>}
       </div>
 
       <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>

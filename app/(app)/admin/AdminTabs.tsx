@@ -22,6 +22,12 @@ export interface AdminTab {
 export default function AdminTabs({ tabs }: { tabs: AdminTab[] }) {
   const [tabId, setTabId] = useState(tabs[0].id)
   const [subId, setSubId] = useState(tabs[0].subtabs[0].id)
+  // Panels that have been opened at least once. Only these are mounted, so
+  // opening the admin page no longer fires every panel's data fetch at once;
+  // once opened, a panel stays mounted (still display:none when inactive) so it
+  // keeps its state.
+  const [seen, setSeen] = useState<Set<string>>(() => new Set([`${tabs[0].id}/${tabs[0].subtabs[0].id}`]))
+  const markSeen = (t: string, s: string) => setSeen(prev => prev.has(`${t}/${s}`) ? prev : new Set(prev).add(`${t}/${s}`))
 
   // Restore from the hash on mount and follow hash-only navigations
   useEffect(() => {
@@ -31,7 +37,9 @@ export default function AdminTabs({ tabs }: { tabs: AdminTab[] }) {
       if (!tab) return
       setTabId(tab.id)
       const sub = tab.subtabs.find(x => x.id === s)
-      setSubId(sub ? sub.id : tab.subtabs[0].id)
+      const subResolved = sub ? sub.id : tab.subtabs[0].id
+      setSubId(subResolved)
+      markSeen(tab.id, subResolved)
     }
     applyHash()
     window.addEventListener('hashchange', applyHash)
@@ -44,6 +52,7 @@ export default function AdminTabs({ tabs }: { tabs: AdminTab[] }) {
     const sub = nextSub && tab.subtabs.some(s => s.id === nextSub) ? nextSub : tab.subtabs[0].id
     setTabId(nextTab)
     setSubId(sub)
+    markSeen(nextTab, sub)
     history.replaceState(null, '', `#${nextTab}/${sub}`)
   }
 
@@ -88,16 +97,18 @@ export default function AdminTabs({ tabs }: { tabs: AdminTab[] }) {
         ))}
       </div>
 
-      {/* Active panel — all panels stay mounted so client panels keep their state */}
+      {/* Active panel — panels mount lazily on first open, then stay mounted
+          (display:none when inactive) so client panels keep their state. */}
       {tabs.map(t =>
-        t.subtabs.map(s => (
-          <div
-            key={`${t.id}/${s.id}`}
-            style={{ display: t.id === tab.id && s.id === sub.id ? 'block' : 'none' }}
-          >
-            {s.content}
-          </div>
-        ))
+        t.subtabs.map(s => {
+          const key = `${t.id}/${s.id}`
+          const isActive = t.id === tab.id && s.id === sub.id
+          return (
+            <div key={key} style={{ display: isActive ? 'block' : 'none' }}>
+              {seen.has(key) ? s.content : null}
+            </div>
+          )
+        })
       )}
     </div>
   )

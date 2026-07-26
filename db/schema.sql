@@ -82,3 +82,16 @@ CREATE TABLE IF NOT EXISTS code_redemptions (
 );
 CREATE INDEX IF NOT EXISTS code_redemptions_user_idx ON code_redemptions (user_id);
 CREATE INDEX IF NOT EXISTS code_redemptions_user_kind_idx ON code_redemptions (user_id, kind);
+
+-- Append-only record of consequential admin actions (gifts, code changes,
+-- module toggles, article publishes/deletes, community takedowns). Written by
+-- lib/admin-audit.ts; read by Admin → General → Audit Log.
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id         BIGSERIAL   PRIMARY KEY,
+  actor      TEXT        NOT NULL DEFAULT 'admin',  -- admin email when known
+  action     TEXT        NOT NULL,                  -- e.g. 'gift.grant', 'article.purge'
+  target     TEXT,                                  -- userId / slug / code acted on
+  detail     JSONB,                                 -- action-specific payload
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS admin_audit_id_desc_idx ON admin_audit (id DESC);

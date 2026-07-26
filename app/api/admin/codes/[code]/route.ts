@@ -1,5 +1,6 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { setCodeActive, deleteCode } from '@/lib/codes'
+import { logAdmin } from '@/lib/admin-audit'
 
 export const runtime = 'nodejs'
 
@@ -13,6 +14,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ code: 
   }
   const ok = await setCodeActive(decodeURIComponent(code), body.active)
   if (!ok) return Response.json({ error: 'Code not found' }, { status: 404 })
+  await logAdmin(body.active ? 'code.enable' : 'code.disable', decodeURIComponent(code))
   return Response.json({ ok: true })
 }
 
@@ -22,5 +24,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ code
   const { code } = await params
   const ok = await deleteCode(decodeURIComponent(code))
   if (!ok) return Response.json({ error: 'Code not found' }, { status: 404 })
+  await logAdmin('code.delete', decodeURIComponent(code))
   return Response.json({ ok: true })
 }

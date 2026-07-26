@@ -10,6 +10,7 @@ import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
 import CodesPanel from './CodesPanel'
+import AuditLogPanel from './AuditLogPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -158,31 +159,6 @@ export default async function AdminPage() {
           ),
         },
         {
-          id: 'links',
-          label: 'Quick Links',
-          content: (
-            <>
-              <PanelIntro title="Quick Links" description="External dashboards for the services behind 100Lights." />
-              <div className="flex flex-wrap gap-2">
-                {QUICK_LINKS.map(({ label, url }) => (
-                  <a key={label} href={url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs px-3 py-1.5 rounded-lg"
-                    style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
-                    {label} ↗
-                  </a>
-                ))}
-              </div>
-            </>
-          ),
-        },
-      ],
-    },
-    {
-      id: 'audio',
-      label: 'Audio',
-      color: '#8b5cf6',
-      subtabs: [
-        {
           id: 'feedback',
           label: 'Feedback',
           content: (
@@ -208,6 +184,44 @@ export default async function AdminPage() {
             </>
           ),
         },
+        {
+          id: 'audit',
+          label: 'Audit Log',
+          content: (
+            <>
+              <PanelIntro
+                title="Audit Log"
+                description="A record of consequential admin actions — gifts, code changes, module toggles, article publishes/deletes, and community takedowns — with who did it and when."
+              />
+              <AuditLogPanel />
+            </>
+          ),
+        },
+        {
+          id: 'links',
+          label: 'Quick Links',
+          content: (
+            <>
+              <PanelIntro title="Quick Links" description="External dashboards for the services behind 100Lights." />
+              <div className="flex flex-wrap gap-2">
+                {QUICK_LINKS.map(({ label, url }) => (
+                  <a key={label} href={url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs px-3 py-1.5 rounded-lg"
+                    style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                    {label} ↗
+                  </a>
+                ))}
+              </div>
+            </>
+          ),
+        },
+      ],
+    },
+    {
+      id: 'audio',
+      label: 'Audio',
+      color: '#8b5cf6',
+      subtabs: [
         {
           id: 'sound-library',
           label: 'Sound Library',

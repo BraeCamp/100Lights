@@ -150,11 +150,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!isUuid(id)) return Response.json({ error: 'Not found' }, { status: 404 })
   const { isAdmin } = await import('@/lib/admin-auth')
   const admin = await isAdmin()
-  const rows = await sql`DELETE FROM community_items WHERE id = ${id} AND (user_id = ${userId} OR ${admin}) RETURNING id`
+  const rows = await sql`DELETE FROM community_items WHERE id = ${id} AND (user_id = ${userId} OR ${admin}) RETURNING id, user_id`
   if (rows.length === 0) return Response.json({ error: 'Not found or not yours' }, { status: 404 })
   await sql`DELETE FROM community_votes WHERE item_id = ${id}`
   await sql`DELETE FROM community_reactions WHERE item_id = ${id}`
   await sql`DELETE FROM community_reports WHERE item_id = ${id}`
   await sql`DELETE FROM community_comments WHERE item_id = ${id}`
+  // Record admin takedowns of someone else's content (not self-deletes).
+  if (admin && String(rows[0].user_id) !== userId) {
+    const { logAdmin } = await import('@/lib/admin-audit')
+    await logAdmin('community.remove_item', id, { owner: String(rows[0].user_id) })
+  }
   return Response.json({ ok: true })
 }

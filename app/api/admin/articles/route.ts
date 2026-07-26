@@ -4,6 +4,7 @@ import { sql } from '@/lib/db'
 import { getArticles, getRepoSlugs } from '@/lib/learn-articles'
 import { ensureLearnSchema } from '@/lib/learn-schema'
 import { submitToIndexNow } from '@/lib/indexnow'
+import { logAdmin } from '@/lib/admin-audit'
 
 export const runtime = 'nodejs'
 
@@ -62,7 +63,10 @@ export async function PUT(req: Request) {
   `
   bustLearn(slug)
   // Nudge Bing/Yandex to crawl it now if it's published.
-  if (a.draft === false) void submitToIndexNow([`https://100lights.com/learn/${slug}`])
+  if (a.draft === false) {
+    void submitToIndexNow([`https://100lights.com/learn/${slug}`])
+    await logAdmin('article.publish', slug, { title: a.title?.trim() })
+  }
   return Response.json({ ok: true, slug })
 }
 
@@ -85,9 +89,11 @@ export async function DELETE(req: Request) {
     const [row] = await sql`SELECT repo_shadow FROM learn_articles WHERE slug = ${slug}`
     if (row?.repo_shadow) {
       await sql`UPDATE learn_articles SET body = '', description = '' WHERE slug = ${slug}`
+      await logAdmin('article.purge', slug, { keptAsTombstone: true })
       return Response.json({ ok: true, keptAsTombstone: true })
     }
     await sql`DELETE FROM learn_articles WHERE slug = ${slug}`
+    await logAdmin('article.purge', slug)
     return Response.json({ ok: true })
   }
 
@@ -100,6 +106,7 @@ export async function DELETE(req: Request) {
             ${article.tags.join(', ')}, ${article.draft}, ${article.body}, ${article.source === 'repo'}, NOW())
     ON CONFLICT (slug) DO UPDATE SET deleted_at = NOW()
   `
+  await logAdmin('article.trash', slug, { title: article.title })
   return Response.json({ ok: true, trashed: true })
 }
 
@@ -128,7 +135,9 @@ export async function PATCH(req: Request) {
   // article back to its committed file.
   if (row.repo_shadow && !row.body) {
     await sql`DELETE FROM learn_articles WHERE slug = ${body.slug}`
+    await logAdmin('article.restore', body.slug, { fromRepo: true })
     return Response.json({ ok: true, restoredFromRepo: true })
   }
+  await logAdmin('article.restore', body.slug)
   return Response.json({ ok: true })
 }

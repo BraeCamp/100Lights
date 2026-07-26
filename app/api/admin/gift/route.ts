@@ -1,5 +1,6 @@
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
+import { logAdmin } from '@/lib/admin-audit'
 
 export const runtime = 'nodejs'
 
@@ -55,5 +56,6 @@ export async function POST(req: Request) {
     return Response.json({ error: 'No subscription record for this user yet — they need to sign in once so their account is provisioned.' }, { status: 404 })
   }
 
+  await logAdmin(plan ? 'gift.grant' : 'gift.remove', userId, plan ? { plan, days: days ?? 'indefinite' } : undefined)
   return Response.json({ ok: true })
 }
