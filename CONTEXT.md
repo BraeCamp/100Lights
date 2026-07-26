@@ -44,7 +44,7 @@ Two plans; feature gates live in `lib/stripe.ts` (`PLAN_LIMITS`), prices live in
 | UI | React 19.2.4, Tailwind v4, `lucide-react` icons |
 | Auth | Clerk v7 (`@clerk/nextjs` ^7.5.1) — live mode, custom domain `clerk.100lights.com` |
 | Database | Neon serverless Postgres (`@neondatabase/serverless`) + `pg` — `lib/db.ts` is **dual-mode** (Neon HTTP remote / local `pg` adapter, same tagged-template API) |
-| File storage | Cloudflare R2 via S3 API (`@aws-sdk/client-s3`), bucket `100lights-media-user` |
+| File storage | Cloudflare R2 via S3 API (`@aws-sdk/client-s3`), bucket set via `R2_BUCKET` env |
 | Realtime collab | Liveblocks (`@liveblocks/client|node|react`) |
 | Audio | Custom Web Audio engine in `lib/` (no Tone.js); `@ffmpeg/ffmpeg` + `jszip` for export/packaging |
 | Payments | Stripe (`stripe` ^22, API `2026-05-27.dahlia`), live mode |
@@ -95,7 +95,8 @@ app/
     ├── admin/                        # All admin endpoints
     └── transcribe/                   # LEGACY Deepgram route — dormant (503 without key)
 components/
-├── mobile/MobileStudio.tsx, MobileBeatMaker.tsx   # Condensed touch studio
+├── mobile/MobileDawClient.tsx → MobileDaw.tsx     # Mobile DAW (wraps real desktop components)
+│   └── daw/                                        # ChordPad, MobileTransport, seed, templates
 ├── AnnouncementBanner.tsx            # Global dismissible broadcast banner
 └── … (editor, layout, providers)
 lib/                        # DB, auth, billing, audio engine, admin, etc. (see below)
@@ -169,7 +170,7 @@ Other tables (purpose):
 
 ## Mobile
 
-Condensed, touch-first studio at **`/m`** (`app/m/`, `components/mobile/`), reusing the same audio engine and drum kits as desktop (a phone beat is a normal `DawProject`). Phase 1 shipped = the Beat tab (touch step sequencer, 12 kits, play/stop/tempo). Installable as a **PWA** (`app/manifest.ts` + service worker). Native App/Play Store shipping is pre-wired via **Capacitor 7**, which loads the hosted `/m` (`server.url = https://100lights.com/m`) plus native plugins (haptics, splash, status bar, share, preferences) to satisfy Apple guideline 4.2. See `MOBILE.md`. **Keep mobile/desktop in sync, especially anything affecting sound** — both must survive project sync.
+Touch-first studio at **`/m`** — `app/m/page.tsx` renders `MobileDawClient` → `MobileDaw` (`components/mobile/`). It's a **phone layout around the REAL desktop feature components** (ArrangementView, Mixer, SessionView, InstrumentPicker, DeviceChain, SoundLibrary, PolyCode) driven by the shared `DawContext` — the layout changes, not the functions. Shell: a hamburger drawer (Home / projects / live Clips / Sound library / Code), a slim transport, and a **Song | Mix | Sounds** bottom nav, so a phone session is a normal `DawProject`. Installable as a **PWA** (`app/manifest.ts` + `public/sw.js`). Native App/Play Store shipping is pre-wired via **Capacitor 7** (appId `com.hundredlights.studio`), which loads the hosted `/m` (`server.url = https://100lights.com/m`) plus native plugins (haptics, splash, status bar, share, preferences) to satisfy Apple guideline 4.2. See `MOBILE.md`. **Keep mobile/desktop in sync, especially anything affecting sound** — both must survive project sync.
 
 ## Key Architectural Decisions
 
