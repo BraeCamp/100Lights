@@ -12,15 +12,19 @@ import ArticlesPanel from './ArticlesPanel'
 import CodesPanel from './CodesPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
+import { ensureSubscriptionsSchema } from '@/lib/subscription'
 
 export const dynamic = 'force-dynamic'
 
 async function getStats() {
+  // `created_at` is real signup time; count new users on it, not `updated_at`
+  // (which any gift/plan-change/webhook bumps and would overcount).
+  await ensureSubscriptionsSchema()
   const [users, proUsers, newThisWeek, newThisMonth, projects, projectsThisWeek] = await Promise.all([
     sql`SELECT COUNT(*)::int AS cnt FROM subscriptions`,
     sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE plan = 'pro' AND status = 'active'`,
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '7 days'`,
-    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE updated_at > NOW() - INTERVAL '30 days'`,
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE created_at > NOW() - INTERVAL '7 days'`,
+    sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE created_at > NOW() - INTERVAL '30 days'`,
     sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL`,
     sql`SELECT COUNT(*)::int AS cnt FROM projects WHERE deleted_at IS NULL AND saved_at > NOW() - INTERVAL '7 days'`,
   ])

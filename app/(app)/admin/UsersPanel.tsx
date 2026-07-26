@@ -9,6 +9,7 @@ interface UserRow {
   effectivePlan: string
   giftPlan: string | null
   giftUntil: string | null
+  codeUntil: string | null
   stripeCustomerId: string
   status: string
   updatedAt: string
@@ -82,11 +83,12 @@ export default function UsersPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, plan, days }),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
       showToast(plan ? 'Gift applied' : 'Gift removed')
       await load()
-    } catch {
-      showToast('Action failed — check console')
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Action failed')
     }
   }
 
@@ -117,7 +119,10 @@ export default function UsersPanel() {
           <tbody>
             {users.map((u, i) => {
               const gift = giftLabel(u)
-              const isGifted = u.effectivePlan !== u.stripePlan
+              // A gift and a redeemed code both lift the effective plan; label
+              // them distinctly so "Pro via code" isn't misread as an admin gift.
+              const isGifted = !!u.giftPlan && (!u.giftUntil || new Date(u.giftUntil) > new Date())
+              const isCode = !isGifted && !!u.codeUntil && u.effectivePlan === 'pro'
               return (
                 <tr key={u.userId}
                   onContextMenu={e => {
@@ -149,6 +154,9 @@ export default function UsersPanel() {
                     </span>
                     {isGifted && (
                       <span style={{ marginLeft: 4, fontSize: 10, color: '#f97316' }}>↑ gifted</span>
+                    )}
+                    {isCode && (
+                      <span style={{ marginLeft: 4, fontSize: 10, color: '#34d399' }} title={u.codeUntil ? `Code Pro until ${fmt(u.codeUntil)}` : undefined}>↑ code</span>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-xs">

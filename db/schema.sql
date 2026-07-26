@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS gift_plan  TEXT;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS gift_until TIMESTAMPTZ;
 
+-- Migration: real signup time, so admin growth stats don't count `updated_at`
+-- touches (gifts, plan changes, webhooks). Existing rows backfilled to
+-- `updated_at`; see ensureSubscriptionsSchema() in lib/subscription.ts.
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+UPDATE subscriptions SET created_at = updated_at WHERE created_at IS NULL;
+
 -- Redemption codes: self-service "gifts" that grant N days of Pro. Created and
 -- managed in Admin → Codes; also provisioned lazily by lib/codes.ts.
 --   kind='promo'   — a user may redeem any number of different active promo

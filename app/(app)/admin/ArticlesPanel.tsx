@@ -174,6 +174,9 @@ export default function ArticlesPanel() {
   // Right-click-to-edit: parse the body into elements, and a floating menu.
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
+  // True while the open article is a fresh, never-saved draft — drives the
+  // create-time slug-collision guard on the server.
+  const isNewRef = useRef(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; el: ArticleEl } | null>(null)
   const elements = useMemo(() => (sel ? parseElements(sel.body) : []), [sel])
 
@@ -228,15 +231,25 @@ export default function ArticlesPanel() {
     return () => { alive = false }
   }, [])
 
-  async function save(row: Row, opts?: { thenReload?: boolean }) {
+  async function save(row: Row, opts?: { thenReload?: boolean; overwrite?: boolean }) {
     setBusy('save'); setMsg('')
     try {
       const r = await fetch('/api/admin/articles', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: row.slug, title: row.title, description: row.description, date: row.date, tags: row.tags, draft: row.draft, body: row.body }),
+        body: JSON.stringify({ slug: row.slug, title: row.title, description: row.description, date: row.date, tags: row.tags, draft: row.draft, body: row.body, isNew: isNewRef.current, overwrite: opts?.overwrite ?? false }),
       })
       const d = await r.json()
+      // Creating over an existing slug — confirm before clobbering it.
+      if (r.status === 409 && d.code === 'slug_exists' && !opts?.overwrite) {
+        setBusy(null)
+        if (window.confirm(`${d.error}\n\nOverwrite the existing "${row.slug}"? This replaces its content.`)) {
+          return save(row, { ...opts, overwrite: true })
+        }
+        setMsg('Save cancelled — choose a different slug.')
+        return
+      }
       if (!r.ok) throw new Error(d.error ?? 'Save failed')
+      isNewRef.current = false   // it now exists; further saves are edits
       setMsg('Saved ✓')
       if (opts?.thenReload !== false) await load()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Save failed') } finally { setBusy(null) }
@@ -266,7 +279,8 @@ export default function ArticlesPanel() {
 
   async function remove(slug: string) {
     if (!window.confirm(`Move "${slug}" to the trash? You can restore it for 7 days.`)) return
-    await fetch(`/api/admin/articles?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' })
+    const r = await fetch(`/api/admin/articles?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' }).catch(() => null)
+    if (!r?.ok) { setMsg(`Delete failed${r ? ` (${r.status})` : ' — network error'} — nothing was moved.`); return }
     setSel(null)
     await load()
     if (trash !== null) await loadTrash()
@@ -279,10 +293,11 @@ export default function ArticlesPanel() {
   }, [])
 
   async function restore(slug: string) {
-    await fetch('/api/admin/articles', {
+    const r = await fetch('/api/admin/articles', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug }),
-    })
+    }).catch(() => null)
+    if (!r?.ok) { setMsg(`Restore failed${r ? ` (${r.status})` : ' — network error'}.`); return }
     await Promise.all([load(), loadTrash()])
     setMsg(`Restored "${slug}" ✓`)
   }
@@ -292,7 +307,8 @@ export default function ArticlesPanel() {
       ? `Delete "${slug}" for good?\n\nThis article comes from a committed file, so a hidden marker has to stay behind to keep it off the site. Everything else is erased.`
       : `Delete "${slug}" for good? This cannot be undone.`
     if (!window.confirm(warn)) return
-    await fetch(`/api/admin/articles?slug=${encodeURIComponent(slug)}&permanent=1`, { method: 'DELETE' })
+    const r = await fetch(`/api/admin/articles?slug=${encodeURIComponent(slug)}&permanent=1`, { method: 'DELETE' }).catch(() => null)
+    if (!r?.ok) { setMsg(`Permanent delete failed${r ? ` (${r.status})` : ' — network error'} — the article is untouched.`); return }
     await Promise.all([load(), loadTrash()])
     setMsg('Permanently deleted')
   }
@@ -307,6 +323,7 @@ export default function ArticlesPanel() {
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? 'Generation failed')
+      isNewRef.current = true   // generated draft — guard its slug on first save
       setSel({
         slug: d.slug, title: d.title, description: d.description,
         date: new Date().toISOString().slice(0, 10), tags: '', draft: true, body: d.body, source: 'db',
@@ -904,7 +921,7 @@ export default function ArticlesPanel() {
       {/* New blank + IndexNow */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button
-          onClick={() => setSel({ slug: '', title: '', description: '', date: new Date().toISOString().slice(0, 10), tags: '', draft: true, body: '# Title\n\nStart writing…', source: 'db' })}
+          onClick={() => { isNewRef.current = true; setSel({ slug: '', title: '', description: '', date: new Date().toISOString().slice(0, 10), tags: '', draft: true, body: '# Title\n\nStart writing…', source: 'db' }) }}
           style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
         >+ New article</button>
         <button
@@ -1087,7 +1104,7 @@ export default function ArticlesPanel() {
           // Scheduled tab: soonest publish first, latest last (chronological).
           filter === 'scheduled' ? (a.scheduledFor ?? '').localeCompare(b.scheduledFor ?? '') : 0,
         ).map(r => (
-          <button key={r.slug} onClick={() => { setSel(r); setPreview(false); setMsg('') }} style={{
+          <button key={r.slug} onClick={() => { isNewRef.current = false; setSel(r); setPreview(false); setMsg('') }} style={{
             display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', padding: '10px 14px',
             borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', cursor: 'pointer',
           }}>

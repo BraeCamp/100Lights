@@ -4,6 +4,20 @@ import { getCodeGrantUntil } from '@/lib/codes'
 
 export type Plan = 'free' | 'pro'
 
+// Ensure `created_at` exists so admin "new signups this week/month" can count
+// real account creations rather than `updated_at` (which every gift, plan
+// change, and webhook bumps). Added nullable + default (no table rewrite),
+// then existing rows are backfilled to their `updated_at` — the best available
+// proxy for pre-migration signups; new rows get NOW() via the default.
+let subSchemaReady = false
+export async function ensureSubscriptionsSchema() {
+  if (subSchemaReady) return
+  await sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`
+  await sql`ALTER TABLE subscriptions ALTER COLUMN created_at SET DEFAULT NOW()`
+  await sql`UPDATE subscriptions SET created_at = updated_at WHERE created_at IS NULL`
+  subSchemaReady = true
+}
+
 export interface Subscription {
   /** Effective plan — already accounts for any active admin gift or redeemed code */
   plan: Plan

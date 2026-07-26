@@ -37,10 +37,21 @@ export async function GET() {
 export async function PUT(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
   await ensureLearnSchema()
-  let a: { slug?: string; title?: string; description?: string; date?: string; tags?: string; draft?: boolean; body?: string }
+  let a: { slug?: string; title?: string; description?: string; date?: string; tags?: string; draft?: boolean; body?: string; isNew?: boolean; overwrite?: boolean }
   try { a = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
   const slug = (a.slug ?? '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
   if (!slug || !a.title?.trim()) return Response.json({ error: 'Slug and title required' }, { status: 400 })
+
+  // Creating a new article whose slug collides with an existing DB row or a
+  // committed repo article would silently overwrite it (the upsert below is a
+  // blind DO UPDATE). Guard creates; edits (isNew=false) still update normally.
+  if (a.isNew && !a.overwrite) {
+    const [dbHit] = await sql`SELECT 1 FROM learn_articles WHERE slug = ${slug} AND deleted_at IS NULL LIMIT 1`
+    if (dbHit || getRepoSlugs().has(slug)) {
+      return Response.json({ error: `An article with slug "${slug}" already exists. Rename it, or confirm to overwrite.`, code: 'slug_exists' }, { status: 409 })
+    }
+  }
+
   const updated = new Date().toISOString().slice(0, 10)
   await sql`
     INSERT INTO learn_articles (slug, title, description, date, updated, tags, draft, body)

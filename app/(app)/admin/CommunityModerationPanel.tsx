@@ -40,6 +40,7 @@ export default function CommunityModerationPanel() {
   const [reported, setReported] = useState<ReportedItem[]>([])
   const [reportedComments, setReportedComments] = useState<ReportedComment[]>([])
   const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -59,9 +60,10 @@ export default function CommunityModerationPanel() {
 
   async function removeComment(c: ReportedComment) {
     if (!confirm(`Delete this comment by ${c.author_name}?\n\n“${c.body.slice(0, 200)}”`)) return
-    setBusy(c.id)
-    await fetch(`/api/community/${c.item_id}/comments?commentId=${c.id}`, { method: 'DELETE' }).catch(() => {})
+    setBusy(c.id); setErr(null)
+    const r = await fetch(`/api/community/${c.item_id}/comments?commentId=${c.id}`, { method: 'DELETE' }).catch(() => null)
     setBusy(null)
+    if (!r?.ok) { setErr(`Couldn't delete that comment${r ? ` (${r.status})` : ' — network error'}. It's still live.`); return }
     void load()
   }
   useEffect(() => {
@@ -71,14 +73,18 @@ export default function CommunityModerationPanel() {
 
   async function remove(item: Item) {
     if (!confirm(`Remove "${item.name}" by ${item.authorName} from the community?`)) return
-    setBusy(item.id)
-    await fetch(`/api/community/${item.id}`, { method: 'DELETE' }).catch(() => {})
+    setBusy(item.id); setErr(null)
+    const r = await fetch(`/api/community/${item.id}`, { method: 'DELETE' }).catch(() => null)
     setBusy(null)
+    if (!r?.ok) { setErr(`Couldn't remove "${item.name}"${r ? ` (${r.status})` : ' — network error'}. It's still public.`); return }
     void load()
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {err && (
+        <div style={{ border: '1px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.1)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#f87171' }}>{err}</div>
+      )}
       {reported.length > 0 && (
         <div style={{ border: '1px solid rgba(239,68,68,0.4)', borderRadius: 10, padding: '10px 12px', marginBottom: 6 }}>
           <p style={{ fontSize: 11, fontWeight: 800, color: '#ef4444', margin: '0 0 8px' }}>⚑ REPORTED ({reported.length})</p>
