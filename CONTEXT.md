@@ -183,7 +183,19 @@ Touch-first studio at **`/m`** — `app/m/page.tsx` renders `MobileDawClient` �
 
 ## Learn articles: interactive widgets & audio (conventions — read before touching articles)
 
-Articles are Markdown in `content/learn/*.md`, rendered by `lib/simple-markdown.tsx`. Interactive pieces are `@`-directives (e.g. `@eq`, `@swing`, `@voicing`, `@scrolleq`, `@setup`) parsed there, registered in `components/LazyArticleWidget.tsx`, one lazy-loaded component per widget (`components/Article*.tsx`), each with a server-rendered SEO fallback.
+Articles are Markdown in `content/learn/*.md`, rendered by `lib/simple-markdown.tsx`. Interactive pieces are `@`-directives, parsed there, registered in `components/LazyArticleWidget.tsx`, one lazy-loaded component per widget (`components/Article*.tsx`), each with a server-rendered SEO fallback.
+
+**The catalog to choose from when adding interactivity to an article** (pick the closest fit; don't reinvent):
+- **Audio players / comparisons:** `@audio(url)`, `@ab(json)` (blind A/B), `@sound(communityId)`.
+- **Mixing (over a synthesized groove, no asset):** `@eq`, `@compressor`, `@reverb`, `@width`, `@scrolleq` (scroll-driven EQ tour).
+- **Sound design:** `@synth(json)`, `@adsr`, `@filter`, `@crush` (drive + bitcrush).
+- **Rhythm & feel:** `@grid(json)` (step sequencer), `@swing`, `@sidechain`, `@arp`.
+- **Melody / theory / ear:** `@progression(json)`, `@voicing`, `@intervals` (adaptive ear-trainer), `@practice`.
+- **Page setup:** `@setup` (sets tempo+key that the rhythm/melody widgets on the page follow).
+- **Standalone tools** via `@tool(<id>) caption` — registry in **`lib/article-tools.ts`** (`metronome`, `circle-of-fifths`, `chords`, `chord-identifier`, `fretboard`, `delay-calculator`, `tuner`, `vocal-range`). These import the SAME `@/components/tools/*` module the `/tools` route uses, so **editing a tool auto-updates the route and every article embed**; adding a registry entry makes `@tool(<newid>)` work everywhere immediately. **Add new embeddable tools to that registry** — it is the single source of truth.
+- Creative widgets (`@voicing`/`@arp`/`@swing`) already carry "Open in studio" + "Save to library" buttons (`lib/open-in-studio.ts`, `lib/article-save.ts`).
+
+To add a NEW `@`-widget: component in `components/Article*.tsx`, entry in `LazyArticleWidget` LOADERS + WidgetSpec, a parser + SEO fallback in `simple-markdown.tsx`. To add a NEW embeddable tool: just a row in `lib/article-tools.ts`.
 
 **Article audio MUST be authored in the studio, not just rendered.** Any sound demonstrated in an article should exist as an *editable 100Lights project* — real tracks + instruments + effects — so it can be opened, edited, and re-exported over the source. The path:
 - `lib/demo-projects.ts` — `buildDemoProject(id)` rebuilds each clip as a `DawProject`. **When you add a new article that plays audio, add a `buildDemoProject` case for that clip.**
@@ -191,7 +203,7 @@ Articles are Markdown in `content/learn/*.md`, rendered by `lib/simple-markdown.
 - The admin article editor (`app/(app)/admin/ArticlesPanel.tsx`) shows an **"Open in studio"** button + "editable recreation" badge per clip; edits save back over the source via the existing `saveTo`/override path.
 - `lib/demo-audio.ts` (standalone DSP → `/api/demo-audio/<id>`) and static `/learn-audio/*.mp3` are the *served* audio only — they are **not** editable, which is exactly why every clip also needs a `demo-projects` recreation.
 
-**Diversify the music.** Do not default every demo, widget groove, and example to the same 120 BPM, C-minor, four-on-the-floor house loop (the shared `CHORDS`/`KICK`/`SNARE`/bass bed in `demo-audio.ts` + `demo-projects.ts`, and the groove in `lib/article-loop.ts`). Vary **genre, key, tempo, rhythm, and instrumentation** across articles and widgets — hip-hop, lo-fi, boom-bap, trap, rock, ambient, jazz, bossa, drum & bass, etc. — so the app's music-making represents many styles, not one.
+**Diversify the music — choose a genre first.** Before creating ANY audio (article demo clip, widget groove, demo project, starter), pick a genre from **`lib/genres.ts`** (the canonical 20-genre list, with tempo/swing/scale/feel) and vary tempo, key, rhythm, and instrumentation accordingly. Do NOT default everything to the same 120 BPM, C-minor, four-on-the-floor house loop. Implemented playable beds live in `lib/article-loop.ts` (`LoopStyle`, keyed to genre ids — house, boom-bap, lo-fi, techno, trap, r&b, disco so far; add more from the registry as needed); the mixing widgets already spread across them. `demo-projects.ts` recreations must match their article, but new audio should span the list.
 
 ## Legacy / dormant code (from the old transcription product — safe to ignore, don't build on)
 

@@ -7,11 +7,13 @@
 
 import { useEffect, useState, type ComponentType } from 'react'
 import { toolById } from '@/lib/article-tools'
+import { useArticleState } from './article/article-state'
 
 const ACCENT = '#a78bfa'
 
 export default function ArticleTool({ toolId, caption }: { toolId: string; caption?: string }) {
   const def = toolById(toolId)
+  const { tempo, active } = useArticleState()
   const [Comp, setComp] = useState<ComponentType<Record<string, unknown>> | null>(null)
 
   useEffect(() => {
@@ -22,6 +24,8 @@ export default function ArticleTool({ toolId, caption }: { toolId: string; capti
   }, [def])
 
   if (!def) return null
+  // Let a page-level @setup seed tool props (the metronome starts at the page tempo).
+  const props: Record<string, unknown> = def.id === 'metronome' && active ? { initialBpm: tempo } : {}
   return (
     <figure style={{ margin: '24px 0' }}>
       <div style={{
@@ -29,7 +33,7 @@ export default function ArticleTool({ toolId, caption }: { toolId: string; capti
         background: 'rgba(167,139,250,0.05)', overflowX: def.wide ? 'auto' : 'visible',
       }}>
         {Comp
-          ? <Comp />
+          ? <Comp {...props} />
           : <div style={{ fontSize: 12.5, color: 'var(--text-muted)', padding: '8px 2px' }}>{def.emoji} {def.label} — loading…</div>}
       </div>
       {caption && <figcaption style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.6 }}>{caption}</figcaption>}
