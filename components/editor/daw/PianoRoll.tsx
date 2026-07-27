@@ -551,6 +551,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   const gridRef   = useRef<HTMLDivElement>(null)
   const selBoxRef = useRef<{ startX: number; startY: number; endX: number; endY: number } | null>(null)
+  // FL-style "new notes inherit the last length": remembers the duration you
+  // last drew or resized a note to; a plain click reuses it. 0 = unset → falls
+  // back to the grid snap, so behaviour is unchanged until you set a length.
+  const lastNoteLenRef = useRef(0)
   const [selRect, setSelRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
 
   function snapBeat(b: number) { return Math.round(b / quant) * quant }
@@ -773,6 +777,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             const delta = (ev.clientX - startX) / beatW
             for (const t of targets) {
               const dur = Math.max(0.125, snapUnless(ev.altKey, t.dur + delta))
+              lastNoteLenRef.current = dur
               dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: t.id, patch: { durationBeats: dur } })
             }
           }
@@ -865,7 +870,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               id: crypto.randomUUID(),
               pitch: notePitch,
               startBeat: beat,
-              durationBeats: quant,
+              durationBeats: lastNoteLenRef.current || quant,
               velocity: 80,
             }})
           }
@@ -879,7 +884,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         id: crypto.randomUUID(),
         pitch: finalPitch,
         startBeat: beat,
-        durationBeats: quant,
+        durationBeats: lastNoteLenRef.current || quant,
         velocity: 100,
       }
       dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note })
@@ -891,6 +896,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       function onMove(ev: MouseEvent) {
         const delta = (ev.clientX - startX) / beatW
         const dur   = ev.altKey ? Math.max(0.125, quant + delta) : Math.max(quant, snapBeat(quant + delta))
+        lastNoteLenRef.current = dur
         dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { durationBeats: dur } })
       }
       function onUp() {
@@ -1109,7 +1115,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         for (const interval of intervals) {
           const np = finalPitch + interval
           if (np < 0 || np > 127) continue
-          dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { id: crypto.randomUUID(), pitch: np, startBeat: beat, durationBeats: quant, velocity: 80 } })
+          dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { id: crypto.randomUUID(), pitch: np, startBeat: beat, durationBeats: lastNoteLenRef.current || quant, velocity: 80 } })
         }
         void playNote(finalPitch)
         touchRef.current = null
@@ -1118,7 +1124,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     }
 
     const id = crypto.randomUUID()
-    dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { id, pitch: finalPitch, startBeat: beat, durationBeats: quant, velocity: 100 } })
+    dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: { id, pitch: finalPitch, startBeat: beat, durationBeats: lastNoteLenRef.current || quant, velocity: 100 } })
     setSelectedNotes(new Set([id]))
     void playNote(finalPitch)
     touchRef.current = { mode: 'add', noteId: id, startBeat: beat }
