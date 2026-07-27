@@ -39,6 +39,8 @@ Then break the rhythm. Instead of each chord landing on the downbeat, push it a 
 
 @theory The seventh does something specific: it takes the chord's most definite note — the root, the one that says "this is home" — and puts a neighbor right next to it. Two notes that close together blur into each other rather than announcing themselves, so each chord stops being a statement and becomes a color. When every chord is a color instead of a statement, nothing feels like a destination, and music with no destination can drift for eight minutes and still sound intentional. That's the whole neo-soul contract.
 
+@voicing One chord, re-voiced. Flip **Major** to **Maj7** and hear that added seventh blur the statement into a color — the neo-soul move. Then change the **inversion**: same notes, a different one on the bottom, so the top barely shifts between chords. That near-motionless top is exactly the pop trick from the section above.
+
 ## Three: cinematic
 
 Strip everything back to bare triads, but spread them apart. Put the root down low, alone, in the bass register. Put the other two notes up high, far above it, with a large empty gap in the middle. Give each chord a full bar with no rhythm at all — just hold it, and let it overlap into the next chord by a beat.

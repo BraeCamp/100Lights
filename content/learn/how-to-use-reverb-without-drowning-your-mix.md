@@ -47,6 +47,8 @@ Why this beats an insert on every track isn't subtle. One reverb means one room.
 
 @math Rough, adjustable-by-ear starting points: pre-delay around 20 to 40 ms keeps vocals clear without sounding detached. Decay near 0.8 to 1.5 seconds for a plate on most songs; drop toward 0.4 to 0.8 for something fast and dense; stretch past 2 seconds only for sparse, slow material. If you'd rather lock it to the groove, a tail that fades by the next beat at your tempo almost always sits right — at 120 BPM a beat is 500 ms, so a decay around there breathes with the track instead of against it.
 
+@reverb Both knobs, on a demo groove. Push **Size** up and hear the tail start piling on the next hit — that's where mud comes from. Add **pre-delay** and the attack punches through clean before the wash arrives. **Tone** rolls the top off the tail so it sits behind the mix, and keep **Mix** lower than feels right.
+
 ## High-pass the return — this is the cleanup nobody does
 
 Now the single tidiest trick in the whole chain. Put a high-pass filter on the reverb return itself and cut the low end out of the reverb — not the tracks, the *reverb*.

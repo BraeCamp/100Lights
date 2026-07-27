@@ -67,6 +67,8 @@ Once you can hear it, the mixer version is easy to reach for. Put a compressor o
 
 You can set the whole thing by ear instead. Increase the effect until you can clearly hear the pumping, then back it off until you can only feel it. That's the setting. Everyone arrives at the same place eventually; the numbers just get you there on a bad day.
 
+@sidechain A pad and a four-on-the-floor kick — the French-house setup exactly. Turn the **duck amount** up until the pump stops being invisible and becomes the hook, then find the **release** that lets the pad swell back just before the next kick. Hold "no duck" to hear the pad and kick fighting for the same space.
+
 @studio(/tutorial/fx) Set up a sidechain by ear →
 
 ## What you actually learned

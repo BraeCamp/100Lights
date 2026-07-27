@@ -65,4 +65,6 @@ Two chords. One held root, one third you slide up and down. That's the whole ins
 
 Try it on songs you know cold. Find the root by ear, build the plain chord, and test whether the bright third or the dark third belongs. When you genuinely can't tell, that ambiguity is usually the interesting thing about the song, not a failure of your ear. And when you want to hear how other people are using it, pull a progression from the [community](/community) and lower a third or two on purpose — break a cheerful loop into something haunted, and notice how little you had to touch to do it.
 
+@intervals You just learned two intervals by ear — the bright major third and the dark minor third. Those are two of twelve. Here's the rest: two notes play, you name the gap. The third you came here for is in the grid, and once you can pick it out of a crowd, you'll hear it coming in songs.
+
 You didn't learn that minor sounds sad. You learned that one note, moved one key, changes the color of everything around it. The sad part was always optional.
