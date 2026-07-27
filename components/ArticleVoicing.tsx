@@ -6,8 +6,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Play } from 'lucide-react'
-import { ACCENT, mixCtx, Frame } from './article/mix-kit'
+import { ACCENT, mixCtx, Frame, StudioButton } from './article/mix-kit'
 import { useSharedRoot } from './article/article-state'
+import { openMidiInStudio } from '@/lib/open-in-studio'
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
 const QUALITIES: Record<string, number[]> = {
@@ -111,6 +112,14 @@ export default function ArticleVoicing({ caption }: { caption?: string }) {
           ))}
         </div>
       </div>
+
+      <StudioButton
+        label="Open this chord in the studio"
+        onClick={() => openMidiInStudio(
+          notes.map(m => ({ id: '', pitch: m, startBeat: 0, durationBeats: 4, velocity: 90 })),
+          { name: `${NAMES[notes[0] % 12]} ${quality}` },
+        )}
+      />
 
       <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.65 }}>
         Every inversion is the <em>same chord</em> — same notes, different one on the bottom. Root position stacks them in order; an inversion lifts the lowest note up an octave. Choosing inversions so the notes barely move between chords is <strong style={{ color: 'var(--text-secondary)' }}>voice-leading</strong>, and it&rsquo;s what makes a progression sound smooth instead of jumpy.

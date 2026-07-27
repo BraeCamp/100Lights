@@ -10,6 +10,7 @@ import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrum
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
+import { consumeStudioSeed } from '@/lib/open-in-studio'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
@@ -363,6 +364,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       if (props.initialDawProject) return props.initialDawProject
       if (initialTracks?.length) return buildInitialProject(initialTracks)
       if (isPodcast) return buildPodcastProject()
+      // A reader carried something over from an article — seed the timeline with it.
+      const seed = consumeStudioSeed()
+      if (seed) return migrateProject(seed)
       return defaultProject()
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

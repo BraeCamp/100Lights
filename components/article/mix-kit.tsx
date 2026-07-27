@@ -125,6 +125,21 @@ export function BypassButton({ bypassed, setBypassed, disabled, label = 'Hold: b
   )
 }
 
+/** "Open in studio →" — carries the widget's creation onto the real timeline. */
+export function StudioButton({ onClick, label = 'Open in studio' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Carry this into the full studio to keep building"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700,
+        padding: '8px 13px', borderRadius: 9, cursor: 'pointer', marginTop: 12,
+        border: `1px solid ${ACCENT}66`, background: 'rgba(167,139,250,0.10)', color: ACCENT,
+      }}
+    >{label} →</button>
+  )
+}
+
 export function Control({ label, value, children }: { label: React.ReactNode; value: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
