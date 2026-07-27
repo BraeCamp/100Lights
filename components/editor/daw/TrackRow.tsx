@@ -581,6 +581,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     if (patternId) {
       const pat = DRUM_PATTERNS.find(p => p.id === patternId)
       if (!pat) return
+      // Give the track the default (Studio) kit if it isn't already a drum track,
+      // otherwise the dropped beat would be silent.
+      if (track.instrument.type !== 'drum') dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: structuredClone(DEFAULT_KIT.instrument) })
       const bar = project.timeSignatureNum || 4
       const clip = makeMidiClip(track.id, pat.name, snapBeat(beatX, snap, bar), Math.max(bar, pat.bars * bar), { isDrumClip: true })
       clip.notes = patternToNotes(pat)

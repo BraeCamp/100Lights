@@ -110,8 +110,13 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
     if (!kit || !track) return
     const inst = structuredClone(kit.instrument)
     dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: inst })
-    if (engine.ctx) preloadDrumInstrument(engine.ctx, inst)   // warm any baked samples
-    audition(36)
+    if (engine.ctx) {
+      preloadDrumInstrument(engine.ctx, inst)   // warm any baked samples
+      // Preview the NEW kit directly — `audition()` would use the closure's
+      // still-stale `track.instrument`, which is why switching kits sounded
+      // identical. Play the kick through the kit we just picked.
+      try { playInstrumentNote(engine.ctx, engine.masterGain, inst, 36, 110, engine.ctx.currentTime, 0.25) } catch { /* ctx not ready */ }
+    }
   }
   function applyPattern(patternId: string) {
     const p = patterns.find(x => x.id === patternId)
