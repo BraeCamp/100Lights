@@ -1,6 +1,6 @@
 'use client'
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams } from './daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams } from './daw-types'
 import { createSidechainProcessor } from './sidechain'
 
 // Live Web Audio node handle for a single effect
@@ -149,6 +149,57 @@ export function buildLimiter(ctx: AudioContext, params: LimiterParams): EffectHa
       if (key === 'release')   comp.release.value = value as number
     },
     dispose() { drive.disconnect(); comp.disconnect(); out.disconnect() },
+  }
+}
+
+// Single-band dynamic EQ. A peaking filter carries the audio; a parallel
+// band-pass + analyser measures how loud that band is, and a control-rate loop
+// pushes the peaking gain toward `rangeDb` in proportion to how far the band is
+// over threshold (smoothed by attack/release). The analyser path runs into a
+// muted sink so the graph keeps pulling audio through the detector.
+export function buildDynEq(ctx: AudioContext, params: DynEqParams): EffectHandle {
+  const input  = ctx.createGain()
+  const output = ctx.createGain()
+  const peak = ctx.createBiquadFilter(); peak.type = 'peaking'
+  peak.frequency.value = params.freq; peak.Q.value = params.q; peak.gain.value = 0
+  const det = ctx.createBiquadFilter(); det.type = 'bandpass'
+  det.frequency.value = params.freq; det.Q.value = params.q
+  const ana = ctx.createAnalyser(); ana.fftSize = 512; ana.smoothingTimeConstant = 0.2
+  const sink = ctx.createGain(); sink.gain.value = 0
+
+  input.connect(peak); peak.connect(output)
+  input.connect(det); det.connect(ana); ana.connect(sink); sink.connect(output)
+
+  const p = { ...params }
+  const buf = new Float32Array(ana.fftSize)
+  let raf = 0
+  const loop = () => {
+    if (p.enabled) {
+      ana.getFloatTimeDomainData(buf)
+      let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]
+      const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9)
+      const over = db - p.thresholdDb
+      const amt = over > 0 ? Math.min(1, over / 24) : 0
+      peak.gain.setTargetAtTime(p.rangeDb * amt, ctx.currentTime, Math.max(0.001, over > 0 ? p.attack : p.release))
+    } else {
+      peak.gain.setTargetAtTime(0, ctx.currentTime, 0.05)
+    }
+    raf = requestAnimationFrame(loop)
+  }
+  if (typeof requestAnimationFrame !== 'undefined') raf = requestAnimationFrame(loop)
+
+  return {
+    input,
+    output,
+    setParam(key, value) {
+      ;(p as Record<string, unknown>)[key] = value
+      if (key === 'freq') { peak.frequency.value = value as number; det.frequency.value = value as number }
+      if (key === 'q')    { peak.Q.value = value as number; det.Q.value = value as number }
+    },
+    dispose() {
+      if (raf) cancelAnimationFrame(raf)
+      input.disconnect(); peak.disconnect(); det.disconnect(); ana.disconnect(); sink.disconnect(); output.disconnect()
+    },
   }
 }
 
@@ -736,6 +787,7 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
       case 'transientshaper': handle = buildTransientShaper(ctx, effect.params as TransientShaperParams); break
       case 'multibandcomp':  handle = buildMultibandComp(ctx, effect.params as MultibandCompParams); break
       case 'limiter':        handle = buildLimiter(ctx, effect.params as LimiterParams); break
+      case 'dyneq':          handle = buildDynEq(ctx, effect.params as DynEqParams); break
       default: continue
     }
     prev.connect(handle.input)

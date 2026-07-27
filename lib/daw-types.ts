@@ -17,7 +17,7 @@ export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last'
 
 // ── Effects ───────────────────────────────────────────────────────────────────
 
-export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter'
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter' | 'dyneq'
 
 export interface Eq3Params {
   enabled: boolean
@@ -152,7 +152,7 @@ export interface MultibandCompParams {
   highGain: number        // dB makeup (default 0)
 }
 
-export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams | DynEqParams
 
 export interface TrackEffect {
   id: string
@@ -179,6 +179,24 @@ export interface LimiterParams {
 }
 export function defaultLimiter(): LimiterParams {
   return { enabled: true, gainDb: 0, ceilingDb: -0.3, release: 0.1 }
+}
+
+// Single-band dynamic EQ: a peaking filter at `freq` whose gain is driven by
+// how far the energy *in that band* sits over `thresholdDb`. Negative `rangeDb`
+// tames a resonance / de-muddens only when it flares up; positive lifts a band
+// when it's shy. More surgical than the fixed-band multiband comp, more movable
+// than the sibilance-only de-esser.
+export interface DynEqParams {
+  enabled: boolean
+  freq: number        // Hz 20..20000
+  q: number           // 0.3..12
+  thresholdDb: number // -60..0 — band level above which it acts
+  rangeDb: number     // -18..18 — max cut (−) or boost (+) applied
+  attack: number      // s 0.001..0.5
+  release: number     // s 0.01..1
+}
+export function defaultDynEq(): DynEqParams {
+  return { enabled: true, freq: 300, q: 2, thresholdDb: -30, rangeDb: -6, attack: 0.01, release: 0.15 }
 }
 export function defaultReverb(): ReverbParams {
   return { enabled: true, wet: 0.25, decay: 2, preDelay: 0.02 }

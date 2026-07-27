@@ -6,13 +6,13 @@ import { useDaw } from '@/lib/daw-state'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
-  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams,
+  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams,
   MidiEffect, MidiEffectType, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams,
 } from '@/lib/daw-types'
 import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
   defaultSaturator, defaultRedux, defaultAutoPan, defaultUtility, defaultLfo,
-  defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp, defaultLimiter,
+  defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp, defaultLimiter, defaultDynEq,
   voiceChainEffects,
 } from '@/lib/daw-types'
 
@@ -35,6 +35,7 @@ const EFFECT_LABELS: Record<EffectType, string> = {
   transientshaper:'Transient Shaper',
   multibandcomp:  'Multiband Comp',
   limiter:        'Limiter',
+  dyneq:          'Dynamic EQ',
 }
 
 // ── Shared micro-components ────────────────────────────────────────────────────
@@ -178,6 +179,36 @@ function Eq3Controls({ effect, trackId, returnId }: { effect: TrackEffect; track
 }
 
 // ── Compressor controls ────────────────────────────────────────────────────────
+
+function DynEqControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as DynEqParams
+  const up = (changes: Partial<DynEqParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Freq">
+        <RangeCtrl value={p.freq} min={20} max={20000} step={1} onChange={v => up({ freq: v })} />
+      </CtrlRow>
+      <CtrlRow label="Q">
+        <RangeCtrl value={p.q} min={0.3} max={12} step={0.1} onChange={v => up({ q: v })} />
+      </CtrlRow>
+      <CtrlRow label="Threshold">
+        <RangeCtrl value={p.thresholdDb} min={-60} max={0} step={0.5} onChange={v => up({ thresholdDb: v })} />
+      </CtrlRow>
+      <CtrlRow label="Range">
+        <RangeCtrl value={p.rangeDb} min={-18} max={18} step={0.5} onChange={v => up({ rangeDb: v })} />
+      </CtrlRow>
+      <CtrlRow label="Attack">
+        <RangeCtrl value={p.attack} min={0.001} max={0.5} step={0.001} onChange={v => up({ attack: v })} />
+      </CtrlRow>
+      <CtrlRow label="Release">
+        <RangeCtrl value={p.release} min={0.01} max={1} step={0.005} onChange={v => up({ release: v })} />
+      </CtrlRow>
+    </>
+  )
+}
 
 function LimiterControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
@@ -729,6 +760,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'limiter'        && <LimiterControls         effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'dyneq'          && <DynEqControls           effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'reverb'         && <ReverbControls          effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'delay'          && <DelayControls           effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'filter'         && <FilterControls          effect={effect} trackId={trackId} returnId={returnId} />}
@@ -785,6 +817,7 @@ const ADD_OPTIONS: { type: EffectType; label: string }[] = [
   { type: 'transientshaper',label: 'Transient Shaper' },
   { type: 'multibandcomp',  label: 'Multiband Comp' },
   { type: 'limiter',        label: 'Limiter' },
+  { type: 'dyneq',          label: 'Dynamic EQ' },
 ]
 
 function makeDefaultParams(type: EffectType) {
@@ -805,6 +838,7 @@ function makeDefaultParams(type: EffectType) {
     case 'transientshaper':return defaultTransientShaper()
     case 'multibandcomp':  return defaultMultibandComp()
     case 'limiter':        return defaultLimiter()
+    case 'dyneq':          return defaultDynEq()
     default:               return defaultEq3()
   }
 }
