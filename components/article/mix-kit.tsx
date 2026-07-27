@@ -186,6 +186,23 @@ export function StudioButton({ onClick, label = 'Open in studio' }: { onClick: (
   )
 }
 
+/** "Save to library →" — writes the reader's creation to their library (a recipe). */
+export function SaveButton({ onSave, label = 'Save to library' }: { onSave: () => void; label?: string }) {
+  const [saved, setSaved] = useState(false)
+  return (
+    <button
+      onClick={() => { try { onSave(); setSaved(true); window.setTimeout(() => setSaved(false), 2000) } catch { /* ignore */ } }}
+      title="Save this to your library — it shows up in the studio's Presets → Recipe tab"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700,
+        padding: '8px 13px', borderRadius: 9, cursor: 'pointer', marginTop: 12,
+        border: `1px solid ${saved ? '#34d399' : 'var(--border)'}`,
+        background: saved ? 'rgba(52,211,153,0.14)' : 'var(--bg-card)', color: saved ? '#34d399' : 'var(--text-secondary)',
+      }}
+    >{saved ? 'Saved ✓' : label}</button>
+  )
+}
+
 export function Control({ label, value, children }: { label: React.ReactNode; value: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>

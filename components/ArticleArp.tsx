@@ -5,9 +5,10 @@
 // the engine behind a huge amount of electronic music. Watch the notes light up.
 
 import { useEffect, useRef, useState } from 'react'
-import { ACCENT, mixCtx, Frame, Transport, Control, rangeStyle, StudioButton } from './article/mix-kit'
+import { ACCENT, mixCtx, Frame, Transport, Control, rangeStyle, StudioButton, SaveButton } from './article/mix-kit'
 import { useSharedTempo, useSharedRoot } from './article/article-state'
 import { openMidiInStudio } from '@/lib/open-in-studio'
+import { saveRecipe } from '@/lib/article-save'
 
 const TRIAD = [60, 64, 67]   // C E G (root position, transposed by the shared key)
 const NAMES: Record<number, string> = { 0: 'C', 1: 'C#', 2: 'D', 3: 'D#', 4: 'E', 5: 'F', 6: 'F#', 7: 'G', 8: 'G#', 9: 'A', 10: 'A#', 11: 'B' }
@@ -85,6 +86,13 @@ export default function ArticleArp({ caption }: { caption?: string }) {
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
 
   const seq = buildSeq(pattern, octaves, rootOff)
+  const arpNotes = () => {
+    const s = buildSeq(pattern, octaves, rootOff)
+    const stepBeats = 1 / RATES[rateIdx].spb
+    return Array.from({ length: 32 }, (_, i) => ({
+      id: '', pitch: s[i % s.length], startBeat: i * stepBeats, durationBeats: stepBeats * 0.9, velocity: 90,
+    }))
+  }
 
   return (
     <Frame caption={caption}>
@@ -121,17 +129,10 @@ export default function ArticleArp({ caption }: { caption?: string }) {
         <input type="range" min={1} max={3} step={1} value={octaves} onChange={e => setOctaves(+e.target.value)} style={rangeStyle} aria-label="Octaves" />
       </Control>
 
-      <StudioButton
-        label="Open this arp in the studio"
-        onClick={() => {
-          const s = buildSeq(pattern, octaves, rootOff)
-          const stepBeats = 1 / RATES[rateIdx].spb
-          const out = Array.from({ length: 32 }, (_, i) => ({
-            id: '', pitch: s[i % s.length], startBeat: i * stepBeats, durationBeats: stepBeats * 0.9, velocity: 90,
-          }))
-          openMidiInStudio(out, { tempo: BPM, name: 'Arp' })
-        }}
-      />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <StudioButton label="Open in studio" onClick={() => openMidiInStudio(arpNotes(), { tempo: BPM, name: 'Arp' })} />
+        <SaveButton onSave={() => saveRecipe(arpNotes(), { title: 'Arp', tagline: 'Arpeggio from a lesson' })} />
+      </div>
 
       <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.65 }}>
         Same three notes every time — the <strong style={{ color: 'var(--text-secondary)' }}>pattern</strong> is just the order they&rsquo;re played in, the <strong style={{ color: 'var(--text-secondary)' }}>rate</strong> is how fast, and <strong style={{ color: 'var(--text-secondary)' }}>octaves</strong> stacks copies higher up for range. Hold a chord, let the arp move it, and a static shape becomes a running line.

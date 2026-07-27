@@ -6,9 +6,10 @@
 // as hear it.
 
 import { useEffect, useRef, useState } from 'react'
-import { ACCENT, mixCtx, Frame, Transport, Control, rangeStyle, StudioButton } from './article/mix-kit'
+import { ACCENT, mixCtx, Frame, Transport, Control, rangeStyle, StudioButton, SaveButton } from './article/mix-kit'
 import { useSharedTempo } from './article/article-state'
 import { openMidiInStudio } from '@/lib/open-in-studio'
+import { saveRecipe } from '@/lib/article-save'
 import { dkick, dsnare, dhat } from './article/beat-voices'
 
 const KICK = new Set([0, 4, 8, 12])
@@ -63,6 +64,16 @@ export default function ArticleSwing({ caption }: { caption?: string }) {
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
 
   const swingPct = Math.round(swing * 100)
+  const beatNotes = () => {
+    const out: { id: string; pitch: number; startBeat: number; durationBeats: number; velocity: number }[] = []
+    for (let s = 0; s < 16; s++) {
+      const beat = Math.floor(s / 2) * 0.5 + (s % 2 ? swing * 0.5 : 0)
+      out.push({ id: '', pitch: 42, startBeat: beat, durationBeats: 0.25, velocity: 90 })       // closed hat
+      if (KICK.has(s)) out.push({ id: '', pitch: 36, startBeat: beat, durationBeats: 0.25, velocity: 110 })
+      if (SNARE.has(s)) out.push({ id: '', pitch: 38, startBeat: beat, durationBeats: 0.25, velocity: 100 })
+    }
+    return out
+  }
 
   return (
     <Frame caption={caption}>
@@ -89,19 +100,10 @@ export default function ArticleSwing({ caption }: { caption?: string }) {
         <input type="range" min={0.5} max={0.72} step={0.005} value={swing} onChange={e => setSwing(+e.target.value)} style={rangeStyle} aria-label="Swing amount" />
       </Control>
 
-      <StudioButton
-        label="Open this beat in the studio"
-        onClick={() => {
-          const out: { id: string; pitch: number; startBeat: number; durationBeats: number; velocity: number }[] = []
-          for (let s = 0; s < 16; s++) {
-            const beat = Math.floor(s / 2) * 0.5 + (s % 2 ? swing * 0.5 : 0)
-            out.push({ id: '', pitch: 42, startBeat: beat, durationBeats: 0.25, velocity: 90 })       // closed hat
-            if (KICK.has(s)) out.push({ id: '', pitch: 36, startBeat: beat, durationBeats: 0.25, velocity: 110 })
-            if (SNARE.has(s)) out.push({ id: '', pitch: 38, startBeat: beat, durationBeats: 0.25, velocity: 100 })
-          }
-          openMidiInStudio(out, { tempo: BPM, isDrum: true, name: 'Swung beat' })
-        }}
-      />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <StudioButton label="Open in studio" onClick={() => openMidiInStudio(beatNotes(), { tempo: BPM, isDrum: true, name: 'Swung beat' })} />
+        <SaveButton onSave={() => saveRecipe(beatNotes(), { title: 'Swung beat', tagline: 'Beat from a lesson', isDrum: true })} />
+      </div>
 
       <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.65 }}>
         Straight 16ths are evenly spaced — every dot the same distance apart. Add <strong style={{ color: 'var(--text-secondary)' }}>swing</strong> and the off-beats (the small purple dots) slide later, so each pair becomes long-short, long-short. That lopsided bounce is the difference between a beat that marches and one that grooves. Most swung music lives around 54–62%.
