@@ -815,7 +815,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
               onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
               onClick={e => e.stopPropagation()} draggable={false}
-              className="cf-slider" style={{ width: 120, accentColor: track.color }} />
+              className="cf-slider" style={{ width: 120, accentColor: track.color, height: 12, background: 'transparent' }} />
             <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 10 }}>{isFolded ? 'folded' : `${childCount} track${childCount === 1 ? '' : 's'}`}</span>
           </div>
         </div>
@@ -983,7 +983,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
               onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
               onClick={e => e.stopPropagation()} draggable={false}
-              className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0 }} />
+              className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0, height: 12, background: 'transparent' }} />
             <AddAutoButton track={track} />
             <button
               title="Toggle effects lane"
