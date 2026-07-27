@@ -7,6 +7,7 @@
 // with the same slug, which overrides the file.
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Search } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { renderMarkdown } from '@/lib/simple-markdown'
 import { initLibrary, libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
@@ -57,6 +58,11 @@ const input: React.CSSProperties = {
 // source URL + an in-place save target the studio can write back to.
 interface ElAudio { role?: string; src: string; name: string; saveTo: string | null }
 interface ArticleEl { key: string; type: string; icon: string; label: string; line: number; marker: string; audios: ElAudio[] }
+
+// In-app AI drafting is off until 100Lights has an in-program AI. The "Generate a
+// draft" UI is hidden, but the feature (generate() + /api/admin/articles/generate)
+// is kept intact — flip this back to true to re-enable it.
+const AI_DRAFTS_ENABLED = false
 
 // Turn a served audio URL into the target the studio overwrites in place:
 // demo clips → the override store; learn-audio R2 objects → the same key.
@@ -177,6 +183,7 @@ export default function ArticlesPanel() {
   const [schedTime, setSchedTime] = useState('09:00')
   const [schedEvery, setSchedEvery] = useState(1)
   const [filter, setFilter] = useState<'all' | 'live' | 'draft' | 'scheduled'>('all')
+  const [articleQuery, setArticleQuery] = useState('')
   const [trashOpen, setTrashOpen] = useState(false)
   const [trash, setTrash] = useState<TrashItem[] | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
@@ -924,7 +931,8 @@ export default function ArticlesPanel() {
           onClose={() => setCalendarOpen(false)}
         />
       )}
-      {/* Generate */}
+      {/* Generate — hidden until in-app AI exists (AI_DRAFTS_ENABLED). Feature kept. */}
+      {AI_DRAFTS_ENABLED && (
       <div style={{ border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(124,58,237,0.06)', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 800, color: '#a78bfa' }}>Generate a draft</span>
         <input style={input} placeholder="Topic — e.g. Recording vocals at home with just a browser" value={genTopic} onChange={e => setGenTopic(e.target.value)} />
@@ -951,6 +959,7 @@ export default function ArticlesPanel() {
           <span style={{ fontSize: 11, color: msg.includes('✓') || msg.includes('review') ? '#34d399' : '#ef4444' }}>{msg}</span>
         </div>
       </div>
+      )}
 
       {/* New blank + IndexNow */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1125,16 +1134,33 @@ export default function ArticlesPanel() {
         </div>
       )}
 
+      {/* Search over the list */}
+      {rows !== null && rows.length > 0 && (
+        <div style={{ position: 'relative' }}>
+          <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+          <input
+            value={articleQuery}
+            onChange={e => setArticleQuery(e.target.value)}
+            placeholder="Search articles by title, slug, or tag…"
+            aria-label="Search articles"
+            style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, padding: '8px 10px 8px 30px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', outline: 'none' }}
+          />
+        </div>
+      )}
+
       {/* List */}
       {rows === null && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</p>}
       {rows?.length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No articles yet.</p>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {rows?.filter(r =>
-          filter === 'all' ? true
-          : filter === 'live' ? !r.draft
-          : filter === 'draft' ? r.draft && !r.scheduledFor
-          : !!r.scheduledFor,
-        ).sort((a, b) =>
+        {rows?.filter(r => {
+          const statusOk = filter === 'all' ? true
+            : filter === 'live' ? !r.draft
+            : filter === 'draft' ? r.draft && !r.scheduledFor
+            : !!r.scheduledFor
+          const query = articleQuery.trim().toLowerCase()
+          const textOk = !query || r.title.toLowerCase().includes(query) || r.slug.toLowerCase().includes(query) || (r.description ?? '').toLowerCase().includes(query) || (r.tags ?? '').toLowerCase().includes(query)
+          return statusOk && textOk
+        }).sort((a, b) =>
           // Scheduled tab: soonest publish first, latest last (chronological).
           filter === 'scheduled' ? (a.scheduledFor ?? '').localeCompare(b.scheduledFor ?? '') : 0,
         ).map(r => (
