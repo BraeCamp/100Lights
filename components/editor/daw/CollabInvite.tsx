@@ -132,7 +132,12 @@ export function CollabInvite({ projectId }: { projectId: string }) {
           background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
           padding: '12px 14px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
         }}>
-          <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px' }}>Share project</p>
+          <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 3px' }}>Share &amp; collaborate</p>
+          <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
+            {count > 0
+              ? <><span style={{ color: '#22c55e', fontWeight: 700 }}>● {count} {count === 1 ? 'person is' : 'people are'} here now</span> — you&rsquo;re editing this session together, live.</>
+              : <>Send the link and edit this session <strong style={{ color: 'var(--text-secondary)' }}>together, live</strong> — everyone in the same project in real time.</>}
+          </p>
 
           <button onClick={copyLink} style={{
             display: 'flex', alignItems: 'center', gap: 7, width: '100%', justifyContent: 'center',
@@ -141,7 +146,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
             background: copied ? 'rgba(34,197,94,0.12)' : 'rgb(var(--accent-rgb) / 0.1)',
             color: copied ? '#22c55e' : '#7ab4f5',
           }}>
-            <Link2 size={12} /> {copied ? 'Link copied' : 'Copy link'}
+            <Link2 size={12} /> {copied ? 'Link copied — send it to jam together' : 'Copy invite link'}
           </button>
 
           {notOwner ? (
