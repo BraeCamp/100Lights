@@ -5,7 +5,7 @@ import CommandPalette from './CommandPalette'
 import {
   Sunrise, LayoutDashboard, Users, TrendingUp, BarChart3, Eye, Megaphone, BookOpen, Ticket, ListChecks,
   MessageSquare, Flag, Activity, Webhook, HardDrive, ScrollText, Link as LinkIcon,
-  Library, Music, Piano, Package, Drum, Film, Image as ImageIcon, Circle,
+  Library, Music, Piano, Package, Drum, Film, Image as ImageIcon, Circle, Search,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -49,6 +49,7 @@ function iconFor(tabId: string, subId: string): LucideIcon {
 export default function AdminTabs({ tabs, badges = {} }: { tabs: AdminTab[]; badges?: Record<string, number> }) {
   const [tabId, setTabId] = useState(tabs[0].id)
   const [subId, setSubId] = useState(tabs[0].subtabs[0].id)
+  const [query, setQuery] = useState('')
   const [seen, setSeen] = useState<Set<string>>(() => new Set([`${tabs[0].id}/${tabs[0].subtabs[0].id}`]))
   const markSeen = (t: string, s: string) => setSeen(prev => prev.has(`${t}/${s}`) ? prev : new Set(prev).add(`${t}/${s}`))
 
@@ -91,6 +92,39 @@ export default function AdminTabs({ tabs, badges = {} }: { tabs: AdminTab[]; bad
     g.items.push(s)
   }
 
+  // Cross-module panel search — a flat filtered list while the query is non-empty.
+  const q = query.trim().toLowerCase()
+  const matches = q
+    ? tabs.flatMap(t => t.subtabs
+        .filter(s => s.label.toLowerCase().includes(q) || (s.group ?? '').toLowerCase().includes(q) || t.label.toLowerCase().includes(q))
+        .map(s => ({ t, s })))
+    : []
+
+  const navBtn = (t: AdminTab, s: AdminSubtab, active: boolean, hint?: string) => {
+    const Icon = iconFor(t.id, s.id)
+    const badge = badges[s.id] ?? 0
+    return (
+      <button key={`${t.id}/${s.id}`} onClick={() => { select(t.id, s.id); setQuery('') }}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left',
+          padding: '6px 8px', borderRadius: 8, cursor: 'pointer', border: 'none',
+          background: active ? 'var(--bg-card)' : 'transparent',
+          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+          boxShadow: active ? `inset 2px 0 0 ${accent}` : 'none',
+          fontSize: 12.5, fontWeight: active ? 700 : 500,
+        }}
+        onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-surface)' }}
+        onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}>
+        <Icon size={14} style={{ flexShrink: 0, color: active ? accent : 'var(--text-muted)' }} />
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+        {hint && <span style={{ flexShrink: 0, fontSize: 9, color: 'var(--text-muted)' }}>{hint}</span>}
+        {badge > 0 && (
+          <span style={{ flexShrink: 0, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 99, background: '#f59e0b', color: '#1a1205', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', fontVariantNumeric: 'tabular-nums' }}>{badge}</span>
+        )}
+      </button>
+    )
+  }
+
   return (
     <div>
       <CommandPalette tabs={tabs} />
@@ -116,42 +150,38 @@ export default function AdminTabs({ tabs, badges = {} }: { tabs: AdminTab[]; bad
             })}
           </div>
 
-          {/* Grouped subtab nav */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {groups.map(g => (
-              <div key={g.name || '_'}>
-                {g.name && (
-                  <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 8px 5px' }}>{g.name}</div>
-                )}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  {g.items.map(s => {
-                    const active = subId === s.id
-                    const Icon = iconFor(tab.id, s.id)
-                    const badge = badges[s.id] ?? 0
-                    return (
-                      <button key={s.id} onClick={() => select(tab.id, s.id)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left',
-                          padding: '6px 8px', borderRadius: 8, cursor: 'pointer', border: 'none',
-                          background: active ? 'var(--bg-card)' : 'transparent',
-                          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                          boxShadow: active ? `inset 2px 0 0 ${accent}` : 'none',
-                          fontSize: 12.5, fontWeight: active ? 700 : 500,
-                        }}
-                        onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-surface)' }}
-                        onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}>
-                        <Icon size={14} style={{ flexShrink: 0, color: active ? accent : 'var(--text-muted)' }} />
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
-                        {badge > 0 && (
-                          <span style={{ flexShrink: 0, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 99, background: '#f59e0b', color: '#1a1205', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', fontVariantNumeric: 'tabular-nums' }}>{badge}</span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
+          {/* Search all panels across every module */}
+          <div style={{ position: 'relative', marginBottom: 12 }}>
+            <Search size={12} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search panels…"
+              aria-label="Search admin panels"
+              style={{ width: '100%', boxSizing: 'border-box', fontSize: 12, padding: '6px 8px 6px 27px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', outline: 'none' }}
+            />
           </div>
+
+          {q ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {matches.length === 0
+                ? <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 8px' }}>No panels match &ldquo;{query.trim()}&rdquo;.</div>
+                : matches.map(({ t, s }) => navBtn(t, s, tabId === t.id && subId === s.id, t.label))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {groups.map(g => (
+                <div key={g.name || '_'}>
+                  {g.name && (
+                    <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 8px 5px' }}>{g.name}</div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {g.items.map(s => navBtn(tab, s, subId === s.id))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </nav>
 
         {/* ── Active panel ────────────────────────────────────────── */}
