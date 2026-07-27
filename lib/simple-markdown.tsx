@@ -123,6 +123,9 @@ const MIX_TOOLS = {
   '@compressor': { kind: 'compressor' as const, emoji: '🔊', text: 'Interactive compressor — squeeze the groove and watch the gain-reduction meter move.' },
   '@reverb':     { kind: 'reverb' as const,     emoji: '🌫', text: 'Interactive reverb — size a room with pre-delay and tone over a demo groove.' },
   '@width':      { kind: 'width' as const,      emoji: '🎧', text: 'Interactive stereo width & pan — widen the image and watch the vectorscope.' },
+  '@adsr':       { kind: 'adsr' as const,       emoji: '📈', text: 'Interactive ADSR envelope — reshape a note from a pluck to a pad, live.' },
+  '@filter':     { kind: 'filter' as const,     emoji: '🌊', text: 'Interactive resonant filter — sweep the cutoff, add resonance and an LFO wah.' },
+  '@crush':      { kind: 'crush' as const,      emoji: '📼', text: 'Interactive drive + bitcrusher — add grit and lo-fi to a demo groove.' },
 }
 
 function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {

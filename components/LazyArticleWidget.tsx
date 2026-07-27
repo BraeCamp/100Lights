@@ -36,6 +36,9 @@ const LOADERS = {
   compressor: () => import('@/components/ArticleCompressor'),
   reverb: () => import('@/components/ArticleReverb'),
   width: () => import('@/components/ArticleWidth'),
+  adsr: () => import('@/components/ArticleADSR'),
+  filter: () => import('@/components/ArticleFilter'),
+  crush: () => import('@/components/ArticleCrush'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -54,6 +57,9 @@ type WidgetSpec =
   | { kind: 'compressor'; props: { caption?: string } }
   | { kind: 'reverb'; props: { caption?: string } }
   | { kind: 'width'; props: { caption?: string } }
+  | { kind: 'adsr'; props: { caption?: string } }
+  | { kind: 'filter'; props: { caption?: string } }
+  | { kind: 'crush'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 
