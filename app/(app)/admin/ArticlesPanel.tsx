@@ -19,6 +19,7 @@ import { VOICES, VOICE_LIST, type VoiceId } from '@/lib/article-voice'
 import { parseTags, MAX_TAGS } from '@/lib/tags'
 import { validateMarkers } from '@/lib/article-markers'
 import type { AudioFile } from '@/app/api/admin/articles/audio/list/route'
+import { demoIdFor } from '@/lib/demo-projects'
 import ArticleScheduleCalendar from './ArticleScheduleCalendar'
 
 interface TrashItem {
@@ -121,15 +122,25 @@ function parseElements(body: string): ArticleEl[] {
 // Open the real studio seeded with this clip; the saveTo target lets its export
 // modal write the finished edit straight back over the source (in place).
 function editInStudio(src: string, name: string) {
-  const abs = /^https?:/.test(src) ? src : window.location.origin + src
   const u = new URL('/new', window.location.origin)
   u.searchParams.set('modules', 'audio')
-  u.searchParams.set('importAudio', abs)
-  u.searchParams.set('importName', name)
+  // Prefer an editable recreation (real tracks/instruments/effects) when this
+  // clip has one; otherwise import the flat audio (trim/effect only).
+  const demoId = demoIdFor(src)
+  if (demoId) {
+    u.searchParams.set('demoProject', demoId)
+  } else {
+    const abs = /^https?:/.test(src) ? src : window.location.origin + src
+    u.searchParams.set('importAudio', abs)
+    u.searchParams.set('importName', name)
+  }
   const saveTo = saveTargetFor(src)
   if (saveTo) u.searchParams.set('saveTo', saveTo)
   window.open(u.toString(), '_blank', 'noopener')
 }
+
+/** Whether a clip opens as an editable multi-track recreation (vs flat audio). */
+function hasRecreation(src: string): boolean { return demoIdFor(src) != null }
 
 const menuItem: React.CSSProperties = {
   textAlign: 'left', fontSize: 12, padding: '7px 10px', borderRadius: 7,
@@ -610,23 +621,29 @@ export default function ArticlesPanel() {
           if (!audioList.length) return null
           return (
             <div style={{ border: '1px solid rgba(56,189,248,0.4)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: 'rgba(56,189,248,0.05)' }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: '#38bdf8' }}>🎧 Audio in this article ({audioList.length}) — click “Fix in studio” to edit a clip and save it back in place</span>
-              {audioList.map(({ el, a }, i) => (
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#38bdf8' }}>🎧 Audio in this article ({audioList.length}) — open a clip in the studio to edit it and save it back in place. Clips marked “editable recreation” open as real tracks + instruments.</span>
+              {audioList.map(({ el, a }, i) => {
+                const recreatable = hasRecreation(a.src)
+                return (
                 <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{el.icon} {el.label}{a.role ? ` · ${a.role}` : ''}</span>
+                    {recreatable && (
+                      <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 99, border: '1px solid rgba(167,139,250,0.5)', color: '#a78bfa' }}>editable recreation</span>
+                    )}
                     <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 7px', borderRadius: 99, border: `1px solid ${a.saveTo ? 'rgba(52,211,153,0.45)' : 'rgba(245,158,11,0.45)'}`, color: a.saveTo ? '#34d399' : '#f59e0b' }}>
                       {a.saveTo ? 'edits save in place' : 'saves as new'}
                     </span>
                     <button
-                      onClick={() => { editInStudio(a.src, a.name); setMsg('Opened in the studio — edit, then Export → “Save to article source” ↗') }}
+                      onClick={() => { editInStudio(a.src, a.name); setMsg(recreatable ? 'Opened an editable recreation — edit the tracks, then Export → “Save to article source” ↗' : 'Opened in the studio — edit, then Export → “Save to article source” ↗') }}
                       style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, padding: '5px 13px', borderRadius: 7, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    >🎚 Fix in studio ↗</button>
+                    >🎚 {recreatable ? 'Open in studio' : 'Fix in studio'} ↗</button>
                   </div>
                   <audio controls preload="none" src={a.src} style={{ width: '100%', height: 32, display: 'block' }} />
                   <span style={{ fontSize: 9.5, color: 'var(--text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.src}</span>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )
         })()}

@@ -76,6 +76,9 @@ export interface ProjectEditorProps {
    *  starting state (used by the tutorial capture pipeline for a realistic
    *  WIP backdrop). Static, same-origin, id-restricted — safe. */
   fixtureId?: string
+  /** Build an editable recreation of a learn-article demo clip (id from
+   *  lib/demo-projects.ts) as the starting state — the admin "Open in studio". */
+  demoProjectId?: string
   audioMode?: 'music' | 'podcast'
 }
 
@@ -284,7 +287,7 @@ style={{
 
 // ── Main component ────────────────────────────────────────────
 
-export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId }: ProjectEditorProps) {
+export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId, demoProjectId }: ProjectEditorProps) {
   const isNewProject = !projectId
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
     isNewProject ? (moduleProp ?? ['video']) : null
@@ -316,6 +319,14 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       .catch(() => { if (alive) setStarterLoading(false) })
     return () => { alive = false }
   }, [fixtureId])
+  // Editable recreation of an article demo clip — built synchronously, no fetch.
+  useEffect(() => {
+    if (!demoProjectId) return
+    import('@/lib/demo-projects').then(({ buildDemoProject }) => {
+      const p = buildDemoProject(demoProjectId)
+      if (p) setStarterProject(p)
+    }).catch(() => { /* keep blank project */ })
+  }, [demoProjectId])
   const [localName, setLocalName]       = useState(projectName)
   const [currentTime, setCurrentTime]   = useState(0)
   const [audioMedia, setAudioMedia]     = useState<SerializedAudioMedia[]>([])

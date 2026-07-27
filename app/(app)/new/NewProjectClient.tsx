@@ -28,9 +28,11 @@ export default function NewProjectClient({ flags }: Props) {
   const starterParam = searchParams.get('starter')
   const communityItemParam = searchParams.get('communityItem')
   const fixtureParam = searchParams.get('fixture')
+  const demoProjectParam = searchParams.get('demoProject')   // editable recreation of an article clip
   // Community deep-links and demo fixtures always target the DAW
-  const moduleParam   = searchParams.get('modules') ?? (starterParam || communityItemParam || fixtureParam ? 'audio' : null)
-  const audioModeParam = searchParams.get('audioMode') ?? (starterParam || communityItemParam || fixtureParam ? 'music' : null)
+  const deepLink = starterParam || communityItemParam || fixtureParam || demoProjectParam
+  const moduleParam   = searchParams.get('modules') ?? (deepLink ? 'audio' : null)
+  const audioModeParam = searchParams.get('audioMode') ?? (deepLink ? 'music' : null)
 
   const visibleMods = MODULE_DEFS.filter(m => flags.enabledModules.includes(m.key))
 
@@ -66,6 +68,7 @@ export default function NewProjectClient({ flags }: Props) {
           allowImport
           starterId={starterParam ?? undefined}
           fixtureId={fixtureParam ?? undefined}
+          demoProjectId={demoProjectParam ?? undefined}
         />
       </div>
     )
