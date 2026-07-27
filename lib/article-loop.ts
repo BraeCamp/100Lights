@@ -1,51 +1,72 @@
-// A short, broadband groove (kick / snare / hats / saw bass) rendered offline
-// into a seamless loop buffer. It gives the article mixing widgets real, dynamic
-// material to shape — transients for a compressor, low end for EQ, a stereo-able
-// body for width — with nothing to download. Cached per sample-rate.
+// Short, broadband grooves (kick / snare / hats / saw bass) rendered offline into
+// seamless loop buffers for the article mixing widgets. Multiple STYLES so the
+// demos aren't all one house loop — different tempo, pattern, swing, and bass per
+// genre (see the "diversify the music" note in CONTEXT.md). Cached per style+rate.
 
-const cache = new Map<number, Promise<AudioBuffer>>()
+export type LoopStyle = 'house' | 'boombap' | 'lofi'
 
-/** A 2-bar, 100-bpm groove as a loopable buffer at the given sample rate. */
-export function grooveLoop(sampleRate: number): Promise<AudioBuffer> {
-  const hit = cache.get(sampleRate)
+interface StyleSpec {
+  bpm: number
+  swing: number          // 0 = straight; fraction the off-beat 16ths slide late
+  kick: number[]         // 16th-step indices over 2 bars (0..31)
+  snare: number[]
+  clHat: number[]
+  opHat: number[]
+  bass: Array<[number, number]>   // [step, Hz]
+  hatGain: number
+}
+
+const A = (n: number) => 55 * Math.pow(2, n / 12)   // Hz from semitones above A1
+const STYLES: Record<LoopStyle, StyleSpec> = {
+  // Four-on-the-floor, bright and busy.
+  house: {
+    bpm: 122, swing: 0, hatGain: 1,
+    kick: [0, 4, 8, 12, 16, 20, 24, 28], snare: [4, 12, 20, 28],
+    clHat: [2, 6, 10, 14, 18, 22, 26, 30], opHat: [7, 23],
+    bass: [[0, 55], [3, 55], [6, 82.4], [8, 65.4], [11, 65.4], [14, 98], [16, 55], [19, 55], [22, 82.4], [24, 49], [27, 49], [30, 73.4]],
+  },
+  // Dusty hip-hop: swung, kick+snare backbone, sparser hats, lower + laid-back.
+  boombap: {
+    bpm: 88, swing: 0.6, hatGain: 0.8,
+    kick: [0, 10, 16, 19, 26], snare: [4, 12, 20, 28],
+    clHat: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30], opHat: [],
+    bass: [[0, A(-12)], [10, A(-12)], [16, A(-5)], [26, A(-7)]],
+  },
+  // Lo-fi: slow, sparse, soft — room to breathe, warm low bass.
+  lofi: {
+    bpm: 72, swing: 0.58, hatGain: 0.55,
+    kick: [0, 16, 22], snare: [8, 24],
+    clHat: [2, 6, 10, 14, 18, 22, 26, 30], opHat: [12],
+    bass: [[0, A(-14)], [8, A(-9)], [16, A(-11)], [24, A(-16)]],
+  },
+}
+
+const cache = new Map<string, Promise<AudioBuffer>>()
+export function grooveLoop(sampleRate: number, style: LoopStyle = 'house'): Promise<AudioBuffer> {
+  const key = `${style}:${sampleRate}`
+  const hit = cache.get(key)
   if (hit) return hit
-  const p = render(sampleRate)
-  cache.set(sampleRate, p)
+  const p = render(sampleRate, STYLES[style])
+  cache.set(key, p)
   return p
 }
 
-const BPM = 100
-const BARS = 2
-const STEP = 60 / BPM / 4          // sixteenth-note, seconds
-
-async function render(sampleRate: number): Promise<AudioBuffer> {
-  const beats = BARS * 4
-  const dur = (60 / BPM) * beats
+async function render(sampleRate: number, S: StyleSpec): Promise<AudioBuffer> {
+  const bars = 2, beats = bars * 4
+  const step = 60 / S.bpm / 4                 // 16th, seconds
+  const dur = (60 / S.bpm) * beats
   const OAC = (typeof OfflineAudioContext !== 'undefined'
     ? OfflineAudioContext
     : (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext)
   const ac = new OAC(2, Math.ceil(dur * sampleRate), sampleRate)
-  const at = (step: number) => step * STEP
+  // Swing pushes odd 16ths late by `swing` of an 8th.
+  const at = (s: number) => Math.floor(s / 2) * (step * 2) + (s % 2 ? S.swing * step * 2 : 0)
 
-  // Four-on-the-floor with an offbeat hat shuffle + a moving saw bass, over 2 bars.
-  const kick = [0, 4, 8, 12, 16, 20, 24, 28]
-  const snare = [4, 12, 20, 28]
-  const clHat = [2, 6, 10, 14, 18, 22, 26, 30]
-  const opHat = [7, 23]
-  // Bass: A1 root moving to C2 / E2 / G1 across the two bars (Hz).
-  const bass: Array<[number, number]> = [
-    [0, 55.0], [3, 55.0], [6, 82.4], [8, 65.4],
-    [11, 65.4], [14, 98.0], [16, 55.0], [19, 55.0],
-    [22, 82.4], [24, 49.0], [27, 49.0], [30, 73.4],
-  ]
-
-  for (const s of kick)  synthKick(ac, at(s))
-  for (const s of snare) synthSnare(ac, at(s))
-  // Closed hats alternate across the stereo field, open hats sit wide — this is
-  // what gives the loop real width for the stereo widget (and just sounds nicer).
-  clHat.forEach((s, i) => synthHat(ac, at(s), false, i % 2 ? 0.4 : -0.4))
-  opHat.forEach((s, i) => synthHat(ac, at(s), true, i % 2 ? -0.6 : 0.6))
-  for (const [s, hz] of bass) synthBass(ac, at(s), hz, STEP * 2.6)
+  for (const s of S.kick) synthKick(ac, at(s))
+  for (const s of S.snare) synthSnare(ac, at(s))
+  S.clHat.forEach((s, i) => synthHat(ac, at(s), false, S.hatGain, i % 2 ? 0.4 : -0.4))
+  S.opHat.forEach((s, i) => synthHat(ac, at(s), true, S.hatGain, i % 2 ? -0.6 : 0.6))
+  for (const [s, hz] of S.bass) synthBass(ac, at(s), hz, step * 2.6)
 
   return ac.startRendering()
 }
@@ -81,17 +102,16 @@ function synthSnare(ac: BaseAudioContext, t: number) {
   const g = env(ac, t, 0.5, 0.18)
   n.connect(f); f.connect(g); g.connect(ac.destination)
   n.start(t); n.stop(t + 0.2)
-  // Body tone under the noise.
   const o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = 180
   const gt = env(ac, t, 0.28, 0.12)
   o.connect(gt); gt.connect(ac.destination); o.start(t); o.stop(t + 0.14)
 }
 
-function synthHat(ac: BaseAudioContext, t: number, open: boolean, pan = 0) {
+function synthHat(ac: BaseAudioContext, t: number, open: boolean, gain: number, pan = 0) {
   const len = open ? 0.3 : 0.05
   const n = noiseBuffer(ac, len)
   const f = ac.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 8500
-  const g = env(ac, t, open ? 0.24 : 0.3, len)
+  const g = env(ac, t, (open ? 0.24 : 0.3) * gain, len)
   n.connect(f); f.connect(g)
   if (pan && ac.createStereoPanner) { const p = ac.createStereoPanner(); p.pan.value = pan; g.connect(p); p.connect(ac.destination) }
   else g.connect(ac.destination)

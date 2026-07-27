@@ -22,7 +22,7 @@ export default function ArticleCompressor({ caption }: { caption?: string }) {
   const inputRef = useRef<AudioNode | null>(null)
   const compRef = useRef<DynamicsCompressorNode | null>(null)
   const makeupRef = useRef<GainNode | null>(null)
-  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef, 'boombap')
 
   useEffect(() => {
     const c = mixCtx()

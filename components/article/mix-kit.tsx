@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Play, Square, RotateCcw } from 'lucide-react'
-import { grooveLoop } from '@/lib/article-loop'
+import { grooveLoop, type LoopStyle } from '@/lib/article-loop'
 
 export const ACCENT = '#a78bfa'
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -21,7 +21,7 @@ export function mixCtx(): AudioContext {
 
 /** Loads the groove and loops it into `inputRef` on play. Also accepts a reader's
  *  own audio file (looped in place of the demo groove). Returns transport state. */
-export function useLoopPlayer(inputRef: React.RefObject<AudioNode | null>) {
+export function useLoopPlayer(inputRef: React.RefObject<AudioNode | null>, style: LoopStyle = 'house') {
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [sourceName, setSourceName] = useState<string | null>(null)   // null = demo groove
@@ -31,11 +31,11 @@ export function useLoopPlayer(inputRef: React.RefObject<AudioNode | null>) {
 
   useEffect(() => {
     let cancelled = false
-    grooveLoop(mixCtx().sampleRate)
+    grooveLoop(mixCtx().sampleRate, style)
       .then(b => { if (!cancelled) { grooveRef.current = b; setReady(true) } })
       .catch(() => { /* leave !ready — button shows unavailable */ })
     return () => { cancelled = true; try { srcRef.current?.stop() } catch { /* stopped */ } }
-  }, [])
+  }, [style])
 
   const stop = useCallback(() => {
     try { srcRef.current?.stop() } catch { /* already stopped */ }

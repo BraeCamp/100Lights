@@ -181,6 +181,18 @@ Touch-first studio at **`/m`** — `app/m/page.tsx` renders `MobileDawClient` �
 5. **R2 presigned URLs** — media is private; upload via presigned PUT, playback via presigned GET (1-hour expiry).
 6. **Admin actions are audited** — anything consequential calls `logAdmin(action, target, detail)`.
 
+## Learn articles: interactive widgets & audio (conventions — read before touching articles)
+
+Articles are Markdown in `content/learn/*.md`, rendered by `lib/simple-markdown.tsx`. Interactive pieces are `@`-directives (e.g. `@eq`, `@swing`, `@voicing`, `@scrolleq`, `@setup`) parsed there, registered in `components/LazyArticleWidget.tsx`, one lazy-loaded component per widget (`components/Article*.tsx`), each with a server-rendered SEO fallback.
+
+**Article audio MUST be authored in the studio, not just rendered.** Any sound demonstrated in an article should exist as an *editable 100Lights project* — real tracks + instruments + effects — so it can be opened, edited, and re-exported over the source. The path:
+- `lib/demo-projects.ts` — `buildDemoProject(id)` rebuilds each clip as a `DawProject`. **When you add a new article that plays audio, add a `buildDemoProject` case for that clip.**
+- It opens via `/new?demoProject=<id>` (threaded `NewProjectClient → ProjectEditor → initialDawProject`).
+- The admin article editor (`app/(app)/admin/ArticlesPanel.tsx`) shows an **"Open in studio"** button + "editable recreation" badge per clip; edits save back over the source via the existing `saveTo`/override path.
+- `lib/demo-audio.ts` (standalone DSP → `/api/demo-audio/<id>`) and static `/learn-audio/*.mp3` are the *served* audio only — they are **not** editable, which is exactly why every clip also needs a `demo-projects` recreation.
+
+**Diversify the music.** Do not default every demo, widget groove, and example to the same 120 BPM, C-minor, four-on-the-floor house loop (the shared `CHORDS`/`KICK`/`SNARE`/bass bed in `demo-audio.ts` + `demo-projects.ts`, and the groove in `lib/article-loop.ts`). Vary **genre, key, tempo, rhythm, and instrumentation** across articles and widgets — hip-hop, lo-fi, boom-bap, trap, rock, ambient, jazz, bossa, drum & bass, etc. — so the app's music-making represents many styles, not one.
+
 ## Legacy / dormant code (from the old transcription product — safe to ignore, don't build on)
 
 - `package.json` `"name": "contentforge"` — stale name.

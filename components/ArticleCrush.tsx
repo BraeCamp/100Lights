@@ -25,7 +25,7 @@ export default function ArticleCrush({ caption }: { caption?: string }) {
   const outRef = useRef<GainNode | null>(null)
   const params = useRef({ bits, reduction })
   params.current = { bits, reduction }
-  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef, 'lofi')
 
   useEffect(() => {
     const c = mixCtx()
