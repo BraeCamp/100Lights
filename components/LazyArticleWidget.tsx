@@ -46,6 +46,7 @@ const LOADERS = {
   voicing: () => import('@/components/ArticleVoicing'),
   setup: () => import('@/components/ArticleSetup'),
   scrolleq: () => import('@/components/ArticleScrollEQ'),
+  tool: () => import('@/components/ArticleTool'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -74,6 +75,7 @@ type WidgetSpec =
   | { kind: 'voicing'; props: { caption?: string } }
   | { kind: 'setup'; props: { caption?: string } }
   | { kind: 'scrolleq'; props: { caption?: string } }
+  | { kind: 'tool'; props: { toolId: string; caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

@@ -13,6 +13,7 @@ import type { ProgressionData } from '@/components/ArticleProgression'
 import type { GridSpec } from '@/components/ArticleGrid'
 import type { ABSpec } from '@/components/ArticleAB'
 import type { SynthConfig } from '@/components/SynthPlayground'
+import { toolById } from '@/lib/article-tools'
 
 function inline(text: string, keyBase: string): React.ReactNode[] {
   const out: React.ReactNode[] = []
@@ -522,6 +523,24 @@ export function renderMarkdown(md: string): React.ReactNode {
           <MixerFallback caption={caption} />
         </LazyArticleWidget>
       )
+      return
+    }
+    // @tool(<id>) [caption] — embed a standalone /tools component (same module the
+    // /tools route uses, so it stays in sync). Registry: lib/article-tools.ts.
+    if (b.startsWith('@tool')) {
+      const m = b.match(/^@tool\(([^)]+)\)\s*([\s\S]*)$/)
+      if (m) {
+        const id = m[1].trim()
+        const caption = m[2]?.trim() || undefined
+        const def = toolById(id)
+        if (def) {
+          out.push(
+            <LazyArticleWidget key={key} kind="tool" props={{ toolId: id, caption }}>
+              <MixToolFallback emoji={def.emoji} text={`${def.label} — ${def.blurb}`} caption={caption} />
+            </LazyArticleWidget>
+          )
+        }
+      }
       return
     }
     // @eq / @compressor / @reverb / @width [caption] — self-contained mixing
