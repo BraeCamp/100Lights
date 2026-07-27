@@ -58,11 +58,14 @@ export default function FxControls({ value, onCommit, hideCats, ranges, onField,
   const hidden = new Set<FxCat>(hideCats ?? [])
   const topFields = TOP_FIELDS.filter(f => !hidden.has(f.cat))
 
-  // Basic mode: just the essentials, flat — no category menus.
+  // Basic mode: the curated essential macros, flat — no category menus. This set
+  // is deliberately hand-picked (Volume, Release, Filter, Reverb, Drive), so it is
+  // NOT subject to hideCats (which only collapses the advanced category sections);
+  // otherwise a hidden category would silently drop an essential like Release.
   if (mode === 'basic') {
     return (
       <div style={{ padding: '4px 0 2px' }}>
-        {BASIC_FIELDS.filter(f => !hidden.has(f.cat)).map(f => (
+        {BASIC_FIELDS.map(f => (
           <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} />
         ))}
       </div>
