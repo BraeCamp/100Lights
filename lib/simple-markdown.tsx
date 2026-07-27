@@ -126,6 +126,9 @@ const MIX_TOOLS = {
   '@adsr':       { kind: 'adsr' as const,       emoji: '📈', text: 'Interactive ADSR envelope — reshape a note from a pluck to a pad, live.' },
   '@filter':     { kind: 'filter' as const,     emoji: '🌊', text: 'Interactive resonant filter — sweep the cutoff, add resonance and an LFO wah.' },
   '@crush':      { kind: 'crush' as const,      emoji: '📼', text: 'Interactive drive + bitcrusher — add grit and lo-fi to a demo groove.' },
+  '@swing':      { kind: 'swing' as const,      emoji: '🕺', text: 'Interactive swing — slide the off-beats from straight to a heavy shuffle.' },
+  '@sidechain':  { kind: 'sidechain' as const,  emoji: '💓', text: 'Interactive sidechain pump — duck a pad under a four-on-the-floor kick.' },
+  '@arp':        { kind: 'arp' as const,        emoji: '🎹', text: 'Interactive arpeggiator — turn a chord into a running line by pattern and rate.' },
 }
 
 function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {

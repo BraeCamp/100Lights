@@ -39,6 +39,9 @@ const LOADERS = {
   adsr: () => import('@/components/ArticleADSR'),
   filter: () => import('@/components/ArticleFilter'),
   crush: () => import('@/components/ArticleCrush'),
+  swing: () => import('@/components/ArticleSwing'),
+  sidechain: () => import('@/components/ArticleSidechain'),
+  arp: () => import('@/components/ArticleArp'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -60,6 +63,9 @@ type WidgetSpec =
   | { kind: 'adsr'; props: { caption?: string } }
   | { kind: 'filter'; props: { caption?: string } }
   | { kind: 'crush'; props: { caption?: string } }
+  | { kind: 'swing'; props: { caption?: string } }
+  | { kind: 'sidechain'; props: { caption?: string } }
+  | { kind: 'arp'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 
