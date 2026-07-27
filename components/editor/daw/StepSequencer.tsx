@@ -280,11 +280,11 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
         <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>SMART DRUMS — drag: → busier · ↑ louder</div>
           <div onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ok */ } handleSmart(e) }} onPointerMove={e => { if (e.buttons) handleSmart(e) }}
-            style={{ position: 'relative', width: '100%', maxWidth: 300, height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(59,130,246,0.06))', touchAction: 'none', cursor: 'crosshair', margin: '0 auto' }}>
+            style={{ position: 'relative', width: '100%', maxWidth: 300, height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'linear-gradient(135deg, rgb(var(--accent-rgb) / 0.12), rgba(59,130,246,0.06))', touchAction: 'none', cursor: 'crosshair', margin: '0 auto' }}>
             <span style={{ position: 'absolute', left: 8, bottom: 5, fontSize: 8, color: 'var(--text-muted)' }}>sparse</span>
             <span style={{ position: 'absolute', right: 8, bottom: 5, fontSize: 8, color: 'var(--text-muted)' }}>busy</span>
             <span style={{ position: 'absolute', left: 8, top: 5, fontSize: 8, color: 'var(--text-muted)' }}>loud</span>
-            <div style={{ position: 'absolute', left: `calc(${smart.d * 100}% - 10px)`, top: `calc(${(1 - smart.i) * 100}% - 10px)`, width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', border: '2px solid #fff', boxShadow: '0 0 12px rgba(139,92,246,0.7)', pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', left: `calc(${smart.d * 100}% - 10px)`, top: `calc(${(1 - smart.i) * 100}% - 10px)`, width: 20, height: 20, borderRadius: '50%', background: 'var(--accent)', border: '2px solid #fff', boxShadow: '0 0 12px rgb(var(--accent-rgb) / 0.7)', pointerEvents: 'none' }} />
           </div>
         </div>
       )}
@@ -334,7 +334,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
                       border: hit ? '1px solid rgba(248,113,113,0.85)' : downbeat ? '1px solid #333' : '1px solid #262626',
                       background: hit
                         ? (now ? 'rgba(248,113,113,1)' : 'rgba(220,38,38,0.72)')
-                        : now ? 'rgba(124,58,237,0.28)' : downbeat ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)',
+                        : now ? 'rgb(var(--accent-rgb) / 0.28)' : downbeat ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)',
                     }}
                   />
                 )

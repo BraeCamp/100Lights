@@ -1042,13 +1042,13 @@ function MidiEffectCard({ effect, trackId }: { effect: MidiEffect; trackId: stri
   const selStyle: React.CSSProperties = { width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2 }
 
   return (
-    <div style={{ width: 160, minHeight: 120, background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.3)', borderRadius: 4, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', borderBottom: '1px solid rgba(124,58,237,0.2)', background: 'rgba(124,58,237,0.12)' }}>
+    <div style={{ width: 160, minHeight: 120, background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.3)', borderRadius: 4, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', borderBottom: '1px solid rgb(var(--accent-rgb) / 0.2)', background: 'rgb(var(--accent-rgb) / 0.12)' }}>
         <button
           onClick={() => up({ enabled: !p.enabled })}
-          style={{ width: 12, height: 12, borderRadius: 2, border: 'none', background: p.enabled ? '#a78bfa' : '#333', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+          style={{ width: 12, height: 12, borderRadius: 2, border: 'none', background: p.enabled ? 'var(--accent-light)' : '#333', cursor: 'pointer', padding: 0, flexShrink: 0 }}
         />
-        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: '#c4b5fd', letterSpacing: '0.04em' }}>{MIDI_EFFECT_LABELS[effect.type]}</span>
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'var(--accent-light)', letterSpacing: '0.04em' }}>{MIDI_EFFECT_LABELS[effect.type]}</span>
         <button onClick={() => dispatch({ type: 'REMOVE_MIDI_EFFECT', trackId, effectId: effect.id })}
           style={{ width: 14, height: 14, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>×</button>
       </div>
@@ -1150,7 +1150,7 @@ function AddMidiEffectButton({ trackId }: { trackId: string }) {
           }
           setOpen(v => !v)
         }}
-        style={{ width: 28, height: 28, borderRadius: 4, border: '1px dashed rgba(124,58,237,0.4)', background: 'transparent', color: 'rgba(124,58,237,0.6)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+        style={{ width: 28, height: 28, borderRadius: 4, border: '1px dashed rgb(var(--accent-rgb) / 0.4)', background: 'transparent', color: 'rgb(var(--accent-rgb) / 0.6)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
         title="Add MIDI effect"
       >+</button>
       {open && typeof document !== 'undefined' && createPortal(
@@ -1202,8 +1202,8 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
       </div>
       {/* MIDI FX row */}
       {(midiEffects.length > 0 || track.instrument) && (
-        <div style={{ borderTop: '1px solid rgba(124,58,237,0.2)', padding: '4px 8px 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 8, color: 'rgba(124,58,237,0.7)', letterSpacing: '0.1em', fontWeight: 700, flexShrink: 0 }}>MIDI FX</span>
+        <div style={{ borderTop: '1px solid rgb(var(--accent-rgb) / 0.2)', padding: '4px 8px 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 8, color: 'rgb(var(--accent-rgb) / 0.7)', letterSpacing: '0.1em', fontWeight: 700, flexShrink: 0 }}>MIDI FX</span>
           <div style={{ display: 'flex', flexDirection: 'row', gap: 6, overflowX: 'auto', alignItems: 'flex-start' }}>
             {midiEffects.map(mfx => (
               <MidiEffectCard key={mfx.id} effect={mfx} trackId={trackId} />

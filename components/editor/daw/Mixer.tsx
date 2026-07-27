@@ -265,7 +265,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           engine.setTrackTone(track.id, next)
         }
         const BANDS = [
-          ['sub', 'SUB', '#8b5cf6'], ['bass', 'BASS', '#22c55e'],
+          ['sub', 'SUB', 'var(--accent-light)'], ['bass', 'BASS', '#22c55e'],
           ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6'],
         ] as const
         // On a phone the 20px knobs are near-impossible to control, so the Tone
@@ -471,7 +471,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: rt.color, borderRadius: '2px 2px 0 0' }} />
 
       {/* Return label */}
-      <div style={{ fontSize: 8, color: '#a78bfa', fontWeight: 700, letterSpacing: '0.06em', marginTop: 4 }}>{label}</div>
+      <div style={{ fontSize: 8, color: 'var(--accent-light)', fontWeight: 700, letterSpacing: '0.06em', marginTop: 4 }}>{label}</div>
 
       {/* Name */}
       {editing ? (
@@ -488,7 +488,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       ) : (
         <div
           onDoubleClick={() => { setEditing(true); setNameDraft(rt.name) }}
-          style={{ fontSize: 9, color: '#c4b5fd', textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default', userSelect: 'none' }}
+          style={{ fontSize: 9, color: 'var(--accent-light)', textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default', userSelect: 'none' }}
           title={rt.name}
         >
           {rt.name}
@@ -518,7 +518,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
         >M</button>
         <button
           onClick={() => dispatch({ type: 'UPDATE_RETURN_TRACK', trackId: rt.id, patch: { soloSafe: !rt.soloSafe } })}
-          style={{ width: 24, height: 18, fontSize: 8, borderRadius: 3, border: `1px solid ${rt.soloSafe ? '#a78bfa' : 'var(--border)'}`, background: rt.soloSafe ? 'rgba(167,139,250,0.18)' : 'var(--bg-surface)', color: rt.soloSafe ? '#a78bfa' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
+          style={{ width: 24, height: 18, fontSize: 8, borderRadius: 3, border: `1px solid ${rt.soloSafe ? 'var(--accent-light)' : 'var(--border)'}`, background: rt.soloSafe ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: rt.soloSafe ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
           title="Solo-safe: keep this return audible during track solos"
         >SS</button>
       </div>
@@ -535,9 +535,9 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
         }}
         style={{
           fontSize: 8, padding: '2px 4px', borderRadius: 3, fontWeight: 700, cursor: 'pointer',
-          border: `1px solid ${showFx ? '#a78bfa' : 'var(--border)'}`,
-          background: showFx ? 'rgba(167,139,250,0.18)' : 'var(--bg-surface)',
-          color: showFx ? '#a78bfa' : rt.effects.length > 0 ? '#a78bfa' : 'var(--text-muted)',
+          border: `1px solid ${showFx ? 'var(--accent-light)' : 'var(--border)'}`,
+          background: showFx ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)',
+          color: showFx ? 'var(--accent-light)' : rt.effects.length > 0 ? 'var(--accent-light)' : 'var(--text-muted)',
         }}
         title="Show FX chain"
       >{rt.effects.length > 0 ? `FX (${rt.effects.length})` : 'FX'}</button>
@@ -558,13 +558,13 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
             left: fxPos.left,
             zIndex: 200,
             background: 'var(--bg-surface)',
-            border: '1px solid #a78bfa44',
+            border: '1px solid var(--accent-light)44',
             borderRadius: 6,
             boxShadow: '0 -4px 20px rgba(0,0,0,0.6)',
             minWidth: 220,
           }}
         >
-          <div style={{ padding: '5px 8px 3px', fontSize: 9, color: '#a78bfa', fontWeight: 700, letterSpacing: '0.06em', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '5px 8px 3px', fontSize: 9, color: 'var(--accent-light)', fontWeight: 700, letterSpacing: '0.06em', borderBottom: '1px solid var(--border)' }}>
             {rt.name} — FX Chain
           </div>
           <ReturnDeviceChain returnId={rt.id} />
@@ -593,7 +593,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
   const lab: React.CSSProperties = { width: 46, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0, letterSpacing: '0.04em' }
   const val: React.CSSProperties = { width: 52, fontSize: 11, textAlign: 'right', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
-  const BANDS = [['sub', 'SUB', '#8b5cf6'], ['bass', 'BASS', '#22c55e'], ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6']] as const
+  const BANDS = [['sub', 'SUB', 'var(--accent-light)'], ['bass', 'BASS', '#22c55e'], ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6']] as const
   return createPortal(
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 220, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end' }}>
       <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '92vh', overflowY: 'auto', background: 'var(--bg-surface)', borderTop: `3px solid ${track.color ?? 'var(--accent)'}`, borderRadius: '18px 18px 0 0', padding: '16px 18px calc(20px + env(safe-area-inset-bottom))' }}>
@@ -669,7 +669,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
             <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } })}
               style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-card)', color: track.solo ? '#000' : 'var(--text-secondary)', fontWeight: 800, fontSize: 15, cursor: 'pointer' }}>Solo</button>
             <button onClick={() => { window.dispatchEvent(new CustomEvent('mobile-open-sounds', { detail: { trackId: track.id, sub: 'fx' } })); onClose() }}
-              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid #7c3aed', background: 'rgba(124,58,237,0.18)', color: '#a78bfa', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>🎚 Effects</button>
+              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.18)', color: 'var(--accent-light)', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>🎚 Effects</button>
           </div>
         </div>
       </div>
@@ -732,7 +732,7 @@ export default function Mixer() {
         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '8px 6px' }}>
           <button
             onClick={addReturnTrack}
-            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid #7c5fa8', background: 'rgba(80,40,120,0.18)', color: '#a78bfa', cursor: 'pointer', letterSpacing: '0.03em' }}
+            style={{ width: 60, padding: '4px 0', fontSize: 10, borderRadius: 4, border: '1px solid #7c5fa8', background: 'rgba(80,40,120,0.18)', color: 'var(--accent-light)', cursor: 'pointer', letterSpacing: '0.03em' }}
           >
             + Return
           </button>

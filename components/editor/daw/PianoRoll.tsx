@@ -1265,8 +1265,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                         <button key={n} onClick={() => transposeToRoot(i)}
                           style={{
                             padding: '6px 0', fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
-                            background: (clip.rootNote ?? 0) === i ? 'rgba(124,58,237,0.2)' : 'transparent',
-                            color: (clip.rootNote ?? 0) === i ? '#a78bfa' : '#bbb',
+                            background: (clip.rootNote ?? 0) === i ? 'rgb(var(--accent-rgb) / 0.2)' : 'transparent',
+                            color: (clip.rootNote ?? 0) === i ? 'var(--accent-light)' : '#bbb',
                           }}>
                           {n}
                         </button>
@@ -1307,16 +1307,16 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   onClick={() => previewMiddleC(clip.presetId!)}
                   disabled={previewing}
                   title="Preview middle C of this preset"
-                  style={{ ...prBtn, fontSize: 10, padding: '2px 5px', border: '1px solid rgba(167,139,250,0.4)', background: previewing ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.10)', color: '#a78bfa' }}
+                  style={{ ...prBtn, fontSize: 10, padding: '2px 5px', border: '1px solid rgb(var(--accent-rgb) / 0.4)', background: previewing ? 'rgb(var(--accent-rgb) / 0.25)' : 'rgb(var(--accent-rgb) / 0.10)', color: 'var(--accent-light)' }}
                 >▶</button>
               )}
               <button
                 onClick={() => setShowPresetPicker(v => !v)}
                 style={{
                   ...prBtn, fontSize: 9, padding: '2px 8px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0,
-                  border: `1px solid ${clip.presetId ? 'rgba(167,139,250,0.5)' : 'var(--border)'}`,
-                  background: clip.presetId ? 'rgba(124,58,237,0.15)' : 'transparent',
-                  color: clip.presetId ? '#a78bfa' : 'var(--text-muted)',
+                  border: `1px solid ${clip.presetId ? 'rgb(var(--accent-rgb) / 0.5)' : 'var(--border)'}`,
+                  background: clip.presetId ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
+                  color: clip.presetId ? 'var(--accent-light)' : 'var(--text-muted)',
                 }}
                 title={clip.presetId
                   ? `Sound: ${presets.find(p => p.id === clip.presetId)?.name ?? '?'} — click to change (notes are kept)`
@@ -1362,7 +1362,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                               title={`Listen — plays ${midiNoteLabel(clampToPreset(p, 60))}`}
                               style={{
                                 flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer',
-                                color: previewing ? 'var(--text-muted)' : '#a78bfa', fontSize: 10, padding: '4px 0 4px 8px', textAlign: 'left',
+                                color: previewing ? 'var(--text-muted)' : 'var(--accent-light)', fontSize: 10, padding: '4px 0 4px 8px', textAlign: 'left',
                               }}>
                               ▶
                             </button>
@@ -1371,8 +1371,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                               style={{
                                 flex: 1, display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0,
                                 textAlign: 'left', padding: '4px 10px 4px 0', fontSize: 10, cursor: 'pointer', border: 'none',
-                                background: clip.presetId === p.id ? 'rgba(124,58,237,0.15)' : 'transparent',
-                                color: clip.presetId === p.id ? '#a78bfa' : '#aaa',
+                                background: clip.presetId === p.id ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
+                                color: clip.presetId === p.id ? 'var(--accent-light)' : '#aaa',
                               }}>
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
                               <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>
@@ -1383,7 +1383,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                     ))}
                     <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
                     <button onClick={() => { setShowPresetPicker(false); setShowNewPreset(true) }}
-                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer' }}>
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer' }}>
                       + New Preset
                     </button>
                     <a href="/community?kind=preset" target="_blank" rel="noreferrer"
@@ -1429,9 +1429,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               title={`Lock new notes to: ${NOTE_NAMES[project.key]} ${project.scale}`}
               style={{
                 ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
-                background: scaleLock ? 'rgba(167,139,250,0.15)' : 'transparent',
-                color: scaleLock ? '#a78bfa' : 'var(--text-muted)',
-                border: scaleLock ? '1px solid rgba(167,139,250,0.4)' : '1px solid transparent',
+                background: scaleLock ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
+                color: scaleLock ? 'var(--accent-light)' : 'var(--text-muted)',
+                border: scaleLock ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent',
               }}
             >
               {scaleLock ? `♩ ${NOTE_NAMES[project.key]} ${project.scale}` : '♩ Scale'}
@@ -1566,7 +1566,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       position: 'absolute', left: x, top: y + 1,
                       width: w, height: rowH - 2,
                       background: color,
-                      border: sel ? '1px solid #fff' : hasPreset ? `1px solid #a78bfa` : `1px solid ${color}cc`,
+                      border: sel ? '1px solid #fff' : hasPreset ? `1px solid var(--accent-light)` : `1px solid ${color}cc`,
                       boxShadow: sel ? '0 0 0 1px #fff, 0 0 6px rgba(255,255,255,0.55)' : undefined,
                       filter: sel ? 'brightness(1.3)' : undefined,
                       borderRadius: 2, boxSizing: 'border-box',
@@ -1624,7 +1624,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         >
           <div style={{ padding: '4px 12px 6px', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
             {NOTE_NAMES[ctxMenu.note.pitch % 12]}{octave(ctxMenu.note.pitch)}
-            {ctxMenu.note.presetId && <span style={{ color: '#7c3aed', marginLeft: 5 }}>● preset</span>}
+            {ctxMenu.note.presetId && <span style={{ color: 'var(--accent)', marginLeft: 5 }}>● preset</span>}
           </div>
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 3 }}>
             {CHORD_PRESETS.map(({ label, intervals }) => (

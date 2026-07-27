@@ -328,15 +328,15 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
         borderLeft: `3px solid ${rt.color}`,
         boxSizing: 'border-box',
       }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: '#a78bfa', letterSpacing: '0.05em', flexShrink: 0 }}>{label}</span>
+        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent-light)', letterSpacing: '0.05em', flexShrink: 0 }}>{label}</span>
         <span style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rt.name}</span>
         <button
           onClick={() => setSelectedReturnId(fxActive ? null : rt.id)}
           title="Show FX chain"
           style={{ fontSize: 8, padding: '1px 4px', borderRadius: 2, flexShrink: 0, cursor: 'pointer', fontWeight: 700,
-            border: `1px solid ${fxActive ? '#a78bfa' : 'var(--border)'}`,
-            background: fxActive ? 'rgba(167,139,250,0.18)' : 'var(--bg-surface)',
-            color: fxActive ? '#a78bfa' : rt.effects.length > 0 ? '#a78bfa' : 'var(--text-muted)',
+            border: `1px solid ${fxActive ? 'var(--accent-light)' : 'var(--border)'}`,
+            background: fxActive ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)',
+            color: fxActive ? 'var(--accent-light)' : rt.effects.length > 0 ? 'var(--accent-light)' : 'var(--text-muted)',
           }}
         >{rt.effects.length > 0 ? `FX(${rt.effects.length})` : 'FX'}</button>
         <button
@@ -1357,9 +1357,9 @@ export default function ArrangementView() {
                 style={{
                   ...toolBtn, width: 'auto', padding: '2px 8px',
                   fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
-                  background: morphing ? 'rgba(139,92,246,0.18)' : 'rgba(139,92,246,0.08)',
-                  border: '1px solid rgba(139,92,246,0.5)',
-                  color: morphing ? '#c4b5fd' : '#a78bfa',
+                  background: morphing ? 'rgb(var(--accent-rgb) / 0.18)' : 'rgb(var(--accent-rgb) / 0.08)',
+                  border: '1px solid rgb(var(--accent-rgb) / 0.5)',
+                  color: 'var(--accent-light)',
                   cursor: morphing ? 'wait' : 'pointer',
                   gap: 5, display: 'flex', alignItems: 'center',
                 }}
@@ -1397,16 +1397,16 @@ export default function ArrangementView() {
           <div ref={editorDropdownRef} style={{ position: 'relative', display: 'flex' }}>
             <button onClick={openEditor} title="Open the editor for the selected clip — piano roll for melodic clips, step sequencer for beats" data-help-id="editor" style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-              border: `1px solid ${active ? '#7c3aed' : 'var(--border)'}`,
-              background: active ? 'rgba(124,58,237,0.18)' : 'transparent',
-              color: active ? '#a78bfa' : 'var(--text-muted)',
+              border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+              background: active ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent',
+              color: active ? 'var(--accent-light)' : 'var(--text-muted)',
               letterSpacing: '0.04em', borderRadius: '3px 0 0 3px', borderRight: 'none',
             }}>{label}</button>
             <button onClick={() => setShowEditorMenu(m => !m)} title="Create a new piano roll or beat" style={{
               ...toolBtn, width: 14, padding: 0, fontSize: 9,
-              border: `1px solid ${active ? '#7c3aed' : 'var(--border)'}`,
-              background: showEditorMenu ? 'var(--bg-card)' : active ? 'rgba(124,58,237,0.18)' : 'transparent',
-              color: active ? '#a78bfa' : 'var(--text-muted)', borderRadius: '0 3px 3px 0',
+              border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+              background: showEditorMenu ? 'var(--bg-card)' : active ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent',
+              color: active ? 'var(--accent-light)' : 'var(--text-muted)', borderRadius: '0 3px 3px 0',
             }}>▾</button>
             {showEditorMenu && (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
@@ -1504,7 +1504,7 @@ export default function ArrangementView() {
           <button onClick={onSave} disabled={isSaving} title={isGuest ? 'Sign up to save your project (⌘S)' : 'Save project (⌘S)'} data-help-id="save" style={{
             ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
             border: `1px solid ${saveNudge ? 'var(--accent)' : 'var(--border)'}`,
-            background: isSaving ? 'rgba(34,197,94,0.15)' : saveNudge ? 'rgba(139,92,246,0.15)' : 'transparent',
+            background: isSaving ? 'rgba(34,197,94,0.15)' : saveNudge ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
             color: isSaving ? '#4ade80' : saveNudge ? 'var(--accent-light)' : 'var(--text-muted)',
             letterSpacing: '0.04em', marginLeft: 4,
             animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
@@ -1701,7 +1701,7 @@ export default function ArrangementView() {
               onClick={addReturnTrack}
               title="Add return track"
               data-help-id="add-return"
-              style={{ padding: '3px 6px', fontSize: 9, borderRadius: 3, border: '1px solid #7c5fa8', background: 'rgba(100,60,150,0.12)', color: '#a78bfa', cursor: 'pointer', flexShrink: 0 }}
+              style={{ padding: '3px 6px', fontSize: 9, borderRadius: 3, border: '1px solid #7c5fa8', background: 'rgba(100,60,150,0.12)', color: 'var(--accent-light)', cursor: 'pointer', flexShrink: 0 }}
             >+Ret</button>
           </div>
         </div>
@@ -1787,7 +1787,7 @@ export default function ArrangementView() {
           </button>
           <button
             onClick={() => {
-              const palette = ['#60a5fa', '#34d399', '#f472b6', '#facc15', '#a78bfa', '#fb923c']
+              const palette = ['#60a5fa', '#34d399', '#f472b6', '#facc15', 'var(--accent-light)', '#fb923c']
               const n = (project.sections ?? []).length
               dispatch({ type: 'ADD_SECTION', section: { id: crypto.randomUUID(), beat: tsPopover?.beat ?? 0, name: `Section ${n + 1}`, color: palette[n % palette.length] } })
               setTsPopover(null)
@@ -2007,12 +2007,12 @@ function MobileToolbar(p: {
         {p.snapMenu && (
           <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, overflow: 'hidden', minWidth: 130, boxShadow: '0 6px 18px rgba(0,0,0,0.5)' }}>
             {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
-              <button key={m} onClick={() => { p.setSnap(m); p.setSnapMenu(false) }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 14px', fontSize: 13, background: p.snap === m ? 'rgba(139,92,246,0.14)' : 'transparent', border: 'none', color: p.snap === m ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{snapLabel(m)}</button>
+              <button key={m} onClick={() => { p.setSnap(m); p.setSnapMenu(false) }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 14px', fontSize: 13, background: p.snap === m ? 'rgb(var(--accent-rgb) / 0.14)' : 'transparent', border: 'none', color: p.snap === m ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{snapLabel(m)}</button>
             ))}
           </div>
         )}
       </div>
-      <button onClick={p.onEditor} style={{ ...mTool, width: 'auto', padding: '0 14px', fontSize: 12.5, fontWeight: 800, background: p.editorActive ? 'rgba(124,58,237,0.18)' : 'var(--bg-card)', color: p.editorActive ? '#a78bfa' : 'var(--text-secondary)', border: `1px solid ${p.editorActive ? '#7c3aed' : 'var(--border)'}` }}>Editor</button>
+      <button onClick={p.onEditor} style={{ ...mTool, width: 'auto', padding: '0 14px', fontSize: 12.5, fontWeight: 800, background: p.editorActive ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-card)', color: p.editorActive ? 'var(--accent-light)' : 'var(--text-secondary)', border: `1px solid ${p.editorActive ? 'var(--accent)' : 'var(--border)'}` }}>Editor</button>
       <div style={{ flex: 1 }} />
       <button onClick={() => p.setMore(true)} style={mTool} aria-label="More tools">⋯</button>
       {p.more && (

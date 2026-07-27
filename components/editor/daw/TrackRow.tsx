@@ -966,7 +966,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </>)}
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
               onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
-              onClick={e => e.stopPropagation()}
+              onClick={e => e.stopPropagation()} draggable={false}
               className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0 }} />
             <AddAutoButton track={track} />
             <button
@@ -1080,7 +1080,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
               {([['fx', '🎚', 'Effects'], ['sounds', '🎛', 'Sound'], ['keys', '🎹', 'Play / Keys']] as const).map(([sub, icon, label]) => (
                 <button key={sub} onClick={() => { window.dispatchEvent(new CustomEvent('mobile-open-sounds', { detail: { trackId: track.id, sub } })); setTrackCtxMenu(null) }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 14px', fontSize: 12, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 14px', fontSize: 12, color: 'var(--accent-light)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
                   <span>{icon}</span><span>{label}</span>
                 </button>
               ))}
@@ -1105,16 +1105,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {track.instrument.type !== 'drum' && (<>
               <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
               <button onClick={() => { newMidiClip(); setTrackCtxMenu(null) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: 'var(--accent-light)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
                 <span>♩</span>
                 <span>New MIDI Clip</span>
               </button>
               <button onClick={() => { openDigitalMidi(); setTrackCtxMenu(null) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: 'var(--accent-light)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
                 <span>🎹</span>
@@ -1128,8 +1128,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 const noun = beat ? 'Step Sequencer' : 'Piano Roll'
                 return (
                   <button onClick={() => { openClipTyped(midiClip, true); setTrackCtxMenu(null) }}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#a78bfa', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                    onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(167,139,250,0.10)' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: 'var(--accent-light)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                    onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
                     onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
                   >
                     <span>{beat ? '◼' : '▦'}</span>
@@ -1640,7 +1640,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             borderLeft: `3px solid ${track.color}55`,
             boxSizing: 'border-box',
           }}>
-            <span style={{ fontSize: 9, color: '#a78bfa', fontWeight: 600, letterSpacing: '0.03em' }}>TAKE</span>
+            <span style={{ fontSize: 9, color: 'var(--accent-light)', fontWeight: 600, letterSpacing: '0.03em' }}>TAKE</span>
             <span style={{ flex: 1, fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lane.name}</span>
             <button
               onClick={() => dispatch({ type: 'REMOVE_TAKE_LANE', laneId: lane.id })}
@@ -1771,7 +1771,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
           >
-            <span style={{ color: '#a78bfa' }}>♩</span>
+            <span style={{ color: 'var(--accent-light)' }}>♩</span>
             <span>Piano Roll here</span>
             <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-muted)' }}>bar {Math.floor(laneCtxMenu.beat / project.timeSignatureNum) + 1}</span>
           </button>
@@ -1805,7 +1805,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '7px 14px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
-                <span style={{ color: '#a78bfa', width: 14, textAlign: 'center' }}>{icon}</span>
+                <span style={{ color: 'var(--accent-light)', width: 14, textAlign: 'center' }}>{icon}</span>
                 <span>{label}</span>
               </button>
             ))}

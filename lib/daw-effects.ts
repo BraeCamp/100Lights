@@ -171,27 +171,27 @@ export function buildDynEq(ctx: AudioContext, params: DynEqParams): EffectHandle
   const buf = new Float32Array(ana.fftSize)
   let raf = 0
   const loop = () => {
-    if (p.enabled) {
-      ana.getFloatTimeDomainData(buf)
-      let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]
-      const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9)
-      const over = db - p.thresholdDb
-      const amt = over > 0 ? Math.min(1, over / 24) : 0
-      peak.gain.setTargetAtTime(p.rangeDb * amt, ctx.currentTime, Math.max(0.001, over > 0 ? p.attack : p.release))
-    } else {
-      peak.gain.setTargetAtTime(0, ctx.currentTime, 0.05)
-    }
+    ana.getFloatTimeDomainData(buf)
+    let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]
+    const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9)
+    const over = db - p.thresholdDb
+    const amt = over > 0 ? Math.min(1, over / 24) : 0
+    peak.gain.setTargetAtTime(p.rangeDb * amt, ctx.currentTime, Math.max(0.001, over > 0 ? p.attack : p.release))
     raf = requestAnimationFrame(loop)
   }
-  if (typeof requestAnimationFrame !== 'undefined') raf = requestAnimationFrame(loop)
+  // The control loop only runs while enabled — a bypassed dynamic EQ costs nothing.
+  const start = () => { if (!raf && typeof requestAnimationFrame !== 'undefined') raf = requestAnimationFrame(loop) }
+  const stop  = () => { if (raf) { cancelAnimationFrame(raf); raf = 0 } peak.gain.setTargetAtTime(0, ctx.currentTime, 0.05) }
+  if (p.enabled) start()
 
   return {
     input,
     output,
     setParam(key, value) {
       ;(p as Record<string, unknown>)[key] = value
-      if (key === 'freq') { peak.frequency.value = value as number; det.frequency.value = value as number }
-      if (key === 'q')    { peak.Q.value = value as number; det.Q.value = value as number }
+      if (key === 'freq')    { peak.frequency.value = value as number; det.frequency.value = value as number }
+      if (key === 'q')       { peak.Q.value = value as number; det.Q.value = value as number }
+      if (key === 'enabled') { value ? start() : stop() }
     },
     dispose() {
       if (raf) cancelAnimationFrame(raf)

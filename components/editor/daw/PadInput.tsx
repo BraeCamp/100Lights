@@ -264,7 +264,7 @@ function FxToggleConfig({ pad, onPadChange }: {
   )
   const [selFxType, setSelFxType] = useState<EffectType>('reverb')
 
-  const C = { accent: '#7c3aed', border: '#333', text: '#ccc', muted: '#555', bgCard: '#0e0e0e' }
+  const C = { accent: 'var(--accent)', border: '#333', text: '#ccc', muted: '#555', bgCard: '#0e0e0e' }
 
   // Current assignment (if any)
   const assignedTrack  = pad.effectTarget ? project.tracks.find(t => t.id === pad.effectTarget!.trackId) : null
@@ -320,7 +320,7 @@ function FxToggleConfig({ pad, onPadChange }: {
                 textAlign: 'left', fontSize: 10, padding: '3px 7px', borderRadius: 3, cursor: 'pointer',
                 border: `1px solid ${selTrackId === t.id ? C.accent : C.border}`,
                 background: selTrackId === t.id ? `${C.accent}22` : C.bgCard,
-                color: selTrackId === t.id ? '#a78bfa' : C.text,
+                color: selTrackId === t.id ? 'var(--accent-light)' : C.text,
                 borderLeft: `3px solid ${t.color}`,
               }}
             >{t.name}</button>
@@ -340,7 +340,7 @@ function FxToggleConfig({ pad, onPadChange }: {
                 fontSize: 10, padding: '3px 8px', borderRadius: 3, cursor: 'pointer',
                 border: `1px solid ${selFxType === fx.type ? C.accent : C.border}`,
                 background: selFxType === fx.type ? `${C.accent}22` : C.bgCard,
-                color: selFxType === fx.type ? '#a78bfa' : C.text,
+                color: selFxType === fx.type ? 'var(--accent-light)' : C.text,
               }}
             >{fx.label}</button>
           ))}
@@ -1412,14 +1412,14 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               <button
                 onClick={() => setQuantizeEnabled(v => !v)}
                 title="Quantize note starts to grid"
-                style={{ padding: '2px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800, border: `1px solid ${quantizeEnabled ? '#7c3aed' : C.border}`, background: quantizeEnabled ? 'rgba(124,58,237,0.12)' : 'transparent', color: quantizeEnabled ? '#a78bfa' : C.muted, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                style={{ padding: '2px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800, border: `1px solid ${quantizeEnabled ? 'var(--accent)' : C.border}`, background: quantizeEnabled ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', color: quantizeEnabled ? 'var(--accent-light)' : C.muted, cursor: 'pointer', letterSpacing: '0.04em' }}>
                 Q
               </button>
               {quantizeEnabled && (
                 <div style={{ display: 'flex', gap: 2 }}>
                   {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
                     <button key={g} onClick={() => setQuantizeGrid(g)}
-                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${quantizeGrid === g ? '#7c3aed' : '#222'}`, background: quantizeGrid === g ? 'rgba(124,58,237,0.15)' : '#111', color: quantizeGrid === g ? '#a78bfa' : '#555', cursor: 'pointer' }}>
+                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${quantizeGrid === g ? 'var(--accent)' : '#222'}`, background: quantizeGrid === g ? 'rgb(var(--accent-rgb) / 0.15)' : '#111', color: quantizeGrid === g ? 'var(--accent-light)' : '#555', cursor: 'pointer' }}>
                       {g}
                     </button>
                   ))}
@@ -1479,7 +1479,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
               title={captureCount > 0
                 ? `Capture the last ${captureCount} played note${captureCount === 1 ? '' : 's'} (up to 30s) into a MIDI clip`
                 : 'Play some notes while the transport runs, then capture them here'}
-              style={{ background: captureCount > 0 ? 'rgba(167,139,250,0.10)' : 'transparent', border: `1px solid ${captureCount > 0 ? 'rgba(167,139,250,0.5)' : C.border}`, color: captureCount > 0 ? '#a78bfa' : C.muted, cursor: captureCount > 0 ? 'pointer' : 'default', fontSize: 9, padding: '2px 6px', borderRadius: 3, fontWeight: 700, opacity: captureCount > 0 ? 1 : 0.55 }}>
+              style={{ background: captureCount > 0 ? 'rgb(var(--accent-rgb) / 0.10)' : 'transparent', border: `1px solid ${captureCount > 0 ? 'rgb(var(--accent-rgb) / 0.5)' : C.border}`, color: captureCount > 0 ? 'var(--accent-light)' : C.muted, cursor: captureCount > 0 ? 'pointer' : 'default', fontSize: 9, padding: '2px 6px', borderRadius: 3, fontWeight: 700, opacity: captureCount > 0 ? 1 : 0.55 }}>
               CAPTURE
             </button>
             {/* Hardware MIDI status */}

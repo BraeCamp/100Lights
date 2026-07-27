@@ -758,7 +758,7 @@ export default function Transport() {
       {/* Performance FX — parity with the mobile ⚡ hold-FX */}
       <div style={{ position: 'relative' }}>
         <button onClick={() => setFxOpen(o => !o)} style={fxOpen ? active : base} title="Performance FX — hold a pad to sweep the master" data-help-id="perf-fx">
-          <span style={{ fontSize: 13, lineHeight: 1 }}>⚡</span>
+          <span style={{ fontSize: 13, lineHeight: 1 }}>🎛️</span>
         </button>
         {fxOpen && (
           <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, display: 'flex', gap: 5, padding: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
