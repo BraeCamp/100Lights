@@ -3,7 +3,8 @@
 // demos aren't all one house loop — different tempo, pattern, swing, and bass per
 // genre (see the "diversify the music" note in CONTEXT.md). Cached per style+rate.
 
-export type LoopStyle = 'house' | 'boombap' | 'lofi'
+// Playable loop styles (a subset of lib/genres.ts, keyed by the same ids).
+export type LoopStyle = 'house' | 'boombap' | 'lofi' | 'techno' | 'trap' | 'rnb' | 'disco'
 
 interface StyleSpec {
   bpm: number
@@ -38,6 +39,34 @@ const STYLES: Record<LoopStyle, StyleSpec> = {
     kick: [0, 16, 22], snare: [8, 24],
     clHat: [2, 6, 10, 14, 18, 22, 26, 30], opHat: [12],
     bass: [[0, A(-14)], [8, A(-9)], [16, A(-11)], [24, A(-16)]],
+  },
+  // Techno: hard four-floor, offbeat clap, relentless driving bass, no melody.
+  techno: {
+    bpm: 132, swing: 0, hatGain: 0.7,
+    kick: [0, 4, 8, 12, 16, 20, 24, 28], snare: [8, 24],
+    clHat: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30], opHat: [2, 6, 10, 14, 18, 22, 26, 30],
+    bass: [[2, A(-12)], [6, A(-12)], [10, A(-12)], [14, A(-12)], [18, A(-12)], [22, A(-12)], [26, A(-12)], [30, A(-12)]],
+  },
+  // Trap: half-time snare on the 3, syncopated kick, rolling hats, deep 808.
+  trap: {
+    bpm: 140, swing: 0, hatGain: 0.65,
+    kick: [0, 6, 10, 16, 22, 26], snare: [8, 24],
+    clHat: [0, 2, 4, 6, 8, 10, 11, 12, 14, 16, 18, 20, 22, 23, 24, 26, 28, 30], opHat: [],
+    bass: [[0, A(-24)], [10, A(-24)], [16, A(-19)], [26, A(-22)]],
+  },
+  // R&B / neo-soul: swung, backbeat, round bass, mellow.
+  rnb: {
+    bpm: 88, swing: 0.55, hatGain: 0.6,
+    kick: [0, 6, 16, 22], snare: [4, 12, 20, 28],
+    clHat: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30], opHat: [14, 30],
+    bass: [[0, A(-12)], [8, A(-9)], [16, A(-14)], [24, A(-7)]],
+  },
+  // Disco: four-floor with offbeat open hats and an octave-jumping bass.
+  disco: {
+    bpm: 120, swing: 0, hatGain: 0.7,
+    kick: [0, 4, 8, 12, 16, 20, 24, 28], snare: [4, 12, 20, 28],
+    clHat: [0, 4, 8, 12, 16, 20, 24, 28], opHat: [2, 6, 10, 14, 18, 22, 26, 30],
+    bass: [[0, A(-12)], [2, A(0)], [4, A(-12)], [6, A(0)], [8, A(-7)], [10, A(5)], [12, A(-7)], [14, A(5)], [16, A(-12)], [18, A(0)], [20, A(-12)], [22, A(0)], [24, A(-5)], [26, A(7)], [28, A(-5)], [30, A(7)]],
   },
 }
 

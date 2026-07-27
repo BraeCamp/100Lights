@@ -31,7 +31,7 @@ export default function ArticleScrollEQ({ caption }: { caption?: string }) {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRefs = useRef<(HTMLDivElement | null)[]>([])
-  const { ready, playing, play, stop } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop } = useLoopPlayer(inputRef, 'techno')
 
   // Persistent chain: in → band×4 → analyser → out.
   useEffect(() => {

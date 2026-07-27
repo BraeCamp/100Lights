@@ -21,7 +21,7 @@ export default function ArticleWidth({ caption }: { caption?: string }) {
   const analyserLRef = useRef<AnalyserNode | null>(null)
   const analyserRRef = useRef<AnalyserNode | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef, 'disco')
 
   useEffect(() => {
     const c = mixCtx()

@@ -34,7 +34,7 @@ export default function ArticleReverb({ caption }: { caption?: string }) {
   const preRef = useRef<DelayNode | null>(null)
   const dampRef = useRef<BiquadFilterNode | null>(null)
   const wetRef = useRef<GainNode | null>(null)
-  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef, 'lofi')
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef, 'rnb')
 
   useEffect(() => {
     const c = mixCtx()
