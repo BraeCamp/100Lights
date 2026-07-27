@@ -4,9 +4,13 @@
 // Immediate right/wrong feedback and a running score turn the abstract list of
 // interval names into something you can actually recognize.
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Play } from 'lucide-react'
 import { ACCENT, mixCtx, Frame } from './article/mix-kit'
+
+// Per-interval recurrence weights, persisted. Missed intervals quietly come up
+// more often (the drill), known ones ease off — never surfaced to the reader.
+const WEIGHTS_KEY = '100lights-interval-weights'
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
 const INTERVALS = [
@@ -23,7 +27,8 @@ export default function ArticleIntervals({ caption }: { caption?: string }) {
   const [root, setRoot] = useState(60)
   const [guess, setGuess] = useState<number | null>(null)
   const [score, setScore] = useState({ right: 0, total: 0 })
-  const seedRef = useRef(0)
+  const weightsRef = useRef<Record<number, number>>({})
+  useEffect(() => { try { weightsRef.current = JSON.parse(localStorage.getItem(WEIGHTS_KEY) || '{}') } catch { /* ignore */ } }, [])
 
   function tone(freq: number, t: number) {
     const c = mixCtx()
@@ -41,18 +46,29 @@ export default function ArticleIntervals({ caption }: { caption?: string }) {
     tone(mtof(r), t); tone(mtof(r + s), t + 0.6)
   }
 
+  function pickSemi(): number {
+    const w = weightsRef.current
+    const total = INTERVALS.reduce((a, iv) => a + Math.max(1, w[iv.s] ?? 1), 0)
+    let r = Math.random() * total
+    for (const iv of INTERVALS) { r -= Math.max(1, w[iv.s] ?? 1); if (r <= 0) return iv.s }
+    return INTERVALS[INTERVALS.length - 1].s
+  }
   function next() {
-    // Deterministic-ish rotation without Math.random dependence at module load.
-    seedRef.current = (seedRef.current * 1103515245 + 12345 + Date.now() % 997) & 0x7fffffff
-    const s = INTERVALS[seedRef.current % INTERVALS.length].s
-    const r = 57 + (seedRef.current >> 3) % 8
+    const s = pickSemi()
+    const r = 55 + Math.floor(Math.random() * 10)
     setSemi(s); setRoot(r); setGuess(null)
     playPair(r, s)
   }
   function choose(s: number) {
     if (guess != null || semi == null) return
     setGuess(s)
-    setScore(sc => ({ right: sc.right + (s === semi ? 1 : 0), total: sc.total + 1 }))
+    const correct = s === semi
+    // Quietly steer the mix of future questions: what gets missed comes back more,
+    // what's known eases off. Never announced.
+    const w = weightsRef.current
+    w[semi] = correct ? Math.max(1, (w[semi] ?? 1) * 0.7) : Math.min(6, (w[semi] ?? 1) * 1.9)
+    try { localStorage.setItem(WEIGHTS_KEY, JSON.stringify(w)) } catch { /* ignore */ }
+    setScore(sc => ({ right: sc.right + (correct ? 1 : 0), total: sc.total + 1 }))
   }
 
   const answered = guess != null
