@@ -66,6 +66,8 @@ Then hunt. Sweep a narrow boost across a track until you find the frequency that
 
 @math Rough starting points, all adjustable by ear: high-pass hats and cymbals around 400 Hz, most synths and guitars around 100–150 Hz, and a lead vocal around 80–100 Hz. Boxiness usually hides between 200 and 500 Hz; harshness between 2 and 4 kHz. Cuts of 3–6 dB with a moderately narrow bandwidth do more than most people expect. None of these are laws — they're where to point the flashlight first.
 
+@scrolleq Press play and keep scrolling — this walks the loop band by band so you can hear what actually lives in each region before you go hunting in your own mix.
+
 The reliable method needs none of it: find the ugly frequency by ear, turn it down until it stops being ugly, move on.
 
 Here's that muddy mix, with the three moves in your hands. Do them in order — balance, pan, cut — and hold "hear it flat" whenever you want to know what a move actually bought you.

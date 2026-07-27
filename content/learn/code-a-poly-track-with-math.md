@@ -107,6 +107,8 @@ return {
 };
 ```
 
+@setup Pick a key and tempo for the page — the arpeggiator below plays in it, so you can transpose the example without touching the code.
+
 @arp The same idea by hand: a chord turned into a running line. Change the **pattern** and **rate** and hear that an arpeggio is just order plus speed — the code above spells one out in JavaScript, but the move is this.
 
 ## Example 2 — a euclidean bassline
