@@ -17,6 +17,8 @@ The third note is the whole article, and I'm going to make you play it two ways 
 
 @ear Keep the root and the fifth held down. In the gap between them, drop a note four keys above the root. Play all three. Sit with it for a second — actually listen, don't skim. Then move that middle note down by exactly one key, so it's three above the root instead of four, and play the three notes again. Don't read ahead until you've heard both.
 
+@voicing No keyboard handy? Do it right here — flip **Major** to **Minor** and watch the single note that moves: the middle one, the third, drops one key and the whole chord goes from bright to overcast. That one move is the entire article.
+
 You heard it. You didn't need me for the next part.
 
 ## The one note that flipped

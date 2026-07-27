@@ -197,6 +197,8 @@ Articles are Markdown in `content/learn/*.md`, rendered by `lib/simple-markdown.
 
 To add a NEW `@`-widget: component in `components/Article*.tsx`, entry in `LazyArticleWidget` LOADERS + WidgetSpec, a parser + SEO fallback in `simple-markdown.tsx`. To add a NEW embeddable tool: just a row in `lib/article-tools.ts`.
 
+**Hook readers in the first third.** Put at least one interactive widget/tool near the TOP of every article — less-engaged readers decide whether to keep reading within the opening third, so lead with something on-topic they can touch, not paragraphs of text. Don't bury the main interactive at the bottom; a hands-on version of the article's core idea belongs up front.
+
 **Article audio MUST be authored in the studio, not just rendered.** Any sound demonstrated in an article should exist as an *editable 100Lights project* — real tracks + instruments + effects — so it can be opened, edited, and re-exported over the source. The path:
 - `lib/demo-projects.ts` — `buildDemoProject(id)` rebuilds each clip as a `DawProject`. **When you add a new article that plays audio, add a `buildDemoProject` case for that clip.**
 - It opens via `/new?demoProject=<id>` (threaded `NewProjectClient → ProjectEditor → initialDawProject`).
