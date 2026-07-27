@@ -14,9 +14,17 @@ import {
 import { useUser } from '@clerk/nextjs'
 
 let _recipeCtx: AudioContext | null = null
+// Drum-lane key → synth voice, for auditioning patterns in the library.
+const LANE_TO_BEAT: Record<string, BeatType> = {
+  kick: 'kick', snare: 'snare', clap: 'clap', rim: 'rim',
+  closedHat: 'hihat', openHat: 'open-hihat', crash: 'crash',
+  tomHi: 'tom', tomMid: 'tom', tomLo: 'tom',
+}
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getAllChordRecipes, RECIPE_GENRE_ORDER, type PracticeRecipe } from '@/lib/practice-recipes'
-import { DRUM_PATTERNS } from '@/lib/drum-presets'
+import { DRUM_PATTERNS, DRUM_LANES, STEP_BEATS } from '@/lib/drum-presets'
+import { playDrumHit } from '@/lib/drum-samples'
+import type { BeatType } from '@/lib/beat-analyzer'
 import { clampToViewport } from './daw/menu-clamp'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -1170,6 +1178,52 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     }
     setAuditioningRecipe(recipeId)
   }
+
+  const [auditioningPattern, setAuditioningPattern] = useState<string | null>(null)
+  const patternStopRef = useRef<() => void>(() => {})
+  useEffect(() => () => { patternStopRef.current() }, [])
+
+  // Preview a drum pattern: play its hits twice through the synth kit so you can
+  // hear the groove. Click again (or another pattern) to stop.
+  function auditionPattern(patternId: string) {
+    if (auditioningPattern === patternId) { patternStopRef.current(); return }
+    patternStopRef.current()
+    recipeStopRef.current()   // never overlap with a recipe preview
+    const pat = DRUM_PATTERNS.find(p => p.id === patternId)
+    if (!pat) return
+    _recipeCtx ??= new AudioContext()
+    const ctx = _recipeCtx
+    if (ctx.state === 'suspended') void ctx.resume()
+    const g = ctx.createGain()
+    g.gain.value = 0.9
+    g.connect(ctx.destination)
+    const spb = 60 / 100                 // audition at 100 bpm
+    const barBeats = 4
+    const loops = 2
+    const t0 = ctx.currentTime + 0.06
+    let end = 0
+    for (let loop = 0; loop < loops; loop++) {
+      for (const key of Object.keys(pat.hits)) {
+        const lane = DRUM_LANES.find(l => l.key === key)
+        const type = LANE_TO_BEAT[key] ?? 'other'
+        for (const step of pat.hits[key]) {
+          const beat = loop * barBeats + step * STEP_BEATS
+          playDrumHit(ctx, 'synth', type, t0 + beat * spb, 0.85, lane?.pitch, 0.45, g)
+          end = Math.max(end, beat * spb)
+        }
+      }
+    }
+    const timer = window.setTimeout(() => patternStopRef.current(), (end + 0.8) * 1000)
+    patternStopRef.current = () => {
+      clearTimeout(timer)
+      g.gain.setTargetAtTime(0, ctx.currentTime, 0.03)
+      setTimeout(() => g.disconnect(), 250)
+      setAuditioningPattern(null)
+      patternStopRef.current = () => {}
+    }
+    setAuditioningPattern(patternId)
+  }
+
   const [entries,          setEntries]          = useState<LibraryEntry[]>([])
   const [folders,          setFolders]          = useState<string[]>([])
   const [openFolders,      setOpenFolders]      = useState<Set<string>>(new Set())
@@ -1643,25 +1697,43 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
         Drag a pattern onto a track to drop in a beat. It opens in the step sequencer, where every hit stays editable.
       </p>
-      {DRUM_PATTERNS.map(pat => (
+      {DRUM_PATTERNS.map(pat => {
+        const playing = auditioningPattern === pat.id
+        return (
         <div
           key={pat.id}
           draggable
           onDragStart={e => { e.dataTransfer.setData('application/x-drum-pattern-id', pat.id); e.dataTransfer.effectAllowed = 'copy' }}
-          title={`${pat.desc} — drag onto a track`}
+          onClick={() => auditionPattern(pat.id)}
+          title={`${pat.desc} — click to hear it, drag onto a track`}
           style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 6, cursor: 'grab',
-            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            background: playing ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-card)',
+            border: playing ? '1px solid rgb(var(--accent-rgb) / 0.45)' : '1px solid var(--border)',
           }}
         >
-          <div style={{ width: 22, height: 22, borderRadius: 5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgb(var(--accent-rgb) / 0.16)', fontSize: 12 }}>🥁</div>
+          <button
+            onClick={e => { e.stopPropagation(); auditionPattern(pat.id) }}
+            onMouseDown={e => e.stopPropagation()}
+            draggable={false}
+            aria-label={playing ? 'Stop preview' : 'Play preview'}
+            style={{
+              width: 22, height: 22, borderRadius: 5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: 'none', cursor: 'pointer',
+              background: playing ? 'var(--accent)' : 'rgb(var(--accent-rgb) / 0.16)',
+              color: playing ? '#fff' : 'var(--accent-light)',
+            }}
+          >
+            {playing ? <Square size={9} fill="currentColor" /> : <Play size={10} style={{ marginLeft: 1 }} />}
+          </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pat.name}</div>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pat.desc}</div>
           </div>
           <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(52,211,153,0.13)', color: '#34d399', flexShrink: 0 }}>{pat.bars} bar{pat.bars !== 1 ? 's' : ''}</span>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 
