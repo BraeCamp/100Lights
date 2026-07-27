@@ -32,6 +32,10 @@ const LOADERS = {
   synth: () => import('@/components/SynthPlayground'),
   practice: () => import('@/components/ArticlePracticeBuilder'),
   mixer: () => import('@/components/ArticleMixer'),
+  eq: () => import('@/components/ArticleEQ'),
+  compressor: () => import('@/components/ArticleCompressor'),
+  reverb: () => import('@/components/ArticleReverb'),
+  width: () => import('@/components/ArticleWidth'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -46,6 +50,10 @@ type WidgetSpec =
   | { kind: 'synth'; props: { config: SynthConfig } }
   | { kind: 'practice'; props: { label?: string } }
   | { kind: 'mixer'; props: { src: string; caption?: string } }
+  | { kind: 'eq'; props: { caption?: string } }
+  | { kind: 'compressor'; props: { caption?: string } }
+  | { kind: 'reverb'; props: { caption?: string } }
+  | { kind: 'width'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

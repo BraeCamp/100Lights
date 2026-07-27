@@ -116,6 +116,24 @@ function MixerFallback({ caption }: { caption?: string }) {
   )
 }
 
+// Self-contained mixing tools (EQ / compressor / reverb / width) — each renders
+// over a synthesized groove, so `@tag caption` is the whole authoring syntax.
+const MIX_TOOLS = {
+  '@eq':         { kind: 'eq' as const,         emoji: '🎛', text: 'Interactive 4-band EQ — shape a live spectrum over a demo groove.' },
+  '@compressor': { kind: 'compressor' as const, emoji: '🔊', text: 'Interactive compressor — squeeze the groove and watch the gain-reduction meter move.' },
+  '@reverb':     { kind: 'reverb' as const,     emoji: '🌫', text: 'Interactive reverb — size a room with pre-delay and tone over a demo groove.' },
+  '@width':      { kind: 'width' as const,      emoji: '🎧', text: 'Interactive stereo width & pan — widen the image and watch the vectorscope.' },
+}
+
+function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {
+  return (
+    <figure style={{ margin: '24px 0', padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>{emoji} {text}</p>
+      {caption && <figcaption style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.6 }}>{caption}</figcaption>}
+    </figure>
+  )
+}
+
 /** Server-rendered stand-in for a community sound embed — keeps the caption
  *  in the document even if the fetch never happens. */
 function SoundFallback({ caption }: { caption: string }) {
@@ -495,6 +513,20 @@ export function renderMarkdown(md: string): React.ReactNode {
         </LazyArticleWidget>
       )
       return
+    }
+    // @eq / @compressor / @reverb / @width [caption] — self-contained mixing
+    // tools over a synthesized groove (no audio asset needed).
+    for (const tag of Object.keys(MIX_TOOLS) as Array<keyof typeof MIX_TOOLS>) {
+      if (b === tag || b.startsWith(tag + ' ') || b.startsWith(tag + '\n')) {
+        const t = MIX_TOOLS[tag]
+        const caption = b.slice(tag.length).trim() || undefined
+        out.push(
+          <LazyArticleWidget key={key} kind={t.kind} props={{ caption }}>
+            <MixToolFallback emoji={t.emoji} text={t.text} caption={caption} />
+          </LazyArticleWidget>
+        )
+        return
+      }
     }
     // @practice [button label] — slides an interactive progression-building
     // bench up from the bottom of the screen. The @progression viewers above
