@@ -17,7 +17,7 @@ import TrackInputCard from './TrackInputCard'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
-import { DEFAULT_KIT } from '@/lib/drum-presets'
+import { DEFAULT_KIT, DRUM_PATTERNS, patternToNotes } from '@/lib/drum-presets'
 import EffectLaneView, { EFFECT_H } from './EffectLane'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
@@ -574,6 +574,19 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       dispatch({ type: 'ADD_CLIP', clip })
       setSelectedClipId(clip.id)
       setExpandedPianoRollClipId(clip.id)
+      return
+    }
+    // A drum pattern dragged from the library → a beat clip, opened in the sequencer.
+    const patternId = e.dataTransfer.getData('application/x-drum-pattern-id')
+    if (patternId) {
+      const pat = DRUM_PATTERNS.find(p => p.id === patternId)
+      if (!pat) return
+      const bar = project.timeSignatureNum || 4
+      const clip = makeMidiClip(track.id, pat.name, snapBeat(beatX, snap, bar), Math.max(bar, pat.bars * bar), { isDrumClip: true })
+      clip.notes = patternToNotes(pat)
+      dispatch({ type: 'ADD_CLIP', clip })
+      setSelectedClipId(clip.id)
+      setExpandedStepSeqClipId(clip.id)
       return
     }
     // A generated item dragged out of the Code panel becomes a MIDI clip here.

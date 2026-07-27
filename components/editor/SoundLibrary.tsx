@@ -16,6 +16,7 @@ import { useUser } from '@clerk/nextjs'
 let _recipeCtx: AudioContext | null = null
 import { seedDefaultSamples } from '@/lib/default-samples'
 import { getAllChordRecipes, RECIPE_GENRE_ORDER, type PracticeRecipe } from '@/lib/practice-recipes'
+import { DRUM_PATTERNS } from '@/lib/drum-presets'
 import { clampToViewport } from './daw/menu-clamp'
 import { playMelodicNote } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -1130,7 +1131,8 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     seedDefaultSamples().catch(() => {})
   }, [isLoaded, user?.id])
 
-  const [libTab,           setLibTab]           = useState<'samples' | 'recipes'>('samples')
+  const [libTab,           setLibTab]           = useState<'samples' | 'presets'>('samples')
+  const [presetSub,        setPresetSub]        = useState<'recipes' | 'patterns'>('recipes')
   const [recipesVersion,   setRecipesVersion]   = useState(0)
   const [recipeDetail,     setRecipeDetail]     = useState<{ id: string; x: number; y: number } | null>(null)
   const [openGenres,       setOpenGenres]       = useState<Set<string>>(new Set())
@@ -1634,12 +1636,59 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     </div>
   )
 
+  // Pads-sequencer grooves. Drag a pattern onto a track → a beat clip that opens
+  // in the step sequencer (drop wired in TrackRow via application/x-drum-pattern-id).
+  const patternsBody = (
+    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
+        Drag a pattern onto a track to drop in a beat. It opens in the step sequencer, where every hit stays editable.
+      </p>
+      {DRUM_PATTERNS.map(pat => (
+        <div
+          key={pat.id}
+          draggable
+          onDragStart={e => { e.dataTransfer.setData('application/x-drum-pattern-id', pat.id); e.dataTransfer.effectAllowed = 'copy' }}
+          title={`${pat.desc} — drag onto a track`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 6, cursor: 'grab',
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+          }}
+        >
+          <div style={{ width: 22, height: 22, borderRadius: 5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgb(var(--accent-rgb) / 0.16)', fontSize: 12 }}>🥁</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pat.name}</div>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pat.desc}</div>
+          </div>
+          <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(52,211,153,0.13)', color: '#34d399', flexShrink: 0 }}>{pat.bars} bar{pat.bars !== 1 ? 's' : ''}</span>
+        </div>
+      ))}
+    </div>
+  )
+
+  // The "Presets" tab: a Recipe sub-tab (piano-roll chord progressions) and a
+  // Patterns sub-tab (pads-sequencer grooves).
+  const presetsBody = (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: 4, padding: '6px 10px 4px', flexShrink: 0 }}>
+        {([['recipes', 'Recipe'], ['patterns', 'Patterns']] as const).map(([k, lbl]) => (
+          <button key={k} onClick={() => setPresetSub(k)} style={{
+            fontSize: 9.5, fontWeight: 700, padding: '3px 11px', borderRadius: 99, cursor: 'pointer',
+            border: `1px solid ${presetSub === k ? 'var(--accent)' : 'var(--border)'}`,
+            background: presetSub === k ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
+            color: presetSub === k ? 'var(--accent-light)' : 'var(--text-muted)',
+          }}>{lbl}</button>
+        ))}
+      </div>
+      {presetSub === 'recipes' ? recipesBody : patternsBody}
+    </div>
+  )
+
   const content = (
     <>
-      {/* Samples | Recipes tabs (hidden in pickers — onPick contexts expect audio samples) */}
+      {/* Samples | Presets tabs (hidden in pickers — onPick contexts expect audio samples) */}
       {!onPick && (
         <div style={{ display: 'flex', gap: 2, padding: '6px 10px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-          {(['samples', 'recipes'] as const).map(t => (
+          {(['samples', 'presets'] as const).map(t => (
             <button key={t} onClick={() => setLibTab(t)} style={{
               fontSize: 10, fontWeight: 600, padding: '4px 12px', borderRadius: '5px 5px 0 0', cursor: 'pointer',
               background: libTab === t ? 'var(--bg-card)' : 'transparent',
@@ -1651,16 +1700,16 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             }}>{t}</button>
           ))}
           <a
-            href={libTab === 'recipes' ? '/community?kind=recipe' : '/community?kind=sample'}
+            href={libTab === 'presets' ? '/community?kind=recipe' : '/community?kind=sample'}
             target="_blank" rel="noreferrer"
             title="Browse what other producers have shared"
             style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 9.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none', padding: '4px 2px' }}
           >
-            {libTab === 'recipes' ? 'Find recipes ↗' : 'Find sounds ↗'}
+            {libTab === 'presets' ? 'Find recipes ↗' : 'Find sounds ↗'}
           </a>
         </div>
       )}
-      {!onPick && libTab === 'recipes' ? recipesBody : (<>
+      {!onPick && libTab === 'presets' ? presetsBody : (<>
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
