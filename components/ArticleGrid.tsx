@@ -100,9 +100,16 @@ export default function ArticleGrid({ spec }: { spec: GridSpec }) {
     setPlaying(false); setStep(-1)
   }
 
-  function start() {
+  async function start() {
     const c = ctx()
-    void c.resume()
+    // Await resume so currentTime is live before we schedule — otherwise the
+    // first hits can be planned against a not-yet-running clock and rush.
+    try { await c.resume() } catch { /* gesture already resumed it */ }
+    // The audio graph is heard `outputLatency` after its currentTime reaches a
+    // sample (hardware buffering). We schedule the step highlight on the audio
+    // clock, so without this the square lights up a beat BEFORE the drum is
+    // heard — i.e. the sound feels delayed. Delay the visual to match the ear.
+    const latency = c.outputLatency || c.baseLatency || 0
     stepRef.current = 0
     nextTimeRef.current = c.currentTime + 0.06
     const stepDur = 60 / spec.bpm / 4      // sixteenths
@@ -117,7 +124,7 @@ export default function ArticleGrid({ spec }: { spec: GridSpec }) {
           if (onRef.current[li]?.[s]) voice(lane.sound, nextTimeRef.current)
         })
         const drawAt = nextTimeRef.current
-        window.setTimeout(() => setStep(s), Math.max(0, (drawAt - c.currentTime) * 1000))
+        window.setTimeout(() => setStep(s), Math.max(0, (drawAt - c.currentTime + latency) * 1000))
         nextTimeRef.current += stepDur
         stepRef.current++
       }
