@@ -42,6 +42,8 @@ const LOADERS = {
   swing: () => import('@/components/ArticleSwing'),
   sidechain: () => import('@/components/ArticleSidechain'),
   arp: () => import('@/components/ArticleArp'),
+  intervals: () => import('@/components/ArticleIntervals'),
+  voicing: () => import('@/components/ArticleVoicing'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -66,6 +68,8 @@ type WidgetSpec =
   | { kind: 'swing'; props: { caption?: string } }
   | { kind: 'sidechain'; props: { caption?: string } }
   | { kind: 'arp'; props: { caption?: string } }
+  | { kind: 'intervals'; props: { caption?: string } }
+  | { kind: 'voicing'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

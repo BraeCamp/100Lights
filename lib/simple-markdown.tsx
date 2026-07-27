@@ -129,6 +129,8 @@ const MIX_TOOLS = {
   '@swing':      { kind: 'swing' as const,      emoji: '🕺', text: 'Interactive swing — slide the off-beats from straight to a heavy shuffle.' },
   '@sidechain':  { kind: 'sidechain' as const,  emoji: '💓', text: 'Interactive sidechain pump — duck a pad under a four-on-the-floor kick.' },
   '@arp':        { kind: 'arp' as const,        emoji: '🎹', text: 'Interactive arpeggiator — turn a chord into a running line by pattern and rate.' },
+  '@intervals':  { kind: 'intervals' as const,  emoji: '👂', text: 'Interval ear-trainer — two notes play, name the distance, keep score.' },
+  '@voicing':    { kind: 'voicing' as const,    emoji: '🎼', text: 'Chord voicing explorer — hear qualities and inversions on a keyboard.' },
 }
 
 function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {
