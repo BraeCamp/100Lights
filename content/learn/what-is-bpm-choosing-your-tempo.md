@@ -51,6 +51,8 @@ Whatever song made you want to write this one — the mood you're chasing — go
 
 @tip Don't trust the first tap reading blindly — tap for a full eight beats or so, not two. A short tap can land on double or half the real tempo, especially in music with a strong offbeat. If the number looks twice as fast as the song feels, it probably is. Halve it.
 
+@tool(metronome) Tap it in here: hit Tap in time with your reference for eight beats or so to read its tempo, then nudge the BPM up and down and feel where a groove locks in.
+
 Once you've got a starting number, the honest move is to write a bar or two and then nudge the tempo up and down by five while it loops. You'll feel the right one lock in. It stops sounding like a demo and starts sounding like the thing in your head. That's not a metaphor — it's a specific, findable moment, and it's usually not the round number you assumed.
 
 @studio(/tutorial/tempo) Open a project and tap your tempo in →

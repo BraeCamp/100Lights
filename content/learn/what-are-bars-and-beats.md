@@ -59,6 +59,8 @@ Look at the top of the arrangement: that numbered ruler is the bar and beat rule
 
 Turn on the metronome and it clicks the beat for you — a sharper click on the downbeat, so "one" is unmistakable. Hit record and the count-in ticks you a bar before recording starts, so you come in on the downbeat instead of chasing it. Play, tap, count out loud along with the click until the four stops being something you count and becomes something you feel. That's the whole goal: the counting goes into your body and then disappears.
 
+@tool(metronome) Here's one right here. Start it slow, count "1-2-3-4" out loud with the click — the downbeat is the sharper one — and let the four sink from something you count into something you feel.
+
 @studio(/tutorial/tempo) Turn on the metronome and count →
 
 @tip Set the tempo slow — 80 BPM — before you practice counting. The four is much easier to hear when it isn't rushing past you. Speed it up only once the "one" lands without effort.

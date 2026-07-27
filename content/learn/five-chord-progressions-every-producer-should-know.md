@@ -95,4 +95,6 @@ You now know four chords and roughly five ways to arrange them, which is genuine
 3. **Rotate before you replace.** You heard what starting on a different chord did. Do that before reaching for new chords.
 4. **Play only the bass notes.** If the progression still works with one note per chord, it's a good progression. If it doesn't, no amount of voicing will save it.
 
+@tool(chords) Or build one right here — stack chords, hear them back, and run the rotate-and-bass-note tests above on a progression of your own before you take it into the studio.
+
 When you've made something out of one of these, put it in the [community](https://100lights.com/community) — half the value of a progression is hearing what somebody else did with the one you thought you understood.

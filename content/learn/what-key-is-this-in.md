@@ -61,6 +61,8 @@ Skip this entire section if you want. Nothing later depends on it. You can find 
 
 @math A key signature is bookkeeping. Start at C, which has none, and every time you move up a fifth you add one sharp: C to G is one sharp, G to D is two, D to A is three, A to E is four. Going the other direction — down a fifth — you add flats: C to F is one flat, F to B-flat is two. That loop is the circle of fifths, and it closes after twelve steps because twelve fifths stacked up land back where you started. Minor keys share signatures with the major key three semitones above them, so A minor and C major both have zero sharps, and F-sharp minor and A major both have three.
 
+@tool(circle-of-fifths) The circle itself — click around it. Each clockwise step adds a sharp, each counter-clockwise step a flat, and every key's relative minor sits right beside it (the seven in-key chords light up below).
+
 Key signatures are genuinely useful for writing music down and nearly useless for hearing it. Which is why they're the last thing here instead of the first.
 
 ## The drill
