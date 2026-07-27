@@ -5,7 +5,7 @@
 // tone control. Mix blends the wet in; hold bypass to hear it bone dry.
 
 import { useEffect, useRef, useState } from 'react'
-import { ACCENT, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control } from './article/mix-kit'
+import { ACCENT, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control, SourcePicker } from './article/mix-kit'
 
 function buildIR(ctx: BaseAudioContext, seconds: number): AudioBuffer {
   const rate = ctx.sampleRate
@@ -34,7 +34,7 @@ export default function ArticleReverb({ caption }: { caption?: string }) {
   const preRef = useRef<DelayNode | null>(null)
   const dampRef = useRef<BiquadFilterNode | null>(null)
   const wetRef = useRef<GainNode | null>(null)
-  const { ready, playing, play, stop } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
 
   useEffect(() => {
     const c = mixCtx()
@@ -67,6 +67,7 @@ export default function ArticleReverb({ caption }: { caption?: string }) {
         onReset={() => { setMix(0.35); setSize(1.8); setPreDelay(0.02); setTone(6000); setBypassed(false) }}
         extra={<BypassButton bypassed={bypassed} setBypassed={setBypassed} disabled={!playing} label="Hold: dry" />}
       />
+      <SourcePicker sourceName={sourceName} onFile={loadFile} onDemo={useDemo} />
 
       <Control label="Mix (dry → wet)" value={`${Math.round(mix * 100)}%`}>
         <input type="range" min={0} max={1} step={0.01} value={mix} onChange={e => setMix(+e.target.value)} style={rangeStyle} aria-label="Mix" />

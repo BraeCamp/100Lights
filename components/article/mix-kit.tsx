@@ -19,17 +19,20 @@ export function mixCtx(): AudioContext {
   return (_ctx ??= new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)())
 }
 
-/** Loads the groove and loops it into `inputRef` on play. Returns transport state. */
+/** Loads the groove and loops it into `inputRef` on play. Also accepts a reader's
+ *  own audio file (looped in place of the demo groove). Returns transport state. */
 export function useLoopPlayer(inputRef: React.RefObject<AudioNode | null>) {
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
-  const bufRef = useRef<AudioBuffer | null>(null)
+  const [sourceName, setSourceName] = useState<string | null>(null)   // null = demo groove
+  const grooveRef = useRef<AudioBuffer | null>(null)
+  const customRef = useRef<AudioBuffer | null>(null)
   const srcRef = useRef<AudioBufferSourceNode | null>(null)
 
   useEffect(() => {
     let cancelled = false
     grooveLoop(mixCtx().sampleRate)
-      .then(b => { if (!cancelled) { bufRef.current = b; setReady(true) } })
+      .then(b => { if (!cancelled) { grooveRef.current = b; setReady(true) } })
       .catch(() => { /* leave !ready — button shows unavailable */ })
     return () => { cancelled = true; try { srcRef.current?.stop() } catch { /* stopped */ } }
   }, [])
@@ -43,10 +46,11 @@ export function useLoopPlayer(inputRef: React.RefObject<AudioNode | null>) {
   const play = useCallback(async () => {
     const c = mixCtx()
     try { await c.resume() } catch { /* gesture already resumed */ }
-    if (!bufRef.current || !inputRef.current) return
+    const buf = customRef.current ?? grooveRef.current
+    if (!buf || !inputRef.current) return
     try { srcRef.current?.stop() } catch { /* none */ }
     const s = c.createBufferSource()
-    s.buffer = bufRef.current
+    s.buffer = buf
     s.loop = true
     s.connect(inputRef.current)
     s.start()
@@ -54,7 +58,49 @@ export function useLoopPlayer(inputRef: React.RefObject<AudioNode | null>) {
     setPlaying(true)
   }, [inputRef])
 
-  return { ready, playing, play, stop }
+  // Swap in a reader's own clip; if playing, restart on it seamlessly.
+  const loadFile = useCallback(async (file: File) => {
+    try {
+      const buf = await mixCtx().decodeAudioData(await file.arrayBuffer())
+      customRef.current = buf
+      setSourceName(file.name.replace(/\.[^.]+$/, ''))
+      if (srcRef.current) { stop(); void play() }
+    } catch { /* undecodable file — keep the current source */ }
+  }, [stop, play])
+
+  const useDemo = useCallback(() => {
+    customRef.current = null
+    setSourceName(null)
+    if (srcRef.current) { stop(); void play() }
+  }, [stop, play])
+
+  return { ready, playing, play, stop, loadFile, useDemo, sourceName }
+}
+
+/** File input + current-source label so a widget can process the reader's own clip. */
+export function SourcePicker({ sourceName, onFile, onDemo }: {
+  sourceName: string | null; onFile: (f: File) => void; onDemo: () => void
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '-4px 0 12px' }}>
+      <label style={{
+        fontSize: 10.5, fontWeight: 700, padding: '5px 10px', borderRadius: 8, cursor: 'pointer',
+        border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)',
+      }}>
+        Use your own sound
+        <input type="file" accept="audio/*" style={{ display: 'none' }}
+          onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); e.currentTarget.value = '' }} />
+      </label>
+      <span style={{ fontSize: 10.5, color: sourceName ? ACCENT : 'var(--text-muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>
+        {sourceName ? `♪ ${sourceName}` : 'demo groove'}
+      </span>
+      {sourceName && (
+        <button onClick={onDemo} style={{ fontSize: 10, fontWeight: 700, padding: '4px 9px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>
+          back to demo
+        </button>
+      )}
+    </div>
+  )
 }
 
 export const rangeStyle: React.CSSProperties = { width: '100%', accentColor: ACCENT, cursor: 'pointer', height: 22 }

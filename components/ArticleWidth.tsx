@@ -6,7 +6,7 @@
 // from a vertical line (mono) to a spread cloud (wide) as they drag.
 
 import { useEffect, useRef, useState } from 'react'
-import { ACCENT, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control } from './article/mix-kit'
+import { ACCENT, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control, SourcePicker } from './article/mix-kit'
 
 const panLabel = (p: number) => (Math.abs(p) < 0.03 ? 'Centre' : `${Math.round(Math.abs(p) * 100)}% ${p < 0 ? 'L' : 'R'}`)
 
@@ -21,7 +21,7 @@ export default function ArticleWidth({ caption }: { caption?: string }) {
   const analyserLRef = useRef<AnalyserNode | null>(null)
   const analyserRRef = useRef<AnalyserNode | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { ready, playing, play, stop } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
 
   useEffect(() => {
     const c = mixCtx()
@@ -115,6 +115,7 @@ export default function ArticleWidth({ caption }: { caption?: string }) {
         onReset={() => { setWidth(1); setPan(0); setBypassed(false) }}
         extra={<BypassButton bypassed={bypassed} setBypassed={setBypassed} disabled={!playing} label="Hold: as-is" />}
       />
+      <SourcePicker sourceName={sourceName} onFile={loadFile} onDemo={useDemo} />
 
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>
         <canvas ref={canvasRef} style={{ width: 150, height: 150, display: 'block', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-base)' }} aria-hidden="true" />

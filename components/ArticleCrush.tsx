@@ -6,7 +6,7 @@
 // sound. Hold bypass to hear the clean loop.
 
 import { useEffect, useRef, useState } from 'react'
-import { mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control } from './article/mix-kit'
+import { mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control, SourcePicker } from './article/mix-kit'
 
 function driveCurve(amount: number) {
   const n = 1024, curve = new Float32Array(n), k = amount * amount * 120
@@ -25,7 +25,7 @@ export default function ArticleCrush({ caption }: { caption?: string }) {
   const outRef = useRef<GainNode | null>(null)
   const params = useRef({ bits, reduction })
   params.current = { bits, reduction }
-  const { ready, playing, play, stop } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
 
   useEffect(() => {
     const c = mixCtx()
@@ -70,6 +70,7 @@ export default function ArticleCrush({ caption }: { caption?: string }) {
       <Transport ready={ready} playing={playing} onPlay={play} onStop={stop}
         onReset={() => { setDrive(0); setBits(16); setReduction(1); setBypassed(false) }}
         extra={<BypassButton bypassed={bypassed} setBypassed={setBypassed} disabled={!playing} label="Hold: clean" />} />
+      <SourcePicker sourceName={sourceName} onFile={loadFile} onDemo={useDemo} />
 
       <Control label="Drive" value={drive < 0.01 ? 'off' : `${Math.round(drive * 100)}%`}>
         <input type="range" min={0} max={1} step={0.01} value={drive} onChange={e => setDrive(+e.target.value)} style={rangeStyle} aria-label="Drive" />

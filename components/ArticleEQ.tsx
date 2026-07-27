@@ -6,7 +6,7 @@
 // AnalyserNode on the output, so what you see is exactly what you hear.
 
 import { useEffect, useRef, useState } from 'react'
-import { ACCENT, clamp, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control } from './article/mix-kit'
+import { ACCENT, clamp, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control, SourcePicker } from './article/mix-kit'
 
 type BandKind = 'lowshelf' | 'peaking' | 'highshelf'
 const BANDS: Array<{ key: string; label: string; type: BandKind; freq: number; q: number }> = [
@@ -25,7 +25,7 @@ export default function ArticleEQ({ caption }: { caption?: string }) {
   const filtersRef = useRef<BiquadFilterNode[]>([])
   const analyserRef = useRef<AnalyserNode | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { ready, playing, play, stop } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
 
   // Persistent chain: in → band×4 → analyser → out. Built once so the curve is
   // live before the first play (a suspended context still answers getFreqResp).
@@ -131,6 +131,7 @@ export default function ArticleEQ({ caption }: { caption?: string }) {
         onReset={() => { setGains(BANDS.map(() => 0)); setBypassed(false) }}
         extra={<BypassButton bypassed={bypassed} setBypassed={setBypassed} disabled={!playing} label="Hold: flat" />}
       />
+      <SourcePicker sourceName={sourceName} onFile={loadFile} onDemo={useDemo} />
 
       <canvas ref={canvasRef} style={{ width: '100%', height: 120, display: 'block', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-base)' }} aria-hidden="true" />
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-muted)', margin: '3px 2px 14px', fontWeight: 600 }}>

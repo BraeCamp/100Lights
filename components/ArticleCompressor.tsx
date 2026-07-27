@@ -6,7 +6,7 @@
 // gain lets you match loudness so the A/B is about dynamics, not volume.
 
 import { useEffect, useRef, useState } from 'react'
-import { ACCENT, clamp, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control } from './article/mix-kit'
+import { ACCENT, clamp, mixCtx, useLoopPlayer, rangeStyle, Frame, Transport, BypassButton, Control, SourcePicker } from './article/mix-kit'
 
 const fmtMs = (s: number) => (s < 0.1 ? `${Math.round(s * 1000)} ms` : `${(s).toFixed(2)} s`)
 
@@ -22,7 +22,7 @@ export default function ArticleCompressor({ caption }: { caption?: string }) {
   const inputRef = useRef<AudioNode | null>(null)
   const compRef = useRef<DynamicsCompressorNode | null>(null)
   const makeupRef = useRef<GainNode | null>(null)
-  const { ready, playing, play, stop } = useLoopPlayer(inputRef)
+  const { ready, playing, play, stop, loadFile, useDemo, sourceName } = useLoopPlayer(inputRef)
 
   useEffect(() => {
     const c = mixCtx()
@@ -75,6 +75,7 @@ export default function ArticleCompressor({ caption }: { caption?: string }) {
         onReset={() => { setThreshold(-24); setRatio(4); setAttack(0.006); setRelease(0.18); setMakeup(0); setBypassed(false) }}
         extra={<BypassButton bypassed={bypassed} setBypassed={setBypassed} disabled={!playing} />}
       />
+      <SourcePicker sourceName={sourceName} onFile={loadFile} onDemo={useDemo} />
 
       {/* Gain-reduction meter */}
       <div style={{ marginBottom: 14 }}>
