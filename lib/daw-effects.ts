@@ -203,6 +203,16 @@ export function buildDynEq(ctx: AudioContext, params: DynEqParams): EffectHandle
   }
 }
 
+// Decoded impulse responses, keyed by their data URL, so a loaded IR is decoded
+// once and reused across every reverb build.
+const _irCache = new Map<string, AudioBuffer>()
+async function decodeIr(ctx: AudioContext, dataUrl: string): Promise<AudioBuffer | null> {
+  try {
+    const arr = await (await fetch(dataUrl)).arrayBuffer()
+    return await ctx.decodeAudioData(arr)
+  } catch { return null }
+}
+
 export function buildReverb(ctx: AudioContext, params: ReverbParams): EffectHandle {
   const convolver = ctx.createConvolver()
   const dryGain   = ctx.createGain()
@@ -210,7 +220,20 @@ export function buildReverb(ctx: AudioContext, params: ReverbParams): EffectHand
   const input     = ctx.createGain()
   const output    = ctx.createGain()
 
-  convolver.buffer = buildIR(ctx, params.decay, params.preDelay)
+  // Apply a custom IR when present (cache-hit is instant; otherwise fall back
+  // to the synthetic IR until the decode lands and we swap it in).
+  function applyIr(p: ReverbParams) {
+    if (p.irData) {
+      const cached = _irCache.get(p.irData)
+      if (cached) { convolver.buffer = cached; return }
+      convolver.buffer = buildIR(ctx, p.decay, p.preDelay)
+      void decodeIr(ctx, p.irData).then(buf => { if (buf) { _irCache.set(p.irData!, buf); convolver.buffer = buf } })
+    } else {
+      convolver.buffer = buildIR(ctx, p.decay, p.preDelay)
+    }
+  }
+
+  applyIr(params)
   dryGain.gain.value = 1
   wetGain.gain.value = params.enabled ? params.wet : 0
 
@@ -226,8 +249,9 @@ export function buildReverb(ctx: AudioContext, params: ReverbParams): EffectHand
     setParam(key, value) {
       if (key === 'enabled')  { params = { ...params, enabled: value as boolean }; wetGain.gain.value = (value as boolean) ? params.wet : 0 }
       if (key === 'wet')      { params = { ...params, wet: value as number };      wetGain.gain.value = params.enabled ? value as number : 0 }
-      if (key === 'decay')    { params = { ...params, decay: value as number };    convolver.buffer = buildIR(ctx, params.decay, params.preDelay) }
-      if (key === 'preDelay') { params = { ...params, preDelay: value as number }; convolver.buffer = buildIR(ctx, params.decay, params.preDelay) }
+      if (key === 'decay')    { params = { ...params, decay: value as number };    if (!params.irData) convolver.buffer = buildIR(ctx, params.decay, params.preDelay) }
+      if (key === 'preDelay') { params = { ...params, preDelay: value as number }; if (!params.irData) convolver.buffer = buildIR(ctx, params.decay, params.preDelay) }
+      if (key === 'irData')   { params = { ...params, irData: (value as string) || undefined }; applyIr(params) }
     },
     dispose() { convolver.disconnect(); dryGain.disconnect(); wetGain.disconnect(); input.disconnect(); output.disconnect() },
   }

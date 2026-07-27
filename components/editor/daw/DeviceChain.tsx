@@ -283,6 +283,7 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
     : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
 
   const padRef = useRef<HTMLDivElement>(null)
+  const irFileRef = useRef<HTMLInputElement>(null)
   const PRE_MAX   = 0.1
   const DECAY_MIN = 0.1
   const DECAY_MAX = 10
@@ -339,6 +340,18 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
       </div>
       <CtrlRow label="Wet">
         <RangeCtrl value={p.wet} min={0} max={1} step={0.01} onChange={v => up({ wet: v })} />
+      </CtrlRow>
+      <CtrlRow label="IR">
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', width: '100%' }}>
+          <input ref={irFileRef} type="file" accept="audio/*" style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => up({ irData: r.result as string, irName: f.name.replace(/\.[^.]+$/, '') }); r.readAsDataURL(f) }} />
+          <button onClick={e => { e.stopPropagation(); irFileRef.current?.click() }} title="Load your own impulse response — a real hall, plate, room, or cabinet"
+            style={{ flex: 1, minWidth: 0, fontSize: 9, padding: '2px 5px', borderRadius: 3, border: `1px solid ${p.irData ? 'var(--accent)' : 'var(--border)'}`, background: p.irData ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-surface)', color: p.irData ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {p.irName || 'Load IR…'}
+          </button>
+          {p.irData && <button onClick={e => { e.stopPropagation(); up({ irData: undefined, irName: undefined }) }} title="Use the built-in reverb"
+            style={{ fontSize: 10, lineHeight: 1, padding: '2px 5px', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>}
+        </div>
       </CtrlRow>
     </>
   )

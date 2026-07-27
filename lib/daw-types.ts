@@ -45,6 +45,11 @@ export interface ReverbParams {
   wet: number        // 0..1
   decay: number      // s 0.1..10
   preDelay: number   // s 0..0.5
+  // Load your own impulse response (a real hall/plate/room/cabinet). When set,
+  // it replaces the synthetic IR and decay/pre-delay no longer apply. Stored as
+  // a data URL so it travels with the project; clear it to return to built-in.
+  irData?: string
+  irName?: string
 }
 
 export interface DelayParams {
