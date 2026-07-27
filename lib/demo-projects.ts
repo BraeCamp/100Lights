@@ -35,6 +35,9 @@ const BASS = () => poly({ waveform: 'sawtooth', filterCutoff: 600, sustain: 0.9,
 const PAD = () => poly({ waveform: 'sawtooth', filterCutoff: 1600, detune: 8, attack: 0.05, sustain: 0.85, release: 0.6 })
 const LEAD = () => poly({ waveform: 'square', filterCutoff: 4200, attack: 0.004, decay: 0.1, sustain: 0.25, release: 0.1 })
 const MELODY = () => poly({ waveform: 'triangle', filterCutoff: 3200, sustain: 0.5 })
+// Bright, wide pad — its own filter is wide open so the automatable filter EFFECT
+// (not the instrument) is what opens and closes the sound.
+const AUTO_PAD = () => poly({ waveform: 'sawtooth', filterCutoff: 9000, detune: 12, attack: 0.08, decay: 0.4, sustain: 0.9, release: 0.9 })
 
 const fx = (type: string, params: Record<string, unknown>): TrackEffect =>
   ({ id: uid(), type, params } as unknown as TrackEffect)
@@ -174,29 +177,43 @@ export function buildDemoProject(id: string): DawProject | null {
     // Static-MP3 sounds with a known recipe.
     case 'reese-before': return project('Reese — one saw', [stem('Bass', poly({ waveform: 'sawtooth', filterCutoff: 620, filterResonance: 6, sustain: 1, release: 0.1 }), [note(28, 0, 8, 100), note(28, 8, 8, 100)], 4, false, { color: '#38bdf8' })], 4)
     case 'reese-after': return project('Reese — detuned', [stem('Bass', poly({ waveform: 'sawtooth', detune: 9, filterCutoff: 620, filterResonance: 6, sustain: 1, release: 0.1 }), [note(28, 0, 8, 100), note(28, 8, 8, 100)], 4, false, { color: '#38bdf8' })], 4)
-    // Automation demos — the loop plus editable automation lanes under the tracks.
-    case 'automation-before': return project('Loop — no automation', mixStems(8, { lead: true }), 8)
+    // Automation demos — the article's loop is "one chord progression, nothing
+    // else": a bright pad whose low-pass filter opens and reverb send swells over
+    // 16 bars. `before` parks everything; `after` adds the three automation lanes.
+    case 'automation-before': {
+      const filterFx = fx('filter', { ...defaultFilter(), type: 'lowpass', frequency: 2600, q: 1.2 })
+      const reverbFx = fx('reverb', { ...defaultReverb(), wet: 0.14, decay: 2.6 })
+      return project('Loop — nothing automated', [
+        stem('Drums', defaultDrumInstrument(), drumNotes(16), 16, true, { color: '#f472b6' }),
+        stem('Bass', BASS(), bassNotes(16), 16, false, { color: '#38bdf8' }),
+        stem('Pad', AUTO_PAD(), padNotes(16), 16, false, { color: '#a78bfa', effects: [filterFx, reverbFx] }),
+      ], 16)
+    }
     case 'automation-after': {
-      const filterFx = fx('filter', { ...defaultFilter(), type: 'lowpass', frequency: 500, q: 2 })
-      const stems = mixStems(8, { lead: true })
-      const pad = stems.find(s => s.track.name === 'Pad')!.track; pad.effects = [...pad.effects, filterFx]
-      const lead = stems.find(s => s.track.name === 'Lead')!.track
-      const p = project('Loop + automation', stems, 8)
+      const filterFx = fx('filter', { ...defaultFilter(), type: 'lowpass', frequency: 400, q: 1.2 })
+      const reverbFx = fx('reverb', { ...defaultReverb(), wet: 0.05, decay: 2.6 })
+      const pad = stem('Pad', AUTO_PAD(), padNotes(16), 16, false, { color: '#a78bfa', effects: [filterFx, reverbFx] })
+      const p = project('Loop — three automation lanes', [
+        stem('Drums', defaultDrumInstrument(), drumNotes(16), 16, true, { color: '#f472b6' }),
+        stem('Bass', BASS(), bassNotes(16), 16, false, { color: '#38bdf8' }),
+        pad,
+      ], 16)
       p.automationLanes = [
-        autoLane(pad.id, `fx:${filterFx.id}:frequency`, 'Pad cutoff', 200, 8000, 500, [[0, 0.08], [16, 0.15], [28, 0.7], [32, 1]]),
-        autoLane(lead.id, 'volume', 'Lead volume', 0, 1, 0.8, [[0, 0], [16, 0], [17, 0.8], [32, 0.8]]),   // lead enters halfway
+        autoLane(pad.track.id, `fx:${filterFx.id}:frequency`, 'Pad filter', 300, 9000, 400, [[0, 0.02], [56, 0.85], [64, 1]]),        // filter opens across all 16 bars
+        autoLane(pad.track.id, `fx:${reverbFx.id}:wet`, 'Reverb send', 0, 0.7, 0.05, [[0, 0.06], [40, 0.12], [64, 0.9]]),           // reverb swells toward the end
+        autoLane(pad.track.id, 'volume', 'Pad volume', 0, 1, 0.8, [[0, 0.62], [64, 0.82]]),                                        // pad rises a couple dB
       ]
       return p
     }
     case 'automation-filter-sweep': {
-      const filterFx = fx('filter', { ...defaultFilter(), type: 'lowpass', frequency: 400, q: 4 })
-      const stems: Stem[] = [
-        stem('Drums', defaultDrumInstrument(), drumNotes(8), 8, true, { color: '#f472b6' }),
-        stem('Bass', BASS(), bassNotes(8), 8, false, { color: '#38bdf8' }),
-        stem('Pad', PAD(), padNotes(8), 8, false, { color: '#a78bfa', effects: [filterFx] }),
+      const filterFx = fx('filter', { ...defaultFilter(), type: 'lowpass', frequency: 380, q: 1.4 })
+      const reverbFx = fx('reverb', { ...defaultReverb(), wet: 0.05, decay: 2.8 })
+      const pad = stem('Pad', AUTO_PAD(), padNotes(16), 16, false, { color: '#a78bfa', effects: [filterFx, reverbFx] })
+      const p = project('Filter opening + reverb swell', [pad], 16)   // one chord progression, nothing else
+      p.automationLanes = [
+        autoLane(pad.track.id, `fx:${filterFx.id}:frequency`, 'Filter cutoff', 300, 9000, 380, [[0, 0.02], [58, 0.9], [64, 1]]),
+        autoLane(pad.track.id, `fx:${reverbFx.id}:wet`, 'Reverb send', 0, 0.7, 0.05, [[0, 0.06], [40, 0.15], [64, 0.9]]),
       ]
-      const p = project('Filter sweep', stems, 8)
-      p.automationLanes = [autoLane(stems[2].track.id, `fx:${filterFx.id}:frequency`, 'Filter cutoff', 200, 9000, 400, [[0, 0.03], [16, 0.12], [30, 0.9], [32, 1]])]
       return p
     }
     default: return null
