@@ -8,6 +8,7 @@ import { useIsMobile } from '@/lib/use-is-mobile'
 import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
 import { TRACK_COLORS } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
+import ReferenceAB from './ReferenceAB'
 import Knob from './Knob'
 import { ReturnDeviceChain } from './DeviceChain'
 
@@ -354,6 +355,9 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>LUFS</span>
         </div>
       )}
+
+      {/* Reference-track A/B (master only) */}
+      {isMaster && <div style={{ marginTop: 3 }}><ReferenceAB /></div>}
 
       {/* Arm */}
       {!isMaster && track && (
