@@ -41,7 +41,9 @@ const EFFECT_LABELS: Record<EffectType, string> = {
 
 // ── Shared micro-components ────────────────────────────────────────────────────
 
-function CtrlRow({ label, children }: { label: string; children: React.ReactNode }) {
+// `learnKey` overrides the label used for the MIDI-learn binding id when the
+// visible label isn't unique within an effect (e.g. per-band "Threshold" rows).
+function CtrlRow({ label, learnKey, children }: { label: string; learnKey?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
       <span style={{
@@ -51,7 +53,7 @@ function CtrlRow({ label, children }: { label: string; children: React.ReactNode
         {label}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <CtrlLabelCtx.Provider value={label}>{children}</CtrlLabelCtx.Provider>
+        <CtrlLabelCtx.Provider value={learnKey ?? label}>{children}</CtrlLabelCtx.Provider>
       </div>
     </div>
   )
@@ -693,17 +695,17 @@ function MultibandCompControls({ effect, trackId, returnId }: { effect: TrackEff
       <CtrlRow label="Low↔Mid"><RangeCtrl value={p.lowMid} min={50} max={2000} step={1} onChange={v => up({ lowMid: v })} /></CtrlRow>
       <CtrlRow label="Mid↔High"><RangeCtrl value={p.midHigh} min={1000} max={16000} step={1} onChange={v => up({ midHigh: v })} /></CtrlRow>
       {bandLabel('#60a5fa', 'Low')}
-      <CtrlRow label="Threshold"><RangeCtrl value={p.lowThreshold} min={-60} max={0} step={0.5} onChange={v => up({ lowThreshold: v })} /></CtrlRow>
-      <CtrlRow label="Ratio"><RangeCtrl value={p.lowRatio} min={1} max={20} step={0.1} onChange={v => up({ lowRatio: v })} /></CtrlRow>
-      <CtrlRow label="Gain dB"><RangeCtrl value={p.lowGain} min={-12} max={12} step={0.1} onChange={v => up({ lowGain: v })} /></CtrlRow>
+      <CtrlRow label="Threshold" learnKey="Low Threshold"><RangeCtrl value={p.lowThreshold} min={-60} max={0} step={0.5} onChange={v => up({ lowThreshold: v })} /></CtrlRow>
+      <CtrlRow label="Ratio" learnKey="Low Ratio"><RangeCtrl value={p.lowRatio} min={1} max={20} step={0.1} onChange={v => up({ lowRatio: v })} /></CtrlRow>
+      <CtrlRow label="Gain dB" learnKey="Low Gain"><RangeCtrl value={p.lowGain} min={-12} max={12} step={0.1} onChange={v => up({ lowGain: v })} /></CtrlRow>
       {bandLabel('#4ade80', 'Mid')}
-      <CtrlRow label="Threshold"><RangeCtrl value={p.midThreshold} min={-60} max={0} step={0.5} onChange={v => up({ midThreshold: v })} /></CtrlRow>
-      <CtrlRow label="Ratio"><RangeCtrl value={p.midRatio} min={1} max={20} step={0.1} onChange={v => up({ midRatio: v })} /></CtrlRow>
-      <CtrlRow label="Gain dB"><RangeCtrl value={p.midGain} min={-12} max={12} step={0.1} onChange={v => up({ midGain: v })} /></CtrlRow>
+      <CtrlRow label="Threshold" learnKey="Mid Threshold"><RangeCtrl value={p.midThreshold} min={-60} max={0} step={0.5} onChange={v => up({ midThreshold: v })} /></CtrlRow>
+      <CtrlRow label="Ratio" learnKey="Mid Ratio"><RangeCtrl value={p.midRatio} min={1} max={20} step={0.1} onChange={v => up({ midRatio: v })} /></CtrlRow>
+      <CtrlRow label="Gain dB" learnKey="Mid Gain"><RangeCtrl value={p.midGain} min={-12} max={12} step={0.1} onChange={v => up({ midGain: v })} /></CtrlRow>
       {bandLabel('#f87171', 'High')}
-      <CtrlRow label="Threshold"><RangeCtrl value={p.highThreshold} min={-60} max={0} step={0.5} onChange={v => up({ highThreshold: v })} /></CtrlRow>
-      <CtrlRow label="Ratio"><RangeCtrl value={p.highRatio} min={1} max={20} step={0.1} onChange={v => up({ highRatio: v })} /></CtrlRow>
-      <CtrlRow label="Gain dB"><RangeCtrl value={p.highGain} min={-12} max={12} step={0.1} onChange={v => up({ highGain: v })} /></CtrlRow>
+      <CtrlRow label="Threshold" learnKey="High Threshold"><RangeCtrl value={p.highThreshold} min={-60} max={0} step={0.5} onChange={v => up({ highThreshold: v })} /></CtrlRow>
+      <CtrlRow label="Ratio" learnKey="High Ratio"><RangeCtrl value={p.highRatio} min={1} max={20} step={0.1} onChange={v => up({ highRatio: v })} /></CtrlRow>
+      <CtrlRow label="Gain dB" learnKey="High Gain"><RangeCtrl value={p.highGain} min={-12} max={12} step={0.1} onChange={v => up({ highGain: v })} /></CtrlRow>
     </>
   )
 }

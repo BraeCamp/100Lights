@@ -125,12 +125,13 @@ export function buildLimiter(ctx: AudioContext, params: LimiterParams): EffectHa
   const comp  = ctx.createDynamicsCompressor()
   const out   = ctx.createGain()
 
+  const p = { ...params }
   comp.knee.value    = 0
   comp.ratio.value   = 20
   comp.attack.value  = 0.002
-  comp.release.value = params.release
-  comp.threshold.value = params.enabled ? params.ceilingDb : 0
-  drive.gain.value   = params.enabled ? Math.pow(10, params.gainDb / 20) : 1
+  comp.release.value = p.release
+  comp.threshold.value = p.enabled ? p.ceilingDb : 0
+  drive.gain.value   = p.enabled ? Math.pow(10, p.gainDb / 20) : 1
   out.gain.value     = 1
 
   drive.connect(comp); comp.connect(out)
@@ -139,14 +140,10 @@ export function buildLimiter(ctx: AudioContext, params: LimiterParams): EffectHa
     input: drive,
     output: out,
     setParam(key, value) {
-      if (key === 'enabled') {
-        const on = value as boolean
-        drive.gain.value = on ? Math.pow(10, params.gainDb / 20) : 1
-        comp.threshold.value = on ? params.ceilingDb : 0
-      }
-      if (key === 'gainDb')    drive.gain.value = params.enabled ? Math.pow(10, (value as number) / 20) : 1
-      if (key === 'ceilingDb') comp.threshold.value = params.enabled ? value as number : 0
-      if (key === 'release')   comp.release.value = value as number
+      ;(p as Record<string, unknown>)[key] = value
+      drive.gain.value     = p.enabled ? Math.pow(10, p.gainDb / 20) : 1
+      comp.threshold.value = p.enabled ? p.ceilingDb : 0
+      comp.release.value   = p.release
     },
     dispose() { drive.disconnect(); comp.disconnect(); out.disconnect() },
   }

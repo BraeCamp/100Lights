@@ -154,7 +154,9 @@ function GainEnvelope({ points, onChange }: { points: { t: number; g: number }[]
     : [{ t: 0, g: 1 }, { t: 1, g: 1 }]
   const d = line.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.g).toFixed(1)}`).join(' ')
 
-  function addPoint(e: React.MouseEvent) { const { t, g } = toTG(e.clientX, e.clientY); onChange([...ptsRef.current, { t, g }]) }
+  // Add on pointerdown of the empty background. Points stop propagation on their
+  // own pointerdown, so grabbing / double-click-removing one never also adds one.
+  function addPoint(e: React.PointerEvent) { const { t, g } = toTG(e.clientX, e.clientY); onChange([...ptsRef.current, { t, g }]) }
   function startDrag(i: number, e: React.PointerEvent) {
     e.stopPropagation(); e.preventDefault()
     const move = (ev: PointerEvent) => { const { t, g } = toTG(ev.clientX, ev.clientY); onChange(ptsRef.current.map((p, idx) => idx === i ? { t, g } : p)) }
@@ -163,7 +165,7 @@ function GainEnvelope({ points, onChange }: { points: { t: number; g: number }[]
   }
 
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} onClick={addPoint}
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} onPointerDown={addPoint}
       style={{ display: 'block', background: 'var(--bg-base)', borderRadius: 5, cursor: 'crosshair', touchAction: 'none' }}>
       <line x1={0} y1={y(1)} x2={W} y2={y(1)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3 3" />
       <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
