@@ -9,6 +9,7 @@ import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
 import { TRACK_COLORS } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
 import ReferenceAB from './ReferenceAB'
+import { useMidiLearn } from '@/lib/midi-learn'
 import Knob from './Knob'
 import { ReturnDeviceChain } from './DeviceChain'
 
@@ -105,6 +106,13 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
   const specRafRef = useRef<number>(0)
 
   const volume  = isMaster ? project.masterVolume : (track?.volume ?? 0.8)
+  // MIDI-learn: map a hardware fader to this channel's volume (right-click the
+  // fader to bind). Volume is already 0..1, so a CC maps straight onto it.
+  const setVol = (v: number) => {
+    if (isMaster) { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }
+    else if (track) { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }
+  }
+  const midi = useMidiLearn(isMaster ? 'master:vol' : `track:${track?.id ?? 'x'}:vol`, setVol)
   const pan     = track?.pan ?? 0
   const muted   = track?.mute ?? false
   const soloed  = track?.solo ?? false
@@ -333,18 +341,34 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
         )
       })()}
 
-      {/* Fader + meter */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, flex: 1 }}>
+      {/* Fader + meter — right-click the fader to MIDI-learn a hardware fader */}
+      <div
+        style={{ display: 'flex', alignItems: 'flex-end', gap: 3, flex: 1 }}
+        onContextMenu={e => { e.preventDefault(); midi.arm() }}
+        title={midi.armed ? 'Move a fader/knob to bind it…' : midi.cc != null ? `Bound to CC ${midi.cc} — right-click to rebind` : 'Right-click to MIDI-learn a hardware fader'}
+      >
         <VerticalFader
           value={volume}
           color={isMaster ? 'var(--accent)' : color}
-          onChange={v => {
-            if (isMaster) { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }
-            else if (track) { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }
-          }}
+          onChange={setVol}
         />
         <LevelMeter trackId={isMaster ? undefined : track?.id} width={6} height={110} />
       </div>
+      {/* MIDI-learn badge */}
+      {(midi.armed || midi.cc != null) && (
+        <button
+          onClick={() => (midi.armed ? midi.arm() : midi.clear())}
+          title={midi.armed ? 'Cancel learning' : 'Unbind'}
+          style={{
+            fontSize: 7.5, fontWeight: 700, letterSpacing: '0.04em', padding: '1px 4px', borderRadius: 3, cursor: 'pointer', border: '1px solid',
+            borderColor: midi.armed ? '#f59e0b' : 'var(--border)',
+            background: midi.armed ? 'rgba(245,158,11,0.18)' : 'var(--bg-surface)',
+            color: midi.armed ? '#f59e0b' : 'var(--text-muted)', whiteSpace: 'nowrap', marginTop: 1,
+          }}
+        >
+          {midi.armed ? '◉ LEARN' : `CC ${midi.cc}`}
+        </button>
+      )}
 
       {/* LUFS display (master only) */}
       {isMaster && (

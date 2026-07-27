@@ -14,7 +14,14 @@ export interface MidiNoteEvent {
   deviceName: string
 }
 
+export interface MidiCCEvent {
+  cc: number           // controller number 0–127
+  value: number        // 0–127
+  deviceName: string
+}
+
 type NoteListener = (e: MidiNoteEvent) => void
+type CCListener = (e: MidiCCEvent) => void
 type DevicesListener = (names: string[]) => void
 
 export const webMidiSupported =
@@ -23,6 +30,7 @@ export const webMidiSupported =
 let access: MIDIAccess | null = null
 let starting: Promise<boolean> | null = null
 const noteListeners = new Set<NoteListener>()
+const ccListeners = new Set<CCListener>()
 const deviceListeners = new Set<DevicesListener>()
 
 function deviceNames(): string[] {
@@ -41,6 +49,10 @@ function handleMessage(deviceName: string) {
       for (const l of noteListeners) l({ type: 'on', pitch, velocity, deviceName })
     } else if (status === 0x80 || (status === 0x90 && velocity === 0)) {
       for (const l of noteListeners) l({ type: 'off', pitch, velocity: 0, deviceName })
+    } else if (status === 0xb0) {
+      // Control change — knobs, faders, mod wheel. `pitch`/`velocity` here are
+      // the controller number and its 0–127 value.
+      for (const l of ccListeners) l({ cc: pitch, value: velocity, deviceName })
     }
   }
 }
@@ -77,6 +89,12 @@ export async function startWebMidi(): Promise<boolean> {
 export function onMidiNote(listener: NoteListener): () => void {
   noteListeners.add(listener)
   return () => noteListeners.delete(listener)
+}
+
+/** Subscribe to hardware control-change (knob/fader) events. */
+export function onMidiCC(listener: CCListener): () => void {
+  ccListeners.add(listener)
+  return () => ccListeners.delete(listener)
 }
 
 /** Subscribe to the connected-device list (fires on hot-plug). */
