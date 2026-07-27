@@ -1352,10 +1352,19 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                         Track instrument — {INSTRUMENT_LABELS[track.instrument.type]}
                       </button>
                     )}
-                    {getGroupedPresets(presets).map(({ group, presets: gp }) => (
+                    {getGroupedPresets(presets).map(({ group, presets: gp }) => {
+                      // A preset is flagged when the clip has notes below loNote or
+                      // above hiNote — those notes play at the wrong pitch (nearest
+                      // edge sample), so they're the ones to warn about in red.
+                      const ns = clip.notes ?? []
+                      const cLo = ns.length ? Math.min(...ns.map(n => n.pitch)) : null
+                      const cHi = ns.length ? Math.max(...ns.map(n => n.pitch)) : null
+                      return (
                       <div key={group}>
                         <div style={{ padding: '5px 10px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
-                        {gp.map(p => (
+                        {gp.map(p => {
+                          const oor = cLo != null && cHi != null && (cLo < p.loNote || cHi > p.hiNote)
+                          return (
                           <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
                             <button
                               onClick={e => { e.stopPropagation(); void previewMiddleC(p.id) }}
@@ -1368,19 +1377,22 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                             </button>
                             <button
                               onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(getPresets()); setShowPresetPicker(false) }}
+                              title={oor ? `This clip's notes (${midiNoteLabel(cLo!)}–${midiNoteLabel(cHi!)}) go outside this preset's range (${noteRangeLabel(p)}); out-of-range notes play at the wrong pitch.` : undefined}
                               style={{
                                 flex: 1, display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0,
                                 textAlign: 'left', padding: '4px 10px 4px 0', fontSize: 10, cursor: 'pointer', border: 'none',
                                 background: clip.presetId === p.id ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
-                                color: clip.presetId === p.id ? 'var(--accent-light)' : '#aaa',
+                                color: oor ? '#f87171' : clip.presetId === p.id ? 'var(--accent-light)' : '#aaa',
                               }}>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                              <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{oor ? '⚠ ' : ''}{p.name}</span>
+                              <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: oor ? '#f87171' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>
                             </button>
                           </div>
-                        ))}
+                          )
+                        })}
                       </div>
-                    ))}
+                      )
+                    })}
                     <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
                     <button onClick={() => { setShowPresetPicker(false); setShowNewPreset(true) }}
                       style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', fontSize: 10, background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer' }}>

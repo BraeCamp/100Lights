@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
+import { Pencil } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { AutomationLane, AutomationPoint } from '@/lib/daw-types'
 
@@ -24,6 +25,7 @@ export default function AutomationLaneView({
   // can call it without stale captures.
   const drawRef = useRef<() => void>(() => {})
   const [draggingPointId, setDraggingPointId] = useState<string | null>(null)
+  const [drawMode, setDrawMode] = useState(false)
 
   // ── Coordinate helpers ──────────────────────────────────────────────────
   // These are kept as plain functions (not callbacks) because they are only
@@ -214,10 +216,48 @@ export default function AutomationLaneView({
     return null
   }
 
+  // ── Freehand draw (pencil) ──────────────────────────────────────────────
+  // Drag to paint the curve. Points are bucketed by x (~6px) so a stroke leaves
+  // an even trail; any pre-existing points under the painted beat-range are
+  // replaced, points outside it are kept. One lane-level dispatch per move.
+  function startFreehand(e: React.MouseEvent<HTMLCanvasElement>): void {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    e.preventDefault()
+    const dpr = window.devicePixelRatio || 1
+    const base = [...lane.points]
+    const buckets = new Map<number, AutomationPoint>()
+    const sample = (clientX: number, clientY: number) => {
+      const r = canvas.getBoundingClientRect()
+      const x = clientX - r.left, y = clientY - r.top
+      const bucket = Math.round(x / 6)
+      const prev = buckets.get(bucket)
+      buckets.set(bucket, {
+        id: prev?.id ?? crypto.randomUUID(),
+        beat: Math.max(0, xToBeat(x)),
+        value: yToValue(y, canvas.height / dpr),
+      })
+      const drawn = [...buckets.values()]
+      const beats = drawn.map(p => p.beat)
+      const minB = Math.min(...beats), maxB = Math.max(...beats)
+      const kept = base.filter(p => p.beat < minB || p.beat > maxB)
+      dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: [...kept, ...drawn] } })
+    }
+    sample(e.clientX, e.clientY)
+    const onMove = (ev: MouseEvent) => sample(ev.clientX, ev.clientY)
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
   // ── Mouse handlers ──────────────────────────────────────────────────────
   function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>): void {
     if (e.button !== 0) return
     e.preventDefault()
+    if (drawMode) { startFreehand(e); return }
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -277,20 +317,38 @@ export default function AutomationLaneView({
     }
   }
 
-  // ── Render (canvas only — caller provides the lane header) ─────────────
+  // ── Render (caller provides the lane header) ───────────────────────────
   return (
-    <canvas
-      ref={canvasRef}
-      height={height}
-      onMouseDown={handleMouseDown}
-      onContextMenu={handleContextMenu}
-      style={{
-        display: 'block',
-        width: '100%',
-        height,
-        cursor: draggingPointId ? 'grabbing' : 'crosshair',
-        userSelect: 'none',
-      }}
-    />
+    <div style={{ position: 'relative', width: '100%', height }}>
+      <canvas
+        ref={canvasRef}
+        height={height}
+        onMouseDown={handleMouseDown}
+        onContextMenu={handleContextMenu}
+        style={{
+          display: 'block',
+          width: '100%',
+          height,
+          cursor: draggingPointId ? 'grabbing' : drawMode ? 'crosshair' : 'crosshair',
+          userSelect: 'none',
+        }}
+      />
+      {/* Pencil: toggle freehand drawing of the curve */}
+      <button
+        onClick={() => setDrawMode(d => !d)}
+        title={drawMode ? 'Drawing — drag to paint the curve. Click to stop.' : 'Draw the curve freehand'}
+        aria-pressed={drawMode}
+        style={{
+          position: 'absolute', top: 3, right: 3, width: 20, height: 20, padding: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: 4, cursor: 'pointer',
+          border: `1px solid ${drawMode ? 'var(--accent)' : 'var(--border)'}`,
+          background: drawMode ? 'rgb(var(--accent-rgb) / 0.22)' : 'rgba(0,0,0,0.35)',
+          color: drawMode ? 'var(--accent-light)' : 'var(--text-muted)',
+        }}
+      >
+        <Pencil size={11} />
+      </button>
+    </div>
   )
 }
