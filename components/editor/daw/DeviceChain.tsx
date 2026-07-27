@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, createContext, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
+import { useMidiLearn } from '@/lib/midi-learn'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
@@ -49,24 +50,46 @@ function CtrlRow({ label, children }: { label: string; children: React.ReactNode
       }}>
         {label}
       </span>
-      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <CtrlLabelCtx.Provider value={label}>{children}</CtrlLabelCtx.Provider>
+      </div>
     </div>
   )
 }
+
+// Effect id + control label flow down through context so every RangeCtrl gets a
+// stable MIDI-learn id (`<effectId>:<label>`) with zero per-slider wiring.
+const EffectLearnCtx = createContext<string>('')
+const CtrlLabelCtx = createContext<string>('')
 
 function RangeCtrl({ value, min, max, step = 0.01, onChange }: {
   value: number; min: number; max: number; step?: number
   onChange: (v: number) => void
 }) {
+  const eid = useContext(EffectLearnCtx)
+  const label = useContext(CtrlLabelCtx)
+  const learnId = eid && label ? `${eid}:${label}` : ''
+  // A CC (0..1) maps across the control's own range.
+  const midi = useMidiLearn(learnId, v01 => onChange(min + v01 * (max - min)))
   return (
-    <input
-      type="range"
-      min={min} max={max} step={step} value={value}
-      style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'pointer', display: 'block' }}
-      onChange={e => { e.stopPropagation(); onChange(parseFloat(e.target.value)) }}
-      onKeyDown={e => e.stopPropagation()}
-      onClick={e => e.stopPropagation()}
-    />
+    <div style={{ position: 'relative' }} onContextMenu={learnId ? e => { e.preventDefault(); midi.arm() } : undefined}
+      title={!learnId ? undefined : midi.armed ? 'Move a knob/fader to bind it…' : midi.cc != null ? `Bound to CC ${midi.cc} — right-click to rebind` : 'Right-click to MIDI-learn a knob'}>
+      <input
+        type="range"
+        min={min} max={max} step={step} value={value}
+        style={{ width: '100%', accentColor: midi.armed ? '#f59e0b' : midi.cc != null ? '#22c55e' : 'var(--accent)', cursor: 'pointer', display: 'block' }}
+        onChange={e => { e.stopPropagation(); onChange(parseFloat(e.target.value)) }}
+        onKeyDown={e => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
+      />
+      {(midi.armed || midi.cc != null) && (
+        <button onClick={e => { e.stopPropagation(); midi.armed ? midi.arm() : midi.clear() }}
+          title={midi.armed ? 'Cancel learning' : 'Unbind'}
+          style={{ position: 'absolute', top: -1, right: 0, fontSize: 7, fontWeight: 700, lineHeight: 1, padding: '1px 3px', borderRadius: 2, cursor: 'pointer', border: 'none', background: midi.armed ? '#f59e0b' : 'rgba(34,197,94,0.9)', color: '#000' }}>
+          {midi.armed ? 'LEARN' : `CC${midi.cc}`}
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -769,6 +792,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         </button>
       </div>
       {/* Controls */}
+      <EffectLearnCtx.Provider value={effect.id}>
       <div style={{ padding: '8px 6px', flex: 1 }}>
         {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
@@ -807,6 +831,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
           </label>
         </div>
       </div>
+      </EffectLearnCtx.Provider>
     </div>
   )
 }

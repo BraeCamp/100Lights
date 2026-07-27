@@ -49,19 +49,20 @@ export function clearMidiBinding(bindingId: string) { delete bindings[bindingId]
 // Register a control and reflect its binding state; re-renders on any change so
 // the "learning…" / "CC n" affordance stays live.
 export function useMidiLearn(bindingId: string, apply: Apply) {
-  ensure()
+  if (bindingId) ensure()
   const ref = useRef(apply)
   ref.current = apply
   const [, force] = useReducer((x: number) => x + 1, 0)
   useEffect(() => {
+    if (!bindingId) return
     applyRefs.set(bindingId, ref)
-    const un = (() => { listeners.add(force); return () => listeners.delete(force) })()
-    return () => { applyRefs.delete(bindingId); un() }
+    listeners.add(force)
+    return () => { applyRefs.delete(bindingId); listeners.delete(force) }
   }, [bindingId])
   return {
-    cc: bindings[bindingId] ?? null,
-    armed: armed === bindingId,
-    arm: () => armMidiLearn(bindingId),
-    clear: () => clearMidiBinding(bindingId),
+    cc: bindingId ? (bindings[bindingId] ?? null) : null,
+    armed: !!bindingId && armed === bindingId,
+    arm: () => { if (bindingId) armMidiLearn(bindingId) },
+    clear: () => { if (bindingId) clearMidiBinding(bindingId) },
   }
 }
