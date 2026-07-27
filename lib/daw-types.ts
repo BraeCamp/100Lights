@@ -17,7 +17,7 @@ export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last'
 
 // ── Effects ───────────────────────────────────────────────────────────────────
 
-export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp'
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter'
 
 export interface Eq3Params {
   enabled: boolean
@@ -152,7 +152,7 @@ export interface MultibandCompParams {
   highGain: number        // dB makeup (default 0)
 }
 
-export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams
 
 export interface TrackEffect {
   id: string
@@ -165,6 +165,20 @@ export function defaultEq3(): Eq3Params {
 }
 export function defaultCompressor(): CompressorParams {
   return { enabled: true, threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 6, makeupGain: 0 }
+}
+
+// Brickwall limiter / maximizer — the final loudness stage for the master bus.
+// `gainDb` drives the signal into a fast, high-ratio compressor pinned just
+// under `ceilingDb`, so peaks are caught and the mix gets louder without
+// clipping. Pair it with the master LUFS meter to hit a target loudness.
+export interface LimiterParams {
+  enabled: boolean
+  gainDb: number     // input drive, dB 0..24
+  ceilingDb: number  // output ceiling, dB -12..0
+  release: number    // s 0.005..1
+}
+export function defaultLimiter(): LimiterParams {
+  return { enabled: true, gainDb: 0, ceilingDb: -0.3, release: 0.1 }
 }
 export function defaultReverb(): ReverbParams {
   return { enabled: true, wet: 0.25, decay: 2, preDelay: 0.02 }

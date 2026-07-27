@@ -6,13 +6,13 @@ import { useDaw } from '@/lib/daw-state'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
-  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams,
+  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams,
   MidiEffect, MidiEffectType, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams,
 } from '@/lib/daw-types'
 import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
   defaultSaturator, defaultRedux, defaultAutoPan, defaultUtility, defaultLfo,
-  defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp,
+  defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp, defaultLimiter,
   voiceChainEffects,
 } from '@/lib/daw-types'
 
@@ -34,6 +34,7 @@ const EFFECT_LABELS: Record<EffectType, string> = {
   chorus:         'Chorus/Flanger',
   transientshaper:'Transient Shaper',
   multibandcomp:  'Multiband Comp',
+  limiter:        'Limiter',
 }
 
 // ── Shared micro-components ────────────────────────────────────────────────────
@@ -177,6 +178,27 @@ function Eq3Controls({ effect, trackId, returnId }: { effect: TrackEffect; track
 }
 
 // ── Compressor controls ────────────────────────────────────────────────────────
+
+function LimiterControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as LimiterParams
+  const up = (changes: Partial<LimiterParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      <CtrlRow label="Drive">
+        <RangeCtrl value={p.gainDb} min={0} max={24} step={0.1} onChange={v => up({ gainDb: v })} />
+      </CtrlRow>
+      <CtrlRow label="Ceiling">
+        <RangeCtrl value={p.ceilingDb} min={-12} max={0} step={0.1} onChange={v => up({ ceilingDb: v })} />
+      </CtrlRow>
+      <CtrlRow label="Release">
+        <RangeCtrl value={p.release} min={0.005} max={1} step={0.005} onChange={v => up({ release: v })} />
+      </CtrlRow>
+    </>
+  )
+}
 
 function CompressorControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch, project } = useDaw()
@@ -706,6 +728,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
       <div style={{ padding: '8px 6px', flex: 1 }}>
         {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'limiter'        && <LimiterControls         effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'reverb'         && <ReverbControls          effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'delay'          && <DelayControls           effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'filter'         && <FilterControls          effect={effect} trackId={trackId} returnId={returnId} />}
@@ -761,6 +784,7 @@ const ADD_OPTIONS: { type: EffectType; label: string }[] = [
   { type: 'chorus',         label: 'Chorus/Flanger' },
   { type: 'transientshaper',label: 'Transient Shaper' },
   { type: 'multibandcomp',  label: 'Multiband Comp' },
+  { type: 'limiter',        label: 'Limiter' },
 ]
 
 function makeDefaultParams(type: EffectType) {
@@ -780,6 +804,7 @@ function makeDefaultParams(type: EffectType) {
     case 'chorus':         return defaultChorus()
     case 'transientshaper':return defaultTransientShaper()
     case 'multibandcomp':  return defaultMultibandComp()
+    case 'limiter':        return defaultLimiter()
     default:               return defaultEq3()
   }
 }

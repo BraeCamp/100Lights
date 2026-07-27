@@ -1,6 +1,6 @@
 'use client'
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams } from './daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams } from './daw-types'
 import { createSidechainProcessor } from './sidechain'
 
 // Live Web Audio node handle for a single effect
@@ -114,6 +114,41 @@ export function buildCompressor(ctx: AudioContext, params: CompressorParams): Ef
       if (key === 'makeupGain') makeup.gain.value    = params.enabled ? Math.pow(10, (value as number) / 20) : 1
     },
     dispose() { comp.disconnect(); makeup.disconnect() },
+  }
+}
+
+// Brickwall limiter / maximizer: drive → fast high-ratio compressor pinned at
+// the ceiling. Approximate (Web Audio has no true look-ahead brickwall) but it
+// catches peaks and adds loudness, which is what a master limiter is for.
+export function buildLimiter(ctx: AudioContext, params: LimiterParams): EffectHandle {
+  const drive = ctx.createGain()
+  const comp  = ctx.createDynamicsCompressor()
+  const out   = ctx.createGain()
+
+  comp.knee.value    = 0
+  comp.ratio.value   = 20
+  comp.attack.value  = 0.002
+  comp.release.value = params.release
+  comp.threshold.value = params.enabled ? params.ceilingDb : 0
+  drive.gain.value   = params.enabled ? Math.pow(10, params.gainDb / 20) : 1
+  out.gain.value     = 1
+
+  drive.connect(comp); comp.connect(out)
+
+  return {
+    input: drive,
+    output: out,
+    setParam(key, value) {
+      if (key === 'enabled') {
+        const on = value as boolean
+        drive.gain.value = on ? Math.pow(10, params.gainDb / 20) : 1
+        comp.threshold.value = on ? params.ceilingDb : 0
+      }
+      if (key === 'gainDb')    drive.gain.value = params.enabled ? Math.pow(10, (value as number) / 20) : 1
+      if (key === 'ceilingDb') comp.threshold.value = params.enabled ? value as number : 0
+      if (key === 'release')   comp.release.value = value as number
+    },
+    dispose() { drive.disconnect(); comp.disconnect(); out.disconnect() },
   }
 }
 
@@ -700,6 +735,7 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
       case 'chorus':         handle = buildChorus(ctx, effect.params as ChorusParams); break
       case 'transientshaper': handle = buildTransientShaper(ctx, effect.params as TransientShaperParams); break
       case 'multibandcomp':  handle = buildMultibandComp(ctx, effect.params as MultibandCompParams); break
+      case 'limiter':        handle = buildLimiter(ctx, effect.params as LimiterParams); break
       default: continue
     }
     prev.connect(handle.input)
