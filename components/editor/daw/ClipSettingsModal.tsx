@@ -132,6 +132,51 @@ function detectBufferPitch(buffer: AudioBuffer, trimStartSec: number): number | 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+// A draggable multi-point gain envelope for the clip. g = 1 is unity (rides on
+// top of the clip's gain + fades); 2 = +6 dB, 0 = silence. Click empty space to
+// add a point, drag to move, double-click to remove.
+function GainEnvelope({ points, onChange }: { points: { t: number; g: number }[]; onChange: (p: { t: number; g: number }[]) => void }) {
+  const W = 376, H = 54, GMAX = 2
+  const svgRef = useRef<SVGSVGElement>(null)
+  const ptsRef = useRef(points); ptsRef.current = points
+  const x = (t: number) => t * W
+  const y = (g: number) => H * (1 - Math.min(GMAX, Math.max(0, g)) / GMAX)
+  function toTG(clientX: number, clientY: number) {
+    const r = svgRef.current!.getBoundingClientRect()
+    return {
+      t: Math.min(1, Math.max(0, (clientX - r.left) / r.width)),
+      g: Math.min(GMAX, Math.max(0, GMAX * (1 - (clientY - r.top) / r.height))),
+    }
+  }
+  const sorted = [...points].sort((a, b) => a.t - b.t)
+  const line = sorted.length
+    ? [{ t: 0, g: sorted[0].g }, ...sorted, { t: 1, g: sorted[sorted.length - 1].g }]
+    : [{ t: 0, g: 1 }, { t: 1, g: 1 }]
+  const d = line.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.g).toFixed(1)}`).join(' ')
+
+  function addPoint(e: React.MouseEvent) { const { t, g } = toTG(e.clientX, e.clientY); onChange([...ptsRef.current, { t, g }]) }
+  function startDrag(i: number, e: React.PointerEvent) {
+    e.stopPropagation(); e.preventDefault()
+    const move = (ev: PointerEvent) => { const { t, g } = toTG(ev.clientX, ev.clientY); onChange(ptsRef.current.map((p, idx) => idx === i ? { t, g } : p)) }
+    const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up) }
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', up)
+  }
+
+  return (
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} onClick={addPoint}
+      style={{ display: 'block', background: 'var(--bg-base)', borderRadius: 5, cursor: 'crosshair', touchAction: 'none' }}>
+      <line x1={0} y1={y(1)} x2={W} y2={y(1)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3 3" />
+      <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
+      {points.map((p, i) => (
+        <circle key={i} cx={x(p.t)} cy={y(p.g)} r={4} fill="var(--accent)" stroke="#fff" strokeWidth={1}
+          style={{ cursor: 'grab' }}
+          onPointerDown={e => startDrag(i, e)}
+          onDoubleClick={e => { e.stopPropagation(); onChange(ptsRef.current.filter((_, idx) => idx !== i)) }} />
+      ))}
+    </svg>
+  )
+}
+
 export default function ClipSettingsModal({ clip, onClose }: { clip: AudioClip; onClose: () => void }) {
   const { dispatch, engine, project } = useDaw()
   const altHeld = useAltKey()

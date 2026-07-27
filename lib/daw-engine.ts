@@ -1667,7 +1667,13 @@ export class DawEngine extends EventTarget {
 
     const source   = this.ctx.createBufferSource()
     const fadeGain = this.ctx.createGain()
-    source.connect(fadeGain)
+    // Optional clip gain envelope: an extra node in series, created ONLY when
+    // the clip has one — every other clip keeps the untouched source→fadeGain
+    // path, so existing playback is unaffected. Automated below once startAt and
+    // the effective duration are known.
+    const envPoints = clip.gainPoints && clip.gainPoints.length > 0 ? clip.gainPoints : null
+    const envGain = envPoints ? this.ctx.createGain() : null
+    if (envGain) { source.connect(envGain); envGain.connect(fadeGain) } else { source.connect(fadeGain) }
 
     // Clip-level pitch transpose (semitones + fine cents)
     const clipDetune = ((clip.pitchSemitones ?? 0) * 100) + (clip.pitchCents ?? 0)
@@ -1843,6 +1849,17 @@ export class DawEngine extends EventTarget {
       const fadeStart = Math.max(startAt, startAt + effectiveDuration - fs)
       fadeGain.gain.setValueAtTime(clip.gain, fadeStart)
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
+    }
+
+    // Ride the gain envelope on the dedicated node (multiplies the fades above).
+    if (envGain && envPoints && effectiveDuration > 0) {
+      const dur = effectiveDuration
+      const pts = [...envPoints].sort((a, b) => a.t - b.t)
+      envGain.gain.setValueAtTime(Math.max(0, pts[0].g), startAt)
+      for (const p of pts) {
+        const t = Math.min(1, Math.max(0, p.t))
+        envGain.gain.linearRampToValueAtTime(Math.max(0, p.g), startAt + t * dur)
+      }
     }
 
     // Reverb/delay tails need to ring out after the source stops — longest wins.

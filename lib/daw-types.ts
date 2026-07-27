@@ -620,6 +620,10 @@ export interface AudioClip {
   libraryId?: string
   waveformPeaks?: number[]
   gain: number
+  // Optional multi-point gain envelope drawn on the clip: points across the
+  // clip (t = 0..1 of its length, g = linear gain multiplier ~0..2). When
+  // present it rides on top of `gain` and the fades; absent = flat.
+  gainPoints?: { t: number; g: number }[]
   loopEnabled: boolean
   reverse: boolean
   fadeIn: number
