@@ -45,6 +45,7 @@ const LOADERS = {
   intervals: () => import('@/components/ArticleIntervals'),
   voicing: () => import('@/components/ArticleVoicing'),
   setup: () => import('@/components/ArticleSetup'),
+  scrolleq: () => import('@/components/ArticleScrollEQ'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -72,6 +73,7 @@ type WidgetSpec =
   | { kind: 'intervals'; props: { caption?: string } }
   | { kind: 'voicing'; props: { caption?: string } }
   | { kind: 'setup'; props: { caption?: string } }
+  | { kind: 'scrolleq'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

@@ -132,6 +132,7 @@ const MIX_TOOLS = {
   '@intervals':  { kind: 'intervals' as const,  emoji: '👂', text: 'Interval ear-trainer — two notes play, name the distance, keep score.' },
   '@voicing':    { kind: 'voicing' as const,    emoji: '🎼', text: 'Chord voicing explorer — hear qualities and inversions on a keyboard.' },
   '@setup':      { kind: 'setup' as const,      emoji: '🎚', text: 'Set the tempo and key for this page — the tools below follow it.' },
+  '@scrolleq':   { kind: 'scrolleq' as const,   emoji: '📜', text: 'A scroll-driven EQ tour — the bands move as you scroll past each one.' },
 }
 
 function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {
