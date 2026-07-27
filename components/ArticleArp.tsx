@@ -6,9 +6,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ACCENT, mixCtx, Frame, Transport, Control, rangeStyle } from './article/mix-kit'
+import { useSharedTempo, useSharedRoot } from './article/article-state'
 
-const BPM = 120
-const TRIAD = [60, 64, 67]   // C E G
+const TRIAD = [60, 64, 67]   // C E G (root position, transposed by the shared key)
 const NAMES: Record<number, string> = { 0: 'C', 1: 'C#', 2: 'D', 3: 'D#', 4: 'E', 5: 'F', 6: 'F#', 7: 'G', 8: 'G#', 9: 'A', 10: 'A#', 11: 'B' }
 const noteName = (m: number) => `${NAMES[m % 12]}${Math.floor(m / 12) - 1}`
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
@@ -16,15 +16,17 @@ const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
 type Pattern = 'up' | 'down' | 'updown' | 'random'
 const RATES = [{ label: '1/8', spb: 2 }, { label: '1/8T', spb: 3 }, { label: '1/16', spb: 4 }, { label: '1/16T', spb: 6 }]
 
-function buildSeq(pattern: Pattern, octaves: number): number[] {
+function buildSeq(pattern: Pattern, octaves: number, root: number): number[] {
   let notes: number[] = []
-  for (let o = 0; o < octaves; o++) notes.push(...TRIAD.map(n => n + o * 12))
+  for (let o = 0; o < octaves; o++) notes.push(...TRIAD.map(n => n + o * 12 + root))
   if (pattern === 'down') notes = notes.slice().reverse()
   else if (pattern === 'updown' && notes.length > 2) notes = [...notes, ...notes.slice(1, -1).reverse()]
   return notes
 }
 
 export default function ArticleArp({ caption }: { caption?: string }) {
+  const BPM = useSharedTempo(120)
+  const rootOff = useSharedRoot(0)
   const [pattern, setPattern] = useState<Pattern>('up')
   const [rateIdx, setRateIdx] = useState(2)   // 1/16
   const [octaves, setOctaves] = useState(2)
@@ -33,7 +35,8 @@ export default function ArticleArp({ caption }: { caption?: string }) {
 
   const outRef = useRef<GainNode | null>(null)
   const timerRef = useRef<number | null>(null)
-  const p = useRef({ pattern, rateIdx, octaves }); p.current = { pattern, rateIdx, octaves }
+  const p = useRef({ pattern, rateIdx, octaves, bpm: BPM, root: rootOff })
+  p.current = { pattern, rateIdx, octaves, bpm: BPM, root: rootOff }
 
   useEffect(() => {
     const c = mixCtx()
@@ -62,15 +65,15 @@ export default function ArticleArp({ caption }: { caption?: string }) {
     timerRef.current = window.setInterval(() => {
       const now = c.currentTime
       while (next < now + 0.14) {
-        const { pattern: pat, rateIdx: ri, octaves: oc } = p.current
-        const seq = buildSeq(pat, oc)
+        const { pattern: pat, rateIdx: ri, octaves: oc, bpm, root } = p.current
+        const seq = buildSeq(pat, oc, root)
         const idx = pat === 'random' ? Math.floor(Math.random() * seq.length) : i % seq.length
         const note = seq[idx]
         pluck(mtof(note), next)
         const t = next, showIdx = idx
         window.setTimeout(() => setActive(showIdx), Math.max(0, (t - c.currentTime + (c.outputLatency || 0)) * 1000))
         i++
-        next += 60 / BPM / RATES[ri].spb
+        next += 60 / bpm / RATES[ri].spb
       }
     }, 25)
   }
@@ -80,7 +83,7 @@ export default function ArticleArp({ caption }: { caption?: string }) {
   }
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
 
-  const seq = buildSeq(pattern, octaves)
+  const seq = buildSeq(pattern, octaves, rootOff)
 
   return (
     <Frame caption={caption}>

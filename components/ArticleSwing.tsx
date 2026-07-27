@@ -7,13 +7,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ACCENT, mixCtx, Frame, Transport, Control, rangeStyle } from './article/mix-kit'
+import { useSharedTempo } from './article/article-state'
 import { dkick, dsnare, dhat } from './article/beat-voices'
 
-const BPM = 96
 const KICK = new Set([0, 4, 8, 12])
 const SNARE = new Set([4, 12])
 
 export default function ArticleSwing({ caption }: { caption?: string }) {
+  const BPM = useSharedTempo(96)
   const [swing, setSwing] = useState(0.5)   // 0.5 = straight
   const [playing, setPlaying] = useState(false)
   const [cur, setCur] = useState(-1)

@@ -6,6 +6,7 @@ import { renderMarkdown } from '@/lib/simple-markdown'
 import { pickRecommendations } from '@/lib/article-recommendations'
 import { articlePersona, extractHeadings, extractFaq } from '@/lib/article-personas'
 import ArticleRecommendations from '@/components/ArticleRecommendations'
+import { ArticleStateProvider } from '@/components/article/article-state'
 import ReadingProgress from '@/components/learn/ReadingProgress'
 import ArticleToc from '@/components/learn/ArticleToc'
 import ArticleShare from '@/components/learn/ArticleShare'
@@ -114,7 +115,7 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
             </div>
           </div>
 
-          {renderMarkdown(a.body)}
+          <ArticleStateProvider>{renderMarkdown(a.body)}</ArticleStateProvider>
         </article>
 
         {/* Share + tags */}

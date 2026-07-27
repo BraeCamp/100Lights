@@ -131,6 +131,7 @@ const MIX_TOOLS = {
   '@arp':        { kind: 'arp' as const,        emoji: '🎹', text: 'Interactive arpeggiator — turn a chord into a running line by pattern and rate.' },
   '@intervals':  { kind: 'intervals' as const,  emoji: '👂', text: 'Interval ear-trainer — two notes play, name the distance, keep score.' },
   '@voicing':    { kind: 'voicing' as const,    emoji: '🎼', text: 'Chord voicing explorer — hear qualities and inversions on a keyboard.' },
+  '@setup':      { kind: 'setup' as const,      emoji: '🎚', text: 'Set the tempo and key for this page — the tools below follow it.' },
 }
 
 function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {

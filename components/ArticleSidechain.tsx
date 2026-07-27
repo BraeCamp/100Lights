@@ -6,12 +6,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ACCENT, clamp, mixCtx, Frame, Transport, BypassButton, Control, rangeStyle } from './article/mix-kit'
+import { useSharedTempo, useSharedRoot } from './article/article-state'
 import { dkick } from './article/beat-voices'
 
-const BPM = 124
-const CHORD = [110.0, 130.81, 164.81, 220.0]   // Am-ish pad
+const CHORD = [110.0, 130.81, 164.81, 220.0]   // Am-ish pad (transposed by the shared key)
 
 export default function ArticleSidechain({ caption }: { caption?: string }) {
+  const BPM = useSharedTempo(124)
+  const rootOff = useSharedRoot(0)
   const [amount, setAmount] = useState(0.8)
   const [release, setRelease] = useState(0.22)
   const [bypassed, setBypassed] = useState(false)
@@ -42,9 +44,10 @@ export default function ArticleSidechain({ caption }: { caption?: string }) {
     if (!padGain || !out) return
     // Start the pad chord.
     oscsRef.current.forEach(o => { try { o.stop() } catch { /* none */ } })
+    const semi = Math.pow(2, rootOff / 12)
     oscsRef.current = CHORD.flatMap(hz => {
       return [0, 7].map(det => {
-        const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = hz; o.detune.value = det
+        const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = hz * semi; o.detune.value = det
         const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2200
         const g = c.createGain(); g.gain.value = 0.09
         o.connect(f); f.connect(g); g.connect(padGain); o.start()

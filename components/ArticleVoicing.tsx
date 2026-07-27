@@ -7,12 +7,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Play } from 'lucide-react'
 import { ACCENT, mixCtx, Frame } from './article/mix-kit'
+import { useSharedRoot } from './article/article-state'
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12)
 const QUALITIES: Record<string, number[]> = {
   Major: [0, 4, 7], Minor: [0, 3, 7], Maj7: [0, 4, 7, 11], Min7: [0, 3, 7, 10], Dom7: [0, 4, 7, 10],
 }
-const ROOT = 60   // C4
 const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 function invert(notes: number[], n: number): number[] {
@@ -26,6 +26,7 @@ const WHITE_SEMI = [0, 2, 4, 5, 7, 9, 11]
 const BLACK_SEMI = [1, 3, 6, 8, 10]
 
 export default function ArticleVoicing({ caption }: { caption?: string }) {
+  const ROOT = 60 + useSharedRoot(0)   // C4, shifted by the shared key
   const [quality, setQuality] = useState('Major')
   const [inv, setInv] = useState(0)
   const chord = QUALITIES[quality]

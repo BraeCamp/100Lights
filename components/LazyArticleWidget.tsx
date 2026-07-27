@@ -44,6 +44,7 @@ const LOADERS = {
   arp: () => import('@/components/ArticleArp'),
   intervals: () => import('@/components/ArticleIntervals'),
   voicing: () => import('@/components/ArticleVoicing'),
+  setup: () => import('@/components/ArticleSetup'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -70,6 +71,7 @@ type WidgetSpec =
   | { kind: 'arp'; props: { caption?: string } }
   | { kind: 'intervals'; props: { caption?: string } }
   | { kind: 'voicing'; props: { caption?: string } }
+  | { kind: 'setup'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 
