@@ -87,7 +87,10 @@ export default function StatusPanel() {
             ) : !emailResult.enabled ? (
               <span style={{ color: '#f59e0b', fontWeight: 700 }}>Email is off — set RESEND_API_KEY in Vercel and redeploy.</span>
             ) : (
-              <span style={{ color: '#ef4444' }}><strong>Failed:</strong> {emailResult.error} {/domain/i.test(emailResult.error ?? '') && '· Is your sending domain verified in Resend?'}</span>
+              <span style={{ color: '#ef4444' }}>
+                <strong>Failed</strong> — the app tried to send from <strong>{emailResult.from}</strong>. {emailResult.error}
+                {/domain/i.test(emailResult.error ?? '') && <><br /><span style={{ color: 'var(--text-secondary)' }}>The domain in that from-address must exactly match a Verified domain in Resend. If it says @100lights.com but you verified send.100lights.com, set EMAIL_FROM in Vercel and redeploy.</span></>}
+              </span>
             )}
           </div>
         )}
