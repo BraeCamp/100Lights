@@ -1,5 +1,6 @@
 import { headers } from 'next/headers'
 import { submitDmcaNotice } from '@/lib/dmca'
+import { sendDmcaAckEmail } from '@/lib/email'
 import { checkAttemptLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
@@ -26,5 +27,7 @@ export async function POST(req: Request) {
     accuracy: Boolean(b.accuracy),
   })
   if (!result.ok) return Response.json({ error: result.error }, { status: 400 })
+  // Acknowledge receipt to the complainant (best-effort, from dmca@).
+  await sendDmcaAckEmail(String(b.email ?? ''), String(b.complainantName ?? ''))
   return Response.json({ ok: true })
 }

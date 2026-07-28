@@ -14,16 +14,47 @@ const FROM = process.env.EMAIL_FROM ?? '100Lights <notifications@100lights.com>'
 // replies to a real, monitored Workspace inbox.
 const REPLY_TO = process.env.EMAIL_REPLY_TO ?? 'notifications@100lights.com'
 
-export async function sendEmail(opts: { to: string; subject: string; html: string; text?: string; replyTo?: string }): Promise<boolean> {
+// ── Sender identities ────────────────────────────────────────────────────────
+// Different kinds of mail send from different aliases. Every alias lives on the
+// same verified send-domain (parsed from EMAIL_FROM), and replies route to the
+// matching real Workspace inbox on the reply-domain (parsed from EMAIL_REPLY_TO)
+// — so the whole registry follows you automatically if you change domains.
+function domainOf(addr: string, fallback: string): string {
+  const m = addr.match(/@([^\s>]+)/)
+  return m ? m[1] : fallback
+}
+const SEND_DOMAIN = domainOf(FROM, '100lights.com')       // e.g. send.100lights.com
+const REPLY_DOMAIN = domainOf(REPLY_TO, '100lights.com')  // e.g. 100lights.com
+
+export type SenderRole = 'default' | 'partnerships' | 'dmca' | 'support'
+
+const SENDER_TABLE: Record<SenderRole, { name: string; local: string }> = {
+  default:      { name: '100Lights',              local: 'notifications' },
+  partnerships: { name: '100Lights Partnerships', local: 'partnerships' },
+  dmca:         { name: '100Lights',              local: 'dmca' },
+  support:      { name: '100Lights Support',      local: 'support' },
+}
+
+function sender(role: SenderRole): { from: string; replyTo: string } {
+  const s = SENDER_TABLE[role] ?? SENDER_TABLE.default
+  return { from: `${s.name} <${s.local}@${SEND_DOMAIN}>`, replyTo: `${s.local}@${REPLY_DOMAIN}` }
+}
+
+export async function sendEmail(opts: {
+  to: string; subject: string; html: string; text?: string
+  role?: SenderRole; from?: string; replyTo?: string
+}): Promise<boolean> {
   const key = process.env.RESEND_API_KEY
   if (!key || !opts.to) return false
+  const s = opts.role ? sender(opts.role) : null
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: FROM, to: opts.to, subject: opts.subject, html: opts.html, text: opts.text,
-        reply_to: opts.replyTo ?? REPLY_TO,
+        from: opts.from ?? s?.from ?? FROM,
+        to: opts.to, subject: opts.subject, html: opts.html, text: opts.text,
+        reply_to: opts.replyTo ?? s?.replyTo ?? REPLY_TO,
       }),
     })
     return res.ok
@@ -79,6 +110,7 @@ export async function sendAffiliateApprovalEmail(input: {
   try {
     return await sendEmail({
       to: input.to,
+      role: 'partnerships',
       subject: 'You’re in — welcome to the 100Lights Founding Affiliates 🎛️',
       text:
 `Welcome to the 100Lights Founding Affiliates, ${name}!
@@ -159,6 +191,21 @@ export async function sendCommentEmail(ownerUserId: string, actorName: string, i
         <p><a href="${url}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#8b5cf6;color:#fff;text-decoration:none;font-weight:600">Read the comment →</a></p>
         <p style="font-size:12px;color:#888">100Lights Community</p>
       </div>`,
+    })
+  } catch { /* best-effort */ }
+}
+
+/** Acknowledge receipt of a DMCA takedown notice to the complainant (dmca@). */
+export async function sendDmcaAckEmail(to: string, name: string): Promise<void> {
+  if (!emailEnabled() || !looksLikeEmail(to)) return
+  const safe = (name || 'there').replace(/[<>&]/g, '')
+  try {
+    await sendEmail({
+      to,
+      role: 'dmca',
+      subject: 'We received your copyright notice — 100Lights',
+      text: `Hi ${safe},\n\nWe've received your copyright takedown notice and will review it promptly. Valid notices are acted on quickly; if we need any more information, we'll reply to this email.\n\n— 100Lights, Copyright`,
+      html: `<div style="font-family:system-ui,sans-serif;max-width:480px"><p style="font-size:15px;color:#1b1922">Hi ${safe},</p><p style="font-size:14px;line-height:1.6;color:#3a3550">We've received your copyright takedown notice and will review it promptly. Valid notices are acted on quickly; if we need any more information, we'll reply to this email.</p><p style="font-size:12px;color:#888">100Lights — Copyright</p></div>`,
     })
   } catch { /* best-effort */ }
 }
