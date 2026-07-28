@@ -10,19 +10,49 @@ export function emailEnabled(): boolean {
 }
 
 const FROM = process.env.EMAIL_FROM ?? '100Lights <notifications@100lights.com>'
+// Where replies land. The from-address may be a send-only subdomain, so route
+// replies to a real, monitored Workspace inbox.
+const REPLY_TO = process.env.EMAIL_REPLY_TO ?? 'notifications@100lights.com'
 
-export async function sendEmail(opts: { to: string; subject: string; html: string; text?: string }): Promise<boolean> {
+export async function sendEmail(opts: { to: string; subject: string; html: string; text?: string; replyTo?: string }): Promise<boolean> {
   const key = process.env.RESEND_API_KEY
   if (!key || !opts.to) return false
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: FROM, to: opts.to, subject: opts.subject, html: opts.html, text: opts.text }),
+      body: JSON.stringify({
+        from: FROM, to: opts.to, subject: opts.subject, html: opts.html, text: opts.text,
+        reply_to: opts.replyTo ?? REPLY_TO,
+      }),
     })
     return res.ok
   } catch {
     return false
+  }
+}
+
+/** Send a test email and return a detailed result (for the admin verifier). */
+export async function sendTestEmail(to: string): Promise<{ ok: boolean; enabled: boolean; from: string; error?: string }> {
+  const key = process.env.RESEND_API_KEY
+  if (!key) return { ok: false, enabled: false, from: FROM, error: 'RESEND_API_KEY not set.' }
+  if (!to) return { ok: false, enabled: true, from: FROM, error: 'No recipient email on your account.' }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: FROM, to, reply_to: REPLY_TO,
+        subject: '100Lights email test ✓',
+        text: `This is a test from 100Lights, sent from ${FROM}. If you got this, transactional email is working.`,
+        html: `<div style="font-family:system-ui,sans-serif"><p>✓ Transactional email is working.</p><p style="color:#888;font-size:13px">Sent from <strong>${FROM}</strong> · replies go to ${REPLY_TO}</p></div>`,
+      }),
+    })
+    if (res.ok) return { ok: true, enabled: true, from: FROM }
+    const body = await res.text().catch(() => '')
+    return { ok: false, enabled: true, from: FROM, error: `Resend ${res.status}: ${body.slice(0, 300)}` }
+  } catch (e) {
+    return { ok: false, enabled: true, from: FROM, error: e instanceof Error ? e.message : 'Request failed' }
   }
 }
 

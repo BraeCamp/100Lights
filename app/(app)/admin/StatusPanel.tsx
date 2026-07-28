@@ -22,6 +22,18 @@ export default function StatusPanel() {
   }
   useEffect(() => { void load() }, [])
 
+  // Email deliverability check
+  const [emailBusy, setEmailBusy] = useState(false)
+  const [emailResult, setEmailResult] = useState<{ ok: boolean; enabled: boolean; to: string; from: string; error?: string } | null>(null)
+  async function sendTest() {
+    setEmailBusy(true); setEmailResult(null)
+    try {
+      const r = await fetch('/api/admin/email-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      setEmailResult(await r.json())
+    } catch { setEmailResult({ ok: false, enabled: false, to: '', from: '', error: 'Request failed' }) }
+    finally { setEmailBusy(false) }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -55,6 +67,31 @@ export default function StatusPanel() {
         </div>
       )}
       <p style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Probes run live from the server when this tab opens or you hit Recheck. Latency is round-trip from the app.</p>
+
+      {/* Email deliverability */}
+      <div className="rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)', marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Transactional email</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Sends a test to your admin email to confirm Resend + your sending domain.</div>
+          </div>
+          <button onClick={() => void sendTest()} disabled={emailBusy} style={{
+            marginLeft: 'auto', fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
+            background: 'rgba(139,92,246,0.2)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.35)', opacity: emailBusy ? 0.6 : 1,
+          }}>{emailBusy ? 'Sending…' : 'Send test email'}</button>
+        </div>
+        {emailResult && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 12 }}>
+            {emailResult.ok ? (
+              <span style={{ color: '#34d399', fontWeight: 700 }}>✓ Sent to {emailResult.to} from {emailResult.from} — check your inbox (and spam).</span>
+            ) : !emailResult.enabled ? (
+              <span style={{ color: '#f59e0b', fontWeight: 700 }}>Email is off — set RESEND_API_KEY in Vercel and redeploy.</span>
+            ) : (
+              <span style={{ color: '#ef4444' }}><strong>Failed:</strong> {emailResult.error} {/domain/i.test(emailResult.error ?? '') && '· Is your sending domain verified in Resend?'}</span>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
