@@ -1,6 +1,8 @@
+import { randomBytes } from 'crypto'
 import { sql } from '@/lib/db'
 import { ensureCodeTables, normalizeCode } from '@/lib/codes'
 import { getProPrice } from '@/lib/stripe'
+import { encryptField, fieldEncryptionAvailable } from '@/lib/crypto-field'
 
 // ── Affiliate (creator referral) program ─────────────────────────────────────
 // An affiliate is a creator who shares a referral link (100lights.com/?ref=CODE)
@@ -24,6 +26,8 @@ export interface Affiliate {
   perkDays: number
   active: boolean
   createdAt: string
+  /** Whether the affiliate has submitted their W-9 / payee details. */
+  w9Received: boolean
 }
 
 export interface AffiliateStats extends Affiliate {
@@ -39,6 +43,8 @@ export interface AffiliateStats extends Affiliate {
   paid: number
   /** Outstanding balance = accrued − paid (USD). */
   owed: number
+  /** Total paid to this affiliate in the current calendar year (USD). */
+  ytdPaid: number
 }
 
 export interface CommissionEntry {
@@ -131,7 +137,27 @@ export async function ensureAffiliateTables(): Promise<void> {
     )
   `
   await sql`CREATE INDEX IF NOT EXISTS affiliate_payouts_code_idx ON affiliate_payouts (code)`
+  // Tax / W-9 fields on the affiliate (additive — never stores a raw TIN unless
+  // AFFILIATE_TAX_KEY is set, in which case tin_enc holds it encrypted).
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_token TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS legal_name TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS business_name TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_address TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_city TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_state TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_zip TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_class TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tin_last4 TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tin_enc TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS w9_received_at TIMESTAMPTZ`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_updated_at TIMESTAMPTZ`
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS affiliates_tax_token_idx ON affiliates (tax_token) WHERE tax_token IS NOT NULL`
   ready = true
+}
+
+/** Unguessable token for an affiliate's self-service W-9 link; created on demand. */
+function newTaxToken(): string {
+  return randomBytes(18).toString('base64url')
 }
 
 function mapAffiliate(r: Record<string, unknown>): Affiliate {
@@ -144,6 +170,7 @@ function mapAffiliate(r: Record<string, unknown>): Affiliate {
     perkDays: Number(r.perk_days),
     active: Boolean(r.active),
     createdAt: (r.created_at as Date | string).toString(),
+    w9Received: r.w9_received_at != null,
   }
 }
 
@@ -185,8 +212,8 @@ export async function createAffiliate(input: {
     VALUES (${code}, 'promo', ${perkDays}, TRUE, NULL, ${'Affiliate: ' + name})
   `
   await sql`
-    INSERT INTO affiliates (code, name, contact, commission_pct, commission_months, perk_days)
-    VALUES (${code}, ${name}, ${input.contact ?? null}, ${commissionPct}, ${commissionMonths}, ${perkDays})
+    INSERT INTO affiliates (code, name, contact, commission_pct, commission_months, perk_days, tax_token)
+    VALUES (${code}, ${name}, ${input.contact ?? null}, ${commissionPct}, ${commissionMonths}, ${perkDays}, ${newTaxToken()})
   `
   const rows = await sql`SELECT * FROM affiliates WHERE code = ${code}`
   return { ok: true, affiliate: mapAffiliate(rows[0]) }
@@ -232,12 +259,14 @@ export async function listAffiliates(): Promise<AffiliateStats[]> {
   } catch { /* leave estimate at 0 */ }
 
   // Real balances from the accrual ledger + payout log (cents → dollars).
-  const [accRows, payRows] = await Promise.all([
+  const [accRows, payRows, ytdRows] = await Promise.all([
     sql`SELECT code, COALESCE(SUM(commission_cents), 0)::bigint AS cents FROM affiliate_commissions WHERE code = ANY(${codes}) GROUP BY code`,
     sql`SELECT code, COALESCE(SUM(amount_cents), 0)::bigint AS cents FROM affiliate_payouts WHERE code = ANY(${codes}) GROUP BY code`,
+    sql`SELECT code, COALESCE(SUM(amount_cents), 0)::bigint AS cents FROM affiliate_payouts WHERE code = ANY(${codes}) AND paid_at >= date_trunc('year', NOW()) GROUP BY code`,
   ])
   const accByCode = new Map(accRows.map(r => [r.code as string, Number(r.cents) / 100]))
   const paidByCode = new Map(payRows.map(r => [r.code as string, Number(r.cents) / 100]))
+  const ytdByCode = new Map(ytdRows.map(r => [r.code as string, Number(r.cents) / 100]))
 
   return affs.map(a => {
     const s = byCode.get(a.code) ?? { referrals: 0, converted: 0 }
@@ -245,7 +274,8 @@ export async function listAffiliates(): Promise<AffiliateStats[]> {
     const accrued = accByCode.get(a.code) ?? 0
     const paid = paidByCode.get(a.code) ?? 0
     const owed = Math.round((accrued - paid) * 100) / 100
-    return { ...a, referrals: s.referrals, converted: s.converted, estMonthly, accrued, paid, owed }
+    const ytdPaid = ytdByCode.get(a.code) ?? 0
+    return { ...a, referrals: s.referrals, converted: s.converted, estMonthly, accrued, paid, owed, ytdPaid }
   })
 }
 
@@ -366,6 +396,7 @@ export async function approveApplication(id: string, code?: string): Promise<Cre
     commissionPct: result.affiliate.commissionPct,
     commissionMonths: result.affiliate.commissionMonths,
     perkDays: result.affiliate.perkDays,
+    taxToken: await getOrCreateTaxToken(result.affiliate.code),
   })
   return { ...result, emailed }
 }
@@ -492,4 +523,194 @@ export async function listPayouts(code: string): Promise<PayoutEntry[]> {
     note: (r.note as string) ?? null,
     paidAt: (r.paid_at as Date | string).toString(),
   }))
+}
+
+/** One-click: log a payout for the exact outstanding balance. */
+export async function markFullyPaid(code: string, method?: string | null): Promise<{ ok: true; amount: number } | { ok: false; error: string }> {
+  await ensureAffiliateTables()
+  const c = normalizeCode(code)
+  const [acc, paid] = await Promise.all([
+    sql`SELECT COALESCE(SUM(commission_cents), 0)::bigint AS cents FROM affiliate_commissions WHERE code = ${c}`,
+    sql`SELECT COALESCE(SUM(amount_cents), 0)::bigint AS cents FROM affiliate_payouts WHERE code = ${c}`,
+  ])
+  const owed = Math.round((Number(acc[0].cents) - Number(paid[0].cents))) / 100
+  if (owed <= 0) return { ok: false, error: 'Nothing outstanding.' }
+  const r = await recordPayout({ code: c, amount: owed, method: method || 'marked fully paid', note: null })
+  if (!r.ok) return r
+  return { ok: true, amount: owed }
+}
+
+// ── W-9 / tax details (self-service) ─────────────────────────────────────────
+
+export const TAX_CLASSES = [
+  'Individual / sole proprietor',
+  'Single-member LLC',
+  'LLC — taxed as C corp',
+  'LLC — taxed as S corp',
+  'Partnership',
+  'C corporation',
+  'S corporation',
+  'Other',
+]
+
+export interface AffiliateTax {
+  legalName: string | null
+  businessName: string | null
+  address: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
+  taxClass: string | null
+  tinLast4: string | null
+  w9Received: boolean
+  hasEncryptedTin: boolean
+}
+
+function mapTax(r: Record<string, unknown>): AffiliateTax {
+  return {
+    legalName: (r.legal_name as string) ?? null,
+    businessName: (r.business_name as string) ?? null,
+    address: (r.tax_address as string) ?? null,
+    city: (r.tax_city as string) ?? null,
+    state: (r.tax_state as string) ?? null,
+    zip: (r.tax_zip as string) ?? null,
+    taxClass: (r.tax_class as string) ?? null,
+    tinLast4: (r.tin_last4 as string) ?? null,
+    w9Received: r.w9_received_at != null,
+    hasEncryptedTin: r.tin_enc != null,
+  }
+}
+
+/** The self-service W-9 link token for an affiliate (created on demand). */
+export async function getOrCreateTaxToken(code: string): Promise<string | null> {
+  await ensureAffiliateTables()
+  const c = normalizeCode(code)
+  const rows = await sql`SELECT tax_token FROM affiliates WHERE code = ${c}`
+  if (rows.length === 0) return null
+  let token = rows[0].tax_token as string | null
+  if (!token) { token = newTaxToken(); await sql`UPDATE affiliates SET tax_token = ${token} WHERE code = ${c}` }
+  return token
+}
+
+/** Public: resolve a tax-form token to the affiliate + whether we retain TINs. */
+export async function affiliateTaxContext(token: string): Promise<{ code: string; name: string; storeTin: boolean; existing: AffiliateTax } | null> {
+  if (!token) return null
+  await ensureAffiliateTables()
+  const rows = await sql`SELECT * FROM affiliates WHERE tax_token = ${token}`
+  if (rows.length === 0) return null
+  return { code: rows[0].code as string, name: rows[0].name as string, storeTin: fieldEncryptionAvailable(), existing: mapTax(rows[0]) }
+}
+
+/** Public: an affiliate submits their W-9 / payee details via their token. */
+export async function saveAffiliateTaxByToken(token: string, input: {
+  legalName?: string; businessName?: string; address?: string; city?: string
+  state?: string; zip?: string; taxClass?: string; tin?: string
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  await ensureAffiliateTables()
+  const rows = await sql`SELECT code FROM affiliates WHERE tax_token = ${token}`
+  if (rows.length === 0) return { ok: false, error: 'This link is invalid or expired.' }
+  const legalName = (input.legalName || '').trim()
+  const address = (input.address || '').trim()
+  if (!legalName) return { ok: false, error: 'Your legal name is required.' }
+  if (!address) return { ok: false, error: 'A mailing address is required.' }
+
+  // TIN is only retained when field encryption is configured; otherwise we keep
+  // just the non-sensitive details and the e-file service collects the TIN.
+  let encTin: string | null = null
+  let last4: string | null = null
+  const digits = (input.tin || '').replace(/\D/g, '')
+  if (digits && fieldEncryptionAvailable()) {
+    encTin = encryptField(digits)
+    last4 = digits.slice(-4)
+  }
+
+  await sql`
+    UPDATE affiliates SET
+      legal_name = ${legalName},
+      business_name = ${(input.businessName || '').trim() || null},
+      tax_address = ${address},
+      tax_city = ${(input.city || '').trim() || null},
+      tax_state = ${(input.state || '').trim() || null},
+      tax_zip = ${(input.zip || '').trim() || null},
+      tax_class = ${(input.taxClass || '').trim() || null},
+      tin_enc = COALESCE(${encTin}, tin_enc),
+      tin_last4 = COALESCE(${last4}, tin_last4),
+      w9_received_at = COALESCE(w9_received_at, NOW()),
+      tax_updated_at = NOW()
+    WHERE tax_token = ${token}
+  `
+  return { ok: true }
+}
+
+export async function getAffiliateTax(code: string): Promise<AffiliateTax | null> {
+  await ensureAffiliateTables()
+  const rows = await sql`SELECT * FROM affiliates WHERE code = ${normalizeCode(code)}`
+  return rows.length ? mapTax(rows[0]) : null
+}
+
+// ── 1099 / tax report ────────────────────────────────────────────────────────
+
+export interface TaxReportRow {
+  code: string
+  name: string
+  contact: string | null
+  legalName: string | null
+  businessName: string | null
+  address: string
+  taxClass: string | null
+  ytdPaid: number
+  w9Received: boolean
+  /** Paid ≥ $600 this year via a method a processor won't report → you must 1099. */
+  needs1099: boolean
+  /** California: same trigger as needs1099 (EDD DE 542, due within 20 days of $600). */
+  de542Due: boolean
+  methods: string
+}
+
+// A method that a third-party settlement org reports on a 1099-K, so you don't.
+function processorCovered(method: string | null | undefined): boolean {
+  return /paypal|venmo|stripe|card|credit|cash app/i.test(method || '')
+}
+
+/** Per-affiliate 1099 picture for a calendar year (default: current year). */
+export async function taxReport(year?: number): Promise<TaxReportRow[]> {
+  await ensureAffiliateTables()
+  const y = year ?? new Date().getUTCFullYear()
+  const affs = await sql`SELECT * FROM affiliates ORDER BY name`
+  if (affs.length === 0) return []
+  const pays = await sql`
+    SELECT code, amount_cents, method FROM affiliate_payouts
+    WHERE EXTRACT(YEAR FROM paid_at) = ${y}
+  `
+  const byCode = new Map<string, { cents: number; methods: Set<string>; selfFile: boolean }>()
+  for (const p of pays) {
+    const code = p.code as string
+    const e = byCode.get(code) ?? { cents: 0, methods: new Set<string>(), selfFile: false }
+    e.cents += Number(p.amount_cents)
+    if (p.method) e.methods.add(p.method as string)
+    // Any non-processor (or unlabeled) payment means the 1099 falls on you.
+    if (!processorCovered(p.method as string)) e.selfFile = true
+    byCode.set(code, e)
+  }
+
+  return affs.map(a => {
+    const t = mapTax(a)
+    const e = byCode.get(a.code as string) ?? { cents: 0, methods: new Set<string>(), selfFile: false }
+    const ytdPaid = e.cents / 100
+    const needs1099 = ytdPaid >= 600 && e.selfFile
+    return {
+      code: a.code as string,
+      name: a.name as string,
+      contact: (a.contact as string) ?? null,
+      legalName: t.legalName,
+      businessName: t.businessName,
+      address: [t.address, t.city, t.state, t.zip].filter(Boolean).join(', '),
+      taxClass: t.taxClass,
+      ytdPaid,
+      w9Received: t.w9Received,
+      needs1099,
+      de542Due: needs1099,
+      methods: [...e.methods].join(', '),
+    }
+  }).filter(r => r.ytdPaid > 0)
 }

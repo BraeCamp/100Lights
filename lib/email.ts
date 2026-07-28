@@ -38,9 +38,11 @@ export function looksLikeEmail(s: string | null | undefined): boolean {
 export async function sendAffiliateApprovalEmail(input: {
   to: string; name: string; code: string
   commissionPct: number; commissionMonths: number | null; perkDays: number
+  taxToken?: string | null
 }): Promise<boolean> {
   if (!emailEnabled() || !looksLikeEmail(input.to)) return false
   const link = `https://100lights.com/?ref=${input.code}`
+  const taxLink = input.taxToken ? `https://100lights.com/creators/tax/${input.taxToken}` : null
   const name = input.name.replace(/[<>&]/g, '')
   const months = input.commissionMonths ? `for ${input.commissionMonths} months` : 'for life'
   const deal = `${input.commissionPct}% recurring ${months}`
@@ -64,7 +66,7 @@ Best ways to share it:
 - Run a "make a beat in 60 seconds" challenge with your link in the caption
 
 Every signup and upgrade through your link is tracked; we reconcile and pay out monthly.
-
+${taxLink ? `\nBefore your first payout, add your payout & tax details (2 minutes): ${taxLink}\n` : ''}
 Make something great,
 The 100Lights team`,
       html:
@@ -94,6 +96,11 @@ The 100Lights team`,
   </ul>
 
   <p style="font-size:13px;line-height:1.6;color:#7a7590;margin:0 0 4px">Every signup and upgrade through your link is tracked — we reconcile and pay out monthly, so you never have to chase a number.</p>
+  ${taxLink ? `<div style="margin:18px 0 0;padding:14px 16px;border:1px solid #e7e2f1;border-radius:10px;background:#f5f3fb">
+    <p style="font-size:13px;font-weight:700;margin:0 0 4px;color:#1b1922">One quick thing before your first payout</p>
+    <p style="font-size:13px;line-height:1.5;color:#3a3550;margin:0 0 10px">Add your payout &amp; tax details (the W-9 basics) so we can pay you and handle your 1099 without chasing you.</p>
+    <a href="${taxLink}" style="display:inline-block;padding:9px 16px;border-radius:8px;background:#7c3aed;color:#fff;text-decoration:none;font-weight:700;font-size:13px">Add my details →</a>
+  </div>` : ''}
   <p style="font-size:12px;color:#a5a1b5;margin:18px 0 0">100Lights — the music studio in your browser</p>
 </div>`,
     })

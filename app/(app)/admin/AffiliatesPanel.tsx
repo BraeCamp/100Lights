@@ -17,6 +17,8 @@ interface Affiliate {
   accrued: number
   paid: number
   owed: number
+  ytdPaid: number
+  w9Received: boolean
 }
 
 interface Referral {
@@ -27,7 +29,8 @@ interface Referral {
 
 interface CommissionEntry { userId: string; invoice: number; commission: number; invoiceAt: string }
 interface PayoutEntry { id: string; amount: number; method: string | null; note: string | null; paidAt: string }
-interface Detail { referrals: Referral[]; ledger: CommissionEntry[]; payouts: PayoutEntry[] }
+interface TaxInfo { legalName: string | null; businessName: string | null; address: string | null; city: string | null; state: string | null; zip: string | null; taxClass: string | null; tinLast4: string | null; w9Received: boolean; hasEncryptedTin: boolean }
+interface Detail { referrals: Referral[]; ledger: CommissionEntry[]; payouts: PayoutEntry[]; taxToken: string | null; tax: TaxInfo | null }
 
 interface Application {
   id: string
@@ -192,8 +195,28 @@ export default function AffiliatesPanel() {
     finally { setPayingOut(false) }
   }
 
+  async function markPaid(a: Affiliate) {
+    if (a.owed <= 0) { showToast('Nothing outstanding'); return }
+    if (!confirm(`Log a payout of $${a.owed.toFixed(2)} to ${a.code} (the full outstanding balance)?`)) return
+    setPayingOut(true)
+    try {
+      const res = await fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'markPaid', method: payMethod.trim() || null }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Failed')
+      showToast(`Marked $${Number(data.amount).toFixed(2)} paid to ${a.code}`)
+      const [, dRes] = await Promise.all([load(), fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`)])
+      if (dRes.ok) setDetail(await dRes.json() as Detail)
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Failed') }
+    finally { setPayingOut(false) }
+  }
+
   const totalMonthly = rows.reduce((s, a) => s + a.estMonthly, 0)
   const totalOwed = rows.reduce((s, a) => s + a.owed, 0)
+  const needW9 = rows.filter(a => a.owed > 0 && !a.w9Received).length
+  const flagged1099 = rows.filter(a => a.ytdPaid >= 600).length
 
   const inputStyle: React.CSSProperties = {
     padding: '6px 9px', borderRadius: 7, fontSize: 12,
@@ -290,12 +313,20 @@ export default function AffiliatesPanel() {
 
       {/* ── Summary ─────────────────────────────────────────────────────── */}
       {!loading && !err && rows.length > 0 && (
-        <div style={{ display: 'flex', gap: 20, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 20, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
           <Stat label="Affiliates" value={rows.filter(a => a.active).length} />
           <Stat label="Paying referrals" value={rows.reduce((s, a) => s + a.converted, 0)} />
-          <Stat label="Accrued all-time" value={`$${rows.reduce((s, a) => s + a.accrued, 0).toFixed(2)}`} />
           <Stat label="Owed now" value={`$${totalOwed.toFixed(2)}`} accent />
-          <Stat label="Est. / mo" value={`$${totalMonthly.toFixed(2)}`} />
+          <Stat label="Paid this year" value={`$${rows.reduce((s, a) => s + a.ytdPaid, 0).toFixed(2)}`} />
+          <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+            <a href={`/api/admin/affiliate-tax?year=${new Date().getFullYear()}&format=csv`} style={{
+              fontSize: 12, fontWeight: 700, textDecoration: 'none', padding: '7px 13px', borderRadius: 8,
+              border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-card)',
+            }}>↓ 1099 CSV ({new Date().getFullYear()})</a>
+            <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textAlign: 'right' }}>
+              {flagged1099} at ≥$600{needW9 > 0 && <span style={{ color: '#f59e0b' }}> · {needW9} owed but no W-9</span>}
+            </div>
+          </div>
         </div>
       )}
 
@@ -321,7 +352,12 @@ export default function AffiliatesPanel() {
                 <React.Fragment key={a.code}>
                   <tr style={{ borderBottom: openCode === a.code ? 'none' : '1px solid var(--border)', background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-surface)' }}>
                     <td className="px-3 py-2.5">
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12 }}>{a.name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12 }}>{a.name}</span>
+                        {a.w9Received
+                          ? <span title="W-9 / payee details on file" style={{ fontSize: 8.5, fontWeight: 700, color: '#34d399' }}>✓ W-9</span>
+                          : a.owed > 0 && <span title="Owed but no W-9 on file" style={{ fontSize: 8.5, fontWeight: 700, color: '#f59e0b' }}>⚠ no W-9</span>}
+                      </div>
                       {a.contact && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{a.contact}</div>}
                     </td>
                     <td className="px-3 py-2.5">
@@ -362,14 +398,23 @@ export default function AffiliatesPanel() {
                                 <div><div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>${a.paid.toFixed(2)}</div><div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>PAID</div></div>
                                 <div><div style={{ fontSize: 15, fontWeight: 700, color: a.owed > 0 ? '#f59e0b' : 'var(--success)' }}>${a.owed.toFixed(2)}</div><div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>OWED</div></div>
                               </div>
+                              {a.owed > 0 && !detail.tax?.w9Received && (
+                                <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '0 0 8px' }}>⚠ No W-9 on file — collect it before paying (link below).</p>
+                              )}
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                                <input value={payAmount} onChange={e => setPayAmount(e.target.value)} type="number" min={0} step="0.01" placeholder="$ amount" style={{ ...inputStyle, width: 90 }} />
-                                <input value={payMethod} onChange={e => setPayMethod(e.target.value)} placeholder="method" style={{ ...inputStyle, width: 90 }} />
+                                <input value={payMethod} onChange={e => setPayMethod(e.target.value)} placeholder="method (PayPal, check…)" style={{ ...inputStyle, width: 140 }} />
+                                <button onClick={() => markPaid(a)} disabled={payingOut || a.owed <= 0} style={{
+                                  padding: '6px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 700, cursor: a.owed > 0 ? 'pointer' : 'default',
+                                  background: 'rgba(52,211,153,0.18)', color: '#34d399', border: '1px solid rgba(52,211,153,0.4)', opacity: (payingOut || a.owed <= 0) ? 0.5 : 1,
+                                }}>Mark fully paid (${a.owed.toFixed(2)})</button>
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                                <input value={payAmount} onChange={e => setPayAmount(e.target.value)} type="number" min={0} step="0.01" placeholder="$ partial" style={{ ...inputStyle, width: 80 }} />
                                 <input value={payNote} onChange={e => setPayNote(e.target.value)} placeholder="note" style={{ ...inputStyle, width: 110 }} />
                                 <button onClick={() => recordPayment(a)} disabled={payingOut} style={{
-                                  padding: '6px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
-                                  background: 'rgba(52,211,153,0.18)', color: '#34d399', border: '1px solid rgba(52,211,153,0.4)', opacity: payingOut ? 0.6 : 1,
-                                }}>Record payment</button>
+                                  padding: '6px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                                  background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', opacity: payingOut ? 0.6 : 1,
+                                }}>Record partial</button>
                               </div>
                             </div>
 
@@ -423,6 +468,32 @@ export default function AffiliatesPanel() {
                                     </div>
                                   ))}
                                 </div>
+                              )}
+                            </div>
+
+                            {/* Tax / W-9 */}
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-muted)', marginBottom: 8 }}>Tax / W-9</div>
+                              <div style={{ fontSize: 11.5, marginBottom: 8 }}>
+                                {detail.tax?.w9Received
+                                  ? <span style={{ color: '#34d399', fontWeight: 700 }}>✓ On file{detail.tax.tinLast4 ? ` · TIN ••${detail.tax.tinLast4}` : ''}</span>
+                                  : <span style={{ color: '#f59e0b', fontWeight: 700 }}>Not received yet</span>}
+                              </div>
+                              {detail.tax?.w9Received && (
+                                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8, lineHeight: 1.5 }}>
+                                  {detail.tax.legalName}{detail.tax.businessName ? ` (${detail.tax.businessName})` : ''}<br />
+                                  {[detail.tax.address, detail.tax.city, detail.tax.state, detail.tax.zip].filter(Boolean).join(', ')}<br />
+                                  {detail.tax.taxClass}
+                                </div>
+                              )}
+                              {a.ytdPaid >= 600 && (
+                                <div style={{ fontSize: 10.5, color: '#f59e0b', marginBottom: 8 }}>≥ $600 paid this year — 1099-NEC / CA DE 542 likely due.</div>
+                              )}
+                              {detail.taxToken && (
+                                <button onClick={() => copy(`${origin}/creators/tax/${detail.taxToken}`, 'tax-form link')} style={{
+                                  fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '5px 10px', borderRadius: 7,
+                                  border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--accent-light)',
+                                }}>Copy W-9 form link</button>
                               )}
                             </div>
 
