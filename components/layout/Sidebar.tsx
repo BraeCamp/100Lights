@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import type { ModuleKey } from '@/lib/editor-types'
+import { LogoMark } from '@/components/Logo'
 
 interface Usage {
   plan: 'free' | 'pro'
@@ -102,9 +103,7 @@ export default function Sidebar() {
             textDecoration: 'none',
           }}
         >
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
-            <Zap size={14} color="#fff" fill="#fff" />
-          </div>
+          <LogoMark size={28} />
           <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text-primary)' }}>
             100Lights
           </span>

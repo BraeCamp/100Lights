@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { UserButton } from '@clerk/nextjs'
 import type { Metadata } from 'next'
 import NotificationBell from '@/components/NotificationBell'
+import { LogoMark } from '@/components/Logo'
 
 export const metadata: Metadata = {
   title: 'Community — Free Sounds, Samples & Chord Recipes',
@@ -29,6 +30,7 @@ export default function CommunityLayout({ children }: { children: React.ReactNod
         borderBottom: '1px solid var(--border, #26262b)',
       }}>
         <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+          <LogoMark size={24} />
           <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary, #f1f0ff)', letterSpacing: '-0.01em' }}>100Lights</span>
           <span style={{ fontSize: 10, fontWeight: 700, color: '#a78bfa', background: 'rgba(124,58,237,0.16)', border: '1px solid rgba(167,139,250,0.35)', borderRadius: 999, padding: '2px 9px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Community</span>
         </Link>

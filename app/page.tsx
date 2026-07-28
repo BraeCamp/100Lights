@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import DemoVideo from '@/components/DemoVideo'
+import { LogoMark } from '@/components/Logo'
 import HeaderAuthCta from '@/components/HeaderAuthCta'
 import HeroCta from '@/components/HeroCta'
 import { getArticles } from '@/lib/learn-articles'
@@ -228,12 +229,7 @@ export default async function LandingPage() {
           >
             {/* Logo */}
             <Link href="/" className="flex items-center gap-2.5" aria-label="100Lights home">
-              <div
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: 'var(--accent)' }}
-              >
-                <Zap size={16} color="#fff" fill="#fff" aria-hidden="true" />
-              </div>
+              <LogoMark size={32} />
               <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>100Lights</span>
             </Link>
 
@@ -537,12 +533,7 @@ export default async function LandingPage() {
           <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-0 sm:justify-between">
               <div className="flex items-center gap-2">
-                <div
-                  className="w-6 h-6 rounded flex items-center justify-center"
-                  style={{ background: 'var(--accent)' }}
-                >
-                  <Zap size={12} color="#fff" fill="#fff" aria-hidden="true" />
-                </div>
+                <LogoMark size={22} />
                 <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>100Lights</span>
               </div>
               <nav aria-label="Footer navigation">

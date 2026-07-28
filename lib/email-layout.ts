@@ -7,7 +7,7 @@
 // Defaults to the existing app icon; override with EMAIL_LOGO_URL (e.g. a
 // wordmark you drop in public/).
 
-const LOGO_URL = process.env.EMAIL_LOGO_URL ?? 'https://100lights.com/icon-512.png'
+const LOGO_URL = process.env.EMAIL_LOGO_URL ?? 'https://100lights.com/logo1yellowNObuffer.png'
 const SITE = 'https://100lights.com'
 
 export interface EmailContent {
