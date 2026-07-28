@@ -1,14 +1,19 @@
-import type Stripe from 'stripe'
 import { stripe } from '@/lib/stripe'
 import { sql } from '@/lib/db'
 import { normalizeCode } from '@/lib/codes'
 import { looksLikeEmail } from '@/lib/email'
 import { ensureAffiliateTables, recordPayout, affiliateOwed, listAffiliates } from '@/lib/affiliates'
 
-// Automated affiliate payouts via Stripe Connect (Express). Affiliates onboard a
-// connected account (Stripe hosts KYC + bank collection); we pay them from the
-// platform balance with a Transfer and record it in the existing payout ledger,
-// so owed / paid / YTD / 1099 stay correct. Stripe issues their 1099-Ks.
+// Automated affiliate payouts via Stripe Connect — V2 "recipient" accounts.
+//
+// An affiliate is a payee, not a merchant: they receive funds, never process
+// charges. So we create a V2 account with only the `recipient` configuration
+// (stripe_transfers capability). They onboard through Stripe-hosted pages
+// (KYC + bank), and we pay them with a plain Transfer from the platform balance
+// — recorded in the existing payout ledger so owed / paid / YTD / 1099 stay
+// correct. Stripe issues their 1099-Ks. Readiness updates arrive as V2 thin
+// events (see app/api/webhook/stripe-connect); we cache it on the affiliate row
+// so the admin panel never has to hit Stripe per render.
 //
 // Every Stripe call is wrapped so a failure (e.g. Connect not enabled yet)
 // surfaces as a clear error string and never moves money by surprise.
@@ -19,37 +24,41 @@ const REFRESH_URL = 'https://100lights.com/creators/payouts/start'
 export interface ConnectStatus {
   accountId: string | null
   payoutsEnabled: boolean
-  detailsSubmitted: boolean
+  /** Requirements gate: 'currently_due' | 'past_due' | null (null = clear). */
+  requirements: string | null
 }
 
 export async function getConnectStatus(code: string): Promise<ConnectStatus | null> {
   await ensureAffiliateTables()
   const rows = await sql`
-    SELECT stripe_account_id, connect_payouts_enabled, connect_details_submitted
+    SELECT stripe_account_id, connect_payouts_enabled, connect_requirements
     FROM affiliates WHERE code = ${normalizeCode(code)}
   `
   if (rows.length === 0) return null
   return {
     accountId: (rows[0].stripe_account_id as string) ?? null,
     payoutsEnabled: Boolean(rows[0].connect_payouts_enabled),
-    detailsSubmitted: Boolean(rows[0].connect_details_submitted),
+    requirements: (rows[0].connect_requirements as string) ?? null,
   }
 }
 
-/** Create (or reuse) the affiliate's Express connected account; returns its id. */
+/** Create (or reuse) the affiliate's V2 recipient account; returns its id. */
 async function getOrCreateConnectAccount(code: string): Promise<string> {
   await ensureAffiliateTables()
   const c = normalizeCode(code)
-  const rows = await sql`SELECT stripe_account_id, contact FROM affiliates WHERE code = ${c}`
+  const rows = await sql`SELECT stripe_account_id, name, contact FROM affiliates WHERE code = ${c}`
   if (rows.length === 0) throw new Error('Unknown affiliate.')
   const existing = rows[0].stripe_account_id as string | null
   if (existing) return existing
 
   const contact = rows[0].contact as string | null
-  const account = await stripe.accounts.create({
-    type: 'express',
-    email: looksLikeEmail(contact) ? contact! : undefined,
-    capabilities: { transfers: { requested: true } },
+  const account = await stripe.v2.core.accounts.create({
+    display_name: (rows[0].name as string) || c,
+    ...(looksLikeEmail(contact) ? { contact_email: contact! } : {}),
+    identity: { country: 'us' },
+    dashboard: 'express',
+    defaults: { responsibilities: { fees_collector: 'application', losses_collector: 'application' } },
+    configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } },
     metadata: { affiliate_code: c },
   })
   await sql`UPDATE affiliates SET stripe_account_id = ${account.id}, connect_updated_at = NOW() WHERE code = ${c}`
@@ -60,8 +69,12 @@ async function getOrCreateConnectAccount(code: string): Promise<string> {
 export async function connectOnboardingLink(code: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   try {
     const account = await getOrCreateConnectAccount(code)
-    const link = await stripe.accountLinks.create({
-      account, refresh_url: REFRESH_URL, return_url: RETURN_URL, type: 'account_onboarding',
+    const link = await stripe.v2.core.accountLinks.create({
+      account,
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: { configurations: ['recipient'], refresh_url: REFRESH_URL, return_url: RETURN_URL },
+      },
     })
     return { ok: true, url: link.url }
   } catch (e) {
@@ -69,16 +82,25 @@ export async function connectOnboardingLink(code: string): Promise<{ ok: true; u
   }
 }
 
-/** Webhook: reflect a connected account's readiness (account.updated). */
-export async function applyConnectStatus(account: Stripe.Account): Promise<void> {
+/**
+ * Re-read a connected account from Stripe and cache its payout readiness.
+ * Called from the thin-event webhook (requirements / capability changes) and on
+ * demand. Best-effort — never throws.
+ */
+export async function syncConnectAccount(accountId: string): Promise<void> {
   try {
     await ensureAffiliateTables()
+    const account = await stripe.v2.core.accounts.retrieve(accountId, {
+      include: ['configuration.recipient', 'requirements'],
+    })
+    const ready = account.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.status === 'active'
+    const requirements = account.requirements?.summary?.minimum_deadline?.status ?? null
     await sql`
       UPDATE affiliates SET
-        connect_payouts_enabled = ${Boolean(account.payouts_enabled)},
-        connect_details_submitted = ${Boolean(account.details_submitted)},
+        connect_payouts_enabled = ${ready},
+        connect_requirements = ${requirements},
         connect_updated_at = NOW()
-      WHERE stripe_account_id = ${account.id}
+      WHERE stripe_account_id = ${accountId}
     `
   } catch { /* non-critical */ }
 }
@@ -96,6 +118,8 @@ export async function payAffiliateViaConnect(code: string): Promise<PayResult> {
   if (owed <= 0) return { ok: false, error: 'Nothing outstanding.' }
 
   try {
+    // Recipient accounts are paid with a standard transfer to the acct_ id
+    // (Separate Charges & Transfers). This is unchanged from the V1 model.
     const transfer = await stripe.transfers.create({
       amount: Math.round(owed * 100),
       currency: 'usd',

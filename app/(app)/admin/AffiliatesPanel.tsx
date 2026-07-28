@@ -31,7 +31,7 @@ interface Referral {
 interface CommissionEntry { userId: string; invoice: number; commission: number; invoiceAt: string }
 interface PayoutEntry { id: string; amount: number; method: string | null; note: string | null; paidAt: string }
 interface TaxInfo { legalName: string | null; businessName: string | null; address: string | null; city: string | null; state: string | null; zip: string | null; taxClass: string | null; tinLast4: string | null; w9Received: boolean; hasEncryptedTin: boolean }
-interface ConnectInfo { accountId: string | null; payoutsEnabled: boolean; detailsSubmitted: boolean }
+interface ConnectInfo { accountId: string | null; payoutsEnabled: boolean; requirements: string | null }
 interface Detail { referrals: Referral[]; ledger: CommissionEntry[]; payouts: PayoutEntry[]; taxToken: string | null; tax: TaxInfo | null; connect: ConnectInfo | null }
 
 interface Application {

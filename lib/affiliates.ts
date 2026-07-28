@@ -158,6 +158,7 @@ export async function ensureAffiliateTables(): Promise<void> {
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS stripe_account_id TEXT`
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_payouts_enabled BOOLEAN NOT NULL DEFAULT FALSE`
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_details_submitted BOOLEAN NOT NULL DEFAULT FALSE`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_requirements TEXT`
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_updated_at TIMESTAMPTZ`
   await sql`CREATE INDEX IF NOT EXISTS affiliates_stripe_account_idx ON affiliates (stripe_account_id) WHERE stripe_account_id IS NOT NULL`
   ready = true
