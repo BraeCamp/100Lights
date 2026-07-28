@@ -10,7 +10,7 @@ import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import { addKit, addPattern, type DrumKit, type DrumPattern } from './drum-presets'
 import type { MidiClip } from './daw-types'
 
-export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post'
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post' | 'clip'
 
 export interface CommunityComment {
   id: string
@@ -199,6 +199,26 @@ export async function shareSong(blob: Blob, name: string, description: string, m
   const res = await fetch('/api/community', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind: 'song', name, description, r2Key: key, payload: { contentType: baseType, ...meta } }),
+  })
+  if (!res.ok) throw new Error('share failed')
+  return (await res.json()).id as string
+}
+
+/** Shares a screen-capture video clip (from the session recorder) to the feed. */
+export async function shareClip(blob: Blob, name: string, description: string, meta: { durationMs?: number } = {}): Promise<string> {
+  const baseType = (blob.type || 'video/webm').split(';')[0]
+  const ext = baseType.includes('mp4') ? '.mp4' : '.webm'
+  const presign = await fetch('/api/media/presign-upload', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: `clip-${crypto.randomUUID()}${ext}`, contentType: baseType, mediaId: `community-clip-${crypto.randomUUID()}`, size: blob.size }),
+  })
+  if (!presign.ok) throw new Error('upload not authorized')
+  const { uploadUrl, key } = await presign.json() as { uploadUrl: string; key: string }
+  const put = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': baseType } })
+  if (!put.ok) throw new Error('upload failed')
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'clip', name, description, r2Key: key, payload: { contentType: baseType, ...meta } }),
   })
   if (!res.ok) throw new Error('share failed')
   return (await res.json()).id as string

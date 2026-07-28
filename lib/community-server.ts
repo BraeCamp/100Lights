@@ -2,7 +2,7 @@ import { sql } from './db'
 
 // Server-side shared helpers for the community API routes.
 
-export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post'] as const
+export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip'] as const
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 
 let tablesReady = false
@@ -44,7 +44,7 @@ export async function ensureTables() {
     if (!COMMUNITY_KINDS.every(k => def.includes(`'${k}'`))) {
       await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
       // Keep this list in sync with COMMUNITY_KINDS above.
-      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post'))`
+      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip'))`
     }
   } catch { /* concurrent migration won the race — constraint is in place */ }
   await sql`

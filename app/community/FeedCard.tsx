@@ -24,6 +24,7 @@ export const KIND_META: Record<CommunityItem['kind'], { label: string; plural: s
   kit:     { label: 'Kit',     plural: 'Kits',     color: '#f87171', icon: Drum,           action: 'Install kit' },
   pattern: { label: 'Pattern', plural: 'Patterns', color: '#fbbf24', icon: Grid3x3,        action: 'Add pattern' },
   post:    { label: 'Post',    plural: 'Posts',    color: '#94a3b8', icon: MessageSquare,   action: '' },
+  clip:    { label: 'Clip',    plural: 'Clips',    color: '#f472b6', icon: Play,            action: '' },
 }
 
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
@@ -302,6 +303,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
         {item.kind === 'pack' && <PackPreview item={item} color={meta.color} />}
         {item.kind === 'project' && <ProjectPreview item={item} color={meta.color} />}
         {item.kind === 'post' && !editing && <PostPreview body={desc} />}
+        {item.kind === 'clip' && <ClipPreview item={item} />}
       </div>
 
       {/* Actions */}
@@ -415,6 +417,20 @@ function PostPreview({ body }: { body: string }) {
     <div style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
       {body || 'No content.'}
     </div>
+  )
+}
+
+// A screen-capture clip. Streams the recorded video from the item's media route
+// (which 302s to the R2 object, served with its stored video/webm type).
+function ClipPreview({ item }: { item: CommunityItem }) {
+  return (
+    <video
+      src={`/api/community/${item.id}/audio`}
+      controls
+      playsInline
+      preload="metadata"
+      style={{ width: '100%', maxHeight: 420, borderRadius: 10, border: '1px solid var(--border)', background: '#000', display: 'block' }}
+    />
   )
 }
 

@@ -18,6 +18,14 @@ import {
   screenRecordingSupported,
   type RecordingResult,
 } from '@/lib/screen-recorder'
+import ClickHighlighter, { type ClickStyle } from './ClickHighlighter'
+import { shareClip } from '@/lib/community'
+
+const CLICK_STYLES: { id: ClickStyle; label: string }[] = [
+  { id: 'ripple', label: 'Ripple' },
+  { id: 'glow', label: 'Glow' },
+  { id: 'burst', label: 'Burst' },
+]
 
 export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }) {
   const { engine, project } = useDaw()
@@ -26,10 +34,25 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
   const [elapsed, setElapsed] = useState(0)
   const [includeMic, setIncludeMic] = useState(false)
   const [captureCursor, setCaptureCursor] = useState(true)
+  const [highlightClicks, setHighlightClicks] = useState(true)
+  const [clickStyle, setClickStyle] = useState<ClickStyle>('ripple')
   const [result, setResult] = useState<RecordingResult | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [share, setShare] = useState<'idle' | 'sharing' | 'shared'>('idle')
+  const [shareErr, setShareErr] = useState<string | null>(null)
   const supported = screenRecordingSupported()
+
+  async function shareToCommunity() {
+    if (!result) return
+    setShare('sharing'); setShareErr(null)
+    try {
+      await shareClip(result.blob, project.name || 'My session', '', { durationMs: result.durationMs })
+      setShare('shared')
+    } catch (e) {
+      setShareErr(e instanceof Error ? e.message : 'Share failed'); setShare('idle')
+    }
+  }
 
   const finish = useCallback(async () => {
     const r = await recRef.current?.stop() ?? null
@@ -120,16 +143,34 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
             <input type="checkbox" checked={includeMic} onChange={e => setIncludeMic(e.target.checked)} />
             Also record my microphone
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 12, cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 8, cursor: 'pointer' }}>
             <input type="checkbox" checked={captureCursor} onChange={e => setCaptureCursor(e.target.checked)} />
             Capture mouse activity (show the cursor &amp; clicks)
           </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: highlightClicks ? 8 : 12, cursor: 'pointer' }}>
+            <input type="checkbox" checked={highlightClicks} onChange={e => setHighlightClicks(e.target.checked)} />
+            ✨ Highlight my clicks (cinematic)
+          </label>
+          {highlightClicks && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+              {CLICK_STYLES.map(s => (
+                <button key={s.id} onClick={() => setClickStyle(s.id)} style={{
+                  flex: 1, padding: '6px 0', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  border: `1px solid ${clickStyle === s.id ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`,
+                  background: clickStyle === s.id ? 'rgba(139,92,246,0.18)' : 'transparent',
+                  color: clickStyle === s.id ? 'var(--accent-light)' : 'var(--text-muted)',
+                }}>{s.label}</button>
+              ))}
+            </div>
+          )}
           <button onClick={() => void start()}
             style={{ width: '100%', padding: '9px 0', borderRadius: 9, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
             ● Start recording
           </button>
         </>
       )}
+
+      {state === 'recording' && highlightClicks && <ClickHighlighter style={clickStyle} />}
 
       {state === 'recording' && (
         <>
@@ -156,7 +197,7 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px' }}>
             {formatDuration(result.durationMs)} · {formatSize(result.sizeBytes)}
           </p>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
             <button onClick={download}
               style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', background: '#7c3aed', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
               Save video
@@ -166,6 +207,15 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
               Record another
             </button>
           </div>
+          {share === 'shared' ? (
+            <p style={{ fontSize: 11.5, color: '#34d399', fontWeight: 600, margin: 0 }}>✓ Shared to the community</p>
+          ) : (
+            <button onClick={() => void shareToCommunity()} disabled={share === 'sharing'}
+              style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.14)', color: 'var(--accent-light)', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: share === 'sharing' ? 0.6 : 1 }}>
+              {share === 'sharing' ? 'Sharing…' : '↑ Share to community'}
+            </button>
+          )}
+          {shareErr && <p style={{ fontSize: 11, color: '#ef4444', margin: '6px 0 0' }}>{shareErr}</p>}
         </>
       )}
 
