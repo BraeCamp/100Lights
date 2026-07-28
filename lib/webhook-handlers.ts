@@ -1,6 +1,7 @@
 import { stripe } from './stripe'
 import { upsertSubscription } from './subscription'
 import { recordInvoiceCommission } from './affiliates'
+import { applyConnectStatus } from './affiliate-payouts'
 import { sql } from './db'
 import type Stripe from 'stripe'
 
@@ -104,6 +105,12 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
         currency: invoice.currency ?? 'usd',
         invoiceAt: new Date((invoice.created ?? Math.floor(Date.now() / 1000)) * 1000),
       })
+      break
+    }
+    case 'account.updated': {
+      // A Connect affiliate finished (or advanced) onboarding — refresh their
+      // payout readiness so the admin can pay them.
+      await applyConnectStatus(event.data.object as Stripe.Account)
       break
     }
   }

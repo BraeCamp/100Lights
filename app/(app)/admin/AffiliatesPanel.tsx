@@ -19,6 +19,7 @@ interface Affiliate {
   owed: number
   ytdPaid: number
   w9Received: boolean
+  connectReady: boolean
 }
 
 interface Referral {
@@ -30,7 +31,8 @@ interface Referral {
 interface CommissionEntry { userId: string; invoice: number; commission: number; invoiceAt: string }
 interface PayoutEntry { id: string; amount: number; method: string | null; note: string | null; paidAt: string }
 interface TaxInfo { legalName: string | null; businessName: string | null; address: string | null; city: string | null; state: string | null; zip: string | null; taxClass: string | null; tinLast4: string | null; w9Received: boolean; hasEncryptedTin: boolean }
-interface Detail { referrals: Referral[]; ledger: CommissionEntry[]; payouts: PayoutEntry[]; taxToken: string | null; tax: TaxInfo | null }
+interface ConnectInfo { accountId: string | null; payoutsEnabled: boolean; detailsSubmitted: boolean }
+interface Detail { referrals: Referral[]; ledger: CommissionEntry[]; payouts: PayoutEntry[]; taxToken: string | null; tax: TaxInfo | null; connect: ConnectInfo | null }
 
 interface Application {
   id: string
@@ -213,10 +215,56 @@ export default function AffiliatesPanel() {
     finally { setPayingOut(false) }
   }
 
+  const [batchPaying, setBatchPaying] = useState(false)
+
+  async function payViaStripe(a: Affiliate) {
+    if (!confirm(`Send ${a.code} their $${a.owed.toFixed(2)} balance via Stripe now?`)) return
+    setPayingOut(true)
+    try {
+      const res = await fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'payConnect' }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Failed')
+      showToast(`Sent $${Number(data.amount).toFixed(2)} to ${a.code} via Stripe`)
+      const [, dRes] = await Promise.all([load(), fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`)])
+      if (dRes.ok) setDetail(await dRes.json() as Detail)
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Failed') }
+    finally { setPayingOut(false) }
+  }
+
+  async function sendConnectLink(a: Affiliate) {
+    try {
+      const res = await fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'connectLink' }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.url) throw new Error(data.error ?? 'Failed')
+      copy(data.url, 'onboarding link')
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Failed') }
+  }
+
+  async function payAllStripe() {
+    const eligible = rows.filter(a => a.owed > 0 && a.connectReady)
+    if (eligible.length === 0) { showToast('No one is both owed and payout-ready'); return }
+    const total = eligible.reduce((s, a) => s + a.owed, 0)
+    if (!confirm(`Send ${eligible.length} affiliate${eligible.length === 1 ? '' : 's'} a total of $${total.toFixed(2)} via Stripe now?`)) return
+    setBatchPaying(true)
+    try {
+      const res = await fetch('/api/admin/affiliate-payouts', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Failed')
+      showToast(`Paid ${data.paid.length} · $${Number(data.totalPaid).toFixed(2)}${data.skipped.length ? ` · ${data.skipped.length} skipped` : ''}`)
+      await load()
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Batch failed') }
+    finally { setBatchPaying(false) }
+  }
+
   const totalMonthly = rows.reduce((s, a) => s + a.estMonthly, 0)
   const totalOwed = rows.reduce((s, a) => s + a.owed, 0)
   const needW9 = rows.filter(a => a.owed > 0 && !a.w9Received).length
   const flagged1099 = rows.filter(a => a.ytdPaid >= 600).length
+  const readyToPay = rows.filter(a => a.owed > 0 && a.connectReady)
 
   const inputStyle: React.CSSProperties = {
     padding: '6px 9px', borderRadius: 7, fontSize: 12,
@@ -319,10 +367,17 @@ export default function AffiliatesPanel() {
           <Stat label="Owed now" value={`$${totalOwed.toFixed(2)}`} accent />
           <Stat label="Paid this year" value={`$${rows.reduce((s, a) => s + a.ytdPaid, 0).toFixed(2)}`} />
           <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-            <a href={`/api/admin/affiliate-tax?year=${new Date().getFullYear()}&format=csv`} style={{
-              fontSize: 12, fontWeight: 700, textDecoration: 'none', padding: '7px 13px', borderRadius: 8,
-              border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-card)',
-            }}>↓ 1099 CSV ({new Date().getFullYear()})</a>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={payAllStripe} disabled={batchPaying || readyToPay.length === 0} title={readyToPay.length === 0 ? 'No one is both owed and payout-ready' : ''} style={{
+                fontSize: 12, fontWeight: 700, padding: '7px 13px', borderRadius: 8, cursor: readyToPay.length ? 'pointer' : 'default',
+                background: readyToPay.length ? 'rgba(52,211,153,0.18)' : 'var(--bg-card)', color: readyToPay.length ? '#34d399' : 'var(--text-muted)',
+                border: `1px solid ${readyToPay.length ? 'rgba(52,211,153,0.4)' : 'var(--border)'}`, opacity: batchPaying ? 0.6 : 1,
+              }}>{batchPaying ? 'Paying…' : `⚡ Pay all owed via Stripe (${readyToPay.length})`}</button>
+              <a href={`/api/admin/affiliate-tax?year=${new Date().getFullYear()}&format=csv`} style={{
+                fontSize: 12, fontWeight: 700, textDecoration: 'none', padding: '7px 13px', borderRadius: 8,
+                border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-card)',
+              }}>↓ 1099 CSV</a>
+            </div>
             <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textAlign: 'right' }}>
               {flagged1099} at ≥$600{needW9 > 0 && <span style={{ color: '#f59e0b' }}> · {needW9} owed but no W-9</span>}
             </div>
@@ -495,6 +550,30 @@ export default function AffiliatesPanel() {
                                   border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--accent-light)',
                                 }}>Copy W-9 form link</button>
                               )}
+
+                              {/* Direct-deposit (Stripe Connect) payout */}
+                              <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-muted)', marginBottom: 6 }}>Direct deposit (Stripe)</div>
+                                <div style={{ fontSize: 11.5, marginBottom: 8, fontWeight: 600 }}>
+                                  {detail.connect?.payoutsEnabled
+                                    ? <span style={{ color: '#34d399' }}>✓ Connected — ready to pay</span>
+                                    : detail.connect?.accountId
+                                      ? <span style={{ color: '#f59e0b' }}>Onboarding started, not finished</span>
+                                      : <span style={{ color: 'var(--text-muted)' }}>Not set up</span>}
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                  {a.connectReady && a.owed > 0 && (
+                                    <button onClick={() => payViaStripe(a)} disabled={payingOut} style={{
+                                      padding: '5px 11px', borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                                      background: 'rgba(52,211,153,0.18)', color: '#34d399', border: '1px solid rgba(52,211,153,0.4)',
+                                    }}>Pay ${a.owed.toFixed(2)} via Stripe</button>
+                                  )}
+                                  <button onClick={() => sendConnectLink(a)} style={{
+                                    padding: '5px 11px', borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                                    background: 'var(--bg-card)', color: 'var(--accent-light)', border: '1px solid var(--border)',
+                                  }}>Copy onboarding link</button>
+                                </div>
+                              </div>
                             </div>
 
                           </div>

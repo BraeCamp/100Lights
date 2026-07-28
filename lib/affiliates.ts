@@ -28,6 +28,8 @@ export interface Affiliate {
   createdAt: string
   /** Whether the affiliate has submitted their W-9 / payee details. */
   w9Received: boolean
+  /** Whether a connected Stripe account is ready to receive payouts. */
+  connectReady: boolean
 }
 
 export interface AffiliateStats extends Affiliate {
@@ -152,7 +154,24 @@ export async function ensureAffiliateTables(): Promise<void> {
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS w9_received_at TIMESTAMPTZ`
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS tax_updated_at TIMESTAMPTZ`
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS affiliates_tax_token_idx ON affiliates (tax_token) WHERE tax_token IS NOT NULL`
+  // Stripe Connect payout account (Tier 2 — automated payouts).
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS stripe_account_id TEXT`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_payouts_enabled BOOLEAN NOT NULL DEFAULT FALSE`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_details_submitted BOOLEAN NOT NULL DEFAULT FALSE`
+  await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_updated_at TIMESTAMPTZ`
+  await sql`CREATE INDEX IF NOT EXISTS affiliates_stripe_account_idx ON affiliates (stripe_account_id) WHERE stripe_account_id IS NOT NULL`
   ready = true
+}
+
+/** Outstanding balance for one affiliate (accrued − paid), in USD. */
+export async function affiliateOwed(code: string): Promise<number> {
+  await ensureAffiliateTables()
+  const c = normalizeCode(code)
+  const [acc, paid] = await Promise.all([
+    sql`SELECT COALESCE(SUM(commission_cents), 0)::bigint AS cents FROM affiliate_commissions WHERE code = ${c}`,
+    sql`SELECT COALESCE(SUM(amount_cents), 0)::bigint AS cents FROM affiliate_payouts WHERE code = ${c}`,
+  ])
+  return Math.round(Number(acc[0].cents) - Number(paid[0].cents)) / 100
 }
 
 /** Unguessable token for an affiliate's self-service W-9 link; created on demand. */
@@ -171,6 +190,7 @@ function mapAffiliate(r: Record<string, unknown>): Affiliate {
     active: Boolean(r.active),
     createdAt: (r.created_at as Date | string).toString(),
     w9Received: r.w9_received_at != null,
+    connectReady: Boolean(r.connect_payouts_enabled),
   }
 }
 
@@ -593,12 +613,19 @@ export async function getOrCreateTaxToken(code: string): Promise<string | null> 
 }
 
 /** Public: resolve a tax-form token to the affiliate + whether we retain TINs. */
-export async function affiliateTaxContext(token: string): Promise<{ code: string; name: string; storeTin: boolean; existing: AffiliateTax } | null> {
+export async function affiliateTaxContext(token: string): Promise<{ code: string; name: string; storeTin: boolean; existing: AffiliateTax; connectReady: boolean; connectStarted: boolean } | null> {
   if (!token) return null
   await ensureAffiliateTables()
   const rows = await sql`SELECT * FROM affiliates WHERE tax_token = ${token}`
   if (rows.length === 0) return null
-  return { code: rows[0].code as string, name: rows[0].name as string, storeTin: fieldEncryptionAvailable(), existing: mapTax(rows[0]) }
+  return {
+    code: rows[0].code as string,
+    name: rows[0].name as string,
+    storeTin: fieldEncryptionAvailable(),
+    existing: mapTax(rows[0]),
+    connectReady: Boolean(rows[0].connect_payouts_enabled),
+    connectStarted: rows[0].stripe_account_id != null,
+  }
 }
 
 /** Public: an affiliate submits their W-9 / payee details via their token. */

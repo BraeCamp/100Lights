@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { affiliateTaxContext, TAX_CLASSES } from '@/lib/affiliates'
 import TaxForm from './TaxForm'
+import ConnectPayout from './ConnectPayout'
 
 export const runtime = 'nodejs'
 export const metadata: Metadata = { title: 'Your payout & tax details — 100Lights', robots: { index: false, follow: false } }
@@ -29,6 +30,7 @@ export default async function TaxDetailsPage({ params }: { params: Promise<{ tok
             </p>
           </header>
           <TaxForm token={token} classes={TAX_CLASSES} storeTin={ctx.storeTin} existing={ctx.existing} />
+          <ConnectPayout token={token} connectReady={ctx.connectReady} connectStarted={ctx.connectStarted} />
         </>
       )}
     </div>
