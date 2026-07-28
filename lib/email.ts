@@ -5,8 +5,40 @@
 // Uses Resend's HTTP API directly (no SDK dependency). Swap the provider by
 // editing sendEmail() only.
 
+import { renderEmail, emailP, emailButton } from '@/lib/email-layout'
+import { sql } from '@/lib/db'
+
 export function emailEnabled(): boolean {
   return !!process.env.RESEND_API_KEY
+}
+
+// ── Suppression list ─────────────────────────────────────────────────────────
+// Addresses that hard-bounced or filed a spam complaint (fed by the Resend
+// webhook). We never send to them again — that's what keeps deliverability
+// healthy. All best-effort: a DB hiccup never blocks a legitimate send.
+let suppressReady = false
+async function ensureSuppress(): Promise<void> {
+  if (suppressReady) return
+  await sql`CREATE TABLE IF NOT EXISTS email_suppressions (email TEXT PRIMARY KEY, reason TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
+  suppressReady = true
+}
+const normalizeEmail = (e: string) => (e || '').trim().toLowerCase().replace(/^.*<([^>]+)>.*$/, '$1')
+
+export async function suppressEmail(email: string, reason: string): Promise<void> {
+  const e = normalizeEmail(email)
+  if (!e) return
+  try {
+    await ensureSuppress()
+    await sql`INSERT INTO email_suppressions (email, reason) VALUES (${e}, ${reason}) ON CONFLICT (email) DO UPDATE SET reason = EXCLUDED.reason`
+  } catch { /* non-critical */ }
+}
+
+export async function isSuppressed(email: string): Promise<boolean> {
+  try {
+    await ensureSuppress()
+    const r = await sql`SELECT 1 FROM email_suppressions WHERE email = ${normalizeEmail(email)}`
+    return r.length > 0
+  } catch { return false }
 }
 
 const FROM = process.env.EMAIL_FROM ?? '100Lights <notifications@100lights.com>'
@@ -46,6 +78,7 @@ export async function sendEmail(opts: {
 }): Promise<boolean> {
   const key = process.env.RESEND_API_KEY
   if (!key || !opts.to) return false
+  if (await isSuppressed(opts.to)) return false // hard-bounced or complained
   const s = opts.role ? sender(opts.role) : null
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -76,7 +109,11 @@ export async function sendTestEmail(to: string): Promise<{ ok: boolean; enabled:
         from: FROM, to, reply_to: REPLY_TO,
         subject: '100Lights email test ✓',
         text: `This is a test from 100Lights, sent from ${FROM}. If you got this, transactional email is working.`,
-        html: `<div style="font-family:system-ui,sans-serif"><p>✓ Transactional email is working.</p><p style="color:#888;font-size:13px">Sent from <strong>${FROM}</strong> · replies go to ${REPLY_TO}</p></div>`,
+        html: renderEmail({
+          heading: '✓ Transactional email is working',
+          preheader: 'Your 100Lights email setup is live',
+          bodyHtml: emailP('If you’re reading this, sending is configured correctly and the branded layout renders.') + emailP(`<span style="font-size:13px;color:#7a7590">Sent from <strong>${FROM}</strong> · replies go to ${REPLY_TO}</span>`),
+        }),
       }),
     })
     if (res.ok) return { ok: true, enabled: true, from: FROM }
@@ -131,40 +168,35 @@ Every signup and upgrade through your link is tracked; we reconcile and pay out 
 ${taxLink ? `\nBefore your first payout, add your payout & tax details (2 minutes): ${taxLink}\n` : ''}
 Make something great,
 The 100Lights team`,
-      html:
-`<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1b1922">
-  <p style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#7c3aed;font-weight:700;margin:0 0 6px">100Lights · Founding Affiliates</p>
-  <h1 style="font-size:22px;line-height:1.25;margin:0 0 12px">You’re in, ${name} 🎛️</h1>
-  <p style="font-size:15px;line-height:1.6;color:#3a3550;margin:0 0 18px">Welcome to the founding cohort. Here’s everything you need to start earning.</p>
-
-  <p style="font-size:12px;font-weight:700;color:#7a7590;margin:0 0 6px">YOUR REFERRAL LINK</p>
-  <div style="background:#f5f3fb;border:1px solid #e7e2f1;border-radius:10px;padding:14px 16px;margin:0 0 8px">
+      html: renderEmail({
+        heading: `You’re in, ${name} 🎛️`,
+        preheader: 'Your referral link + how to start earning',
+        bodyHtml:
+          emailP('Welcome to the founding cohort. Here’s everything you need to start earning.') +
+          `<p style="font-size:12px;font-weight:700;color:#7a7590;margin:0 0 6px">YOUR REFERRAL LINK</p>
+  <div style="background:#f5f3fb;border:1px solid #e7e2f1;border-radius:10px;padding:14px 16px;margin:0 0 12px">
     <a href="${link}" style="font-family:ui-monospace,Menlo,monospace;font-size:15px;color:#6d28d9;word-break:break-all;text-decoration:none">${link}</a>
-  </div>
-  <p style="margin:0 0 22px"><a href="${link}" style="display:inline-block;padding:11px 20px;border-radius:9px;background:#7c3aed;color:#fff;text-decoration:none;font-weight:700;font-size:14px">Open your link →</a></p>
-
-  <p style="font-size:14px;font-weight:700;margin:0 0 8px">Your deal</p>
+  </div>` +
+          emailButton(link, 'Open your link →') +
+          `<p style="font-size:14px;font-weight:700;margin:0 0 8px;color:#1b1922">Your deal</p>
   <ul style="font-size:14px;line-height:1.6;color:#3a3550;margin:0 0 20px;padding-left:20px">
     <li><strong>${deal}</strong> on every producer you refer who goes Pro</li>
     <li>Your audience gets <strong>${input.perkDays} days of free Pro</strong> when they use your link</li>
     <li>Your <strong>${input.commissionPct}% rate is grandfathered for life</strong></li>
   </ul>
-
-  <p style="font-size:14px;font-weight:700;margin:0 0 8px">Best ways to share it</p>
+  <p style="font-size:14px;font-weight:700;margin:0 0 8px;color:#1b1922">Best ways to share it</p>
   <ul style="font-size:14px;line-height:1.6;color:#3a3550;margin:0 0 20px;padding-left:20px">
     <li><strong>Show it on screen</strong> — make a beat in the browser while your audience follows along.</li>
     <li><strong>Pin your link</strong> in your description, bio, and a pinned comment.</li>
     <li><strong>Run a challenge:</strong> “make a beat in 60 seconds,” link in the caption.</li>
   </ul>
-
-  <p style="font-size:13px;line-height:1.6;color:#7a7590;margin:0 0 4px">Every signup and upgrade through your link is tracked — we reconcile and pay out monthly, so you never have to chase a number.</p>
-  ${taxLink ? `<div style="margin:18px 0 0;padding:14px 16px;border:1px solid #e7e2f1;border-radius:10px;background:#f5f3fb">
+  <p style="font-size:13px;line-height:1.6;color:#7a7590;margin:0 0 0">Every signup and upgrade through your link is tracked — we reconcile and pay out monthly, so you never have to chase a number.</p>` +
+          (taxLink ? `<div style="margin:18px 0 0;padding:14px 16px;border:1px solid #e7e2f1;border-radius:10px;background:#f5f3fb">
     <p style="font-size:13px;font-weight:700;margin:0 0 4px;color:#1b1922">One quick thing before your first payout</p>
     <p style="font-size:13px;line-height:1.5;color:#3a3550;margin:0 0 10px">Add your payout &amp; tax details (the W-9 basics) so we can pay you and handle your 1099 without chasing you.</p>
     <a href="${taxLink}" style="display:inline-block;padding:9px 16px;border-radius:8px;background:#7c3aed;color:#fff;text-decoration:none;font-weight:700;font-size:13px">Add my details →</a>
-  </div>` : ''}
-  <p style="font-size:12px;color:#a5a1b5;margin:18px 0 0">100Lights — the music studio in your browser</p>
-</div>`,
+  </div>` : ''),
+      }),
     })
   } catch { return false }
 }
@@ -186,11 +218,12 @@ export async function sendCommentEmail(ownerUserId: string, actorName: string, i
       to,
       subject: `${actorName} commented on “${safeName}”`,
       text: `${actorName} commented on your share “${safeName}”.\n\nRead it: ${url}`,
-      html: `<div style="font-family:system-ui,sans-serif;max-width:480px">
-        <p style="font-size:15px;color:#111"><strong>${actorName}</strong> commented on your share <strong>${safeName}</strong>.</p>
-        <p><a href="${url}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#8b5cf6;color:#fff;text-decoration:none;font-weight:600">Read the comment →</a></p>
-        <p style="font-size:12px;color:#888">100Lights Community</p>
-      </div>`,
+      html: renderEmail({
+        heading: 'You have a new comment',
+        preheader: `${actorName} commented on “${safeName}”`,
+        bodyHtml: emailP(`<strong>${actorName}</strong> commented on your share <strong>${safeName}</strong>.`) + emailButton(url, 'Read the comment →'),
+      }),
+      role: 'default',
     })
   } catch { /* best-effort */ }
 }
@@ -205,7 +238,11 @@ export async function sendDmcaAckEmail(to: string, name: string): Promise<void> 
       role: 'dmca',
       subject: 'We received your copyright notice — 100Lights',
       text: `Hi ${safe},\n\nWe've received your copyright takedown notice and will review it promptly. Valid notices are acted on quickly; if we need any more information, we'll reply to this email.\n\n— 100Lights, Copyright`,
-      html: `<div style="font-family:system-ui,sans-serif;max-width:480px"><p style="font-size:15px;color:#1b1922">Hi ${safe},</p><p style="font-size:14px;line-height:1.6;color:#3a3550">We've received your copyright takedown notice and will review it promptly. Valid notices are acted on quickly; if we need any more information, we'll reply to this email.</p><p style="font-size:12px;color:#888">100Lights — Copyright</p></div>`,
+      html: renderEmail({
+        heading: 'We received your copyright notice',
+        preheader: 'Your DMCA takedown notice has been received',
+        bodyHtml: emailP(`Hi ${safe},`) + emailP('We’ve received your copyright takedown notice and will review it promptly. Valid notices are acted on quickly; if we need any more information, we’ll reply to this email.'),
+      }),
     })
   } catch { /* best-effort */ }
 }

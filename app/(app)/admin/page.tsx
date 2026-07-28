@@ -11,6 +11,7 @@ import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
 import LearnPathsPanel from './LearnPathsPanel'
 import DmcaPanel from './DmcaPanel'
+import LicensesPanel from './LicensesPanel'
 import CodesPanel from './CodesPanel'
 import AffiliatesPanel from './AffiliatesPanel'
 import AuditLogPanel from './AuditLogPanel'
@@ -685,6 +686,19 @@ export default async function AdminPage() {
                 description="Manage the sound library stored in THIS browser's IndexedDB — the samples the editor shows here. Upload, rename, re-folder, or delete your own additions; built-in catalog sounds (100L) are protected. Note: changes are local to this device and aren't pushed to users or your other machines."
               />
               <SoundLibraryPanel />
+            </>
+          ),
+        },
+        {
+          id: 'licenses',
+          label: 'Content Licenses',
+          content: (
+            <>
+              <PanelIntro
+                title="Content License Registry"
+                description="A living record of where every bundled sound, sample, preset, and piece of article audio came from and under what license. Log each one so provenance is always on file — the flagged rows are missing a source or license. This is your defense on the biggest legal risk for a music app; keep it current as you add content."
+              />
+              <LicensesPanel />
             </>
           ),
         },
