@@ -10,6 +10,7 @@ import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
 import LearnPathsPanel from './LearnPathsPanel'
+import DmcaPanel from './DmcaPanel'
 import CodesPanel from './CodesPanel'
 import AffiliatesPanel from './AffiliatesPanel'
 import AuditLogPanel from './AuditLogPanel'
@@ -535,6 +536,20 @@ export default async function AdminPage() {
                 description="The latest community shares plus the reported queue. Removing an item hides it everywhere but keeps it restorable (with its votes and comments); dismiss a report to clear the flag on something you've reviewed and want to keep."
               />
               <CommunityModerationPanel />
+            </>
+          ),
+        },
+        {
+          id: 'dmca',
+          group: 'Content & comms',
+          label: 'Copyright / DMCA',
+          content: (
+            <>
+              <PanelIntro
+                title="Copyright / DMCA Notices"
+                description="Takedown notices filed by copyright holders through the public form at /legal/dmca. Review each, act on the reported content in Community moderation if valid, then mark it resolved. Acting on valid notices (and terminating repeat infringers) is what keeps your DMCA safe-harbor protection."
+              />
+              <DmcaPanel />
             </>
           ),
         },

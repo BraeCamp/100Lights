@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn, Check, X } from 'lucide-react'
-import { useUser } from '@clerk/nextjs'
+import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn, Check, X, Download, Trash2 } from 'lucide-react'
+import { useUser, useClerk } from '@clerk/nextjs'
 import Link from 'next/link'
 import posthog from 'posthog-js'
 import RedeemCode from '@/components/RedeemCode'
@@ -16,7 +16,15 @@ interface BillingInfo {
 
 export default function SettingsPage() {
   const { isSignedIn, isLoaded, user } = useUser()
+  const { signOut } = useClerk()
   const [billing, setBilling] = useState<BillingInfo | null>(null)
+
+  // Privacy & data
+  const [exporting, setExporting] = useState(false)
+  const [showDelete, setShowDelete] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [billingError, setBillingError] = useState(false)
   const [loading, setLoading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
@@ -116,6 +124,37 @@ export default function SettingsPage() {
       if (url) window.location.href = url
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const res = await fetch('/api/account/export')
+      if (!res.ok) throw new Error()
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = '100lights-my-data.json'
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch { /* surfaced by the browser */ }
+    finally { setExporting(false) }
+  }
+
+  async function handleDelete() {
+    setDeleting(true); setDeleteError('')
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: confirmText.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Deletion failed.')
+      await signOut({ redirectUrl: '/' })
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Deletion failed.')
+      setDeleting(false)
     }
   }
 
@@ -344,6 +383,61 @@ export default function SettingsPage() {
             <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Redeem a code</h2>
             <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
               <RedeemCode variant="promo" onRedeemed={loadBilling} />
+            </div>
+          </div>
+        )}
+
+        {/* Privacy & data */}
+        {isSignedIn && (
+          <div className="mb-4 mt-6">
+            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data</h2>
+            <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              {/* Export */}
+              <div className="flex items-center justify-between gap-4 pb-4 mb-4" style={{ borderBottom: '1px solid var(--border)' }}>
+                <div>
+                  <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Download my data</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>A JSON copy of your profile, projects, posts, and account records.</p>
+                </div>
+                <button onClick={handleExport} disabled={exporting} className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg shrink-0 font-semibold"
+                  style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', opacity: exporting ? 0.6 : 1 }}>
+                  <Download size={13} /> {exporting ? 'Preparing…' : 'Download'}
+                </button>
+              </div>
+
+              {/* Delete */}
+              {!showDelete ? (
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Delete account</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Permanently erase your account, projects, and data. Cancels any subscription. This can&apos;t be undone.</p>
+                  </div>
+                  <button onClick={() => setShowDelete(true)} className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg shrink-0 font-semibold"
+                    style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.35)' }}>
+                    <Trash2 size={13} /> Delete
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-lg p-4" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                  <p className="text-sm font-semibold mb-1" style={{ color: '#ef4444' }}>Permanently delete your account?</p>
+                  <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
+                    This erases your projects, posts, and account records, and cancels any active subscription. It cannot be undone.
+                    Type <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>DELETE</strong> to confirm.
+                  </p>
+                  <input value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder="DELETE" autoFocus
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', marginBottom: 10, fontFamily: 'monospace' }} />
+                  {deleteError && <p className="text-xs mb-2" style={{ color: '#ef4444' }}>{deleteError}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={handleDelete} disabled={deleting || confirmText.trim() !== 'DELETE'} className="text-xs px-3 py-2 rounded-lg font-semibold"
+                      style={{ background: '#ef4444', color: '#fff', opacity: (deleting || confirmText.trim() !== 'DELETE') ? 0.5 : 1, cursor: confirmText.trim() === 'DELETE' ? 'pointer' : 'default' }}>
+                      {deleting ? 'Deleting…' : 'Permanently delete'}
+                    </button>
+                    <button onClick={() => { setShowDelete(false); setConfirmText(''); setDeleteError('') }} disabled={deleting} className="text-xs px-3 py-2 rounded-lg"
+                      style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

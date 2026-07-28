@@ -6,6 +6,7 @@ import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import ReferralCapture from "@/components/ReferralCapture"
+import AgeGate from "@/components/AgeGate"
 import AnnouncementBanner from "@/components/AnnouncementBanner"
 import "./globals.css"
 
@@ -74,6 +75,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <PostHogProvider />
           </Suspense>
           <ReferralCapture />
+          <AgeGate />
           {children}
           <AnnouncementBanner />
         </body>
