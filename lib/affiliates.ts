@@ -33,6 +33,27 @@ export interface AffiliateStats extends Affiliate {
   converted: number
   /** Estimated commission owed per month while current paid referrals stay subscribed (USD). */
   estMonthly: number
+  /** Real commission accrued from paid invoices, all-time (USD). */
+  accrued: number
+  /** Total you've recorded paying this affiliate (USD). */
+  paid: number
+  /** Outstanding balance = accrued − paid (USD). */
+  owed: number
+}
+
+export interface CommissionEntry {
+  userId: string
+  invoice: number       // amount the referred user paid (USD)
+  commission: number    // credited to the affiliate (USD)
+  invoiceAt: string
+}
+
+export interface PayoutEntry {
+  id: string
+  amount: number        // USD
+  method: string | null
+  note: string | null
+  paidAt: string
 }
 
 export interface AffiliateReferral {
@@ -79,6 +100,37 @@ export async function ensureAffiliateTables(): Promise<void> {
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
+  // Accrual ledger — one row per referred user's paid Stripe invoice, crediting
+  // the affiliate their % of the real amount paid. UNIQUE(invoice) makes webhook
+  // replays idempotent. Amounts in cents.
+  await sql`
+    CREATE TABLE IF NOT EXISTS affiliate_commissions (
+      id                BIGSERIAL   PRIMARY KEY,
+      code              TEXT        NOT NULL,
+      user_id           TEXT        NOT NULL,
+      stripe_invoice_id TEXT        NOT NULL UNIQUE,
+      invoice_cents     INTEGER     NOT NULL,
+      commission_cents  INTEGER     NOT NULL,
+      currency          TEXT        NOT NULL DEFAULT 'usd',
+      invoice_at        TIMESTAMPTZ NOT NULL,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+  await sql`CREATE INDEX IF NOT EXISTS affiliate_commissions_code_idx ON affiliate_commissions (code)`
+  await sql`CREATE INDEX IF NOT EXISTS affiliate_commissions_code_user_idx ON affiliate_commissions (code, user_id)`
+  // Payout log — payments you've actually sent an affiliate. Amounts in cents.
+  await sql`
+    CREATE TABLE IF NOT EXISTS affiliate_payouts (
+      id          BIGSERIAL   PRIMARY KEY,
+      code        TEXT        NOT NULL,
+      amount_cents INTEGER    NOT NULL,
+      method      TEXT,
+      note        TEXT,
+      paid_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+  await sql`CREATE INDEX IF NOT EXISTS affiliate_payouts_code_idx ON affiliate_payouts (code)`
   ready = true
 }
 
@@ -179,10 +231,21 @@ export async function listAffiliates(): Promise<AffiliateStats[]> {
     monthlyPrice = (await getProPrice('monthly')).amount / 100
   } catch { /* leave estimate at 0 */ }
 
+  // Real balances from the accrual ledger + payout log (cents → dollars).
+  const [accRows, payRows] = await Promise.all([
+    sql`SELECT code, COALESCE(SUM(commission_cents), 0)::bigint AS cents FROM affiliate_commissions WHERE code = ANY(${codes}) GROUP BY code`,
+    sql`SELECT code, COALESCE(SUM(amount_cents), 0)::bigint AS cents FROM affiliate_payouts WHERE code = ANY(${codes}) GROUP BY code`,
+  ])
+  const accByCode = new Map(accRows.map(r => [r.code as string, Number(r.cents) / 100]))
+  const paidByCode = new Map(payRows.map(r => [r.code as string, Number(r.cents) / 100]))
+
   return affs.map(a => {
     const s = byCode.get(a.code) ?? { referrals: 0, converted: 0 }
     const estMonthly = Math.round(s.converted * monthlyPrice * (a.commissionPct / 100) * 100) / 100
-    return { ...a, referrals: s.referrals, converted: s.converted, estMonthly }
+    const accrued = accByCode.get(a.code) ?? 0
+    const paid = paidByCode.get(a.code) ?? 0
+    const owed = Math.round((accrued - paid) * 100) / 100
+    return { ...a, referrals: s.referrals, converted: s.converted, estMonthly, accrued, paid, owed }
   })
 }
 
@@ -310,4 +373,123 @@ export async function approveApplication(id: string, code?: string): Promise<Cre
 export async function declineApplication(id: string): Promise<void> {
   await ensureAffiliateTables()
   await sql`UPDATE affiliate_applications SET status = 'declined' WHERE id = ${id}`
+}
+
+// ── Commission accrual (Stripe invoice.paid → real earnings) ─────────────────
+
+interface Referrer { code: string; commissionPct: number; commissionMonths: number | null }
+
+/**
+ * The affiliate that gets credit for a user's payments: first-touch — the
+ * earliest affiliate code they redeemed. Returns null if they weren't referred.
+ */
+async function resolveReferrer(userId: string): Promise<Referrer | null> {
+  const rows = await sql`
+    SELECT a.code, a.commission_pct, a.commission_months
+    FROM code_redemptions r
+    JOIN affiliates a ON a.code = r.code
+    WHERE r.user_id = ${userId}
+    ORDER BY r.redeemed_at ASC
+    LIMIT 1
+  `
+  if (rows.length === 0) return null
+  const r = rows[0]
+  return {
+    code: r.code as string,
+    commissionPct: Number(r.commission_pct),
+    commissionMonths: r.commission_months == null ? null : Number(r.commission_months),
+  }
+}
+
+/** Whole calendar months between two dates (a ≤ b). */
+function monthsBetween(a: Date, b: Date): number {
+  let m = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth())
+  if (b.getUTCDate() < a.getUTCDate()) m -= 1
+  return Math.max(0, m)
+}
+
+/**
+ * Credit an affiliate their commission on a referred user's paid invoice.
+ * Idempotent (UNIQUE invoice), and respects the commission-month window: the
+ * clock starts at the referral's first credited invoice. No-ops when the user
+ * wasn't referred, the window has closed, or nothing was actually paid.
+ */
+export async function recordInvoiceCommission(input: {
+  userId: string; invoiceId: string; amountPaidCents: number; currency?: string; invoiceAt: Date
+}): Promise<void> {
+  const { userId, invoiceId, amountPaidCents, invoiceAt } = input
+  if (!userId || !invoiceId || !Number.isFinite(amountPaidCents) || amountPaidCents <= 0) return
+  try {
+    await ensureAffiliateTables()
+    const ref = await resolveReferrer(userId)
+    if (!ref) return
+
+    if (ref.commissionMonths != null) {
+      const startRows = await sql`
+        SELECT MIN(invoice_at) AS start FROM affiliate_commissions
+        WHERE code = ${ref.code} AND user_id = ${userId}
+      `
+      const start = startRows[0]?.start ? new Date(startRows[0].start as string) : invoiceAt
+      if (monthsBetween(start, invoiceAt) >= ref.commissionMonths) return // window closed
+    }
+
+    const commissionCents = Math.round(amountPaidCents * (ref.commissionPct / 100))
+    if (commissionCents <= 0) return
+
+    await sql`
+      INSERT INTO affiliate_commissions (code, user_id, stripe_invoice_id, invoice_cents, commission_cents, currency, invoice_at)
+      VALUES (${ref.code}, ${userId}, ${invoiceId}, ${Math.round(amountPaidCents)}, ${commissionCents}, ${input.currency ?? 'usd'}, ${invoiceAt.toISOString()})
+      ON CONFLICT (stripe_invoice_id) DO NOTHING
+    `
+  } catch { /* commission tracking is best-effort — never fail the webhook */ }
+}
+
+// ── Payouts (recording what you've actually paid affiliates) ─────────────────
+
+export async function recordPayout(input: {
+  code: string; amount: number; method?: string | null; note?: string | null
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  await ensureAffiliateTables()
+  const code = normalizeCode(input.code)
+  const cents = Math.round((Number(input.amount) || 0) * 100)
+  if (cents <= 0) return { ok: false, error: 'Enter a positive amount.' }
+  const exists = await sql`SELECT 1 FROM affiliates WHERE code = ${code}`
+  if (exists.length === 0) return { ok: false, error: 'Unknown affiliate.' }
+  await sql`
+    INSERT INTO affiliate_payouts (code, amount_cents, method, note)
+    VALUES (${code}, ${cents}, ${input.method?.trim() || null}, ${input.note?.trim() || null})
+  `
+  return { ok: true }
+}
+
+/** Recent commission ledger entries for one affiliate. */
+export async function affiliateLedger(code: string, limit = 50): Promise<CommissionEntry[]> {
+  await ensureAffiliateTables()
+  const rows = await sql`
+    SELECT user_id, invoice_cents, commission_cents, invoice_at
+    FROM affiliate_commissions WHERE code = ${normalizeCode(code)}
+    ORDER BY invoice_at DESC LIMIT ${limit}
+  `
+  return rows.map(r => ({
+    userId: r.user_id as string,
+    invoice: Number(r.invoice_cents) / 100,
+    commission: Number(r.commission_cents) / 100,
+    invoiceAt: (r.invoice_at as Date | string).toString(),
+  }))
+}
+
+export async function listPayouts(code: string): Promise<PayoutEntry[]> {
+  await ensureAffiliateTables()
+  const rows = await sql`
+    SELECT id, amount_cents, method, note, paid_at
+    FROM affiliate_payouts WHERE code = ${normalizeCode(code)}
+    ORDER BY paid_at DESC
+  `
+  return rows.map(r => ({
+    id: String(r.id),
+    amount: Number(r.amount_cents) / 100,
+    method: (r.method as string) ?? null,
+    note: (r.note as string) ?? null,
+    paidAt: (r.paid_at as Date | string).toString(),
+  }))
 }

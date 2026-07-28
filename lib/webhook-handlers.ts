@@ -1,5 +1,6 @@
 import { stripe } from './stripe'
 import { upsertSubscription } from './subscription'
+import { recordInvoiceCommission } from './affiliates'
 import { sql } from './db'
 import type Stripe from 'stripe'
 
@@ -81,6 +82,27 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
         plan: 'free',
         status: 'past_due',
         currentPeriodEnd: periodEnd(sub),
+      })
+      break
+    }
+    case 'invoice.paid': {
+      // A subscription invoice actually settled — credit the referring affiliate
+      // (if any) their % of the real amount paid. Idempotent + best-effort, so a
+      // replay or a missing affiliate never disturbs billing.
+      const invoice = event.data.object as Stripe.Invoice
+      const subId = invoiceSubId(invoice)
+      const amountPaid = invoice.amount_paid ?? 0
+      if (!subId || amountPaid <= 0 || !invoice.id) break
+      const sub = await stripe.subscriptions.retrieve(subId)
+      const userId = sub.metadata?.userId
+        ?? (await sql`SELECT user_id FROM subscriptions WHERE stripe_customer_id = ${invoice.customer as string}`)[0]?.user_id as string | undefined
+      if (!userId) break
+      await recordInvoiceCommission({
+        userId,
+        invoiceId: invoice.id,
+        amountPaidCents: amountPaid,
+        currency: invoice.currency ?? 'usd',
+        invoiceAt: new Date((invoice.created ?? Math.floor(Date.now() / 1000)) * 1000),
       })
       break
     }

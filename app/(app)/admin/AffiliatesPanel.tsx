@@ -14,6 +14,9 @@ interface Affiliate {
   referrals: number
   converted: number
   estMonthly: number
+  accrued: number
+  paid: number
+  owed: number
 }
 
 interface Referral {
@@ -21,6 +24,10 @@ interface Referral {
   redeemedAt: string
   paying: boolean
 }
+
+interface CommissionEntry { userId: string; invoice: number; commission: number; invoiceAt: string }
+interface PayoutEntry { id: string; amount: number; method: string | null; note: string | null; paidAt: string }
+interface Detail { referrals: Referral[]; ledger: CommissionEntry[]; payouts: PayoutEntry[] }
 
 interface Application {
   id: string
@@ -54,8 +61,13 @@ export default function AffiliatesPanel() {
 
   // Detail expansion
   const [openCode, setOpenCode] = useState<string | null>(null)
-  const [referrals, setReferrals] = useState<Referral[]>([])
+  const [detail, setDetail] = useState<Detail | null>(null)
   const [loadingRefs, setLoadingRefs] = useState(false)
+  // Record-payment form
+  const [payAmount, setPayAmount] = useState('')
+  const [payMethod, setPayMethod] = useState('')
+  const [payNote, setPayNote] = useState('')
+  const [payingOut, setPayingOut] = useState(false)
 
   // Inbound applications from /creators
   const [apps, setApps] = useState<Application[]>([])
@@ -150,17 +162,38 @@ export default function AffiliatesPanel() {
 
   async function openReferrals(a: Affiliate) {
     if (openCode === a.code) { setOpenCode(null); return }
-    setOpenCode(a.code); setLoadingRefs(true); setReferrals([])
+    setOpenCode(a.code); setLoadingRefs(true); setDetail(null)
+    setPayAmount(''); setPayMethod(''); setPayNote('')
     try {
       const res = await fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`)
       if (!res.ok) throw new Error()
-      const data = await res.json() as { referrals: Referral[] }
-      setReferrals(data.referrals)
-    } catch { showToast('Failed to load referrals') }
+      setDetail(await res.json() as Detail)
+    } catch { showToast('Failed to load detail') }
     finally { setLoadingRefs(false) }
   }
 
+  async function recordPayment(a: Affiliate) {
+    const amount = Number(payAmount)
+    if (!amount || amount <= 0) { showToast('Enter a positive amount'); return }
+    setPayingOut(true)
+    try {
+      const res = await fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, method: payMethod.trim() || null, note: payNote.trim() || null }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Failed')
+      showToast(`Recorded $${amount.toFixed(2)} to ${a.code}`)
+      setPayAmount(''); setPayMethod(''); setPayNote('')
+      // Refresh both the balances and the open detail.
+      const [, dRes] = await Promise.all([load(), fetch(`/api/admin/affiliates/${encodeURIComponent(a.code)}`)])
+      if (dRes.ok) setDetail(await dRes.json() as Detail)
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Failed') }
+    finally { setPayingOut(false) }
+  }
+
   const totalMonthly = rows.reduce((s, a) => s + a.estMonthly, 0)
+  const totalOwed = rows.reduce((s, a) => s + a.owed, 0)
 
   const inputStyle: React.CSSProperties = {
     padding: '6px 9px', borderRadius: 7, fontSize: 12,
@@ -259,9 +292,10 @@ export default function AffiliatesPanel() {
       {!loading && !err && rows.length > 0 && (
         <div style={{ display: 'flex', gap: 20, marginBottom: 14, flexWrap: 'wrap' }}>
           <Stat label="Affiliates" value={rows.filter(a => a.active).length} />
-          <Stat label="Total referrals" value={rows.reduce((s, a) => s + a.referrals, 0)} />
           <Stat label="Paying referrals" value={rows.reduce((s, a) => s + a.converted, 0)} />
-          <Stat label="Est. commission / mo" value={`$${totalMonthly.toFixed(2)}`} accent />
+          <Stat label="Accrued all-time" value={`$${rows.reduce((s, a) => s + a.accrued, 0).toFixed(2)}`} />
+          <Stat label="Owed now" value={`$${totalOwed.toFixed(2)}`} accent />
+          <Stat label="Est. / mo" value={`$${totalMonthly.toFixed(2)}`} />
         </div>
       )}
 
@@ -273,11 +307,11 @@ export default function AffiliatesPanel() {
       ) : rows.length === 0 ? (
         <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No affiliates yet — add a creator above to generate their referral link.</p>
       ) : (
-        <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+        <div className="rounded-xl border" style={{ borderColor: 'var(--border)', overflowX: 'auto' }}>
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-                {['Creator', 'Referral link', 'Terms', 'Referrals', 'Paying', 'Est. / mo', 'Status', ''].map(h => (
+                {['Creator', 'Referral link', 'Terms', 'Paying', 'Owed', 'Est. / mo', 'Status', ''].map(h => (
                   <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{h}</th>
                 ))}
               </tr>
@@ -299,13 +333,13 @@ export default function AffiliatesPanel() {
                     <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
                       {a.commissionPct}%{a.commissionMonths ? ` · ${a.commissionMonths}mo` : ' · life'} · +{a.perkDays}d
                     </td>
-                    <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{a.referrals}</td>
-                    <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{a.converted}</td>
-                    <td className="px-3 py-2.5 text-xs" style={{ color: a.estMonthly > 0 ? 'var(--success)' : 'var(--text-muted)', fontWeight: 600 }}>${a.estMonthly.toFixed(2)}</td>
+                    <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{a.converted}<span style={{ color: 'var(--text-muted)' }}> / {a.referrals}</span></td>
+                    <td className="px-3 py-2.5 text-xs" style={{ color: a.owed > 0 ? '#f59e0b' : 'var(--text-muted)', fontWeight: 700, whiteSpace: 'nowrap' }} title={`Accrued $${a.accrued.toFixed(2)} − paid $${a.paid.toFixed(2)}`}>${a.owed.toFixed(2)}</td>
+                    <td className="px-3 py-2.5 text-xs" style={{ color: a.estMonthly > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}>${a.estMonthly.toFixed(2)}</td>
                     <td className="px-3 py-2.5 text-xs" style={{ color: a.active ? 'var(--success)' : 'var(--text-muted)', fontWeight: 600 }}>{a.active ? 'active' : 'disabled'}</td>
                     <td className="px-3 py-2.5 text-xs" style={{ whiteSpace: 'nowrap' }}>
-                      <button onClick={() => openReferrals(a)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, marginRight: 10 }}>
-                        {openCode === a.code ? 'Hide' : 'Referrals'}
+                      <button onClick={() => openReferrals(a)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-light)', fontSize: 11, fontWeight: 600, marginRight: 10 }}>
+                        {openCode === a.code ? 'Hide' : 'Details / pay'}
                       </button>
                       <button onClick={() => toggleActive(a)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11 }}>
                         {a.active ? 'Disable' : 'Enable'}
@@ -315,23 +349,83 @@ export default function AffiliatesPanel() {
                   {openCode === a.code && (
                     <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-base)' }}>
                       <td colSpan={8} className="px-3 py-3">
-                        {loadingRefs ? (
-                          <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Loading referrals…</p>
-                        ) : referrals.length === 0 ? (
-                          <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>No signups through this link yet. Share <span style={{ fontFamily: 'monospace', color: 'var(--accent-light)' }}>{refLink(a.code)}</span></p>
+                        {loadingRefs || !detail ? (
+                          <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Loading…</p>
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {referrals.map(r => (
-                              <div key={r.userId} style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 11 }}>
-                                <span style={{
-                                  fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
-                                  background: r.paying ? 'rgba(52,211,153,0.15)' : 'var(--bg-card)',
-                                  color: r.paying ? '#34d399' : 'var(--text-muted)',
-                                }}>{r.paying ? 'PAYING' : 'signed up'}</span>
-                                <a href={`/admin?tab=users&q=${encodeURIComponent(r.userId)}`} style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{r.userId}</a>
-                                <span style={{ color: 'var(--text-muted)' }}>{fmtDate(r.redeemedAt)}</span>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20 }}>
+
+                            {/* Balance + record payment */}
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-muted)', marginBottom: 8 }}>Balance</div>
+                              <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                                <div><div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>${a.accrued.toFixed(2)}</div><div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>ACCRUED</div></div>
+                                <div><div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>${a.paid.toFixed(2)}</div><div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>PAID</div></div>
+                                <div><div style={{ fontSize: 15, fontWeight: 700, color: a.owed > 0 ? '#f59e0b' : 'var(--success)' }}>${a.owed.toFixed(2)}</div><div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>OWED</div></div>
                               </div>
-                            ))}
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input value={payAmount} onChange={e => setPayAmount(e.target.value)} type="number" min={0} step="0.01" placeholder="$ amount" style={{ ...inputStyle, width: 90 }} />
+                                <input value={payMethod} onChange={e => setPayMethod(e.target.value)} placeholder="method" style={{ ...inputStyle, width: 90 }} />
+                                <input value={payNote} onChange={e => setPayNote(e.target.value)} placeholder="note" style={{ ...inputStyle, width: 110 }} />
+                                <button onClick={() => recordPayment(a)} disabled={payingOut} style={{
+                                  padding: '6px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                                  background: 'rgba(52,211,153,0.18)', color: '#34d399', border: '1px solid rgba(52,211,153,0.4)', opacity: payingOut ? 0.6 : 1,
+                                }}>Record payment</button>
+                              </div>
+                            </div>
+
+                            {/* Commission ledger */}
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-muted)', marginBottom: 8 }}>Commission (real invoices)</div>
+                              {detail.ledger.length === 0 ? (
+                                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>No commission yet — accrues when a referred user pays.</p>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 150, overflowY: 'auto' }}>
+                                  {detail.ledger.map((l, idx) => (
+                                    <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                                      <span style={{ color: '#34d399', fontWeight: 700, width: 54 }}>+${l.commission.toFixed(2)}</span>
+                                      <span style={{ color: 'var(--text-muted)' }}>of ${l.invoice.toFixed(2)}</span>
+                                      <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>{fmtDate(l.invoiceAt)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Payout history */}
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-muted)', marginBottom: 8 }}>Payments made</div>
+                              {detail.payouts.length === 0 ? (
+                                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>No payments recorded yet.</p>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 150, overflowY: 'auto' }}>
+                                  {detail.payouts.map(p => (
+                                    <div key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                                      <span style={{ color: 'var(--text-primary)', fontWeight: 700, width: 54 }}>${p.amount.toFixed(2)}</span>
+                                      <span style={{ color: 'var(--text-muted)' }}>{[p.method, p.note].filter(Boolean).join(' · ') || '—'}</span>
+                                      <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>{fmtDate(p.paidAt)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Referrals */}
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-muted)', marginBottom: 8 }}>Referrals ({detail.referrals.length})</div>
+                              {detail.referrals.length === 0 ? (
+                                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>No signups yet. Share <span style={{ fontFamily: 'monospace', color: 'var(--accent-light)' }}>{refLink(a.code)}</span></p>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 150, overflowY: 'auto' }}>
+                                  {detail.referrals.map(r => (
+                                    <div key={r.userId} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                                      <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: r.paying ? 'rgba(52,211,153,0.15)' : 'var(--bg-card)', color: r.paying ? '#34d399' : 'var(--text-muted)' }}>{r.paying ? 'PAYING' : 'signed up'}</span>
+                                      <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>{r.userId}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
                           </div>
                         )}
                       </td>
