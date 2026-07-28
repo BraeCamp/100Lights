@@ -34,6 +34,7 @@ Two plans; feature gates live in `lib/stripe.ts` (`PLAN_LIMITS`), prices live in
 
 - **Prices are not hardcoded.** `getProPrice()` fetches from Stripe at runtime by **lookup_key** (`pro_monthly`, `pro_annual`), cached 5 min. No price/product IDs in code or env — Stripe owns pricing; this repo owns the feature gates. Adding a plan = new Stripe price + lookup_key, then update `PLAN_LIMITS`.
 - Pro can also be granted **without Stripe**: admin **gifts** (`gift_plan` / `gift_until` on `subscriptions`) and **redemption codes** (`lib/codes.ts` — promo codes stackable/redeemable once each, starter codes once-ever, granting N days of Pro).
+- **Affiliate/referral program** (`lib/affiliates.ts`, admin BUSINESS→Affiliates): a creator gets a referral link `100lights.com/?ref=CODE` backed by a `promo` code — signups through it earn the creator a recurring % of Pro payments and give the new user bonus Pro days. Attribution reuses `code_redemptions`; `components/ReferralCapture.tsx` (in `app/layout.tsx`) captures `?ref=` → localStorage → redeems once on sign-in. Commission shown is an estimate; payouts are manual.
 - Payments via Stripe Checkout (subscriptions) + billing portal. Clerk `user.created` webhook auto-creates a Stripe customer + free subscription row.
 
 ## Tech Stack

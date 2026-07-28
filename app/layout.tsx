@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/nextjs"
 import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
+import ReferralCapture from "@/components/ReferralCapture"
 import AnnouncementBanner from "@/components/AnnouncementBanner"
 import "./globals.css"
 
@@ -72,6 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Suspense>
             <PostHogProvider />
           </Suspense>
+          <ReferralCapture />
           {children}
           <AnnouncementBanner />
         </body>

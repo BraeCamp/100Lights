@@ -10,6 +10,7 @@ import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
 import CodesPanel from './CodesPanel'
+import AffiliatesPanel from './AffiliatesPanel'
 import AuditLogPanel from './AuditLogPanel'
 import CatalogPanel from './CatalogPanel'
 import StoragePanel from './StoragePanel'
@@ -477,6 +478,20 @@ export default async function AdminPage() {
                 description="Codes that grant free Pro time. Promo codes can be redeemed by any user (each once) and stack; starter codes are for signup and each user can only ever use one. Cap a code's lifetime with an expiry, or its total redemptions with a usage limit — handy for time-boxed campaigns and sponsoring a fixed number of people."
               />
               <CodesPanel />
+            </>
+          ),
+        },
+        {
+          id: 'affiliates',
+          group: 'Business',
+          label: 'Affiliates',
+          content: (
+            <>
+              <PanelIntro
+                title="Affiliate Program"
+                description="Creators who share a referral link. Each signup through it earns them a recurring % of that user's Pro payments, and the new user gets bonus free Pro. Add an affiliate to mint their link, then track referrals → paying conversions → estimated commission owed. Payouts are manual — reconcile the estimate against Stripe before paying."
+              />
+              <AffiliatesPanel />
             </>
           ),
         },
