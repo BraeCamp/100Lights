@@ -186,6 +186,8 @@ Touch-first studio at **`/m`** — `app/m/page.tsx` renders `MobileDawClient` �
 
 Articles are Markdown in `content/learn/*.md`, rendered by `lib/simple-markdown.tsx`. Interactive pieces are `@`-directives, parsed there, registered in `components/LazyArticleWidget.tsx`, one lazy-loaded component per widget (`components/Article*.tsx`), each with a server-rendered SEO fallback.
 
+**Learning paths** group articles into ordered courses. Registry: `lib/learn-paths.ts` (`LEARN_PATHS[]` — add/reorder a path here; slugs may reference unpublished articles, which show as "coming soon"). Surfaces: `/learn/paths` index, `/learn/paths/[slug]` detail (progress + Start/Resume), a "Start with a path" strip on `/learn`, and an in-article "Part X of Y → Next in this path" nav (`components/learn/ArticlePathNav.tsx`). Reading progress is localStorage (`components/learn/usePathProgress.ts`, key `100lights-read-articles`) — guest-friendly, no account.
+
 **The catalog to choose from when adding interactivity to an article** (pick the closest fit; don't reinvent):
 - **Audio players / comparisons:** `@audio(url)`, `@ab(json)` (blind A/B), `@sound(communityId)`.
 - **Mixing (over a synthesized groove, no asset):** `@eq`, `@compressor`, `@reverb`, `@width`, `@scrolleq` (scroll-driven EQ tour).

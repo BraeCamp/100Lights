@@ -6,6 +6,9 @@ import { renderMarkdown } from '@/lib/simple-markdown'
 import { pickRecommendations } from '@/lib/article-recommendations'
 import { articlePersona, extractHeadings, extractFaq } from '@/lib/article-personas'
 import ArticleRecommendations from '@/components/ArticleRecommendations'
+import { getPathsForArticle } from '@/lib/learn-paths-store'
+import { ArticlePathBanner, ArticlePathFooter, type PathNavData } from '@/components/learn/ArticlePathNav'
+import MarkArticleRead from '@/components/learn/MarkArticleRead'
 import { ArticleStateProvider } from '@/components/article/article-state'
 import ReadingProgress from '@/components/learn/ReadingProgress'
 import ArticleToc from '@/components/learn/ArticleToc'
@@ -50,7 +53,31 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
   // Weighted by shared tags, and re-rolled on every revalidation rather than
   // seeded — so the set rotates and internal links spread across the section
   // instead of piling onto the same three articles forever.
-  const recommendations = pickRecommendations(a, await getArticles(), 3)
+  const allArticles = await getArticles()
+  const recommendations = pickRecommendations(a, allArticles, 3)
+
+  // Learning-path context: if this article belongs to a path, resolve its
+  // published neighbors so we can show "Part X of Y" + a next-step nav. An
+  // article can appear in more than one path; we surface the first.
+  const pathMatches = await getPathsForArticle(a.slug)
+  const pathNav = ((): PathNavData | null => {
+    const found = pathMatches[0]
+    if (!found) return null
+    const { path, index } = found
+    const pubTitle = new Map(allArticles.map(x => [x.slug, x.title]))
+    const nearest = (dir: 1 | -1) => {
+      for (let i = index + dir; i >= 0 && i < path.articleSlugs.length; i += dir) {
+        const s = path.articleSlugs[i]
+        if (pubTitle.has(s)) return { slug: s, title: pubTitle.get(s)! }
+      }
+      return null
+    }
+    return {
+      pathSlug: path.slug, pathTitle: path.title, emoji: path.emoji,
+      index, total: path.articleSlugs.length,
+      prev: nearest(-1), next: nearest(1),
+    }
+  })()
 
   const jsonLd: Record<string, unknown>[] = [
     {
@@ -93,6 +120,9 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
         {a.draft && (
           <p style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', letterSpacing: '0.08em', margin: '0 0 14px' }}>DRAFT — not yet published</p>
         )}
+
+        {pathNav && <ArticlePathBanner nav={pathNav} />}
+        {!a.draft && <MarkArticleRead slug={a.slug} />}
 
         <article>
           {!/^\s*#\s/.test(a.body) && (
@@ -146,6 +176,8 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
         </aside>
 
         <ArticleReactions slug={a.slug} />
+
+        {pathNav && <ArticlePathFooter nav={pathNav} />}
 
         <ArticleRecommendations items={recommendations} />
       </main>

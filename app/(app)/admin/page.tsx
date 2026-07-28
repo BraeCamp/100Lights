@@ -9,6 +9,7 @@ import PotentialSamplesPanel from './PotentialSamplesPanel'
 import ClusterCorrectionsPanel from './ClusterCorrectionsPanel'
 import PlatformFlagsPanel from './PlatformFlagsPanel'
 import ArticlesPanel from './ArticlesPanel'
+import LearnPathsPanel from './LearnPathsPanel'
 import CodesPanel from './CodesPanel'
 import AffiliatesPanel from './AffiliatesPanel'
 import AuditLogPanel from './AuditLogPanel'
@@ -450,6 +451,20 @@ export default async function AdminPage() {
                 description="The editorial desk for 100lights.com/learn. Edit anything, publish instantly with the toggle, or generate a new draft — repo-based drafts (written by Claude in dev sessions) appear here too and become editable database copies when saved."
               />
               <ArticlesPanel />
+            </>
+          ),
+        },
+        {
+          id: 'learn-paths',
+          group: 'Content & comms',
+          label: 'Learning Paths',
+          content: (
+            <>
+              <PanelIntro
+                title="Learning Paths"
+                description="Ordered courses that teach one skill across several articles. Built-in paths come from code; edit any of them or add your own here — reorder the reading list, set the goal, hide a path, or reset a built-in to its default. Articles that aren't published yet show as “coming soon” on the path."
+              />
+              <LearnPathsPanel />
             </>
           ),
         },

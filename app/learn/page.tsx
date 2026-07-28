@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { GraduationCap } from 'lucide-react'
 import { getArticles } from '@/lib/learn-articles'
+import { getLearnPaths } from '@/lib/learn-paths-store'
 import LearnBrowser, { type CardArticle } from '@/components/learn/LearnBrowser'
 import { TOOL_PROMOS } from '@/components/learn/tool-promos'
 
@@ -28,6 +29,11 @@ export default async function LearnIndex() {
   const cards: CardArticle[] = articles.map(a => ({
     slug: a.slug, title: a.title, description: a.description, tags: a.tags, minutes: a.minutes, date: a.date,
   }))
+  const pubSet = new Set(articles.map(a => a.slug))
+  // Only surface paths that actually have published guides behind them.
+  const paths = (await getLearnPaths())
+    .map(p => ({ ...p, liveCount: p.articleSlugs.filter(s => pubSet.has(s)).length }))
+    .filter(p => p.liveCount > 0)
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
@@ -54,6 +60,31 @@ export default async function LearnIndex() {
             Not theory for its own sake — practical guides that make a claim, name the songs, and give you something to try. Every one is doable free in the 100Lights studio.
           </p>
         </header>
+
+        {/* Guided paths first — a structured way in for readers who want a
+            course, not a browse. Doubles as strong internal linking. */}
+        {paths.length > 0 && (
+          <section style={{ marginBottom: 40 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 750, color: 'var(--text-primary)', margin: 0 }}>Start with a path</h2>
+              <Link href="/learn/paths" style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-light)', textDecoration: 'none', whiteSpace: 'nowrap' }}>All paths →</Link>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+              {paths.map(p => (
+                <Link key={p.slug} href={`/learn/paths/${p.slug}`} style={{ textDecoration: 'none' }}>
+                  <div style={{ height: '100%', padding: '16px 18px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
+                      <span aria-hidden style={{ fontSize: 22, lineHeight: 1 }}>{p.emoji}</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{p.liveCount} guide{p.liveCount === 1 ? '' : 's'}</span>
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 750, color: 'var(--text-primary)', letterSpacing: '-0.01em', marginBottom: 4, lineHeight: 1.25 }}>{p.title}</div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{p.description}</div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         {cards.length === 0 ? (
           <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>Guides are on their way — check back soon.</p>
