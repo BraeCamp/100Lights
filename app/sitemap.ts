@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next'
 import { sql } from '@/lib/db'
 import { getArticles } from '@/lib/learn-articles'
 import { TUTORIALS } from '@/lib/tutorials'
+import { LEARN_PATHS } from '@/lib/learn-paths'
 
 // Community items are the long-tail SEO surface: every shared sample, recipe,
 // and song is a public, playable page with its own OG card. Fragments (#…)
@@ -19,6 +20,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/sign-up`,       lastModified: new Date(), changeFrequency: 'monthly', priority: 0.9 },
     { url: `${base}/m`,             lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     { url: `${base}/download`,      lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
+    { url: `${base}/creators`,      lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools`,                     lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/tuner`,               lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     { url: `${base}/tools/metronome`,           lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
@@ -57,6 +59,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ]
 
+  // Learning paths — ordered courses over the Learn guides (only once guides exist)
+  const paths: MetadataRoute.Sitemap = published.length === 0 ? [] : [
+    { url: `${base}/learn/paths`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.7 },
+    ...LEARN_PATHS.map(p => ({
+      url: `${base}/learn/paths/${p.slug}`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.6,
+    })),
+  ]
+
   let items: MetadataRoute.Sitemap = []
   try {
     const rows = await sql`
@@ -71,5 +84,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }))
   } catch { /* DB unavailable — static pages still ship */ }
 
-  return [...staticPages, ...learn, ...tutorials, ...items]
+  return [...staticPages, ...learn, ...paths, ...tutorials, ...items]
 }
