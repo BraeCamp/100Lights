@@ -5,7 +5,7 @@ import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
-  ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer,
+  ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
 import type { PodcastMeta } from './project-serializer'
 import {
@@ -684,6 +684,9 @@ export interface DawContextValue {
   project: DawProject
   dispatch: Dispatch<DawAction>
   engine: DawEngine
+  /** This session's live construction log (for the History capture/replay mode),
+   *  so replay works without saving + reopening. Falls back to project.history. */
+  getBuildHistory?: () => DawHistoryEntry[]
   // Optional history (mobile provides these; the desktop editor has its own undo)
   undo?: () => void
   redo?: () => void

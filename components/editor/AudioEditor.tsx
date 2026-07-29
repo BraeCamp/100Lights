@@ -1347,6 +1347,9 @@ export default function AudioEditor(props: AudioEditorProps) {
     project,
     dispatch,
     engine: engineForRender,
+    // Live construction log (this session's edits) for the History capture mode,
+    // so replay works without a save+reopen round-trip.
+    getBuildHistory: () => buildLogRef.current,
     view,
     setView,
     editTarget,

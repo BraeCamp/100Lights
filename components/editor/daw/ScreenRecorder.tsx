@@ -47,10 +47,10 @@ function replayBase(p: DawProject): DawProject {
   }
 }
 
-export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }) {
-  const { engine, project, dispatch } = useDaw()
+export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }: { onClose: () => void; initialMode?: 'screen' | 'history' }) {
+  const { engine, project, dispatch, getBuildHistory } = useDaw()
   const recRef = useRef<Recorder | null>(null)
-  const [mode, setMode] = useState<'screen' | 'history'>('screen')
+  const [mode, setMode] = useState<'screen' | 'history'>(initialMode)
   const [state, setState] = useState<'idle' | 'recording' | 'done'>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [includeMic, setIncludeMic] = useState(false)
@@ -68,7 +68,7 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
   const [buildProg, setBuildProg] = useState<{ i: number; total: number } | null>(null)
   const cancelRef = useRef(false)
   const supported = screenRecordingSupported()
-  const historyLen = project.history?.length ?? 0
+  const historyLen = (getBuildHistory?.() ?? project.history ?? []).length
 
   async function shareToCommunity() {
     if (!result) return
@@ -127,7 +127,7 @@ export default function ScreenRecorderPanel({ onClose }: { onClose: () => void }
   // folded state so the studio visibly rebuilds; pause at milestones to play
   // the song-so-far; finish with the full track. Optionally screen-record it.
   async function playHistory(record: boolean) {
-    const hist = project.history ?? []
+    const hist = getBuildHistory?.() ?? project.history ?? []
     if (!hist.length) {
       setError('This project has no recorded build history yet. Build a project in the studio (or open one authored with history) and try again.')
       return

@@ -4,7 +4,7 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown, History } from 'lucide-react'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { useDaw, formatBeat, makeAudioClip } from '@/lib/daw-state'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
@@ -69,6 +69,7 @@ export default function Transport() {
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [showRecorder, setShowRecorder] = useState(false)
+  const [recorderMode, setRecorderMode] = useState<'screen' | 'history'>('screen')
   const [captureOpen, setCaptureOpen] = useState(false)
   const [shotBusy, setShotBusy] = useState(false)
   const [shotBlob, setShotBlob] = useState<Blob | null>(null)
@@ -1069,8 +1070,15 @@ export default function Transport() {
               icon={<Video size={14} />}
               label="Record session"
               hint="Screen + studio audio"
-              active={showRecorder}
-              onClick={() => { setCaptureOpen(false); setShowRecorder(true) }}
+              active={showRecorder && recorderMode === 'screen'}
+              onClick={() => { setCaptureOpen(false); setRecorderMode('screen'); setShowRecorder(true) }}
+            />
+            <CaptureItem
+              icon={<History size={14} />}
+              label="Replay the build"
+              hint="Watch this project get made"
+              active={showRecorder && recorderMode === 'history'}
+              onClick={() => { setCaptureOpen(false); setRecorderMode('history'); setShowRecorder(true) }}
             />
           </div>
         )}
@@ -1081,7 +1089,7 @@ export default function Transport() {
       <div id="transport-collab-slot" style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }} />
 
       {showRecorder && typeof document !== 'undefined' && createPortal(
-        <ScreenRecorderPanel onClose={() => setShowRecorder(false)} />,
+        <ScreenRecorderPanel initialMode={recorderMode} onClose={() => setShowRecorder(false)} />,
         document.body,
       )}
 
