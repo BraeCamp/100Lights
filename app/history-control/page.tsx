@@ -9,15 +9,20 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useApplyWorkshopTheme } from '@/components/StandaloneThemedShell'
 
 type Step = { icon: string; text: string; where: string }
 const SPEEDS = [0.5, 1, 2, 4]
+// Follows the user's Workshop customization (var(--…), applied to [data-editor]);
+// the hex values are fallbacks for when no theme is set.
 const C = {
-  bg: '#14121a', card: '#1c1a24', border: '#332f40', text: '#ece9f5',
-  muted: '#847f98', sub: '#bcb7cd', accent: '#7c3aed', green: '#059669',
+  bg: 'var(--bg-base, #14121a)', card: 'var(--bg-card, #1c1a24)', border: 'var(--border, #332f40)',
+  text: 'var(--text-primary, #ece9f5)', muted: 'var(--text-muted, #847f98)', sub: 'var(--text-secondary, #bcb7cd)',
+  accent: 'var(--accent, #7c3aed)', green: '#059669',
 }
 
 export default function HistoryControlPage() {
+  useApplyWorkshopTheme()
   const [steps, setSteps] = useState<Step[]>([])
   const [total, setTotal] = useState(0)
   const [step, setStep] = useState(0)
@@ -61,7 +66,8 @@ export default function HistoryControlPage() {
   const desc = step > 0 ? steps[step - 1] : null
 
   const shell: React.CSSProperties = {
-    position: 'fixed', inset: 0, zIndex: 2147483000, background: C.bg, color: C.text,
+    position: 'fixed', inset: 0, zIndex: 2147483000, backgroundColor: C.bg, color: C.text,
+    backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)',
     fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     display: 'flex', flexDirection: 'column', padding: '16px 18px', gap: 10, boxSizing: 'border-box',
   }
@@ -71,7 +77,7 @@ export default function HistoryControlPage() {
   }
 
   if (noOpener) return (
-    <div style={shell}>
+    <div data-editor="true" style={shell}>
       <div style={{ fontSize: 13, fontWeight: 800 }}>Build history</div>
       <p style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.6, marginTop: 8 }}>
         Open this from the studio — the <b>Build history</b> panel&rsquo;s <b>⧉ Pop out</b> button. On the
@@ -81,7 +87,7 @@ export default function HistoryControlPage() {
   )
 
   return (
-    <div style={shell}>
+    <div data-editor="true" style={shell}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 800 }}>Build history</span>
         <span style={{ width: 7, height: 7, borderRadius: 4, background: connected ? C.green : C.muted }} />
@@ -106,7 +112,7 @@ export default function HistoryControlPage() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 'auto' }}>
         <button style={ctrl} title="Previous edit" onClick={() => { setAutoPlay(false); send({ cmd: 'prev' }) }}>◀</button>
-        <button style={{ ...ctrl, flex: 1, background: C.accent, color: '#fff', border: 'none' }}
+        <button style={{ ...ctrl, flex: 1, background: C.accent, color: 'var(--accent-contrast, #fff)', border: 'none' }}
           onClick={() => { const p = !autoPlay; setAutoPlay(p); send({ cmd: p ? 'play' : 'pause' }) }}>{autoPlay ? '⏸ Pause' : '▶ Play'}</button>
         <button style={ctrl} title="Next edit" onClick={() => { setAutoPlay(false); send({ cmd: 'next' }) }}>▶</button>
         <select value={speed} title="Speed" onChange={e => { const s = Number(e.target.value); setSpeed(s); send({ cmd: 'setSpeed', speed: s }) }}

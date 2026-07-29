@@ -11,8 +11,9 @@ import { INSPECTOR_CHANNEL, type InspectorMsg, type InspectorSelection } from '@
 import type { DawAction } from '@/lib/daw-state'
 import { CLIP_EFFECT_PARAM_META } from '@/lib/clip-effect-utils'
 import type { ClipEffectType } from '@/lib/daw-types'
+import { useApplyWorkshopTheme } from '@/components/StandaloneThemedShell'
 
-const ACCENT = '#a78bfa'
+const ACCENT = 'var(--accent, #a78bfa)'
 
 // Filter slider mapping shared with the roll's Sound panel
 function vToHz(v: number): number | undefined {
@@ -24,9 +25,9 @@ function hzToV(hz: number | undefined): number {
   return Math.log(hz / 200) / Math.log(90)
 }
 
-const labelStyle: React.CSSProperties = { fontSize: 11, color: '#999', width: 78, flexShrink: 0 }
+const labelStyle: React.CSSProperties = { fontSize: 11, color: 'var(--text-muted, #999)', width: 78, flexShrink: 0 }
 const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0' }
-const valueStyle: React.CSSProperties = { fontSize: 10.5, color: '#ccc', width: 52, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
+const valueStyle: React.CSSProperties = { fontSize: 10.5, color: 'var(--text-secondary, #ccc)', width: 52, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }
 const sliderStyle: React.CSSProperties = { flex: 1, accentColor: ACCENT, minWidth: 0 }
 
 function Slider({ name, val, min, max, step, fmt, onCommit, draggingRef }: {
@@ -60,9 +61,9 @@ function ToggleRow({ name, on, onChange }: { name: string; on: boolean; onChange
       <span style={labelStyle}>{name}</span>
       <button onClick={() => onChange(!on)} style={{
         fontSize: 11, fontWeight: 700, padding: '4px 16px', borderRadius: 999, cursor: 'pointer',
-        background: on ? 'rgba(124,58,237,0.2)' : 'transparent',
-        border: on ? `1px solid ${ACCENT}80` : '1px solid #333',
-        color: on ? ACCENT : '#888',
+        background: on ? 'var(--accent-subtle, rgba(124,58,237,0.2))' : 'transparent',
+        border: on ? '1px solid var(--accent-light, #a78bfa)' : '1px solid var(--border, #333)',
+        color: on ? ACCENT : 'var(--text-secondary, #888)',
       }}>{on ? 'On' : 'Off'}</button>
     </div>
   )
@@ -82,7 +83,7 @@ function ToneRows({ tone, onBand, draggingRef }: {
   )
   return (
     <>
-      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.1em', color: '#666', margin: '14px 0 4px' }}>EQ / TONE</div>
+      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--text-muted, #666)', margin: '14px 0 4px' }}>EQ / TONE</div>
       {band('Sub', 'sub')}
       {band('Bass', 'bass')}
       {band('Mid', 'mid')}
@@ -105,7 +106,7 @@ function EffectSection({ effect, draggingRef, send }: {
       <Slider name={meta.label} val={cur} min={meta.min} max={meta.max} step={meta.log ? 1 : (meta.max - meta.min) / 100}
         fmt={v => meta.log ? (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`) : `${Math.round(v * 100) / 100}`}
         draggingRef={draggingRef} onCommit={v => send({ type: 'UPDATE_CLIP_EFFECT', effectId: effect.id, patch: { params: { ...effect.params, [meta.key]: v } as never } })} />
-      <p style={{ fontSize: 10.5, color: '#666', marginTop: 12 }}>
+      <p style={{ fontSize: 10.5, color: 'var(--text-muted, #666)', marginTop: 12 }}>
         Beat {effect.startBeat} · {effect.durationBeats} beats long
       </p>
     </>
@@ -113,6 +114,7 @@ function EffectSection({ effect, draggingRef, send }: {
 }
 
 export default function InspectorPage() {
+  useApplyWorkshopTheme()
   const [connected, setConnected] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [sel, setSel] = useState<InspectorSelection>({ kind: 'none' })
@@ -144,11 +146,11 @@ export default function InspectorPage() {
   }
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#0f0f11', color: '#f1f0ff', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-geist-sans, sans-serif)' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid #26262b', flexShrink: 0 }}>
+    <div data-editor="true" style={{ minHeight: '100dvh', backgroundColor: 'var(--bg-base, #0f0f11)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)', color: 'var(--text-primary, #f1f0ff)', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-geist-sans, sans-serif)' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid var(--border, #26262b)', flexShrink: 0 }}>
         <MonitorSmartphone size={15} color={ACCENT} />
         <span style={{ fontSize: 13, fontWeight: 800 }}>Assistant</span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-secondary, #888)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {connected ? projectName : 'Waiting for the editor…'}
         </span>
         <span aria-hidden style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: connected ? '#4ade80' : '#666' }} />
@@ -156,26 +158,26 @@ export default function InspectorPage() {
 
       <main style={{ flex: 1, padding: '16px 20px', overflowY: 'auto' }}>
         {!connected && (
-          <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary, #888)', lineHeight: 1.6 }}>
             Open a project in the studio (same browser) and this window follows your selection.
             Drag it to a second screen and keep working.
           </p>
         )}
 
         {connected && sel.kind === 'none' && (
-          <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary, #888)', lineHeight: 1.6 }}>
             Nothing selected. Click a track, clip, or FX region in the editor — its settings appear here.
           </p>
         )}
 
         {sel.kind !== 'none' && (
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.1em', color: '#666' }}>{kindLabel[sel.kind]}</div>
+            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--text-muted, #666)' }}>{kindLabel[sel.kind]}</div>
             <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.01em', marginTop: 2 }}>
               {sel.kind === 'track' ? sel.track.name : sel.kind === 'effect' ? sel.effect.type : sel.clip.name}
             </div>
             {sel.kind !== 'track' && (
-              <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>on {sel.trackName}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary, #888)', marginTop: 2 }}>on {sel.trackName}</div>
             )}
           </div>
         )}
@@ -192,7 +194,7 @@ export default function InspectorPage() {
             <ToggleRow name="Solo" on={sel.track.solo} onChange={v => send({ type: 'UPDATE_TRACK', trackId: sel.track.id, patch: { solo: v } })} />
             <ToneRows tone={sel.track.tone} draggingRef={draggingRef}
               onBand={(k, v) => send({ type: 'UPDATE_TRACK', trackId: sel.track.id, patch: { tone: { ...sel.track.tone, [k]: v || undefined } } })} />
-            <p style={{ fontSize: 10.5, color: '#666', marginTop: 12 }}>Instrument: {sel.track.instrumentType}</p>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted, #666)', marginTop: 12 }}>Instrument: {sel.track.instrumentType}</p>
           </>
         )}
 
@@ -211,7 +213,7 @@ export default function InspectorPage() {
               fmt={v => v === 0 ? '±0 st' : `${v > 0 ? '+' : ''}${v} st`}
               draggingRef={draggingRef} onCommit={v => send({ type: 'UPDATE_CLIP', clipId: sel.clip.id, patch: { pitchSemitones: v } })} />
             <ToggleRow name="Reverse" on={sel.clip.reverse} onChange={v => send({ type: 'UPDATE_CLIP', clipId: sel.clip.id, patch: { reverse: v } })} />
-            <p style={{ fontSize: 10.5, color: '#666', marginTop: 12 }}>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted, #666)', marginTop: 12 }}>
               Beat {sel.clip.startBeat} · {sel.clip.durationBeats} beats long
             </p>
           </>
@@ -237,7 +239,7 @@ export default function InspectorPage() {
                   onBand={(k, v) => send({ type: 'UPDATE_CLIP', clipId: sel.clip.id, patch: { rollFx: { ...sel.clip.rollFx, [k]: v || undefined } } })} />
               </>
             )}
-            <p style={{ fontSize: 10.5, color: '#666', marginTop: 12 }}>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted, #666)', marginTop: 12 }}>
               Sound: {sel.clip.presetName} · {sel.clip.noteCount} note{sel.clip.noteCount !== 1 ? 's' : ''}
               {sel.clip.isDrumClip ? ' · drum clip' : ''}
             </p>
@@ -247,7 +249,7 @@ export default function InspectorPage() {
         {sel.kind === 'effect' && <EffectSection effect={sel.effect} draggingRef={draggingRef} send={send} />}
       </main>
 
-      <footer style={{ padding: '10px 20px', borderTop: '1px solid #26262b', fontSize: 10, color: '#666', flexShrink: 0 }}>
+      <footer style={{ padding: '10px 20px', borderTop: '1px solid var(--border, #26262b)', fontSize: 10, color: 'var(--text-muted, #666)', flexShrink: 0 }}>
         Follows your selection in the studio window. Changes apply instantly — and sync to collaborators.
       </footer>
     </div>
