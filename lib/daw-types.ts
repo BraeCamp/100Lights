@@ -812,6 +812,16 @@ export type SessionGrid = Record<string, (DawClip | null)[]>
 
 // ── Project ───────────────────────────────────────────────────────────────────
 
+/** One recorded step of a project's construction, for the History replay (the
+ *  third capture method). `action` is a serialized DawAction — typed loosely
+ *  here to avoid a dependency cycle with daw-state; cast to DawAction where the
+ *  reducer is applied. A non-empty `label` marks a milestone: replay pauses
+ *  there to play the song so far. */
+export interface DawHistoryEntry {
+  action: { type: string; [key: string]: unknown }
+  label?: string
+}
+
 export interface DawProject {
   id: string
   name: string
@@ -842,6 +852,9 @@ export interface DawProject {
   comments?: TimelineComment[]
   key: number               // 0-11 (C=0), displayed in transport
   scale: string             // 'major' | 'minor' | etc.
+  /** Ordered construction log for the History capture/replay mode — folded from
+   *  empty through the reducer to re-play how the project was built. */
+  history?: DawHistoryEntry[]
 }
 
 export interface TimelineComment {

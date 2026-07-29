@@ -393,6 +393,12 @@ export default function AudioEditor(props: AudioEditorProps) {
   const UNDO_LIMIT = 200
   const historyRef = useRef<Array<{ before: DawProject; action: DawAction }>>([])
   const redoRef    = useRef<Array<{ before: DawProject; action: DawAction }>>([])
+  // Construction log for the History capture/replay mode (third capture method):
+  // the literal forward action stream, folded from empty to re-play how the
+  // project was built. Seeded from a loaded project's history so edits continue it.
+  const buildLogRef = useRef<NonNullable<DawProject['history']>>(
+    initialProject.history ? [...initialProject.history] : []
+  )
   const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
   const voiceChainAppliedRef = useRef(false)
@@ -631,6 +637,10 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action }]
       redoRef.current = []
+      // Record the build history (capped to keep the save file bounded).
+      if (buildLogRef.current.length < 5000) {
+        buildLogRef.current.push({ action } as unknown as NonNullable<DawProject['history']>[number])
+      }
     }
     rawDispatch(action)
     // Suggestions stay local — never broadcast a proposal into the shared room.
@@ -1112,6 +1122,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       c.kind === 'audio' && c.audioUrl?.startsWith('blob:') ? { ...c, audioUrl: undefined } : c
     const dawProject = {
       ...p,
+      history: buildLogRef.current.length ? [...buildLogRef.current] : p.history,
       arrangementClips: p.arrangementClips.map(stripUrl),
       sessionGrid: Object.fromEntries(Object.entries(p.sessionGrid).map(([tid, row]) =>
         [tid, row.map(c => (c ? stripUrl(c) : c))])),
