@@ -119,6 +119,9 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
   const [consolidateInfo, setConsolidateInfo] = useState<string | null>(null)
   const savedProjRef = useRef<DawProject | null>(null)
   const histRef = useRef<NonNullable<DawProject['history']>>([])
+  const [poppedOut, setPoppedOut] = useState(false)
+  const winRef = useRef<Window | null>(null)
+  const cmdRef = useRef<(d: Record<string, unknown>) => void>(() => {})
   const supported = screenRecordingSupported()
 
   const liveHistory = resolveHistory(getBuildHistory?.(), project.history)
@@ -165,7 +168,9 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
     if (saved) { dispatch({ type: 'LOAD_PROJECT', project: saved }); engine.updateProject(saved) }
     savedProjRef.current = null
     histRef.current = []
-    setAutoPlay(false); setListening(false); setConsolidateInfo(null)
+    try { winRef.current?.close() } catch { /* closed */ }
+    winRef.current = null
+    setPoppedOut(false); setAutoPlay(false); setListening(false); setConsolidateInfo(null)
   }, [dispatch, engine])
 
   async function shareToCommunity() {
@@ -205,12 +210,36 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
   // Restore the real project if the panel unmounts mid-scrub.
   useEffect(() => () => {
     recRef.current?.cleanup()
+    try { winRef.current?.close() } catch { /* closed */ }
     if (savedProjRef.current) {
       const saved = savedProjRef.current
       try { engine.stop(); dispatch({ type: 'LOAD_PROJECT', project: saved }); engine.updateProject(saved) } catch { /* editor gone */ }
     }
     setPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pop-out window: a stable listener forwards commands to the current handler.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== location.origin) return
+      const d = e.data as Record<string, unknown> | null
+      if (d && d.__lightsHistory && typeof d.cmd === 'string') cmdRef.current(d)
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [])
+  // Mirror state to the pop-out whenever it changes.
+  useEffect(() => {
+    if (poppedOut && winRef.current) {
+      try { winRef.current.postMessage({ __lightsHistory: true, type: 'state', step: scrubStep, autoPlay, listening, total }, location.origin) } catch { /* closed */ }
+    }
+  }, [poppedOut, scrubStep, autoPlay, listening, total])
+  // Notice when the user closes the pop-out window.
+  useEffect(() => {
+    if (!poppedOut) return
+    const t = setInterval(() => { if (winRef.current?.closed) { winRef.current = null; setPoppedOut(false) } }, 800)
+    return () => clearInterval(t)
+  }, [poppedOut])
 
   function toggleListen() {
     if (listening) { engine.stop(); setListening(false); return }
@@ -240,6 +269,44 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
     setScrubStep(step); foldToStep(step)
     setConsolidateInfo(before === after ? 'nothing to merge' : `merged ${before} → ${after}`)
   }
+
+  // ── Detachable pop-out window: drive the studio from a separate OS window ──
+  function sendInit() {
+    if (!savedProjRef.current) { savedProjRef.current = project; histRef.current = hist }
+    try {
+      winRef.current?.postMessage({
+        __lightsHistory: true, type: 'init', total, step: scrubStep, speed, autoPlay, listening,
+        steps: hist.map(e => describeStep((e as DawHistoryEntry).action)),
+      }, location.origin)
+    } catch { /* closed */ }
+  }
+  // Recomputed each render so it closes over current values.
+  cmdRef.current = (d: Record<string, unknown>) => {
+    switch (d.cmd) {
+      case 'ready': sendInit(); break
+      case 'scrubTo': setAutoPlay(false); goToStep(Number(d.step)); break
+      case 'prev': setAutoPlay(false); goToStep(scrubStep - 1); break
+      case 'next': setAutoPlay(false); goToStep(scrubStep + 1); break
+      case 'play':
+        if (listening) { engine.stop(); setListening(false) }
+        if (scrubStep >= total) goToStep(0); else if (!savedProjRef.current) goToStep(scrubStep)
+        setAutoPlay(true); break
+      case 'pause': setAutoPlay(false); break
+      case 'listen': toggleListen(); break
+      case 'stopListen': engine.stop(); setListening(false); break
+      case 'setSpeed': setSpeed(Number(d.speed)); break
+      case 'consolidate': doConsolidate(); break
+      case 'closed': winRef.current = null; setPoppedOut(false); break
+    }
+  }
+  function popOut() {
+    if (!savedProjRef.current) goToStep(scrubStep)
+    const w = window.open('/history-control', 'lights-history', 'width=400,height=340,menubar=no,toolbar=no,location=no,status=no')
+    if (!w) { setError('Pop-out was blocked — allow pop-ups for this site.'); return }
+    winRef.current = w
+    setPoppedOut(true)
+  }
+  function bringBack() { try { winRef.current?.close() } catch { /* closed */ } winRef.current = null; setPoppedOut(false) }
 
   async function start() {
     setError(null)
@@ -351,6 +418,13 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
           <p style={{ fontSize: 11, color: '#f59e0b', lineHeight: 1.55, margin: 0 }}>
             No history yet — it records as you build.
           </p>
+        ) : poppedOut ? (
+          <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            🎚 Controls are open in a separate window — drag it to another screen. Scrubbing there drives this studio live.
+            <button onClick={bringBack} style={{ display: 'block', marginTop: 9, padding: '6px 11px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
+              ⧉ Bring controls back here
+            </button>
+          </div>
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -381,6 +455,10 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
               <button onClick={doConsolidate} title="Merge repeated tweaks of the same control into their final value"
                 style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer' }}>
                 ⤳ Consolidate
+              </button>
+              <button onClick={popOut} title="Open the controls in a separate window — drag to another screen"
+                style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer' }}>
+                ⧉ Pop out
               </button>
               {consolidateInfo && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{consolidateInfo}</span>}
             </div>

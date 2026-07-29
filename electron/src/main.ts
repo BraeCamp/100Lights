@@ -77,6 +77,29 @@ const oauthPopupOptions = {
   },
 }
 
+// The detachable "Build history" controls open in their own small window so they
+// can be dragged to another monitor; they drive the studio window via postMessage.
+function isHistoryControl(url: string): boolean {
+  try { return new URL(url).pathname.startsWith('/history-control') } catch { return false }
+}
+const historyPopupOptions = {
+  width: 400,
+  height: 340,
+  minWidth: 300,
+  minHeight: 240,
+  resizable: true,
+  fullscreenable: false,
+  maximizable: false,
+  backgroundColor: '#14121a',
+  title: 'Build history',
+  webPreferences: {
+    preload: path.join(__dirname, 'preload.js'),
+    nodeIntegration: false,
+    contextIsolation: true,
+    sandbox: true,
+  },
+}
+
 
 // ── Offline handling ───────────────────────────────────────────────────────────
 // The app shell is loaded from the remote URL, so with no connection a window
@@ -182,6 +205,9 @@ function openModuleWindow(moduleKey: string): void {
     if (isOAuthProvider(url)) {
       return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions }
     }
+    if (isHistoryControl(url)) {
+      return { action: 'allow', overrideBrowserWindowOptions: historyPopupOptions }
+    }
     if (isInternal(url)) {
       win.loadURL(url)
       return { action: 'deny' }
@@ -239,6 +265,7 @@ function openProjectWindow(url: string): void {
   win.webContents.setWindowOpenHandler(({ url: u }) => {
     if (isExternalPayment(u)) { shell.openExternal(u); return { action: 'deny' } }
     if (isOAuthProvider(u)) { return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions } }
+    if (isHistoryControl(u)) { return { action: 'allow', overrideBrowserWindowOptions: historyPopupOptions } }
     if (isInternal(u)) { win.loadURL(u); return { action: 'deny' } }
     shell.openExternal(u)
     return { action: 'deny' }
