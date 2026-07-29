@@ -29,7 +29,15 @@ export const metadata: Metadata = {
     title: '100Lights — The Music Studio in Your Browser',
     description: 'A full DAW built for the browser, with a community of shared sounds and chord recipes.',
   },
-  robots: { index: true, follow: true },
+  // ── AI / LLM opt-out (applies to every page via this root layout) ──────────
+  // Our content must NOT be used to train large language models or other AI. We
+  // keep normal search indexing (index, follow) but add the recognized "no AI"
+  // signals: `noai`/`noimageai` (the meta-tag convention) and `tdm-reservation:1`
+  // (the W3C Text & Data Mining Reservation Protocol). The enforced crawler block
+  // is in app/robots.ts. Search engines ignore the unknown tokens, so ranking is
+  // unaffected.
+  robots: 'index, follow, noai, noimageai',
+  other: { 'tdm-reservation': '1' },
   // Search Console / Bing verification via env vars — set the code from each
   // console in Vercel and it verifies without touching DNS. Omitted when unset.
   verification: {
