@@ -4,9 +4,10 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown, History } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown, History, Upload } from 'lucide-react'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
-import { useDaw, formatBeat, makeAudioClip } from '@/lib/daw-state'
+import { useDaw, formatBeat, makeAudioClip, migrateProject } from '@/lib/daw-state'
+import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
 
@@ -71,6 +72,24 @@ export default function Transport() {
   const [showRecorder, setShowRecorder] = useState(false)
   const [recorderMode, setRecorderMode] = useState<'screen' | 'history'>('screen')
   const [captureOpen, setCaptureOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Open a .cfproj project file straight into the studio (mirrors the projects
+  // dashboard upload). Loads via the studio seed so the project's recorded
+  // construction history rides along intact — replay plays the real history.
+  async function handleOpenFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const cf = JSON.parse(await file.text())
+      const dp = cf?.dawProject ?? (Array.isArray(cf?.tracks) ? cf : null)
+      if (!dp || !Array.isArray(dp.tracks)) throw new Error('not a project')
+      openProjectInStudio(migrateProject(dp))
+    } catch {
+      window.alert('That doesn’t look like a 100Lights project (.cfproj).')
+    }
+  }
   const [shotBusy, setShotBusy] = useState(false)
   const [shotBlob, setShotBlob] = useState<Blob | null>(null)
   const captureRef = useRef<HTMLDivElement>(null)
@@ -1023,10 +1042,19 @@ export default function Transport() {
         MASK
       </button>
 
+      <input ref={fileInputRef} type="file" accept=".cfproj,application/json" onChange={handleOpenFile} style={{ display: 'none' }} />
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        title="Open a .cfproj project file"
+        style={{ ...base, width: 'auto', padding: '0 9px', gap: 4, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}
+      >
+        <Upload size={13} /> Open
+      </button>
+
       {/* Capture dropdown — screenshot + session recorder, grouped on the
           right next to the invite/Share button. The auto margin lives here so
           this pair floats to the far end of the transport row. */}
-      <div ref={captureRef} style={{ position: 'relative', marginLeft: 'auto', flexShrink: 0 }}>
+      <div ref={captureRef} style={{ position: 'relative', flexShrink: 0 }}>
         <button
           onClick={() => setCaptureOpen(v => !v)}
           title="Capture the studio — take a screenshot or record a session"
