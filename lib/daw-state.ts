@@ -687,6 +687,9 @@ export interface DawContextValue {
   /** This session's live construction log (for the History capture/replay mode),
    *  so replay works without saving + reopening. Falls back to project.history. */
   getBuildHistory?: () => DawHistoryEntry[]
+  /** Collapse repeated same-control tweaks in the build log to their net value
+   *  (the History panel's "Consolidate" button). Returns the new step count. */
+  consolidateBuildHistory?: () => number
   // Optional history (mobile provides these; the desktop editor has its own undo)
   undo?: () => void
   redo?: () => void

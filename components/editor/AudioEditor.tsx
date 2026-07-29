@@ -82,6 +82,23 @@ const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: 
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
+
+// Build-history coalescing: a slider drag or repeated tweaks of one control fire
+// many same-target UPDATE actions — collapse them to a single net step. Returns
+// a stable key for "the same control", or null for non-coalescable actions.
+const COALESCE_TYPES = new Set<string>([
+  'UPDATE_TRACK', 'UPDATE_EFFECT', 'UPDATE_CLIP', 'UPDATE_MIDI_NOTE', 'UPDATE_CLIP_EFFECT',
+  'UPDATE_RETURN_EFFECT', 'UPDATE_MIDI_EFFECT', 'UPDATE_RETURN_TRACK', 'UPDATE_AUTOMATION_POINT',
+  'MOVE_CLIP', 'MOVE_TRACK', 'SET_TEMPO', 'SET_SWING', 'SET_MASTER_VOLUME', 'SET_CROSSFADER', 'SET_KEY_SCALE',
+])
+function buildTargetKey(a: DawAction): string | null {
+  if (!COALESCE_TYPES.has(a.type)) return null
+  const r = a as unknown as Record<string, unknown>
+  const id = ['trackId', 'clipId', 'effectId', 'noteId', 'laneId', 'pointId', 'returnId']
+    .map(k => r[k]).filter(v => v != null).join('/')
+  const fields = r.patch && typeof r.patch === 'object' ? Object.keys(r.patch as object).sort().join(',') : ''
+  return `${a.type}:${id}:${fields}`
+}
 const AppearancePanel = dynamic(() => import('./daw/AppearancePanel'), { ssr: false })
 const SessionRecap = dynamic(() => import('./daw/SessionRecap'), { ssr: false })
 
@@ -399,6 +416,23 @@ export default function AudioEditor(props: AudioEditorProps) {
   const buildLogRef = useRef<NonNullable<DawProject['history']>>(
     initialProject.history ? [...initialProject.history] : []
   )
+  const lastCoalesceRef = useRef<{ key: string; time: number } | null>(null)
+
+  // "Consolidate actions": collapse every run of consecutive same-control tweaks
+  // in the build log to its net (final) value. Returns the new step count.
+  const consolidateBuildHistory = useCallback((): number => {
+    const src = buildLogRef.current
+    const out: NonNullable<DawProject['history']> = []
+    for (const entry of src) {
+      const key = buildTargetKey(entry.action as unknown as DawAction)
+      const last = out[out.length - 1]
+      if (key && last && buildTargetKey(last.action as unknown as DawAction) === key) out[out.length - 1] = entry
+      else out.push(entry)
+    }
+    buildLogRef.current = out
+    lastCoalesceRef.current = null
+    return out.length
+  }, [])
   const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
   const voiceChainAppliedRef = useRef(false)
@@ -637,9 +671,19 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action }]
       redoRef.current = []
-      // Record the build history (capped to keep the save file bounded).
-      if (buildLogRef.current.length < 5000) {
-        buildLogRef.current.push({ action } as unknown as NonNullable<DawProject['history']>[number])
+      // Build history: coalesce a continuous slider drag (rapid same-target
+      // updates) into one step — only the released value is kept.
+      const entry = { action } as unknown as NonNullable<DawProject['history']>[number]
+      const key = buildTargetKey(action)
+      const log = buildLogRef.current
+      const now = Date.now()
+      const lc = lastCoalesceRef.current
+      if (key && lc && lc.key === key && now - lc.time < 500 && log.length) {
+        log[log.length - 1] = entry
+        lastCoalesceRef.current = { key, time: now }
+      } else if (log.length < 5000) {
+        log.push(entry)
+        lastCoalesceRef.current = key ? { key, time: now } : null
       }
     }
     rawDispatch(action)
@@ -1363,6 +1407,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     // Live construction log (this session's edits) for the History capture mode,
     // so replay works without a save+reopen round-trip.
     getBuildHistory: () => buildLogRef.current,
+    consolidateBuildHistory,
     view,
     setView,
     editTarget,
