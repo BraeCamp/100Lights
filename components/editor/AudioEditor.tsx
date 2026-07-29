@@ -649,6 +649,19 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Dev-only: expose dispatch + a project/history snapshot so a genuine build
+  // session can be driven and recorded (the History capture mode then replays
+  // what actually happened — edits and refinements included).
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return
+    const w = window as unknown as {
+      __dawDispatch?: typeof dispatch
+      __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
+    }
+    w.__dawDispatch = dispatch
+    w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
+  }, [])
+
   // ── Community deep-link: /new?communityItem={id} drops the shared thing
   // straight into this fresh project (sample → track+clip, recipe → roll clip,
   // preset → installed). Best-effort; the editor works regardless.
