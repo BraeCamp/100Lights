@@ -317,12 +317,15 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
             </label>
             <button onClick={() => void playHistory(true)} disabled={historyLen === 0 || !supported}
               style={{ width: '100%', padding: '9px 0', borderRadius: 9, border: 'none', background: historyLen ? '#dc2626' : 'var(--border)', color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: historyLen ? 'pointer' : 'not-allowed', marginBottom: 6, opacity: historyLen ? 1 : 0.6 }}>
-              ● Record the build
+              ● Record replay to video
             </button>
             <button onClick={() => void playHistory(false)} disabled={historyLen === 0}
               style={{ width: '100%', padding: '8px 0', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: historyLen ? 'pointer' : 'not-allowed', opacity: historyLen ? 1 : 0.6 }}>
-              ▶ Preview (no recording)
+              ▶ Preview replay (watch only)
             </button>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '8px 0 0', lineHeight: 1.5 }}>
+              The build history is saved with the project automatically — these just play it back.
+            </p>
           </>
         )}
 
