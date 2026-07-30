@@ -91,6 +91,13 @@ const COALESCE_TYPES = new Set<string>([
   'UPDATE_RETURN_EFFECT', 'UPDATE_MIDI_EFFECT', 'UPDATE_RETURN_TRACK', 'UPDATE_AUTOMATION_POINT',
   'MOVE_CLIP', 'MOVE_TRACK', 'SET_TEMPO', 'SET_SWING', 'SET_MASTER_VOLUME', 'SET_CROSSFADER', 'SET_KEY_SCALE',
 ])
+// View / transport-only actions — they change how the project is viewed or
+// played, not its creative content, so they're kept out of the build history
+// (the replay is about how the song was made, not where the loop was set).
+const HISTORY_EXCLUDE = new Set<string>([
+  'SET_LOOP', 'SET_LOOP_ENABLED', 'SET_WAVEFORM_ZOOM', 'SET_CROSSFADER',
+])
+
 function buildTargetKey(a: DawAction): string | null {
   if (!COALESCE_TYPES.has(a.type)) return null
   const r = a as unknown as Record<string, unknown>
@@ -671,19 +678,22 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (action.type !== 'LOAD_PROJECT') {
       historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action }]
       redoRef.current = []
-      // Build history: coalesce a continuous slider drag (rapid same-target
-      // updates) into one step — only the released value is kept.
-      const entry = { action } as unknown as NonNullable<DawProject['history']>[number]
-      const key = buildTargetKey(action)
-      const log = buildLogRef.current
-      const now = Date.now()
-      const lc = lastCoalesceRef.current
-      if (key && lc && lc.key === key && now - lc.time < 500 && log.length) {
-        log[log.length - 1] = entry
-        lastCoalesceRef.current = { key, time: now }
-      } else if (log.length < 5000) {
-        log.push(entry)
-        lastCoalesceRef.current = key ? { key, time: now } : null
+      // Build history: skip view/transport-only actions, and coalesce a
+      // continuous slider drag (rapid same-target updates) into one step —
+      // only the released value is kept.
+      if (!HISTORY_EXCLUDE.has(action.type)) {
+        const entry = { action } as unknown as NonNullable<DawProject['history']>[number]
+        const key = buildTargetKey(action)
+        const log = buildLogRef.current
+        const now = Date.now()
+        const lc = lastCoalesceRef.current
+        if (key && lc && lc.key === key && now - lc.time < 500 && log.length) {
+          log[log.length - 1] = entry
+          lastCoalesceRef.current = { key, time: now }
+        } else if (log.length < 5000) {
+          log.push(entry)
+          lastCoalesceRef.current = key ? { key, time: now } : null
+        }
       }
     }
     rawDispatch(action)
