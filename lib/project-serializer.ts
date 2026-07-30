@@ -8,6 +8,7 @@
  */
 
 import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bundle'
+import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, Track, VideoAdjustments, ModuleKey } from '@/lib/editor-types'
@@ -314,6 +315,46 @@ export async function saveProjectToFile(
   // Fallback: trigger a download
   triggerDownload(json, `${project.name}${CF_EXT}`)
   return undefined
+}
+
+/**
+ * Save a project to the user's own computer — the free-tier alternative to cloud
+ * save (no project-count limit, since it never touches our database). Prefers a
+ * folder the user has granted (building a local library the Projects page lists);
+ * otherwise a Save-As dialog; otherwise a plain download. Works in both the
+ * browser and the desktop app (both use Chromium's File System Access API).
+ */
+export async function saveProjectLocally(project: CfProjFile): Promise<'folder' | 'file' | 'download' | 'cancelled'> {
+  const json = JSON.stringify(project, null, 2)
+  const safe = (project.name || 'project').replace(/[^a-z0-9 _.-]/gi, '_').trim() || 'project'
+  const filename = `${safe}${CF_EXT}`
+
+  // 1) A granted folder → write into it (builds a local library).
+  try {
+    const dir = await loadFolder()
+    if (dir && await verifyWritePermission(dir)) {
+      await writeToFolder(dir, filename, json)
+      return 'folder'
+    }
+  } catch { /* fall through to a picker */ }
+
+  // 2) Save-As dialog (File System Access API — browser + desktop).
+  if (window.showSaveFilePicker) {
+    try {
+      const fh = await window.showSaveFilePicker({ suggestedName: filename, types: PICKER_TYPES })
+      const writable = await fh.createWritable()
+      await writable.write(json)
+      await writable.close()
+      return 'file'
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return 'cancelled'
+      throw err
+    }
+  }
+
+  // 3) Plain download.
+  triggerDownload(json, filename)
+  return 'download'
 }
 
 /**

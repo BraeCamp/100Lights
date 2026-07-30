@@ -729,6 +729,9 @@ export interface DawContextValue {
   setExpandedPianoRollClipId: (id: string | null) => void
   // Save
   onSave?: () => void | Promise<void>
+  /** Save the project to the user's own computer (.cfproj) — the free-tier
+   *  alternative to cloud save (no project limit), available to everyone. */
+  onSaveLocal?: () => void | Promise<void>
   isSaving: boolean
   isGuest?: boolean
   requireAccount?: (action: 'save' | 'export') => void

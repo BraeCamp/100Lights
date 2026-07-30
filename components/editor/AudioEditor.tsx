@@ -59,6 +59,8 @@ export interface AudioEditorProps {
   onTimeChange?: (t: number) => void
   onProjectNameCommit?: (name: string) => void
   onSave?: (tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject }) => Promise<void>
+  /** Save the project to the user's own computer instead of the cloud. */
+  onSaveLocal?: (tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject }) => Promise<void>
   /** When set on a read-only (view) member, enables "suggest changes": local
    *  edits the owner can accept. Serializes/POSTs the proposal upstream. */
   onSuggest?: (note: string, tracks: AudioTrack[], meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject }) => Promise<void>
@@ -1166,6 +1168,16 @@ export default function AudioEditor(props: AudioEditorProps) {
   const selectedClipIdRef  = useRef(selectedClipId)
   const selectedClipIdsRef = useRef(selectedClipIds)
   useEffect(() => { onSaveRef.current        = onSave },          [onSave])
+  const onSaveLocalRef = useRef(props.onSaveLocal)
+  useEffect(() => { onSaveLocalRef.current = props.onSaveLocal }, [props.onSaveLocal])
+  const handleSaveLocalRef = useRef(async () => {})
+  useEffect(() => {
+    handleSaveLocalRef.current = async () => {
+      if (!onSaveLocalRef.current) return
+      const { tracks, dawProject } = collectSnapshot()
+      await onSaveLocalRef.current(tracks, { audioMode: props.audioMode, podcastMeta, dawProject })
+    }
+  })
   useEffect(() => { selectedClipIdRef.current  = selectedClipId },  [selectedClipId])
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds }, [selectedClipIds])
 
@@ -1449,6 +1461,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     loopToolArmed,
     setLoopToolArmed,
     onSave: onSave ? () => { if (props.isGuest) requireAccountRef.current('save'); else void handleSaveRef.current() } : undefined,
+    onSaveLocal: props.onSaveLocal ? () => void handleSaveLocalRef.current() : undefined,
     isSaving,
     isGuest: !!props.isGuest,
     requireAccount: (action: 'save' | 'export') => requireAccountRef.current(action),

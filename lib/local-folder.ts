@@ -59,3 +59,30 @@ export async function verifyPermission(handle: FileSystemDirectoryHandle): Promi
   const req = await handle.requestPermission({ mode: 'read' })
   return req === 'granted'
 }
+
+// Read+write access — needed to save projects into the folder (not just list them).
+export async function verifyWritePermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  const perm = await handle.queryPermission({ mode: 'readwrite' })
+  if (perm === 'granted') return true
+  const req = await handle.requestPermission({ mode: 'readwrite' })
+  return req === 'granted'
+}
+
+// Write a file into the folder, creating or overwriting it.
+export async function writeToFolder(handle: FileSystemDirectoryHandle, filename: string, contents: string): Promise<void> {
+  const fh = await handle.getFileHandle(filename, { create: true })
+  const writable = await fh.createWritable()
+  await writable.write(contents)
+  await writable.close()
+}
+
+// Prompt the user to grant a folder (read+write) and remember it.
+export async function pickWritableFolder(): Promise<FileSystemDirectoryHandle | null> {
+  const picker = window.showDirectoryPicker
+  if (!picker) return null
+  try {
+    const handle = await picker({ mode: 'readwrite' })
+    await saveFolder(handle)
+    return handle
+  } catch { return null } // user cancelled
+}

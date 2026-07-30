@@ -356,7 +356,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
   // Mobile track heads can be minimized *horizontally* to a thin strip so the
   // clip timeline (one overlay anchored at `hdrW`) gets the reclaimed width.
@@ -1269,7 +1269,7 @@ export default function ArrangementView() {
           ripple={rippleEdit} onRipple={() => setRippleEdit(r => !r)}
           editorActive={!!(expandedPianoRollClipId || expandedStepSeqClipId)} onEditor={openEditor}
           onExport={() => { if (isGuest && requireAccount) { requireAccount('export'); return } setShowExport(true) }}
-          onSave={onSave} isSaving={isSaving}
+          onSave={onSave} onSaveLocal={onSaveLocal} isSaving={isSaving}
           more={mobMore} setMore={setMobMore}
         />
       ) : (
@@ -1509,6 +1509,13 @@ export default function ArrangementView() {
             letterSpacing: '0.04em', marginLeft: 4,
             animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
           }}>{isSaving ? 'SAVING…' : 'SAVE'}</button>
+        )}
+        {onSaveLocal && (
+          <button onClick={() => void onSaveLocal()} title="Save a .cfproj file to your computer — no account, no project limit" data-help-id="save-local" style={{
+            ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
+            border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)',
+            letterSpacing: '0.04em', marginLeft: 4,
+          }}>⤓ FILE</button>
         )}
         <VersionHistory />
       </div>
@@ -1992,7 +1999,7 @@ function MobileToolbar(p: {
   wfZoom: number; onWf: (d: number) => void
   ripple: boolean; onRipple: () => void
   editorActive: boolean; onEditor: () => void
-  onExport: () => void; onSave?: () => void | Promise<void>; isSaving: boolean
+  onExport: () => void; onSave?: () => void | Promise<void>; onSaveLocal?: () => void | Promise<void>; isSaving: boolean
   more: boolean; setMore: (v: boolean) => void
 }) {
   const mTool: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 42, height: 40, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0, fontSize: 16 }
@@ -2030,6 +2037,7 @@ function MobileToolbar(p: {
               <button onClick={p.onRipple} style={{ ...row, borderColor: p.ripple ? '#f59e0b' : 'var(--border)', color: p.ripple ? '#f59e0b' : 'var(--text-primary)' }}>{p.ripple ? '✓ ' : ''}Ripple edit</button>
               <button onClick={() => { p.onExport(); p.setMore(false) }} style={row}>⇩ Export</button>
               {p.onSave && <button onClick={() => { void p.onSave!(); p.setMore(false) }} style={{ ...row, justifyContent: 'center', background: 'var(--accent)', color: '#fff', border: 'none', fontWeight: 800 }}>{p.isSaving ? 'Saving…' : 'Save project'}</button>}
+              {p.onSaveLocal && <button onClick={() => { void p.onSaveLocal!(); p.setMore(false) }} style={row}>⤓ Save to my computer (.cfproj)</button>}
             </div>
           </div>
         </div>

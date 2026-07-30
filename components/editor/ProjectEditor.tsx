@@ -23,6 +23,7 @@ import type { Caption, Output } from '@/lib/types'
 import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
 import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
+import { saveProjectLocally } from '@/lib/project-serializer'
 import type { DawProject } from '@/lib/daw-types'
 import { SmallScreenGate } from './SmallScreenGate'
 import StudioGuide from './StudioGuide'
@@ -627,6 +628,21 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     })
   }
 
+  // Save the current project to the user's own computer (.cfproj) — the free-tier
+  // alternative to cloud save (no project limit; never touches the DB). Same
+  // serialization as a cloud save, just written to a local file/folder. For all.
+  async function handleSaveLocal(
+    tracks: AudioTrack[],
+    meta?: { audioMode?: 'music' | 'podcast'; podcastMeta?: import('@/lib/project-serializer').PodcastMeta; dawProject?: import('@/lib/daw-types').DawProject },
+  ) {
+    const now = new Date().toISOString()
+    const serialized: SerializedAudioMedia[] = tracks
+      .filter(t => !!t.r2Key)
+      .map(t => ({ id: t.id, name: t.name, duration: t.duration, contentType: t.contentType ?? 'audio/mpeg', r2Key: t.r2Key!, savedAt: now }))
+    const data = buildCfProj({ audioMedia: serialized, audioMode: meta?.audioMode, podcastMeta: meta?.podcastMeta, dawProject: meta?.dawProject })
+    await saveProjectLocally(data)
+  }
+
   // A view member proposes edits: serialize just like a save, but POST it as a
   // suggestion the owner can accept instead of writing the project directly.
   async function submitSuggestion(
@@ -727,6 +743,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     onTimeChange: setCurrentTime,
     onProjectNameCommit: commitName,
     onSave: isOwner ? handleAudioSave : undefined,
+    onSaveLocal: handleSaveLocal,
     onSuggest: viewOnly && liveProjectId ? submitSuggestion : undefined,
     initialTracks: initAudioTracks,
     initialDawProject: starterProject ?? savedData?.dawProject,
