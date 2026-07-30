@@ -408,6 +408,11 @@ export default function ArrangementView() {
   const [exportDefaultFormat, setExportDefaultFormat] = useState<'webm' | 'wav'>('webm')
   const [showExportDropdown, setShowExportDropdown] = useState(false)
   const exportDropdownRef = useRef<HTMLDivElement>(null)
+  const [showSaveDropdown, setShowSaveDropdown] = useState(false)
+  const saveDropdownRef = useRef<HTMLDivElement>(null)
+  const [saveDest, setSaveDest] = useState<'cloud' | 'local'>(() => {
+    try { return typeof localStorage !== 'undefined' && localStorage.getItem('100lights-save-dest') === 'local' ? 'local' : 'cloud' } catch { return 'cloud' }
+  })
   const [showEditorMenu, setShowEditorMenu] = useState(false)
   const editorDropdownRef = useRef<HTMLDivElement>(null)
   const [arrangeTransientDialog, setArrangeTransientDialog] = useState<{
@@ -501,6 +506,15 @@ export default function ArrangementView() {
       document.removeEventListener('keydown', onKey)
     }
   }, [tsPopover])
+
+  useEffect(() => {
+    if (!showSaveDropdown) return
+    function onDown(e: MouseEvent) { if (saveDropdownRef.current && !saveDropdownRef.current.contains(e.target as Node)) setShowSaveDropdown(false) }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setShowSaveDropdown(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [showSaveDropdown])
 
   useEffect(() => {
     if (!showExportDropdown) return
@@ -1501,21 +1515,54 @@ export default function ArrangementView() {
           </>
         )}
         {onSave && (
-          <button onClick={onSave} disabled={isSaving} title={isGuest ? 'Sign up to save your project (⌘S)' : 'Save project (⌘S)'} data-help-id="save" style={{
-            ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
-            border: `1px solid ${saveNudge ? 'var(--accent)' : 'var(--border)'}`,
-            background: isSaving ? 'rgba(34,197,94,0.15)' : saveNudge ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
-            color: isSaving ? '#4ade80' : saveNudge ? 'var(--accent-light)' : 'var(--text-muted)',
-            letterSpacing: '0.04em', marginLeft: 4,
-            animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
-          }}>{isSaving ? 'SAVING…' : 'SAVE'}</button>
-        )}
-        {onSaveLocal && (
-          <button onClick={() => void onSaveLocal()} title="Save a .cfproj file to your computer — no account, no project limit" data-help-id="save-local" style={{
-            ...toolBtn, width: 'auto', padding: '2px 10px', fontSize: 9, fontWeight: 700,
-            border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)',
-            letterSpacing: '0.04em', marginLeft: 4,
-          }}>⤓ FILE</button>
+          <div ref={saveDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
+            <button
+              onClick={() => { if (saveDest === 'local' && onSaveLocal) void onSaveLocal(); else void onSave?.() }}
+              disabled={isSaving}
+              title={saveDest === 'local' ? 'Save a .cfproj to your computer (⌘S)' : isGuest ? 'Sign up to save to your account (⌘S)' : 'Save to your account (⌘S)'}
+              data-help-id="save"
+              style={{
+                ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
+                border: `1px solid ${saveNudge ? 'var(--accent)' : 'var(--border)'}`,
+                background: isSaving ? 'rgba(34,197,94,0.15)' : saveNudge ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
+                color: isSaving ? '#4ade80' : saveNudge ? 'var(--accent-light)' : 'var(--text-muted)',
+                letterSpacing: '0.04em', borderRadius: '3px 0 0 3px', borderRight: 'none',
+                animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
+              }}
+            >{isSaving ? 'SAVING…' : saveDest === 'local' ? 'SAVE ⤓' : 'SAVE'}</button>
+            <button
+              onClick={() => setShowSaveDropdown(d => !d)}
+              title="Where to save"
+              style={{
+                ...toolBtn, width: 14, padding: 0, fontSize: 9,
+                border: `1px solid ${saveNudge ? 'var(--accent)' : 'var(--border)'}`,
+                background: showSaveDropdown ? 'var(--bg-card)' : 'transparent',
+                color: 'var(--text-muted)', borderRadius: '0 3px 3px 0',
+              }}
+            >▾</button>
+            {showSaveDropdown && (
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 214, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+                <div style={{ padding: '7px 11px 4px', fontSize: 8.5, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Where to save</div>
+                <button onClick={() => { setSaveDest('cloud'); try { localStorage.setItem('100lights-save-dest', 'cloud') } catch { /* private mode */ } setShowSaveDropdown(false); void onSave?.() }}
+                  style={{ display: 'block', width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'cloud' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'cloud' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
+                  ☁ Cloud — your account{saveDest === 'cloud' ? '  ✓' : ''}
+                </button>
+                {onSaveLocal && (
+                  <button onClick={() => { setSaveDest('local'); try { localStorage.setItem('100lights-save-dest', 'local') } catch { /* private mode */ } setShowSaveDropdown(false); void onSaveLocal() }}
+                    style={{ display: 'block', width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'local' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'local' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
+                    💻 This computer — a .cfproj file{saveDest === 'local' ? '  ✓' : ''}
+                  </button>
+                )}
+                <button onClick={async () => { setShowSaveDropdown(false); try { const { pickWritableFolder } = await import('@/lib/local-folder'); await pickWritableFolder() } catch { /* cancelled */ } }}
+                  style={{ display: 'block', width: '100%', padding: '8px 11px', textAlign: 'left', background: 'transparent', border: 'none', borderTop: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer' }}>
+                  📁 Set a local folder…
+                </button>
+                <div style={{ padding: '6px 11px 8px', fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.4, borderTop: '1px solid var(--border)' }}>
+                  Local saves don&rsquo;t count against your project limit.
+                </div>
+              </div>
+            )}
+          </div>
         )}
         <VersionHistory />
       </div>
