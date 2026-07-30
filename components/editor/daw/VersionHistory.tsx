@@ -11,6 +11,9 @@ import { History, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { DawProject } from '@/lib/daw-types'
 import { clampToViewport } from './menu-clamp'
+import { usePlan } from '@/hooks/usePlan'
+import { ENTITLEMENTS } from '@/lib/entitlements'
+import { useUpgradeModal } from '@/components/UpgradeModal'
 
 interface VersionMeta { id: string; name: string; createdAt: string }
 
@@ -21,6 +24,8 @@ function projectIdFromUrl(): string | null {
 
 export default function VersionHistory() {
   const { dispatch, onSave, isSaving } = useDaw()
+  const { isPro, ent } = usePlan()
+  const { showUpgrade } = useUpgradeModal()
   const [open, setOpen] = useState(false)
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
   const [versions, setVersions] = useState<VersionMeta[] | null>(null)
@@ -169,6 +174,14 @@ export default function VersionHistory() {
             ))}
           </div>
           {err && <p style={{ fontSize: 9.5, color: '#ef4444', margin: 0 }}>{err}</p>}
+          {!isPro && projectIdFromUrl() && (
+            <button
+              onClick={() => showUpgrade(`Free keeps your newest ${ent.cloudVersionsPerProject} checkpoints per project. Upgrade to Pro to keep ${ENTITLEMENTS.pro.cloudVersionsPerProject}.`)}
+              style={{ fontSize: 9, color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', lineHeight: 1.4 }}
+            >
+              Keeping newest {ent.cloudVersionsPerProject} · <span style={{ color: 'var(--accent-light)' }}>Pro keeps {ENTITLEMENTS.pro.cloudVersionsPerProject}</span>
+            </button>
+          )}
         </div>,
         document.body,
       )}

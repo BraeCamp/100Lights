@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, REACTION_EMOJI, LARGE_MODE_LIMITS, isUuid } from '@/lib/community-server'
+import { ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, REACTION_EMOJI, LARGE_MODE_LIMITS, isUuid } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
 
 export const runtime = 'nodejs'
@@ -23,7 +23,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
   const { reactions, mine } = await reactionMaps([id], userId)
   const comments = await commentCounts([id])
-  return Response.json({ item: rowToItem(rows[0], userId, votedIds, reactions, mine, comments) })
+  const proAuthors = await proUserIds([rows[0].user_id as string])
+  return Response.json({ item: rowToItem(rows[0], userId, votedIds, reactions, mine, comments, proAuthors) })
 }
 
 // PATCH /api/community/:id — author (or admin) edits an item's title/description.

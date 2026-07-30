@@ -1,8 +1,10 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, LARGE_MODE_LIMITS } from '@/lib/community-server'
+import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, LARGE_MODE_LIMITS } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
 import { isAdminEmail } from '@/lib/admin-auth'
+import { getSubscription } from '@/lib/subscription'
+import { entitlements } from '@/lib/entitlements'
 
 export const runtime = 'nodejs'
 
@@ -76,12 +78,13 @@ export async function GET(req: Request) {
   }
   const { reactions, mine } = await reactionMaps(pageRows.map(r => r.id as string), userId)
   const comments = await commentCounts(pageRows.map(r => r.id as string))
+  const proAuthors = await proUserIds(pageRows.map(r => r.user_id as string))
 
   // Community pulse for the feed header — makes a small feed feel alive
   const statRows = await sql`SELECT COUNT(*)::int AS items, COUNT(DISTINCT author_name)::int AS authors FROM community_items WHERE removed_at IS NULL`
 
   const res = Response.json({
-    items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine, comments)),
+    items: pageRows.map(r => rowToItem(r, userId, votedIds, reactions, mine, comments, proAuthors)),
     hasMore,
     total: totalRows[0]?.n ?? 0,
     scale: communityScale,
@@ -119,10 +122,22 @@ export async function POST(req: Request) {
   if (payloadJson && payloadJson.length > 900_000) return Response.json({ error: 'payload too large' }, { status: 413 })
 
   const { communityScale } = await getFlags()
-  if (communityScale === 'large') {
+  // Daily share cap = the stricter of the plan limit (free is capped, Pro isn't)
+  // and any large-community throttle. Free users hit their limit first.
+  const sub = await getSubscription(userId)
+  const planLimit  = entitlements(sub.plan).communityPostsPerDay
+  const scaleLimit = communityScale === 'large' ? LARGE_MODE_LIMITS.sharesPerDay : Infinity
+  const dailyCap   = Math.min(planLimit, scaleLimit)
+  if (Number.isFinite(dailyCap)) {
     const recent = await sql`SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = ${userId} AND created_at > NOW() - INTERVAL '24 hours'`
-    if ((recent[0]?.n ?? 0) >= LARGE_MODE_LIMITS.sharesPerDay) {
-      return Response.json({ error: `Share limit reached (${LARGE_MODE_LIMITS.sharesPerDay}/day) — try again tomorrow` }, { status: 429 })
+    if ((recent[0]?.n ?? 0) >= dailyCap) {
+      const planBound = sub.plan === 'free' && planLimit <= scaleLimit
+      return Response.json({
+        error: planBound
+          ? `You've reached the free limit of ${dailyCap} shares/day. Upgrade to Pro to share more.`
+          : `Share limit reached (${dailyCap}/day) — try again tomorrow.`,
+        upgrade: planBound,
+      }, { status: 429 })
     }
   }
 

@@ -994,6 +994,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {collabPeers.length > 0 && (
               <button
                 ref={myMixBtnRef}
+                data-ui-el="my-mix"
                 title="My mix — adjust this track just for you (collaborators keep their own balance)"
                 onClick={e => {
                   e.stopPropagation()
@@ -1032,6 +1033,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             )}
             {takeLanes.length > 0 && (
               <button
+                data-ui-el="takes"
                 title={takesExpanded ? 'Hide takes' : 'Show takes'}
                 onClick={e => { e.stopPropagation(); setTakesExpanded(v => !v) }}
                 style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${takesExpanded ? '#f59e0b' : 'var(--border)'}`, background: takesExpanded ? 'rgba(245,158,11,0.2)' : 'var(--bg-surface)', color: takesExpanded ? '#f59e0b' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}

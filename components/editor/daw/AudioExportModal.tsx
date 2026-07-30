@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Download, Loader2, Globe2 } from 'lucide-react'
+import { X, Download, Loader2, Globe2, Lock } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
+import { usePlan } from '@/hooks/usePlan'
+import { useUpgradeModal } from '@/components/UpgradeModal'
 
 // Resample to the chosen export rate via OfflineAudioContext — the browser's
 // resampler, no dependency. Skipped when the buffer is already at the target.
@@ -76,6 +78,8 @@ async function normalizeAudioBuffer(buffer: AudioBuffer, targetLufs = -16): Prom
 
 export default function AudioExportModal({ onClose, audioMode, podcastMeta, defaultFormat }: Props) {
   const { project, engine } = useDaw()
+  const { isPro, ent } = usePlan()
+  const { showUpgrade } = useUpgradeModal()
   const [phase, setPhase]                 = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
   const phaseRef = useRef(phase)
   useEffect(() => { phaseRef.current = phase }, [phase])
@@ -329,21 +333,33 @@ style={{
                   Format
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  {(['webm', 'wav', 'stems'] as ExportFormat[]).map(f => (
-                    <button
-                      key={f}
-                      onClick={() => setFormat(f)}
-                      style={{
-                        flex: 1, padding: '7px 0', borderRadius: 6,
-                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                        border: format === f ? '1px solid var(--accent)' : '1px solid var(--border)',
-                        background: format === f ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'transparent',
-                        color: format === f ? 'var(--accent)' : 'var(--text-secondary)',
-                      }}
-                    >
-                      {f === 'webm' ? 'WebM / Opus' : f === 'wav' ? 'WAV (lossless)' : 'Stems (zip of WAVs)'}
-                    </button>
-                  ))}
+                  {(['webm', 'wav', 'stems'] as ExportFormat[]).map(f => {
+                    // WAV + stems are release-grade output → Pro. Free exports a
+                    // high-quality WebM/Opus mixdown (not crippled). The admin
+                    // article-editing flow (saveTarget) forces WAV and bypasses.
+                    const locked = f !== 'webm' && !isPro && !saveTarget && !ent.audioFormats.includes(f)
+                    return (
+                      <button
+                        key={f}
+                        onClick={() => locked
+                          ? showUpgrade('WAV and stem exports are a Pro feature. Free exports a high-quality WebM/Opus mixdown — upgrade for lossless masters and per-track stems.')
+                          : setFormat(f)}
+                        title={locked ? 'Pro feature' : undefined}
+                        style={{
+                          flex: 1, padding: '7px 0', borderRadius: 6,
+                          fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                          border: format === f ? '1px solid var(--accent)' : '1px solid var(--border)',
+                          background: format === f ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'transparent',
+                          color: locked ? 'var(--text-muted)' : format === f ? 'var(--accent)' : 'var(--text-secondary)',
+                          opacity: locked ? 0.75 : 1,
+                        }}
+                      >
+                        {locked && <Lock size={10} />}
+                        {f === 'webm' ? 'WebM / Opus' : f === 'wav' ? 'WAV (lossless)' : 'Stems (zip of WAVs)'}
+                      </button>
+                    )
+                  })}
                 </div>
                 {format === 'wav' && (
                   <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
@@ -392,7 +408,13 @@ style={{
                 <span>File: {filename}</span>
               </div>
               <button
-                onClick={() => void startExport()}
+                onClick={() => {
+                  if ((format === 'wav' || format === 'stems') && !isPro && !saveTarget) {
+                    showUpgrade('WAV and stem exports are a Pro feature. Free exports a high-quality WebM/Opus mixdown — upgrade for lossless masters and per-track stems.')
+                    return
+                  }
+                  void startExport()
+                }}
                 style={{
                   width: '100%', padding: '10px 0', borderRadius: 8, border: 'none',
                   background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 13, fontWeight: 600, cursor: 'pointer',

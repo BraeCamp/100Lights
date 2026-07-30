@@ -1302,14 +1302,14 @@ export default function ArrangementView() {
         <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 2 }} title="Hold ⌥ Option while dragging to bypass snap">⌥=free</span>
         <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
         {/* Waveform zoom control */}
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }} title="Waveform vertical zoom">WF</span>
+        <span data-ui-el="wf-zoom" style={{ fontSize: 9, color: 'var(--text-muted)' }} title="Waveform vertical zoom">WF</span>
         <button
           onClick={() => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.max(1, project.waveformZoom - 1) })}
           style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}
           title="Decrease waveform zoom"
           data-help-id="wf-zoom"
         >−</button>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 10, textAlign: 'center', fontFamily: 'monospace' }}>{project.waveformZoom}</span>
+        <span data-ui-el="wf-zoom" style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 10, textAlign: 'center', fontFamily: 'monospace' }}>{project.waveformZoom}</span>
         <button
           onClick={() => dispatch({ type: 'SET_WAVEFORM_ZOOM', zoom: Math.min(8, project.waveformZoom + 1) })}
           style={{ ...toolBtn, fontSize: 11, fontWeight: 700 }}

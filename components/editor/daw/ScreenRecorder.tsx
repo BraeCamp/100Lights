@@ -24,6 +24,7 @@ import {
 } from '@/lib/screen-recorder'
 import ClickHighlighter, { type ClickStyle } from './ClickHighlighter'
 import { shareClip } from '@/lib/community'
+import { usePlan } from '@/hooks/usePlan'
 
 const CLICK_STYLES: { id: ClickStyle; label: string }[] = [
   { id: 'ripple', label: 'Ripple' },
@@ -98,6 +99,7 @@ function affectedTrackId(a: any, state: DawProject): string | null {
 
 export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }: { onClose: () => void; initialMode?: 'screen' | 'history' }) {
   const { engine, project, dispatch, getBuildHistory, setSelectedTrackId, consolidateBuildHistory } = useDaw()
+  const { isPro } = usePlan()
   const recRef = useRef<Recorder | null>(null)
   const [mode, setMode] = useState<'screen' | 'history'>(initialMode)
   const [state, setState] = useState<'idle' | 'recording' | 'done'>('idle')
@@ -314,7 +316,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
     recRef.current = rec
     rec.onExternalStop = () => { void finish() }
     try {
-      await rec.start({ masterNode: engine.masterCompressor, audioContext: engine.ctx, includeMic, captureCursor })
+      await rec.start({ masterNode: engine.masterCompressor, audioContext: engine.ctx, includeMic, captureCursor, watermark: !isPro })
       setElapsed(0)
       setState('recording')
     } catch (e) {

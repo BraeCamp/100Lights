@@ -21,6 +21,44 @@ export interface RecorderSources {
   includeMic?: boolean
   /** Show the mouse cursor / clicks in the recording (getDisplayMedia cursor). */
   captureCursor?: boolean
+  /** Draw a "Made with 100Lights" tag over the video (free tier). */
+  watermark?: boolean
+}
+
+/** Draw the "Made with 100Lights" tag bottom-right, scaled to the frame. */
+export function drawWatermark(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const pad      = Math.max(6, Math.round(h * 0.012))
+  const fontSize = Math.max(12, Math.round(h * 0.022))
+  const label    = 'Made with 100Lights'
+  ctx.save()
+  ctx.font = `600 ${fontSize}px system-ui, -apple-system, "Segoe UI", sans-serif`
+  const textW = ctx.measureText(label).width
+  const dotR  = fontSize * 0.3
+  const pillH = fontSize + pad * 1.3
+  const pillW = textW + pad * 2 + dotR * 2 + pad * 0.7
+  const x = w - pillW - pad * 1.5
+  const y = h - pillH - pad * 1.5
+  const r = pillH / 2
+  // pill
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + pillW, y, x + pillW, y + pillH, r)
+  ctx.arcTo(x + pillW, y + pillH, x, y + pillH, r)
+  ctx.arcTo(x, y + pillH, x, y, r)
+  ctx.arcTo(x, y, x + pillW, y, r)
+  ctx.closePath()
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'
+  ctx.fill()
+  // accent dot
+  ctx.beginPath()
+  ctx.arc(x + pad + dotR, y + pillH / 2, dotR, 0, Math.PI * 2)
+  ctx.fillStyle = '#a78bfa'
+  ctx.fill()
+  // label
+  ctx.fillStyle = 'rgba(255,255,255,0.96)'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, x + pad + dotR * 2 + pad * 0.6, y + pillH / 2 + 1)
+  ctx.restore()
 }
 
 export interface RecordingResult {
@@ -52,6 +90,10 @@ export class ScreenRecorder {
   private tap: MediaStreamAudioDestinationNode | null = null
   private startedAt = 0
   private mixCtx: AudioContext | null = null
+  // Watermark compositing pipeline (free tier)
+  private wmVideo: HTMLVideoElement | null = null
+  private wmStream: MediaStream | null = null
+  private wmRAF = 0
 
   /** Fires if the user stops sharing from the browser's own share bar. */
   onExternalStop?: () => void
@@ -112,8 +154,14 @@ export class ScreenRecorder {
       finalAudio = dest.stream.getAudioTracks()
     }
 
+    // Free tier: route the screen video through a canvas so a "Made with
+    // 100Lights" tag is burned into every frame. Pro records the raw stream.
+    const videoTracks = sources.watermark
+      ? await this.startWatermarkComposite(this.displayStream)
+      : this.displayStream.getVideoTracks()
+
     const mixed = new MediaStream([
-      ...this.displayStream.getVideoTracks(),
+      ...videoTracks,
       ...finalAudio,
     ])
 
@@ -131,6 +179,37 @@ export class ScreenRecorder {
     this.displayStream.getVideoTracks()[0]?.addEventListener('ended', () => {
       this.onExternalStop?.()
     })
+  }
+
+  // Play the screen stream into a hidden <video>, redraw it into a canvas every
+  // frame with the watermark on top, and hand back the canvas's captured track.
+  private async startWatermarkComposite(display: MediaStream): Promise<MediaStreamTrack[]> {
+    const track = display.getVideoTracks()[0]
+    const settings = track?.getSettings() ?? {}
+    const video = document.createElement('video')
+    video.srcObject = new MediaStream(display.getVideoTracks())
+    video.muted = true
+    video.playsInline = true
+    await video.play().catch(() => {})
+    if (!video.videoWidth) {
+      await new Promise<void>(r => { video.onloadedmetadata = () => r() })
+    }
+    const w = video.videoWidth || (settings.width as number) || 1280
+    const h = video.videoHeight || (settings.height as number) || 720
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return display.getVideoTracks()   // no 2d context → fall back to raw
+    const draw = () => {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      drawWatermark(ctx, canvas.width, canvas.height)
+      this.wmRAF = requestAnimationFrame(draw)
+    }
+    this.wmRAF = requestAnimationFrame(draw)
+    this.wmVideo = video
+    this.wmStream = canvas.captureStream(30)
+    return this.wmStream.getVideoTracks()
   }
 
   async stop(): Promise<RecordingResult | null> {
@@ -157,10 +236,16 @@ export class ScreenRecorder {
     // MediaStreamDestination hanging off the master bus for the whole session.
     try { this.tap?.disconnect() } catch { /* already gone */ }
     void this.mixCtx?.close().catch(() => {})
+    if (this.wmRAF) cancelAnimationFrame(this.wmRAF)
+    this.wmStream?.getTracks().forEach(t => t.stop())
+    if (this.wmVideo) { try { this.wmVideo.pause(); this.wmVideo.srcObject = null } catch { /* gone */ } }
     this.displayStream = null
     this.micStream = null
     this.tap = null
     this.mixCtx = null
+    this.wmRAF = 0
+    this.wmStream = null
+    this.wmVideo = null
     this.recorder = null
     this.chunks = []
   }
@@ -195,7 +280,7 @@ export function screenshotSupported(): boolean {
  * biased to the current tab where the browser supports it. Returns null if
  * unsupported or the picker was cancelled.
  */
-export async function captureScreenshot(): Promise<Blob | null> {
+export async function captureScreenshot(watermark = false): Promise<Blob | null> {
   if (!screenshotSupported()) return null
   let stream: MediaStream | null = null
   try {
@@ -215,7 +300,9 @@ export async function captureScreenshot(): Promise<Blob | null> {
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
-    canvas.getContext('2d')?.drawImage(video, 0, 0)
+    const ctx = canvas.getContext('2d')
+    ctx?.drawImage(video, 0, 0)
+    if (watermark && ctx) drawWatermark(ctx, canvas.width, canvas.height)
     return await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'))
   } catch {
     return null

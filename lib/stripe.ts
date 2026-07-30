@@ -1,12 +1,14 @@
 import Stripe from 'stripe'
+import { ENTITLEMENTS } from './entitlements'
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-05-27.dahlia' })
 
-// App-side limits per plan. Update here when limits change.
-// Stripe owns the price/product; this file owns the feature gates.
+// App-side limits per plan, derived from the single source of truth in
+// lib/entitlements.ts. Stripe owns the price/product; entitlements.ts owns the
+// feature gates. This shape is kept for existing callers (projectsMax/storageMb).
 export const PLAN_LIMITS = {
-  free: { storageMb: 500,   projectsMax: 5 },
-  pro:  { storageMb: 20480, projectsMax: Infinity },
+  free: { storageMb: ENTITLEMENTS.free.storageMb, projectsMax: ENTITLEMENTS.free.projectsMax },
+  pro:  { storageMb: ENTITLEMENTS.pro.storageMb,  projectsMax: ENTITLEMENTS.pro.projectsMax  },
 } as const
 
 // Legacy alias used by subscription.ts — keeps existing callers working

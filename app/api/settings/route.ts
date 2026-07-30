@@ -25,7 +25,7 @@ export async function GET() {
   await ensureTable()
   const rows = await sql`SELECT data FROM user_settings WHERE user_id = ${userId} LIMIT 1`
   const data = (rows[0]?.data ?? {}) as Record<string, unknown>
-  return Response.json({ theme: data.theme ?? null })
+  return Response.json({ theme: data.theme ?? null, uiTier: data.uiTier ?? null })
 }
 
 export async function PUT(req: Request) {
@@ -36,9 +36,14 @@ export async function PUT(req: Request) {
   if (!body || typeof body !== 'object') {
     return Response.json({ error: 'Invalid body' }, { status: 400 })
   }
-  // Only known keys are merged in — theme for now.
+  // Only known keys are merged in.
   const patch: Record<string, unknown> = {}
   if ('theme' in body) patch.theme = (body as { theme: unknown }).theme
+  if ('uiTier' in body) {
+    const t = (body as { uiTier: unknown }).uiTier
+    if (t === 'beginner' || t === 'intermediate' || t === 'full') patch.uiTier = t
+  }
+  if (Object.keys(patch).length === 0) return Response.json({ ok: true })
 
   await ensureTable()
   await sql`

@@ -236,11 +236,20 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
           background: `hsl(${hue}, 45%, 26%)`, color: `hsl(${hue}, 70%, 78%)`, fontSize: 12, fontWeight: 800,
         }}>{item.authorName.slice(0, 1).toUpperCase()}</div>
         <div style={{ minWidth: 0 }}>
-          <button
-            onClick={() => onAuthorClick?.(item.authorName)}
-            title={`Everything shared by ${item.authorName}`}
-            style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'none', border: 'none', padding: 0, cursor: onAuthorClick ? 'pointer' : 'default', textAlign: 'left' }}
-          >{item.authorName}</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+            <button
+              onClick={() => onAuthorClick?.(item.authorName)}
+              title={`Everything shared by ${item.authorName}`}
+              style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'none', border: 'none', padding: 0, cursor: onAuthorClick ? 'pointer' : 'default', textAlign: 'left' }}
+            >{item.authorName}</button>
+            {item.authorPro && (
+              <span title="Pro creator" style={{
+                flexShrink: 0, fontSize: 8.5, fontWeight: 800, letterSpacing: '0.06em',
+                color: 'var(--accent-light)', background: 'var(--accent-subtle)',
+                border: '1px solid rgba(139,92,246,0.35)', borderRadius: 4, padding: '1px 4px', lineHeight: 1.4,
+              }}>PRO</span>
+            )}
+          </div>
           <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{timeAgo(item.createdAt)}</div>
         </div>
         <span style={{

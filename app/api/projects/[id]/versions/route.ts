@@ -1,13 +1,14 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { getSubscription } from '@/lib/subscription'
+import { entitlements } from '@/lib/entitlements'
 
 export const runtime = 'nodejs'
 
 // Named version checkpoints: full snapshots of the saved project file, so
 // destructive experiments ("what if we cut the bridge?") are reversible.
 // Owner-only — versions are a persistence feature, and saves already are.
-
-const MAX_VERSIONS = 20
+// Free keeps a few checkpoints; Pro keeps many (see cloudVersionsPerProject).
 
 let versionsSchemaReady = false
 async function ensureVersionsSchema() {
@@ -71,11 +72,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const vid = crypto.randomUUID()
   await sql`INSERT INTO project_versions (id, project_id, name, data) VALUES (${vid}, ${id}, ${name}, ${JSON.stringify(proj[0].data)}::jsonb)`
 
-  // Keep the newest MAX_VERSIONS
+  // Retain the newest N per the plan (free keeps a few, Pro keeps many). Old
+  // checkpoints roll off silently — the newest are always kept.
+  const cap = entitlements((await getSubscription(userId!)).plan).cloudVersionsPerProject
   await sql`
     DELETE FROM project_versions WHERE project_id = ${id} AND id NOT IN (
-      SELECT id FROM project_versions WHERE project_id = ${id} ORDER BY created_at DESC LIMIT ${MAX_VERSIONS}
+      SELECT id FROM project_versions WHERE project_id = ${id} ORDER BY created_at DESC LIMIT ${cap}
     )
   `
-  return Response.json({ id: vid, name })
+  return Response.json({ id: vid, name, cap })
 }

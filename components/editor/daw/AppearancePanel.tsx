@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 import { X, RotateCcw, Save, Upload, Trash2, Check, ExternalLink } from 'lucide-react'
 import { useWorkshopTheme } from '../WorkshopThemeProvider'
 import { shareTheme } from '@/lib/community'
+import { usePlan } from '@/hooks/usePlan'
+import { useUpgradeModal } from '@/components/UpgradeModal'
 import {
   THEME_COLOR_KEYS, THEME_COLOR_LABELS, PATTERN_TYPES, BUILTIN_PRESETS,
   DEFAULT_TRACK_PALETTE, resolveColor, contrastWarnings, autoTextTokens,
@@ -16,6 +18,8 @@ const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
 export default function AppearancePanel({ onClose }: { onClose: () => void }) {
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
+  const { isPro, ent } = usePlan()
+  const { showUpgrade } = useUpgradeModal()
   const [userPresets, setUserPresets] = useState<SavedPreset[]>(() => getUserPresets())
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
@@ -38,6 +42,13 @@ export default function AppearancePanel({ onClose }: { onClose: () => void }) {
   const toast = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(null), 2200) }
 
   function savePreset() {
+    // The active theme is always fully editable for everyone — this only caps
+    // how many custom themes a free account keeps in its saved gallery.
+    if (!isPro && Number.isFinite(ent.customThemes) && userPresets.length >= ent.customThemes) {
+      setBusy(null)
+      showUpgrade(`Free accounts save up to ${ent.customThemes} custom themes. Upgrade to Pro for an unlimited theme library.`)
+      return
+    }
     const p = saveUserPreset(name || theme.name || 'My theme', theme)
     setUserPresets(getUserPresets())
     setBusy(null)

@@ -120,9 +120,11 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
                 Pro plan
               </div>
               {[
-                '20 GB media storage',
-                'Priority processing',
-                'Unlimited projects',
+                'Unlimited cloud projects + version history',
+                'WAV & per-track stem exports',
+                'Watermark-free exports & clips',
+                'Real-time collaboration',
+                '20 GB storage · unlimited synced sounds',
               ].map(f => (
                 <div key={f} className="flex items-center gap-2.5 mb-2">
                   <Check size={13} color="var(--success)" />

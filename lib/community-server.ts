@@ -116,17 +116,34 @@ export function devTestUser(req: Request): string | null {
     : null
 }
 
-export function rowToItem(r: Record<string, unknown>, userId: string | null, votedIds: Set<string>, reactions: Map<string, Record<string, number>>, myReactions: Map<string, string[]>, comments?: Map<string, number>) {
+export function rowToItem(r: Record<string, unknown>, userId: string | null, votedIds: Set<string>, reactions: Map<string, Record<string, number>>, myReactions: Map<string, string[]>, comments?: Map<string, number>, proAuthors?: Set<string>) {
   return {
     id: r.id, kind: r.kind, name: r.name, description: r.description,
     authorName: r.author_name, votes: r.votes, downloads: r.downloads,
     createdAt: r.created_at, payload: r.payload, r2Key: r.r2_key,
     votedByMe: votedIds.has(r.id as string),
     mine: userId !== null && r.user_id === userId,
+    authorPro: proAuthors?.has(r.user_id as string) ?? false,
     reactions: reactions.get(r.id as string) ?? {},
     myReactions: myReactions.get(r.id as string) ?? [],
     commentCount: comments?.get(r.id as string) ?? 0,
   }
+}
+
+/** Which of these user_ids are on an active Pro plan (for the author badge).
+ *  One query; empty on any error so a missing table never breaks the feed. */
+export async function proUserIds(userIds: string[]): Promise<Set<string>> {
+  const set = new Set<string>()
+  const ids = [...new Set(userIds.filter(Boolean))]
+  if (ids.length === 0) return set
+  try {
+    const rows = await sql`
+      SELECT user_id FROM subscriptions
+      WHERE user_id = ANY(${ids}) AND plan = 'pro' AND status = 'active'
+        AND (current_period_end IS NULL OR current_period_end > NOW())`
+    for (const r of rows) set.add(r.user_id as string)
+  } catch { /* subscriptions table absent in some envs */ }
+  return set
 }
 
 /** Comment counts for a batch of items (one grouped query). Empty on any error

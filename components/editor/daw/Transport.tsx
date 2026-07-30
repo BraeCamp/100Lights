@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown, History, Upload } from 'lucide-react'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
+import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject } from '@/lib/daw-state'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
@@ -51,6 +52,7 @@ function FxPad({ label, mode, engine, color }: { label: string; mode: 'lp' | 'hp
 
 export default function Transport() {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed } = useDaw()
+  const { isPro } = usePlan()
   const { padTrafficLights } = useElectronChrome()
 
   // ── Refs ────────────────────────────────────────────────────────────────────
@@ -130,7 +132,7 @@ export default function Transport() {
     if (shotBusy) return
     setShotBusy(true)
     try {
-      const blob = await captureScreenshot()
+      const blob = await captureScreenshot(!isPro)
       if (blob) setShotBlob(blob)   // opens the lazy-loaded annotator
     } finally {
       setShotBusy(false)
@@ -837,6 +839,7 @@ export default function Transport() {
         <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', userSelect: 'none' }}>BPM</span>
         <button
           onClick={handleTap}
+          data-ui-el="tap-tempo"
           style={{ ...base, width: 'auto', padding: '0 7px', fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.06em' }}
           title="Tap tempo"
         >

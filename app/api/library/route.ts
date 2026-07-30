@@ -13,6 +13,8 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { getSubscription } from '@/lib/subscription'
+import { entitlements } from '@/lib/entitlements'
 
 let schemaReady = false
 async function ensureSchema() {
@@ -98,6 +100,20 @@ export async function POST(req: Request) {
 
   try {
     await ensureSchema()
+    // Sync cap (free tier). This limits how many sounds follow the account
+    // across devices — it does NOT limit using sounds: they stay in the local
+    // library regardless. New syncs only; updating an existing one is free.
+    const cap = entitlements((await getSubscription(userId)).plan).syncedSounds
+    if (Number.isFinite(cap)) {
+      const [{ n }] = await sql`SELECT COUNT(*)::int AS n FROM user_sounds WHERE user_id = ${userId}`
+      const existing = await sql`SELECT 1 FROM user_sounds WHERE id = ${body.id} AND user_id = ${userId} LIMIT 1`
+      if (existing.length === 0 && n >= cap) {
+        return Response.json({
+          error: `Free accounts sync up to ${cap} sounds across devices. This sound is still saved on this computer — upgrade to Pro for unlimited synced sounds.`,
+          upgrade: true,
+        }, { status: 403 })
+      }
+    }
     await sql`
       INSERT INTO user_sounds (
         id, user_id, name, category, r2_key, duration, content_type,

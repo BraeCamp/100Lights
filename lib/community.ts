@@ -33,6 +33,7 @@ export interface CommunityItem {
   r2Key: string | null
   votedByMe: boolean
   mine: boolean
+  authorPro?: boolean
   reactions: Record<string, number>
   myReactions: string[]
   commentCount?: number

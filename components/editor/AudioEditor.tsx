@@ -16,6 +16,7 @@ import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
 import { Library, Settings, FileText, Users, Palette, Home, Code2 } from 'lucide-react'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
+import { UITierProvider } from './UITierProvider'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
 import { uploadRecordingBlob } from '@/lib/record-upload'
@@ -26,6 +27,7 @@ import { captureAudioInput } from '@/lib/audio-capture'
 import { monitorFxParams } from '@/lib/daw-engine'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
+import UITierSwitcher from './daw/UITierSwitcher'
 import HelpButton from './daw/HelpButton'
 import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
@@ -1753,9 +1755,10 @@ export default function AudioEditor(props: AudioEditorProps) {
                 </span>
               )}
               <InspectorBridge />
-              <DuplicateCleanup />
-              <PracticeButton />
-              <InspectButton />
+              <span data-ui-el="duplicate-cleanup" style={{ display: 'contents' }}><DuplicateCleanup /></span>
+              <span data-ui-el="practice" style={{ display: 'contents' }}><PracticeButton /></span>
+              <span data-ui-el="inspect" style={{ display: 'contents' }}><InspectButton /></span>
+              <UITierSwitcher />
               <HelpButton />
             </div>
 
@@ -1917,5 +1920,5 @@ export default function AudioEditor(props: AudioEditorProps) {
     </DawContext.Provider>
   )
 
-  return <WorkshopThemeProvider>{editorContent}</WorkshopThemeProvider>
+  return <WorkshopThemeProvider><UITierProvider>{editorContent}</UITierProvider></WorkshopThemeProvider>
 }
