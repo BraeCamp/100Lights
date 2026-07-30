@@ -200,6 +200,21 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
     dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: inst })
   }
 
+  // Per-lane volume: boost or duck one drum (e.g. a quiet hi-hat) without
+  // touching the others. Multiplies the lane's hits; 0.8 = default, up to 1.5.
+  function padVolume(pitch: number): number {
+    const p = track?.instrument.type === 'drum' ? (track.instrument.params as DrumInstrumentParams) : undefined
+    return p?.pads?.[pitch]?.volume ?? 0.8
+  }
+  function setPadVolume(pitch: number, volume: number) {
+    if (!track) return
+    const inst = track.instrument.type === 'drum' ? structuredClone(track.instrument) : { type: 'drum' as const, params: { pack: 'synth' as const } }
+    const p = inst.params as DrumInstrumentParams
+    const existing = p.pads?.[pitch] ?? { volume: 0.8, pitch: 0, pan: 0, mute: false }
+    p.pads = { ...(p.pads ?? {}), [pitch]: { ...existing, volume } }
+    dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: inst })
+  }
+
   function setBars(n: number) {
     const next = Math.max(1, Math.min(16, n))
     const dur = next * beatsPerBar
@@ -304,7 +319,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
       <div ref={scrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', padding: '10px 12px', maxHeight: tall ? 420 : 300 }}>
         <div style={{ display: 'inline-block', minWidth: '100%' }}>
           {/* Step numbers */}
-          <div style={{ display: 'grid', gridTemplateColumns: `118px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3 }}>
             <span />
             {Array.from({ length: steps }, (_, s) => (
               <span key={`h${s}`} style={{ fontSize: 8, textAlign: 'center', color: s === playStep ? 'var(--accent-light)' : s % 4 === 0 ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
@@ -313,10 +328,14 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
             ))}
           </div>
           {DRUM_LANES.map(lane => (
-            <div key={lane.key} style={{ display: 'grid', gridTemplateColumns: `118px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3, alignItems: 'center' }}>
+            <div key={lane.key} style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3, alignItems: 'center' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 }}>
                 <span style={{ flex: 1, fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
                   onClick={() => audition(lane.pitch)} title={padSample(lane.pitch) ? `${lane.label} — sample: ${padSample(lane.pitch)!.name ?? 'custom'} (click to preview)` : `Preview ${lane.label}`}>{lane.label}</span>
+                <input type="range" min={0} max={1.5} step={0.05} value={padVolume(lane.pitch)}
+                  onChange={e => setPadVolume(lane.pitch, Number(e.target.value))}
+                  title={`${lane.label} volume — ${Math.round(padVolume(lane.pitch) * 100)}%`} aria-label={`${lane.label} volume`}
+                  style={{ width: 34, flexShrink: 0, accentColor: 'var(--accent)', height: 12, cursor: 'pointer' }} />
                 {padSample(lane.pitch) && (
                   <button onClick={() => clearSample(lane.pitch)} title="Remove sample (back to the synth voice)" style={{ flexShrink: 0, fontSize: 8, lineHeight: 1, padding: '1px 3px', borderRadius: 3, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}>✕</button>
                 )}
