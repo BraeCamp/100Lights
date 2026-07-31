@@ -8,6 +8,7 @@ import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { playInstrumentNote, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
+import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { libraryGetAll } from './sound-library'
 import { libraryFulfill } from './default-samples'
@@ -3082,6 +3083,82 @@ export class DawEngine extends EventTarget {
       }
       this._mediaRecorder!.stop()
     })
+  }
+
+  /**
+   * Dev/analysis bounce: play a beat range in real time and capture lossless
+   * PCM off the master bus (and, with `stems`, each track's post-FX output),
+   * returning base64 float WAV(s). Used by window.__dawRenderWav so an agent can
+   * render what it built and measure the mix (loudness / clipping / balance).
+   * Real-time — a 16s slice takes ~16s. Keep ranges short for quick checks.
+   */
+  async renderWav(opts: {
+    startBeat?: number; endBeat?: number; stems?: boolean; mono?: boolean; tailSec?: number
+  } = {}): Promise<{ sampleRate: number; durationSec: number; startBeat: number; endBeat: number; master: string; stems?: Record<string, string> }> {
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
+    const sr    = this.ctx.sampleRate
+    const start = opts.startBeat ?? 0
+    const clips = [...this._midiClips, ...this._clips]
+    const end   = opts.endBeat ?? (clips.length ? Math.max(...clips.map(c => c.startBeat + c.durationBeats)) : start + 4)
+    const tail  = opts.tailSec ?? 1.5
+    const mono  = opts.mono ?? false
+
+    type Cap = { name: string; node: AudioNode; proc: ScriptProcessorNode; chunks: [Float32Array, Float32Array][] }
+    const caps: Cap[] = []
+    const sink = this.ctx.createGain(); sink.gain.value = 0; sink.connect(this.ctx.destination)
+    const addCap = (name: string, node: AudioNode) => {
+      const proc = this.ctx.createScriptProcessor(8192, 2, 2)
+      const chunks: [Float32Array, Float32Array][] = []
+      proc.onaudioprocess = (e) => {
+        const ib = e.inputBuffer
+        const L = new Float32Array(ib.getChannelData(0))
+        const R = new Float32Array(ib.numberOfChannels > 1 ? ib.getChannelData(1) : ib.getChannelData(0))
+        chunks.push([L, R])
+      }
+      node.connect(proc); proc.connect(sink)
+      caps.push({ name, node, proc, chunks })
+    }
+    addCap('master', this.masterCompressor)
+    if (opts.stems) {
+      for (const t of this._tracks) {
+        const nodes = this.trackNodes.get(t.id)
+        if (nodes) addCap(t.name || t.id, nodes.panner)
+      }
+    }
+
+    this.seek(start)
+    await this.play(start)
+    await new Promise<void>(res => {
+      const tick = () => { if (!this.isPlaying || this.currentBeat >= end) res(); else setTimeout(tick, 30) }
+      tick()
+    })
+    await new Promise(r => setTimeout(r, Math.round(tail * 1000)))
+    this.stop()
+
+    for (const c of caps) { try { c.node.disconnect(c.proc) } catch { /* ok */ } c.proc.onaudioprocess = null; try { c.proc.disconnect() } catch { /* ok */ } }
+    try { sink.disconnect() } catch { /* ok */ }
+
+    const b64 = (buf: ArrayBuffer): string => {
+      const bytes = new Uint8Array(buf); let s = ''
+      const CH = 0x8000
+      for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CH)))
+      return btoa(s)
+    }
+    const assemble = (c: Cap): string => {
+      const total = c.chunks.reduce((n, ch) => n + ch[0].length, 0)
+      const L = new Float32Array(total), R = new Float32Array(total)
+      let o = 0
+      for (const [l, r] of c.chunks) { L.set(l, o); R.set(r, o); o += l.length }
+      let channels: Float32Array[]
+      if (mono) { const mchan = new Float32Array(total); for (let i = 0; i < total; i++) mchan[i] = (L[i] + R[i]) * 0.5; channels = [mchan] }
+      else channels = [L, R]
+      return b64(encodeWav(channels, sr))
+    }
+    const master = assemble(caps[0])
+    let stems: Record<string, string> | undefined
+    if (opts.stems) { stems = {}; for (const c of caps.slice(1)) stems[c.name] = assemble(c) }
+    const durationSec = caps[0].chunks.reduce((n, ch) => n + ch[0].length, 0) / sr
+    return { sampleRate: sr, durationSec, startBeat: start, endBeat: end, master, stems }
   }
 
   // ── Tap tempo ─────────────────────────────────────────────────────────────

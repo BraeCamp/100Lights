@@ -716,9 +716,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     const w = window as unknown as {
       __dawDispatch?: typeof dispatch
       __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
+      __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
     }
     w.__dawDispatch = dispatch
     w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
+    // Bounce a beat range to lossless WAV(s) for offline mix analysis (see
+    // scripts/analyze-mix.py). Real-time capture off the live engine graph.
+    w.__dawRenderWav = (opts) => engineRef.current?.renderWav(opts ?? {}) ?? Promise.resolve(null)
   }, [])
 
   // ── Community deep-link: /new?communityItem={id} drops the shared thing
