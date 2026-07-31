@@ -6,11 +6,15 @@
 
 import type { MidiNote, MidiClip, TrackInstrument } from './daw-types'
 import { defaultPresetId } from './midi-presets'
+import type { UITier } from './ui-tiers'
 
 export interface PracticeRecipe {
   id: string
   title: string
   tagline: string
+  /** Studio tier for Practice Room recipes (beginner = free & Simplified).
+   *  Optional — the shared Sound Library chord/sound recipes don't use tiers. */
+  tier?: UITier
   /** Genre folder in the library (see RECIPE_GENRES for built-in assignments). */
   genre?: string
   /** Study notes shown after loading — the "annotation" on the project file. */
@@ -25,9 +29,14 @@ const N = (pitch: number, startBeat: number, durationBeats: number, velocity = 1
 // GM drum pitches (match DRUM_LANES in the piano roll)
 const KICK = 36, SNARE = 38, CLOSED_HAT = 42, OPEN_HAT = 46
 
+// Practice Room "Recipes" tab — cleared to be rebuilt tier by tier (old set is
+// in git history). Add recipes here, Simplified (tier: 'beginner') first; only
+// beginner-tier recipes are free. This is separate from CHORD_RECIPES /
+// SOUND_RECIPES below, which power the Sound Library and are NOT tiered.
 export const PRACTICE_RECIPES: PracticeRecipe[] = [
   {
     id: 'four-on-floor',
+    tier: 'beginner',
     title: 'Four on the floor',
     tagline: 'The heartbeat of house and disco — one bar of drums.',
     annotation: [
@@ -52,6 +61,7 @@ export const PRACTICE_RECIPES: PracticeRecipe[] = [
   },
   {
     id: 'pop-progression',
+    tier: 'beginner',
     title: 'The pop progression (I–V–vi–IV)',
     tagline: 'C → G → Am → F: the four chords under a thousand hits.',
     annotation: [
@@ -80,6 +90,7 @@ export const PRACTICE_RECIPES: PracticeRecipe[] = [
   },
   {
     id: 'walking-bass',
+    tier: 'intermediate',
     title: 'Walking bass line',
     tagline: 'Quarter notes that stroll from chord to chord.',
     annotation: [
@@ -129,7 +140,30 @@ const progression = (
 })
 
 export const CHORD_RECIPES: PracticeRecipe[] = [
-  PRACTICE_RECIPES.find(r => r.id === 'pop-progression')!,
+  {
+    id: 'pop-progression',
+    title: 'The pop progression (I–V–vi–IV)',
+    tagline: 'C → G → Am → F: the four chords under a thousand hits.',
+    annotation: [
+      'Each chord holds a whole bar. I (C) feels like home, V (G) adds tension, vi (Am) turns it bittersweet, IV (F) lifts back toward home.',
+      'The voicings share notes between neighbors (C and G share G; Am and F share A and C) — that overlap is why the changes feel smooth.',
+      'Every chord keeps the same shape and register. Move one chord up an octave and hear the line jump instead of glide.',
+      'Try: reorder to vi–IV–I–V (Am first) — same chords, completely different mood.',
+    ],
+    build: () => ({
+      trackName: 'Recipe: Pop progression',
+      instrument: { type: 'none', params: {} },
+      isDrumClip: false,
+      durationBeats: 16,
+      usePreset: true,
+      notes: [
+        N(60, 0, 4), N(64, 0, 4), N(67, 0, 4),
+        N(59, 4, 4), N(62, 4, 4), N(67, 4, 4),
+        N(57, 8, 4), N(60, 8, 4), N(64, 8, 4),
+        N(57, 12, 4), N(60, 12, 4), N(65, 12, 4),
+      ],
+    }),
+  },
   progression('canon', 'Pachelbel\u2019s Canon (I–V–vi–iii–IV–I–IV–V)', 'C → G → Am → Em → F → C → F → G: the eight-chord wheel behind centuries of songs.',
     ['Two four-chord halves: the first falls (I–V–vi–iii), the second climbs home (IV–I–IV–V).',
      'The bass walks down almost the whole scale: C B A G F E F G — that stepwise descent is the hook.',

@@ -134,6 +134,13 @@ const MIX_TOOLS = {
   '@voicing':    { kind: 'voicing' as const,    emoji: '🎼', text: 'Chord voicing explorer — hear qualities and inversions on a keyboard.' },
   '@setup':      { kind: 'setup' as const,      emoji: '🎚', text: 'Set the tempo and key for this page — the tools below follow it.' },
   '@scrolleq':   { kind: 'scrolleq' as const,   emoji: '📜', text: 'A scroll-driven EQ tour — the bands move as you scroll past each one.' },
+  // "Learn by doing, no words" challenges — you hit a target or name a sound.
+  '@earfilter':    { kind: 'earfilter' as const,    emoji: '🎯', text: 'Match-by-ear filter — a target tone plays; slide your cutoff until it matches.' },
+  '@findfreq':     { kind: 'findfreq' as const,     emoji: '🔎', text: 'Find the boosted frequency — sweep a cut until the resonant honk disappears.' },
+  '@chordquality': { kind: 'chordquality' as const, emoji: '🎨', text: 'Name that chord — hear a chord, tap its quality (major, minor, dim…), keep score.' },
+  '@scaleid':      { kind: 'scaleid' as const,      emoji: '🪜', text: 'Name that scale — a scale runs up; identify the mode by its flavour.' },
+  '@abx':          { kind: 'abx' as const,          emoji: '🎧', text: 'Blind A/B/X — a hidden X is one of two versions; decide which. Trains the ear.' },
+  '@rhythmtap':    { kind: 'rhythmtap' as const,    emoji: '🥁', text: 'Tap-back rhythm — a pattern plays; recreate it on the slots and check.' },
 }
 
 function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {

@@ -9,6 +9,10 @@ import { PRACTICE_PATHS, PRACTICE_CATEGORY_ORDER, type PracticeSnapshot } from '
 import { PRACTICE_RECIPES, buildRecipeClip, type PracticeRecipe } from '@/lib/practice-recipes'
 import { PRACTICE_SONGS, buildSongClip, songTrackName, type PracticeSong, type SongPart } from '@/lib/practice-songs'
 import { highlightHelpTargets } from './HelpButton'
+import { usePlan } from '@/hooks/usePlan'
+import { useUITierOptional } from '../UITierProvider'
+import { useUpgradeModal } from '@/components/UpgradeModal'
+import { lessonVisibleInMode, lessonRequiresPro, type UITier } from '@/lib/ui-tiers'
 
 const GENRE_COLOR: Record<PracticeSong['genre'], string> = { Pop: '#ec4899', Rock: '#f59e0b', Metal: '#ef4444' }
 
@@ -35,6 +39,20 @@ export default function PracticeButton() {
   const [activePathId, setActivePathId] = useState<string | null>(null)
   const [activeSongId, setActiveSongId] = useState<string | null>(null)
   const [loadedRecipe, setLoadedRecipe] = useState<PracticeRecipe | null>(null)
+
+  // Lessons follow the UI tier: each is offered in its studio mode and up, and
+  // only Simplified (beginner) lessons are free — Standard/Everything need Pro.
+  const { isPro } = usePlan()
+  const { showUpgrade } = useUpgradeModal()
+  const mode: UITier = useUITierOptional()?.tier ?? 'full'
+  const lessonTier = (t?: UITier): UITier => t ?? 'beginner'
+  const inMode = <T extends { tier?: UITier }>(items: readonly T[]): T[] =>
+    items.filter(i => lessonVisibleInMode(lessonTier(i.tier), mode))
+  const lockedFor = (t?: UITier): boolean => !isPro && lessonRequiresPro(lessonTier(t))
+  const proNudge = () => showUpgrade('Standard and Everything lessons are a Pro feature — the Simplified lessons are always free.')
+  const visiblePaths = inMode(PRACTICE_PATHS)
+  const visibleSongs = inMode(PRACTICE_SONGS)
+  const visibleRecipes = inMode(PRACTICE_RECIPES)
 
   // Load a recipe: fresh track + annotated clip appended to the real project,
   // then open it in the piano roll for study.
@@ -240,21 +258,25 @@ export default function PracticeButton() {
                   <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>
                     Small annotated constructions — load one into your project and pull it apart in the piano roll.
                   </p>
-                  {PRACTICE_RECIPES.map(r => (
+                  {visibleRecipes.length === 0 && <LessonsEmpty />}
+                  {visibleRecipes.map(r => {
+                    const locked = lockedFor(r.tier)
+                    return (
                     <div key={r.id} style={{
                       display: 'flex', alignItems: 'center', gap: 10,
                       background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px',
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{r.title}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>{r.title}{locked && <ProTag />}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{r.tagline}</div>
                       </div>
-                      <button onClick={() => loadRecipe(r)} style={{
+                      <button onClick={() => locked ? proNudge() : loadRecipe(r)} style={{
                         flexShrink: 0, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
-                        color: 'var(--accent-contrast)', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px',
-                      }}>Load</button>
+                        color: locked ? 'var(--accent-light)' : 'var(--accent-contrast)', background: locked ? 'var(--accent-subtle)' : 'var(--accent)', border: locked ? '1px solid rgba(139,92,246,0.35)' : 'none', borderRadius: 5, padding: '5px 12px',
+                      }}>{locked ? 'Unlock' : 'Load'}</button>
                     </div>
-                  ))}
+                    )
+                  })}
                   <a href="/community?kind=recipe" target="_blank" rel="noreferrer" style={{
                     fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none',
                     padding: '8px 12px', textAlign: 'center',
@@ -270,10 +292,12 @@ export default function PracticeButton() {
                   <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>
                     Build a full song section, part by part, in your own project. Pick the kind of music you want to make.
                   </p>
-                  {PRACTICE_SONGS.map(song => {
+                  {visibleSongs.length === 0 && <LessonsEmpty />}
+                  {visibleSongs.map(song => {
                     const loaded = song.parts.filter(p => project.tracks.some(t => t.name === songTrackName(song, p))).length
+                    const locked = lockedFor(song.tier)
                     return (
-                      <button key={song.id} onClick={() => setActiveSongId(song.id)} style={{
+                      <button key={song.id} onClick={() => locked ? proNudge() : setActiveSongId(song.id)} style={{
                         textAlign: 'left', cursor: 'pointer',
                         background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
                         padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
@@ -283,11 +307,11 @@ export default function PracticeButton() {
                           color: '#fff', background: GENRE_COLOR[song.genre], borderRadius: 4, padding: '3px 6px', flexShrink: 0,
                         }}>{song.genre}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{song.title}</div>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>{song.title}{locked && <ProTag />}</div>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{song.tagline}</div>
                         </div>
                         <span style={{ fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: loaded === song.parts.length ? 'var(--success)' : 'var(--text-muted)' }}>
-                          {loaded}/{song.parts.length}
+                          {locked ? '🔒' : `${loaded}/${song.parts.length}`}
                         </span>
                       </button>
                     )
@@ -371,8 +395,9 @@ export default function PracticeButton() {
                     Skill paths are completed by doing, not reading — the editor watches your
                     project and checks steps off as you go.
                   </p>
+                  {visiblePaths.length === 0 && <LessonsEmpty />}
                   {PRACTICE_CATEGORY_ORDER.map(cat => {
-                    const paths = PRACTICE_PATHS.filter(p => p.category === cat)
+                    const paths = visiblePaths.filter(p => p.category === cat)
                     if (paths.length === 0) return null
                     return (
                       <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -382,10 +407,11 @@ export default function PracticeButton() {
                         {paths.map(path => {
                           const done = doneIds(path.id)
                           const complete = done.size === path.steps.length
+                          const locked = lockedFor(path.tier)
                           return (
                             <button
                               key={path.id}
-                              onClick={() => setActivePathId(path.id)}
+                              onClick={() => locked ? proNudge() : setActivePathId(path.id)}
                               style={{
                                 textAlign: 'left', cursor: 'pointer',
                                 background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
@@ -393,7 +419,7 @@ export default function PracticeButton() {
                               }}
                             >
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{path.title}</div>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>{path.title}{locked && <ProTag />}</div>
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{path.tagline}</div>
                               </div>
                               <span style={{
@@ -401,8 +427,7 @@ export default function PracticeButton() {
                                 color: complete ? 'var(--success)' : 'var(--text-muted)',
                                 display: 'flex', alignItems: 'center', gap: 4,
                               }}>
-                                {complete && <Sparkles size={11} />}
-                                {done.size}/{path.steps.length}
+                                {locked ? '🔒' : <>{complete && <Sparkles size={11} />}{done.size}/{path.steps.length}</>}
                               </span>
                             </button>
                           )
@@ -470,5 +495,25 @@ export default function PracticeButton() {
         document.body,
       )}
     </>
+  )
+}
+
+/** Small "PRO" chip for lessons above the free (Simplified) tier. */
+function ProTag() {
+  return (
+    <span style={{
+      flexShrink: 0, fontSize: 8.5, fontWeight: 800, letterSpacing: '0.04em',
+      color: 'var(--accent-light)', background: 'var(--accent-subtle)',
+      border: '1px solid rgba(139,92,246,0.35)', borderRadius: 4, padding: '1px 4px', lineHeight: 1.4,
+    }}>PRO</span>
+  )
+}
+
+/** Empty state for a lessons tab with nothing in the current mode. */
+function LessonsEmpty() {
+  return (
+    <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 8px', lineHeight: 1.5 }}>
+      No lessons here yet — new ones are on the way.
+    </div>
   )
 }

@@ -7,6 +7,7 @@
 // practice building the kind of music you actually want to make.
 
 import type { MidiNote, MidiClip, TrackInstrument, PolyInstrumentParams } from './daw-types'
+import type { UITier } from './ui-tiers'
 
 const N = (pitch: number, startBeat: number, durationBeats: number, velocity = 100): Omit<MidiNote, 'id'> =>
   ({ pitch, startBeat, durationBeats, velocity })
@@ -44,6 +45,8 @@ export interface PracticeSong {
   title: string
   tagline: string
   tempo: number
+  /** Studio tier (beginner = free & Simplified). */
+  tier?: UITier
   parts: SongPart[]
 }
 
@@ -67,6 +70,7 @@ const popDrums = (): PartSpec => {
 const POP: PracticeSong = {
   id: 'song-pop-neon-sunrise',
   genre: 'Pop',
+  tier: 'beginner',
   title: 'Neon Sunrise',
   tagline: 'Bright four-chord pop — the I–V–vi–IV loop under a thousand hits.',
   tempo: 116,
@@ -124,6 +128,7 @@ const POP: PracticeSong = {
 const ROCK: PracticeSong = {
   id: 'song-rock-redline',
   genre: 'Rock',
+  tier: 'intermediate',
   title: 'Redline',
   tagline: 'Driving mixolydian rock — C → B♭ → F power chords with a pentatonic lead.',
   tempo: 148,
@@ -194,6 +199,7 @@ const ROCK: PracticeSong = {
 const METAL: PracticeSong = {
   id: 'song-metal-iron-verdict',
   genre: 'Metal',
+  tier: 'full',
   title: 'Iron Verdict',
   tagline: 'Fast, dark, and heavy — a double-kick gallop under a low palm-muted Andalusian riff.',
   tempo: 168,

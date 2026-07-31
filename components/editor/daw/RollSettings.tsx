@@ -117,7 +117,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   }, [anchor, effectiveMode])
 
   useEffect(() => {
-    function onDown(e: MouseEvent) {
+    function onDown(e: Event) {
       // Inside the panel (clicking/dragging a control) → keep open.
       if (panelRef.current?.contains(e.target as Node)) return
       if (ignoreOutside?.current?.contains(e.target as Node)) return
@@ -126,12 +126,12 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       onClose()
     }
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('mousedown', onDown)
-    // capture phase — the editor has its own Escape handling that would
-    // otherwise consume the key before this panel sees it
+    // Capture phase so a click inside the piano roll / arrangement can't
+    // stopPropagation its way past this handler and leave the panel stuck open.
+    document.addEventListener('pointerdown', onDown, true)
     document.addEventListener('keydown', onKey, true)
     return () => {
-      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('pointerdown', onDown, true)
       document.removeEventListener('keydown', onKey, true)
     }
   }, [onClose, ignoreOutside, retargetOnClipClick])

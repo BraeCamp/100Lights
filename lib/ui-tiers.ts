@@ -24,6 +24,22 @@ export function tierAtLeast(current: UITier, required: UITier): boolean {
   return TIER_RANK[current] >= TIER_RANK[required]
 }
 
+// ── Lesson / tutorial gating ──────────────────────────────────────────────────
+// Feature tutorials AND the Practice Room tag each lesson with a `tier`. Rule
+// (set by Brae): a lesson shows in a studio mode once the mode reaches its tier,
+// and ONLY the simplified (beginner) lessons are free — Standard/Everything
+// lessons are Pro. So a free user only ever gets the simplified-mode lessons.
+
+/** A lesson tagged `lessonTier` is offered in `mode` once mode ≥ that tier. */
+export function lessonVisibleInMode(lessonTier: UITier, mode: UITier): boolean {
+  return tierAtLeast(mode, lessonTier)
+}
+
+/** Only beginner-tier lessons are free; the rest require Pro. */
+export function lessonRequiresPro(lessonTier: UITier): boolean {
+  return lessonTier !== 'beginner'
+}
+
 export function isUITier(v: unknown): v is UITier {
   return v === 'beginner' || v === 'intermediate' || v === 'full'
 }
@@ -66,7 +82,8 @@ export const TIER_INFO: Record<UITier, TierInfo> = {
  */
 export const ELEMENT_MIN_TIER: Record<string, UITier> = {
   // ── Show from Standard up (hidden for beginners) ──
-  'loop': 'intermediate',
+  // 'loop' is intentionally NOT gated — looping a section is a core basic move,
+  // available in every mode (incl. Simplified).
   'snap': 'intermediate',
   'key-scale': 'full',
   'time-sig': 'intermediate',
@@ -93,31 +110,18 @@ export const ELEMENT_MIN_TIER: Record<string, UITier> = {
   'my-mix': 'full',
   'takes': 'full',
   'add-return': 'full',
-  'practice': 'full',
+  // NOTE: 'practice' (the Practice Room / lessons button) is intentionally NOT
+  // gated — lessons must be reachable in every mode; the lessons INSIDE it are
+  // filtered by tier + Pro-gated (see PracticeButton).
   'inspect': 'full',
   'duplicate-cleanup': 'full',
 }
 
-/**
- * How much to scale the whole studio per tier. Simpler tiers read bigger and
- * roomier (fewer controls leave the space for it); Everything stays at 1:1.
- * Implemented with CSS `zoom` on the editor root — the studio uses inline px
- * font sizes, so a proportional zoom is the only thing that scales all of it,
- * and the editor stays clamped to its container (no overflow).
- */
-export const TIER_SCALE: Record<UITier, number> = {
-  beginner: 1.15,
-  intermediate: 1.06,
-  full: 1,
-}
-
-/** Zoom rules per tier (skips 1:1 tiers). */
-export function tierScaleCss(): string {
-  return UI_TIERS
-    .filter(t => TIER_SCALE[t] !== 1)
-    .map(t => `[data-ui-tier="${t}"] [data-editor="true"]{zoom:${TIER_SCALE[t]}}`)
-    .join('\n')
-}
+// NOTE: a per-tier CSS `zoom` used to scale the whole studio (bigger text in
+// simpler tiers) lived here — REMOVED because `zoom` shifts the pointer
+// coordinate space and threw off the piano-roll / timeline click math (clicks
+// landed down-and-right by the zoom factor). Any future "bigger text" must not
+// alter the coordinate space of the interactive surfaces.
 
 /**
  * Generate the stylesheet that hides each control for the tiers below its

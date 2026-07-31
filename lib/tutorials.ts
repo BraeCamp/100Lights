@@ -9,9 +9,22 @@
 //      step's helpId, which control to photograph.
 //
 // A step's `helpId` is a data-help-id present in the editor (see the registry in
-// components/editor/daw/HelpButton.tsx). Steps without a helpId are text-only
-// (no screenshot, no glow). To add a tutorial: add an entry here, add a driver
-// for its slug in scripts/capture-tutorials.mjs, then `npm run capture-tutorials`.
+// components/editor/daw/HelpButton.tsx). Steps without a helpId are text-only.
+//
+// ── TIERS ──────────────────────────────────────────────────────────────────────
+// Every tutorial has a `tier` (beginner | intermediate | full = Simplified /
+// Standard / Everything). A tutorial shows in a studio mode once the mode
+// reaches its tier, and ONLY beginner-tier tutorials are free — Standard and
+// Everything tutorials are Pro (see lib/ui-tiers.ts lessonRequiresPro /
+// lessonVisibleInMode). So a free user only ever gets the Simplified lessons.
+//
+// The content was intentionally cleared to be rebuilt tier by tier — the old
+// set is recoverable from git history. To add a tutorial: add an entry below
+// (start with beginner ones), add a driver for its slug in
+// scripts/capture-tutorials.mjs, then `npm run capture-tutorials`.
+
+import type { UITier } from './ui-tiers'
+import { lessonVisibleInMode } from './ui-tiers'
 
 export interface TutorialStep {
   text: string
@@ -25,12 +38,21 @@ export interface Tutorial {
   description: string
   /** One-line summary — index card + page subtitle. */
   tagline: string
+  /** Which studio mode this lesson belongs to. Beginner = free & Simplified. */
+  tier: UITier
   steps: TutorialStep[]
 }
 
+// Add tutorials here, Simplified (beginner) first. Template:
+//   {
+//     slug: 'add-a-track', title: 'Add Your First Track',
+//     description: '…', tagline: '…', tier: 'beginner',
+//     steps: [ { text: '…', helpId: 'add-track' } ],
+//   },
 export const TUTORIALS: Tutorial[] = [
   {
     slug: 'fx',
+    tier: 'intermediate',
     title: 'Add and Use an Effect',
     description: 'Add an effect to a track in the 100Lights studio, then use Bypass to hear it on versus off — the fastest way to learn what any effect actually does.',
     tagline: 'Put an effect on a track and A/B it by ear.',
@@ -43,6 +65,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'transport',
+    tier: 'beginner',
     title: 'Play, Loop, and Move Around',
     description: 'Control playback in the 100Lights studio — start and stop, loop a section to work on it, and jump back to the top.',
     tagline: 'Start, stop, loop a section, and navigate your project.',
@@ -54,6 +77,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'tempo',
+    tier: 'beginner',
     title: 'Set Your Tempo',
     description: 'Set the project tempo in the 100Lights studio — type an exact BPM or tap it in — and turn on the metronome.',
     tagline: 'Dial in the BPM, tap a tempo, and toggle the click.',
@@ -65,6 +89,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'views',
+    tier: 'intermediate',
     title: 'Session, Arrangement, and Mixer Views',
     description: 'The three ways to see a project in the 100Lights studio — a clip grid for jamming, a timeline for building, and a mixer for balancing.',
     tagline: 'The three views, and when to use each.',
@@ -76,6 +101,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'sounds',
+    tier: 'beginner',
     title: 'Find and Add Sounds',
     description: 'Browse the built-in sound library in the 100Lights studio and drop sounds straight onto your tracks.',
     tagline: 'Browse the library and drop sounds onto tracks.',
@@ -86,6 +112,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'export',
+    tier: 'beginner',
     title: 'Export Your Finished Track',
     description: 'Render a project to an audio file in the 100Lights studio — a lossless WAV to master, or a compact file to share.',
     tagline: 'Render your project to an audio file.',
@@ -96,6 +123,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'swing',
+    tier: 'full',
     title: 'Give Your Beat Some Swing',
     description: 'Use the global swing control in the 100Lights studio to loosen up rigid, quantized timing into a human groove.',
     tagline: 'Turn stiff, on-the-grid timing into a groove.',
@@ -106,6 +134,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'tracks',
+    tier: 'beginner',
     title: 'Arm, Mute, and Solo a Track',
     description: 'The per-track controls in the 100Lights studio — record-enable, mute, solo, and the gear that opens a track’s devices.',
     tagline: 'The per-track controls: record-enable, silence, isolate.',
@@ -118,6 +147,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'returns',
+    tier: 'full',
     title: 'Add a Reverb Send (Return Track)',
     description: 'Add a return track in the 100Lights studio so one shared reverb or delay serves every channel — the clean way to add space to a mix.',
     tagline: 'One shared effect any track can send to.',
@@ -128,6 +158,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'key-scale',
+    tier: 'full',
     title: 'Set the Key and Scale',
     description: 'Set the project key and scale in the 100Lights studio so instruments, pads, and pitch tools all stay in tune together.',
     tagline: 'Lock the project to a key so everything stays in tune.',
@@ -138,6 +169,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'code',
+    tier: 'full',
     title: 'Generate a Track from Code',
     description: 'Use the Code panel in the 100Lights studio to generate a synth track from a few lines of math — scales, chords, euclidean rhythms, seeded randomness.',
     tagline: 'A few lines of math become a playable synth track.',
@@ -148,6 +180,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'jam',
+    tier: 'full',
     title: 'Never Lose a Take: Jam Capture',
     description: 'Jam Capture in the 100Lights studio keeps the last 30 seconds of everything you play, so a great unrecorded take is never lost.',
     tagline: 'Grab the last 30 seconds you played — even without recording.',
@@ -158,6 +191,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'record-session',
+    tier: 'intermediate',
     title: 'Record Your Screen and Studio Audio',
     description: 'Record your screen with the studio’s own audio (and optionally your mic) in 100Lights — clean, with no notifications or other tabs in the take.',
     tagline: 'Screen + studio audio, straight from the mixer.',
@@ -168,6 +202,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'tuner',
+    tier: 'full',
     title: 'Tune Your Sounds',
     description: 'Open the tuner in the 100Lights studio to check and adjust the pitch of pads and instruments so everything agrees on one reference.',
     tagline: 'Check pitch so every layer agrees.',
@@ -178,6 +213,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'time-signature',
+    tier: 'intermediate',
     title: 'Change the Time Signature',
     description: 'Set the project’s time signature in the 100Lights studio — the ruler, grid, metronome, and bar numbering all follow the meter you choose.',
     tagline: 'Work in 3/4, 5/4, or 7/8 — not just 4/4.',
@@ -188,6 +224,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'navigate',
+    tier: 'beginner',
     title: 'Zoom and Fit the Timeline',
     description: 'Zoom in for detailed edits and fit the whole arrangement to the window in the 100Lights studio.',
     tagline: 'Get in close, then see the whole song.',
@@ -199,6 +236,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'snap',
+    tier: 'intermediate',
     title: 'Snap to the Grid, and Ripple Edits',
     description: 'Control the grid clips snap to in the 100Lights studio, and use ripple editing to keep everything after an edit glued together.',
     tagline: 'Choose the grid — and keep edits from leaving gaps.',
@@ -209,6 +247,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'masking',
+    tier: 'full',
     title: 'Spot Frequency Clashes',
     description: 'The masking detector in the 100Lights studio shows which tracks compete for the same frequencies, so you can EQ or pan them apart.',
     tagline: 'See which tracks fight for the same frequencies.',
@@ -219,6 +258,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'varispeed',
+    tier: 'full',
     title: 'Slow Down with Varispeed',
     description: 'Tape-style speed control in the 100Lights studio — pitch rises and falls with playback speed, exactly like a reel-to-reel.',
     tagline: 'Tape-style speed — the pitch moves with it.',
@@ -229,6 +269,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'piano-roll',
+    tier: 'beginner',
     title: 'Write Notes in the Piano Roll',
     description: 'Open the piano roll in the 100Lights studio to draw, move, and resize MIDI notes on a grid, with your project’s key highlighted.',
     tagline: 'Draw a melody without touching a keyboard.',
@@ -240,6 +281,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'automation',
+    tier: 'intermediate',
     title: 'Automate a Parameter Over Time',
     description: 'Add automation lanes in the 100Lights studio to change volume, pan, filter, and more over time, drawn as editable curves under a track.',
     tagline: 'Draw volume rides, filter sweeps, and pan moves.',
@@ -250,6 +292,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'session',
+    tier: 'intermediate',
     title: 'Jam with Scenes in Session View',
     description: 'Session view in the 100Lights studio is a grid of clips you launch scene by scene, then capture straight into the arrangement timeline.',
     tagline: 'Launch clips live, then capture the jam.',
@@ -260,6 +303,7 @@ export const TUTORIALS: Tutorial[] = [
   },
   {
     slug: 'instrument',
+    tier: 'beginner',
     title: 'Pick a Synth or Drum Kit',
     description: 'Choose the instrument a MIDI track plays in the 100Lights studio — a synth, drum kit, or sampler — and browse presets with instant preview.',
     tagline: 'Choose what a track plays, and audition presets.',
@@ -272,6 +316,11 @@ export const TUTORIALS: Tutorial[] = [
 
 export function getTutorial(slug: string): Tutorial | undefined {
   return TUTORIALS.find(t => t.slug === slug)
+}
+
+/** Tutorials offered in a given studio mode (that mode's tier and below). */
+export function tutorialsInMode(mode: UITier): Tutorial[] {
+  return TUTORIALS.filter(t => lessonVisibleInMode(t.tier, mode))
 }
 
 /** Public path of a step's generated screenshot (1-based file naming). */

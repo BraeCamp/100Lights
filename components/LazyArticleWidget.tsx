@@ -47,6 +47,13 @@ const LOADERS = {
   setup: () => import('@/components/ArticleSetup'),
   scrolleq: () => import('@/components/ArticleScrollEQ'),
   tool: () => import('@/components/ArticleTool'),
+  // "Learn by doing, no words" challenges — match-by-ear + guess-the-sound games.
+  earfilter: () => import('@/components/ArticleEarFilter'),
+  findfreq: () => import('@/components/ArticleFindFreq'),
+  chordquality: () => import('@/components/ArticleChordQuality'),
+  scaleid: () => import('@/components/ArticleScaleId'),
+  abx: () => import('@/components/ArticleABX'),
+  rhythmtap: () => import('@/components/ArticleRhythmTap'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -76,6 +83,12 @@ type WidgetSpec =
   | { kind: 'setup'; props: { caption?: string } }
   | { kind: 'scrolleq'; props: { caption?: string } }
   | { kind: 'tool'; props: { toolId: string; caption?: string } }
+  | { kind: 'earfilter'; props: { caption?: string } }
+  | { kind: 'findfreq'; props: { caption?: string } }
+  | { kind: 'chordquality'; props: { caption?: string } }
+  | { kind: 'scaleid'; props: { caption?: string } }
+  | { kind: 'abx'; props: { caption?: string } }
+  | { kind: 'rhythmtap'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

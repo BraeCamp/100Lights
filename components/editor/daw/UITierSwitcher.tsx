@@ -37,6 +37,23 @@ export default function UITierSwitcher() {
     if (open && popRef.current && anchor) clampToViewport(popRef.current, anchor)
   }, [open, anchor])
 
+  // After the first-run prompt picks a tier, glow this button so the user knows
+  // where to change it later. Reuses the Help system's .daw-help-glow class
+  // (injected globally by HelpButton). Decoupled via a window event.
+  useEffect(() => {
+    const onGlow = () => {
+      const el = btnRef.current
+      if (!el) return
+      el.classList.remove('daw-help-glow')
+      void el.offsetWidth   // restart the animation
+      el.classList.add('daw-help-glow')
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+      window.setTimeout(() => el.classList.remove('daw-help-glow'), 7100)
+    }
+    window.addEventListener('100lights-tier-first-chosen', onGlow)
+    return () => window.removeEventListener('100lights-tier-first-chosen', onGlow)
+  }, [])
+
   return (
     <>
       <button

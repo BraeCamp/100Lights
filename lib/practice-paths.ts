@@ -4,6 +4,8 @@
 // over live project/transport state that marks it done. No quizzes — the
 // project state IS the verification.
 
+import type { UITier } from './ui-tiers'
+
 export interface PracticeSnapshot {
   trackCount: number
   arrangementClipCount: number
@@ -51,12 +53,15 @@ export interface PracticePath {
   title: string
   tagline: string
   category: PracticeCategory
+  /** Studio tier (beginner = free & Simplified). */
+  tier?: UITier
   steps: PracticeStep[]
 }
 
 export const PRACTICE_PATHS: PracticePath[] = [
   {
     id: 'first-take',
+    tier: 'beginner',
     title: 'Your first take',
     category: 'Recording',
     tagline: 'From an empty session to a captured recording.',
@@ -95,6 +100,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   },
   {
     id: 'mix-basics',
+    tier: 'intermediate',
     title: 'Mix basics',
     category: 'Mixing',
     tagline: 'Hear what solo, mute, and effects actually do.',
@@ -127,6 +133,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   },
   {
     id: 'write-melody',
+    tier: 'beginner',
     title: 'Write a melody',
     category: 'Composing',
     tagline: 'Draw notes in the piano roll and hear them back.',
@@ -159,6 +166,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   },
   {
     id: 'sound-from-code',
+    tier: 'full',
     title: 'Design a sound with code',
     category: 'Coding',
     tagline: 'Generate a synth voice from a tiny script, then shape it.',
@@ -185,6 +193,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   },
   {
     id: 'shape-the-space',
+    tier: 'intermediate',
     title: 'Shape the space',
     category: 'Mixing',
     tagline: 'Sends and returns — one shared reverb for the whole mix.',
@@ -210,6 +219,7 @@ export const PRACTICE_PATHS: PracticePath[] = [
   },
   {
     id: 'speak-the-language',
+    tier: 'full',
     title: 'Speak the language',
     tagline: 'Learn the sound-code by changing it — every edit is something you hear.',
     category: 'Coding',

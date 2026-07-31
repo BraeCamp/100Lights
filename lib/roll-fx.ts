@@ -117,9 +117,10 @@ export const TOP_FIELDS: FxField[] = FX_FIELDS.filter(f => f.top)
 export const GRAPH_TARGETS: PitchGraphTarget[] = FX_FIELDS.filter(f => f.graph).map(f => f.key as PitchGraphTarget)
 
 // "Basic" mode — the most basic controls, shown flat (no categories):
-// sustain, filter (low-pass), gain, plus reverb and drive.
-// Volume (gain) leads the basic set, then sustain, filter, reverb, drive.
-const BASIC_KEYS: (keyof RollFx)[] = ['gain', 'sustain', 'filterHz', 'reverbWet', 'drive']
+// Volume (gain), Sustain (the release-ramp headliner), Reverb, Drive. Low-pass
+// was dropped from the simplified set — sustain is the more useful first knob
+// for beginners (the low-pass filter lives in Advanced / Everything mode).
+const BASIC_KEYS: (keyof RollFx)[] = ['gain', 'sustain', 'reverbWet', 'drive']
 export const BASIC_FIELDS: FxField[] = BASIC_KEYS.map(k => FX_FIELD_BY_KEY[k as string]).filter(Boolean)
 
 /** Is a value meaningfully different from the field's neutral? */

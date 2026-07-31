@@ -11,7 +11,7 @@ import { useUser } from '@clerk/nextjs'
 import { createPortal } from 'react-dom'
 import { Sparkles } from 'lucide-react'
 import {
-  type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss, tierScaleCss,
+  type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss,
 } from '@/lib/ui-tiers'
 
 const LS_KEY = '100lights-ui-tier'
@@ -64,7 +64,7 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
     if (!el || !el.isConnected) {
       el = el ?? document.createElement('style')
       el.id = 'ui-tiers'
-      el.textContent = tierVisibilityCss() + '\n' + tierScaleCss()
+      el.textContent = tierVisibilityCss()
       document.head.appendChild(el)
       styleRef.current = el
     }
@@ -121,7 +121,14 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
   return (
     <Ctx.Provider value={{ tier, setTier, chosen, atLeast }}>
       <div data-ui-tier={tier} style={{ display: 'contents' }}>{children}</div>
-      {ready && !chosen && <UITierFirstRun onChoose={setTier} />}
+      {ready && !chosen && (
+        <UITierFirstRun onChoose={(t) => {
+          setTier(t)
+          // Point the user at the switcher so they know they can change this later.
+          // Delay a beat so the modal is gone and the button is on screen.
+          setTimeout(() => window.dispatchEvent(new CustomEvent('100lights-tier-first-chosen')), 80)
+        }} />
+      )}
     </Ctx.Provider>
   )
 }

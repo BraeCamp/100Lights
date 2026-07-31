@@ -48,8 +48,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ]
 
-  // Feature tutorials — a static, self-contained SEO surface (lib/tutorials.ts)
-  const tutorials: MetadataRoute.Sitemap = [
+  // Feature tutorials — a static, self-contained SEO surface (lib/tutorials.ts).
+  // Only advertised once tutorials exist (mirrors the Learn/paths gating).
+  const tutorials: MetadataRoute.Sitemap = TUTORIALS.length === 0 ? [] : [
     { url: `${base}/tutorial`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     ...TUTORIALS.map(t => ({
       url: `${base}/tutorial/${t.slug}`,
