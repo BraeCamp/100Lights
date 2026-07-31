@@ -38,7 +38,7 @@ import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
 import { saveSnapshot, loadSnapshot, deleteSnapshot, getBranch } from '@/lib/offline-store'
 import { mergeProjects, applyResolutions, hasDiverged, type MergeConflict } from '@/lib/project-merge'
-import { getPresets } from '@/lib/midi-presets'
+import { getPresets, combinePresets } from '@/lib/midi-presets'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
 
@@ -622,12 +622,12 @@ export default function AudioEditor(props: AudioEditorProps) {
   // after a StrictMode dispose the recreated engine starts with an empty
   // preset list, which silences all preset-backed MIDI playback in dev.
   useEffect(() => {
-    engineForRender.setPresets(getPresets())
+    engineForRender.setPresets(combinePresets(project.presets))
     // Dev console access to the live engine (window.__daw)
     if (process.env.NODE_ENV === 'development') {
       (window as unknown as { __daw?: DawEngine }).__daw = engineRef.current ?? undefined
     }
-  }, [engineForRender])
+  }, [engineForRender, project.presets])
 
 
   useEffect(() => { projectRef.current = project }, [project])
@@ -1204,8 +1204,28 @@ export default function AudioEditor(props: AudioEditorProps) {
     // resolve audio on load.
     const stripUrl = <C,>(c: C & { kind: string; audioUrl?: string }): C =>
       c.kind === 'audio' && c.audioUrl?.startsWith('blob:') ? { ...c, audioUrl: undefined } : c
+    // Embed any custom (non-built-in) presets referenced by a clip so the saved
+    // project resolves its sounds on any device — even one that never created
+    // them. Built-in presets (builtin-*) are universal; skip those.
+    const referenced = new Set<string>()
+    const collectRef = (c: { kind: string; presetId?: string }) => {
+      if (c.kind === 'midi' && c.presetId && !c.presetId.startsWith('builtin-')) referenced.add(c.presetId)
+    }
+    p.arrangementClips.forEach(collectRef)
+    Object.values(p.sessionGrid).forEach(row => row.forEach(c => c && collectRef(c)))
+    let embeddedPresets = p.presets
+    if (referenced.size) {
+      const have = new Set((p.presets ?? []).map(pr => pr.id))
+      const missing = referenced.size > have.size || [...referenced].some(id => !have.has(id))
+      if (missing) {
+        const lib = getPresets()
+        const add = lib.filter(pr => referenced.has(pr.id) && !have.has(pr.id))
+        if (add.length) embeddedPresets = [...(p.presets ?? []), ...add]
+      }
+    }
     const dawProject = {
       ...p,
+      presets: embeddedPresets,
       history: buildLogRef.current.length ? [...buildLogRef.current] : p.history,
       arrangementClips: p.arrangementClips.map(stripUrl),
       sessionGrid: Object.fromEntries(Object.entries(p.sessionGrid).map(([tid, row]) =>

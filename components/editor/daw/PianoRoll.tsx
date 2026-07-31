@@ -13,7 +13,7 @@ import { isMidiClip } from '@/lib/daw-types'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { sharePreset } from '@/lib/community'
 import NewPresetModal from './NewPresetModal'
-import { getPresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
+import { getPresets, combinePresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
 import { DRUM_LANES } from '@/lib/drum-presets'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll } from '@/lib/sound-library'
@@ -481,7 +481,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => { rootRef.current?.focus() }, [])
 
-  useEffect(() => { setPresets(getPresets()) }, [])
+  useEffect(() => { setPresets(combinePresets(project.presets)) }, [project.presets])
 
   // Default note sound: a clip with no preset on a track with no instrument
   // would play silently — assign the built-in Piano preset so drawn notes
@@ -492,9 +492,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     const id = defaultPresetId()
     if (id) {
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: id } })
-      engine.setPresets(getPresets())
+      engine.setPresets(combinePresets(project.presets))
     }
-  }, [clip.presetId, clip.isDrumClip, clip.id, track, dispatch, engine])
+  }, [clip.presetId, clip.isDrumClip, clip.id, track, dispatch, engine, project.presets])
 
   useEffect(() => {
     if (!rootMenuPos) return
@@ -633,8 +633,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         ? { ...(fx ? { fx } : {}), ...(graphs.length ? { pitchGraphs: graphs } : {}) }
         : undefined
       const p = addPreset({ name, folder, loNote: lo, hiNote: hi, category: 'custom', sound })
-      setPresets(getPresets())
-      engine.setPresets(getPresets()) // engine resolves presets from its own list — keep it current
+      dispatch({ type: 'ADD_PRESET', preset: p })   // embed in the project so the sound travels with the .cfproj
+      setPresets(combinePresets(project.presets))
+      engine.setPresets(combinePresets(project.presets)) // engine resolves presets from its own list — keep it current
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } })
       if (npShare) {
         try { await sharePreset(p, npDesc.trim() || `${name} — custom preset`) }
@@ -1376,7 +1377,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                               ▶
                             </button>
                             <button
-                              onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(getPresets()); setShowPresetPicker(false) }}
+                              onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(combinePresets(project.presets)); setShowPresetPicker(false) }}
                               title={oor ? `This clip's notes (${midiNoteLabel(cLo!)}–${midiNoteLabel(cHi!)}) go outside this preset's range (${noteRangeLabel(p)}); out-of-range notes play at the wrong pitch.` : undefined}
                               style={{
                                 flex: 1, display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0,

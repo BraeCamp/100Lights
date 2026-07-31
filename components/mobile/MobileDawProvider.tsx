@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { DawContext, reducer, type DawContextValue, type DawAction } from '@/lib/daw-state'
 import { DawEngine } from '@/lib/daw-engine'
-import { getPresets } from '@/lib/midi-presets'
+import { getPresets, combinePresets } from '@/lib/midi-presets'
 import { seedProject } from './daw/seed'
 import type { DawProject, DawView, EditTarget, CollabPeer } from '@/lib/daw-types'
 
@@ -94,7 +94,7 @@ export function MobileDawProvider({ children, initialProject, onSave, isSaving, 
   const [blinkIds] = useState<Set<string>>(new Set())
   const [collabPeers] = useState<CollabPeer[]>([])
 
-  useEffect(() => { engine.setPresets(getPresets()) }, [engine])
+  useEffect(() => { engine.setPresets(combinePresets(project.presets)) }, [engine, project.presets])
   useEffect(() => { engine.updateProject(project) }, [project, engine])
   useEffect(() => () => { engineRef.current?.dispose() }, [])
 

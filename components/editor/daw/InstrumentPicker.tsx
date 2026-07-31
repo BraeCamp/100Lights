@@ -437,15 +437,17 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <Section title="Preset">
         {isMobile ? (
-          <PresetMenu options={Object.keys(POLY_PRESETS).map(k => ({ value: k, label: k }))} onPick={k => onSet({ ...POLY_PRESETS[k] })} placeholder="Load preset…" />
+          <PresetMenu options={Object.keys(POLY_PRESETS).map(k => ({ value: k, label: k }))} onPick={k => onSet({ ...POLY_PRESETS[k], preset: k })} placeholder="Load preset…" />
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
             {Object.keys(POLY_PRESETS).map(k => (
               <button key={k}
-                onClick={e => { e.stopPropagation(); onSet({ ...POLY_PRESETS[k] }) }}
+                onClick={e => { e.stopPropagation(); onSet({ ...POLY_PRESETS[k], preset: k }) }}
                 style={{
                   padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
-                  border: `1px solid ${C.border}`, background: C.bgCard, color: C.textMuted,
+                  border: `1px solid ${p.preset === k ? C.accent : C.border}`,
+                  background: p.preset === k ? `${C.accent}22` : C.bgCard,
+                  color: p.preset === k ? C.accent : C.textMuted,
                 }}>{k}</button>
             ))}
           </div>
@@ -769,16 +771,17 @@ const WavetablePanel = memo(function WavetablePanel({ instrument, onSet }: {
       {/* Presets */}
       <Section title="Preset">
         {isMobile ? (
-          <PresetMenu options={Object.keys(WAVETABLE_PRESETS).map(k => ({ value: k, label: k }))} onPick={k => onSet({ ...WAVETABLE_PRESETS[k] })} placeholder="Load preset…" />
+          <PresetMenu options={Object.keys(WAVETABLE_PRESETS).map(k => ({ value: k, label: k }))} onPick={k => onSet({ ...WAVETABLE_PRESETS[k], preset: k })} placeholder="Load preset…" />
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
             {Object.keys(WAVETABLE_PRESETS).map(k => (
               <button key={k}
-                onClick={e => { e.stopPropagation(); onSet({ ...WAVETABLE_PRESETS[k] }) }}
+                onClick={e => { e.stopPropagation(); onSet({ ...WAVETABLE_PRESETS[k], preset: k }) }}
                 style={{
                   padding: '3px 8px', borderRadius: 3, fontSize: 10, cursor: 'pointer',
-                  border: `1px solid ${C.border}`,
-                  background: C.bgCard, color: C.textMuted,
+                  border: `1px solid ${p.preset === k ? C.accent : C.border}`,
+                  background: p.preset === k ? `${C.accent}22` : C.bgCard,
+                  color: p.preset === k ? C.accent : C.textMuted,
                 }}>{k}</button>
             ))}
           </div>
@@ -934,7 +937,11 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
   const setPoly = useCallback((changes: Partial<PolyInstrumentParams>) => {
     if (instrType !== 'poly') return
     const params = instrument.params as PolyInstrumentParams
-    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'poly', params: { ...params, ...changes } } })
+    // A hand-edit (any change that isn't loading a preset) drops the preset tag
+    // so the sound reads as "custom" again.
+    const next = { ...params, ...changes }
+    if (!('preset' in changes)) delete next.preset
+    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'poly', params: next } })
   }, [dispatch, trackId, instrType, instrument.params])
 
   const setDrum = useCallback((changes: Partial<DrumInstrumentParams>) => {
@@ -951,7 +958,9 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
   const setWavetable = useCallback((changes: Partial<WavetableInstrumentParams>) => {
     if (instrType !== 'wavetable') return
     const params = instrument.params as WavetableInstrumentParams
-    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'wavetable', params: { ...params, ...changes } } })
+    const next = { ...params, ...changes }
+    if (!('preset' in changes)) delete next.preset
+    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'wavetable', params: next } })
   }, [dispatch, trackId, instrType, instrument.params])
 
   return (

@@ -128,6 +128,19 @@ export function getPresets(): MidiPreset[] {
 }
 
 /**
+ * Project-embedded presets first (so a shared .cfproj resolves its custom
+ * sounds even on a device that never saved them), then the local library —
+ * de-duped by id. Pass a project's `presets` and use the result wherever the
+ * engine or a picker needs the full set.
+ */
+export function combinePresets(projectPresets?: MidiPreset[]): MidiPreset[] {
+  const local = getPresets()
+  if (!projectPresets || projectPresets.length === 0) return local
+  const embedded = new Set(projectPresets.map(p => p.id))
+  return [...projectPresets, ...local.filter(p => !embedded.has(p.id))]
+}
+
+/**
  * The default sound for piano-roll notes: the built-in Piano preset.
  * Used when a MIDI clip has no preset and its track has no instrument,
  * so drawn notes are never silent.

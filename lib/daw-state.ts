@@ -7,6 +7,7 @@ import type {
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
+import type { MidiPreset } from './midi-presets'
 import type { PodcastMeta } from './project-serializer'
 import {
   defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, GROUP_TRACK_HEIGHT,
@@ -79,6 +80,10 @@ export type DawAction =
   | { type: 'ADD_CLIP_EFFECT'; effect: ClipEffect }
   | { type: 'REMOVE_CLIP_EFFECT'; effectId: string }
   | { type: 'UPDATE_CLIP_EFFECT'; effectId: string; patch: Partial<ClipEffect> }
+  // Project-embedded MIDI presets (custom sounds that travel with the file)
+  | { type: 'ADD_PRESET'; preset: MidiPreset }
+  | { type: 'UPDATE_PRESET'; id: string; patch: Partial<MidiPreset> }
+  | { type: 'REMOVE_PRESET'; id: string }
   // Return tracks
   | { type: 'ADD_RETURN_TRACK'; track: ReturnTrack }
   | { type: 'REMOVE_RETURN_TRACK'; trackId: string }
@@ -536,6 +541,16 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'ADD_CLIP_EFFECT':
       return { ...project, clipEffects: [...(project.clipEffects ?? []), action.effect] }
+
+    case 'ADD_PRESET': {
+      // Replace an existing entry with the same id (idempotent), else append.
+      const rest = (project.presets ?? []).filter(p => p.id !== action.preset.id)
+      return { ...project, presets: [...rest, action.preset] }
+    }
+    case 'UPDATE_PRESET':
+      return { ...project, presets: (project.presets ?? []).map(p => p.id === action.id ? { ...p, ...action.patch } : p) }
+    case 'REMOVE_PRESET':
+      return { ...project, presets: (project.presets ?? []).filter(p => p.id !== action.id) }
 
     case 'REMOVE_CLIP_EFFECT':
       return { ...project, clipEffects: (project.clipEffects ?? []).filter(e => e.id !== action.effectId) }

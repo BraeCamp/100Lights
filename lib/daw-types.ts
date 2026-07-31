@@ -2,6 +2,7 @@
 
 import type { FMPatch, FMAlgorithm, FMOperator } from './fm-synth'
 import type { WavetablePatch } from './wavetable-synth'
+import type { MidiPreset } from './midi-presets'   // type-only — no runtime cycle
 
 // Re-exported synth engine patch types, used as instrument params
 export type Fm4OpInstrumentParams     = FMPatch
@@ -364,6 +365,10 @@ export interface PolyInstrumentParams {
   lfoDepth: number        // 0–1
   lfoTarget: 'pitch' | 'filter' | 'amp'
   lfoWaveform: OscillatorType
+  /** Name of the POLY_PRESET this patch came from — the instrument editor
+   *  highlights it and shows the sound as recognizable, not "custom". Cleared
+   *  the moment any parameter is hand-edited. */
+  preset?: string
 }
 
 export function defaultOscLayer(over: Partial<PolyOscLayer> = {}): PolyOscLayer {
@@ -855,6 +860,11 @@ export interface DawProject {
   /** Ordered construction log for the History capture/replay mode — folded from
    *  empty through the reducer to re-play how the project was built. */
   history?: DawHistoryEntry[]
+  /** Custom MIDI-instrument presets that live IN the project, so a clip using a
+   *  user-made sound stays intact when the .cfproj is opened on another device
+   *  (built-in presets are always available; user presets otherwise live only in
+   *  the author's localStorage). Resolved ahead of the local library. */
+  presets?: MidiPreset[]
 }
 
 export interface TimelineComment {

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import type { DawTrack, DawClip, AudioClip, MidiClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
-import { getPresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
+import { getPresets, combinePresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import { shareRecipe } from '@/lib/community'
 import { ShareCommunityDialog, saveUserRecipe } from '../SoundCreate'
 import { encodeWav } from '@/lib/wav-codec'
@@ -855,7 +855,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             >{it.label}</button>
           ))}
           {ctxSub === 'presets' && !isAudioClip(clip) && (() => {
-            const presets = getPresets()
+            const presets = combinePresets(project.presets)
             const pick = (presetId: string | undefined) => {
               dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId } })
               engine.setPresets(presets)

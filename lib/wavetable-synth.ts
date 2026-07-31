@@ -9,6 +9,9 @@
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface WavetablePatch {
+  /** Name of the WAVETABLE_PRESET this came from (recognized in the editor,
+   *  cleared on hand-edit). */
+  preset?: string
   // Oscillator A
   oscAWavetable: 'analog' | 'digital' | 'vocal' | 'strings' | 'brass' | 'custom'
   oscAPosition:  number        // 0–1 wavetable scan position
