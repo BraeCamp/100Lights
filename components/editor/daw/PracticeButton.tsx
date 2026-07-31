@@ -161,17 +161,17 @@ export default function PracticeButton() {
     <>
       <button
         onClick={() => setOpen(v => !v)}
-        title="Practice Room — guided skill paths"
+        title="Lessons — guided skill paths, song builds & recipes"
         data-help-id="practice"
         style={{
-          width: 24, height: 24, borderRadius: 6, border: 'none', cursor: 'pointer',
+          height: 24, padding: '0 9px', borderRadius: 6, cursor: 'pointer', flexShrink: 0,
+          border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`,
           background: open ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
-          color: open ? 'var(--accent)' : 'var(--text-muted)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
+          color: open ? 'var(--accent)' : 'var(--text-secondary)',
+          display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
         }}
       >
-        <GraduationCap size={14} />
+        <GraduationCap size={13} /> Lessons
       </button>
 
       {open && typeof document !== 'undefined' && createPortal(
