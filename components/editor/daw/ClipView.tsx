@@ -266,8 +266,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     if (e.button !== 0) return
     e.stopPropagation()
     if (isCropping) return  // don't drag while cropping
-    const wasMultiSelected = multiSelected && !e.altKey
-    if (e.altKey) { onShiftSelect() } else if (!wasMultiSelected) { onSelect() }
+    // Shift = add/remove from the selection (matches the piano roll + FX lane).
+    // Alt stays free for copy-on-drag (see onMove's altKey below).
+    const wasMultiSelected = multiSelected && !e.shiftKey
+    if (e.shiftKey) { onShiftSelect() } else if (!wasMultiSelected) { onSelect() }
     onDragStart?.()
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     let dragged = false

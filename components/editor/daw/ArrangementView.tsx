@@ -836,7 +836,7 @@ export default function ArrangementView() {
 
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
-    const preSelected = new Set(selectedClipIds)   // for Alt-additive selection
+    const preSelected = new Set(selectedClipIds)   // for Shift-additive selection
     const laneEl = laneRef.current
     if (!laneEl) return
     const laneRect = laneEl.getBoundingClientRect()
@@ -908,7 +908,7 @@ export default function ArrangementView() {
       // it overlaps (both ends), so a partial band still selects whole clips.
       let region: { start: number; end: number } | null
 
-      if (ev.altKey) {
+      if (ev.shiftKey) {
         const finalIds = new Set([...preSelected, ...newIds])
         setSelectedClipIds(finalIds)
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))

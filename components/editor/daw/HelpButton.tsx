@@ -59,6 +59,9 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     label: 'Arrangement — selection & editing',
     items: [
+      { keys: 'Drag empty space', action: 'Box-select clips (replaces the current selection)' },
+      { keys: '⇧ click / ⇧ drag', action: 'Add or remove clips from the selection' },
+      { keys: '⌥ drag clip', action: 'Copy the clip as you drag' },
       { keys: '← / →', action: 'Nudge selected clips by snap (⇧ = 1 beat)' },
       { keys: '↑ / ↓', action: 'Move selected clips to the track above / below' },
       { keys: '⌘C / ⌘V', action: 'Copy / paste clips or effects' },
