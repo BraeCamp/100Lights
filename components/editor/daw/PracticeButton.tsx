@@ -80,9 +80,9 @@ export default function PracticeButton() {
   }
 
   function loadWholeSong(song: PracticeSong) {
-    for (const part of song.parts) {
-      if (!project.tracks.some(t => t.name === songTrackName(song, part))) loadSongPart(song, part)
-    }
+    // Always builds the full set — so a song lesson can be run again after use
+    // (a repeat build adds fresh tracks; undo removes them).
+    for (const part of song.parts) loadSongPart(song, part)
   }
   const [progress, setProgress] = useState<Progress>(() =>
     typeof window === 'undefined' ? {} : loadProgress()
@@ -327,11 +327,11 @@ export default function PracticeButton() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 2px' }}>
                       <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: '#fff', background: GENRE_COLOR[activeSong.genre], borderRadius: 4, padding: '3px 6px' }}>{activeSong.genre}</span>
                       <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{activeSong.tempo} BPM · {activeSong.parts.length} parts</span>
-                      <button onClick={() => loadWholeSong(activeSong)} disabled={allIn} style={{
-                        marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, cursor: allIn ? 'default' : 'pointer',
-                        color: allIn ? 'var(--text-muted)' : 'var(--accent-contrast)', background: allIn ? 'transparent' : 'var(--accent)',
-                        border: allIn ? '1px solid var(--border)' : 'none', borderRadius: 5, padding: '5px 12px', opacity: allIn ? 0.6 : 1,
-                      }}>{allIn ? 'All parts in' : 'Build whole song'}</button>
+                      <button onClick={() => loadWholeSong(activeSong)} style={{
+                        marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                        color: 'var(--accent-contrast)', background: 'var(--accent)',
+                        border: 'none', borderRadius: 5, padding: '5px 12px',
+                      }}>{allIn ? 'Build again' : 'Build whole song'}</button>
                     </div>
                     <p style={{ fontSize: 11.5, color: 'var(--text-secondary)', margin: '0 0 4px', lineHeight: 1.5 }}>{activeSong.tagline}</p>
                     {activeSong.parts.map((part, i) => {
@@ -355,12 +355,12 @@ export default function PracticeButton() {
                             <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? 'var(--text-muted)' : 'var(--text-primary)' }}>{part.title}</div>
                             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.5 }}>{part.instruction}</div>
                             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                              {!isDone && (
-                                <button onClick={() => loadSongPart(activeSong, part)} style={{
-                                  fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
-                                  color: 'var(--accent-contrast)', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '4px 11px',
-                                }}>Add this part</button>
-                              )}
+                              <button onClick={() => loadSongPart(activeSong, part)} style={{
+                                fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                                color: isDone ? 'var(--text-secondary)' : 'var(--accent-contrast)',
+                                background: isDone ? 'var(--bg-card)' : 'var(--accent)',
+                                border: isDone ? '1px solid var(--border)' : 'none', borderRadius: 5, padding: '4px 11px',
+                              }}>{isDone ? '↺ Add again' : 'Add this part'}</button>
                               {part.helpId && (
                                 <button onClick={() => { highlightHelpTargets([part.helpId!]); setOpen(false) }} style={{
                                   fontSize: 10.5, fontWeight: 600, cursor: 'pointer',
@@ -441,7 +441,9 @@ export default function PracticeButton() {
               {activePath && (() => {
                 const done = doneIds(activePath.id)
                 const currentIdx = activePath.steps.findIndex(st => !done.has(st.id))
-                return activePath.steps.map((step, i) => {
+                return (
+                <>
+                {activePath.steps.map((step, i) => {
                   const isDone = done.has(step.id)
                   const isCurrent = i === currentIdx
                   return (
@@ -487,7 +489,18 @@ export default function PracticeButton() {
                       </div>
                     </div>
                   )
-                })
+                })}
+                {done.size > 0 && (
+                  <button
+                    onClick={() => setProgress(p => { const n = { ...p }; delete n[activePath.id]; return n })}
+                    title="Clear this path's progress so you can run it again"
+                    style={{ marginTop: 4, alignSelf: 'flex-start', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 12px' }}
+                  >
+                    ↺ Restart this path
+                  </button>
+                )}
+                </>
+                )
               })()}
             </div>
           </div>
