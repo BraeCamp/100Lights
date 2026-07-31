@@ -28,6 +28,7 @@ import { monitorFxParams } from '@/lib/daw-engine'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import UITierSwitcher from './daw/UITierSwitcher'
+import { useResizable, ResizeHandle } from './daw/useResizable'
 import HelpButton from './daw/HelpButton'
 import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
@@ -1107,6 +1108,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showAppearance, setShowAppearance] = useState(false)
+  const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
+  const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
   // B toggles the sound library panel (Ableton-style browser shortcut)
   useEffect(() => {
@@ -1625,14 +1628,16 @@ export default function AudioEditor(props: AudioEditorProps) {
 
             {/* Collapsible panel */}
             <div style={{
-              width: sidebarOpen ? 240 : 0,
+              width: sidebarOpen ? leftResize.size : 0,
               flexShrink: 0,
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
-              transition: 'width 0.15s ease',
+              transition: leftResize.dragging ? 'none' : 'width 0.15s ease',
               background: 'var(--bg-surface)',
+              position: 'relative',
             }}>
+              {sidebarOpen && <ResizeHandle axis="x" edge="right" onPointerDown={leftResize.handleProps.onPointerDown} />}
               {isPodcast && (
                 <div style={{ display: 'flex', padding: '5px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
                   <button
@@ -1773,7 +1778,8 @@ export default function AudioEditor(props: AudioEditorProps) {
 
             {/* Device chain / instrument panel — shown when a track or return is selected */}
             {(selectedTrackId !== null || selectedReturnId !== null) && (
-              <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-base)' }}>
+              <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-base)', position: 'relative' }}>
+                <ResizeHandle axis="y" edge="top" onPointerDown={bottomResize.handleProps.onPointerDown} />
                 {/* Tab bar */}
                 <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 1, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
                   {selectedTrackId && (['devices', 'instrument'] as const).map(tab => (
@@ -1819,7 +1825,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   >×</button>
                 </div>
                 {/* Panel content */}
-                <div style={{ maxHeight: bottomTab === 'instrument' ? 320 : 200, overflowY: 'auto', overflowX: 'auto' }}>
+                <div style={{ height: bottomResize.size, overflowY: 'auto', overflowX: 'auto' }}>
                   {selectedTrackId && bottomTab === 'devices'    && <DeviceChain trackId={selectedTrackId} />}
                   {selectedTrackId && bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
                   {selectedReturnId && <ReturnDeviceChain returnId={selectedReturnId} />}

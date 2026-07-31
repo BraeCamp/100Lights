@@ -33,12 +33,13 @@ function loadProgress(): Progress {
 }
 
 export default function PracticeButton() {
-  const { project, view, playing, metronome, expandedPianoRollClipId, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
+  const { project, view, playing, recording, metronome, expandedPianoRollClipId, expandedStepSeqClipId, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'paths' | 'songs' | 'recipes'>('paths')
   const [activePathId, setActivePathId] = useState<string | null>(null)
   const [activeSongId, setActiveSongId] = useState<string | null>(null)
   const [loadedRecipe, setLoadedRecipe] = useState<PracticeRecipe | null>(null)
+  const [openDetail, setOpenDetail] = useState<string | null>(null)   // lesson step id whose "Learn more" is expanded
 
   // Lessons follow the UI tier: each is offered in its studio mode and up, and
   // only Simplified (beginner) lessons are free — Standard/Everything need Pro.
@@ -114,7 +115,12 @@ export default function PracticeButton() {
     returnCount: project.returnTracks.length,
     anySend: project.tracks.some(t => t.sendAmounts != null && Object.values(t.sendAmounts).some(v => v > 0)),
     anyReturnEffect: project.returnTracks.some(r => r.effects.length > 0),
-  }), [project, playing, metronome, view, expandedPianoRollClipId])
+    // Beginner basics
+    recording,
+    loopEnabled: project.loopEnabled,
+    stepSeqOpen: expandedStepSeqClipId != null,
+    anyVolumeChanged: project.tracks.some(t => Math.abs(t.volume - 0.8) > 0.02),
+  }), [project, playing, recording, metronome, view, expandedPianoRollClipId, expandedStepSeqClipId])
 
   // The verifier: mark the current step of every path when its predicate
   // passes the live snapshot. Derived during render (the sanctioned
@@ -472,6 +478,21 @@ export default function PracticeButton() {
                         {isCurrent && (
                           <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.5 }}>
                             {step.instruction}
+                          </div>
+                        )}
+                        {isCurrent && step.detail && (
+                          <div style={{ marginTop: 4 }}>
+                            <button
+                              onClick={() => setOpenDetail(openDetail === step.id ? null : step.id)}
+                              style={{ fontSize: 10, fontWeight: 700, cursor: 'pointer', color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0 }}
+                            >
+                              {openDetail === step.id ? 'Hide detail ▴' : 'Learn more ▾'}
+                            </button>
+                            {openDetail === step.id && (
+                              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.55, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 9px' }}>
+                                {step.detail}
+                              </div>
+                            )}
                           </div>
                         )}
                         {isCurrent && step.helpId && (

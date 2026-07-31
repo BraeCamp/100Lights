@@ -12,6 +12,7 @@ import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/l
 import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT, clipLockedBy } from '@/lib/daw-types'
 import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
 import { clampToViewport } from './menu-clamp'
+import { useResizable, ResizeHandle } from './useResizable'
 import TrackInputCard from './TrackInputCard'
 // AudioInputSource and AUDIO_INPUT_LABELS removed — TrackInputCard handles device labels directly
 import { libraryGetAll } from '@/lib/sound-library'
@@ -324,6 +325,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const cancelRenameRef = useRef(false)
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
   const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
+  const rollResize = useResizable({ key: 'piano-roll', initial: 260, min: 150, max: 760, axis: 'y' })
+  const seqResize = useResizable({ key: 'step-seq', initial: 300, min: 150, max: 680, axis: 'y' })
   // Originals captured when an edge-resize starts on a stretchNotes clip
   const stretchOriginRef = useRef<{ clipId: string; durationBeats: number; notes: import('@/lib/daw-types').MidiNote[] } | null>(null)
   // Drag-scoped override from held E/L keys, sampled when the drag starts
@@ -814,7 +817,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           <div style={{ flex: 1, height: GROUP_TRACK_HEIGHT, borderBottom: '1px solid var(--border)', background: `linear-gradient(90deg, ${track.color}18, transparent 40%)`, display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
               onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
-              onClick={e => e.stopPropagation()} draggable={false}
+              onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} draggable={false}
               className="cf-slider" style={{ width: 120, accentColor: track.color, height: 12, background: 'transparent' }} />
             <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 10 }}>{isFolded ? 'folded' : `${childCount} track${childCount === 1 ? '' : 's'}`}</span>
           </div>
@@ -982,7 +985,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </>)}
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
               onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
-              onClick={e => e.stopPropagation()} draggable={false}
+              onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} draggable={false}
               className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0, height: 12, background: 'transparent' }} />
             <AddAutoButton track={track} />
             <button
@@ -1841,6 +1844,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           // (ArrangementView, zIndex 10) must not draw through the roll —
           // the roll has its own playhead, so it sits above the overlay.
           <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
+            <ResizeHandle axis="y" edge="bottom" onPointerDown={rollResize.handleProps.onPointerDown} />
             <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>ROLL</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expandedClip.name}</span>
@@ -1853,10 +1857,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   }}>✎ {peer.name}</span>
                 ) : null
               })()}
-              <button onClick={() => setRollTall(v => !v)} style={{ background: 'transparent', border: 'none', color: rollTall ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title={rollTall ? 'Collapse piano roll' : 'Expand piano roll to fill the view'}>{rollTall ? '⤡' : '⤢'}</button>
+              <button onClick={() => rollResize.setSize(rollResize.size < 440 ? 640 : 260)} style={{ background: 'transparent', border: 'none', color: rollResize.size >= 440 ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title={rollResize.size >= 440 ? 'Shrink piano roll' : 'Expand piano roll'}>{rollResize.size >= 440 ? '⤡' : '⤢'}</button>
               <button onClick={() => setExpandedPianoRollClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close piano roll">✕</button>
             </div>
-            <div style={{ flex: 1, height: rollTall ? 'max(400px, calc(100vh - 300px))' : 240, overflow: 'hidden' }}>
+            <div style={{ flex: 1, height: rollResize.size, overflow: 'hidden' }}>
               <PianoRoll clipId={expandedClip.id} />
             </div>
           </div>
@@ -1869,12 +1873,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         if (!seqClip || isMobile) return null   // on mobile the beat editor opens in the Sounds tab
         return (
           <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch', position: 'relative', zIndex: 20, background: 'var(--bg-surface)' }}>
+            <ResizeHandle axis="y" edge="bottom" onPointerDown={seqResize.handleProps.onPointerDown} />
             <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>BEAT</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{seqClip.name}</span>
               <button onClick={() => setExpandedStepSeqClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close step sequencer">✕</button>
             </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ flex: 1, height: seqResize.size, overflowY: 'auto', overflowX: 'hidden' }}>
               <StepSequencer clipId={seqClip.id} />
             </div>
           </div>
