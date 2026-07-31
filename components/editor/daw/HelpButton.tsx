@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { HelpCircle, Search, X } from 'lucide-react'
+import { HelpCircle, Search, X, Lock } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
+import { useUITierOptional } from '../UITierProvider'
+import { type UITier, ELEMENT_MIN_TIER, TIER_RANK, TIER_INFO, tierAtLeast } from '@/lib/ui-tiers'
 
 // ── Feature highlight ──────────────────────────────────────────────────────────
 // Buttons across the editor carry data-help-id attributes. Clicking a feature in
@@ -258,8 +260,21 @@ export function helpInfoFor(helpId: string): { name: string; description: string
   return null
 }
 
+/** Lowest UI tier that shows this feature — the highest requirement of its
+ *  help ids (a feature is only available once every control it points at is). */
+function featureMinTier(f: Feature): UITier {
+  let min: UITier = 'beginner'
+  for (const id of f.helpIds) {
+    const req = ELEMENT_MIN_TIER[id]
+    if (req && TIER_RANK[req] > TIER_RANK[min]) min = req
+  }
+  return min
+}
+
 export default function HelpButton() {
   const { audioMode } = useDaw()
+  const uiTier = useUITierOptional()
+  const currentTier: UITier = uiTier?.tier ?? 'full'
   const mode: Mode = audioMode === 'podcast' ? 'podcast' : 'music'
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'shortcuts' | 'features'>('shortcuts')
@@ -332,6 +347,12 @@ export default function HelpButton() {
   }
 
   function handleFeatureClick(f: Feature) {
+    // A tier-hidden control is still in the DOM (display:none), so highlighting
+    // would "succeed" on an invisible element. Show the tier hint instead.
+    if (!tierAtLeast(currentTier, featureMinTier(f))) {
+      setHintFor(f.name)
+      return
+    }
     const found = highlightHelpTargets(f.helpIds)
     if (found) {
       setHintFor(null)
@@ -514,7 +535,10 @@ export default function HelpButton() {
                         fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
                         letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: 4,
                       }}>{group}</div>
-                      {feats.map(f => (
+                      {feats.map(f => {
+                        const minTier = featureMinTier(f)
+                        const locked = !tierAtLeast(currentTier, minTier)
+                        return (
                         <div key={f.name}>
                           <button
                             onClick={() => handleFeatureClick(f)}
@@ -522,20 +546,45 @@ export default function HelpButton() {
                               display: 'block', width: '100%', textAlign: 'left',
                               background: 'transparent', border: '1px solid transparent',
                               borderRadius: 6, padding: '6px 8px', cursor: 'pointer',
+                              opacity: locked ? 0.55 : 1,
                             }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                           >
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{f.name}</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{f.name}</span>
+                              {locked && (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0,
+                                  fontSize: 9, fontWeight: 700, letterSpacing: '0.03em',
+                                  color: 'var(--accent-light)', background: 'var(--accent-subtle)',
+                                  border: '1px solid rgba(139,92,246,0.35)', borderRadius: 4, padding: '1px 5px',
+                                }}>
+                                  <Lock size={9} /> {TIER_INFO[minTier].name}
+                                </span>
+                              )}
+                            </span>
                             <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 1, lineHeight: 1.45 }}>{f.description}</span>
                           </button>
-                          {hintFor === f.name && (
+                          {hintFor === f.name && locked && (
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '2px 8px 6px', lineHeight: 1.45 }}>
+                              Not in <b style={{ color: 'var(--text-secondary)' }}>{TIER_INFO[currentTier].name}</b> mode.
+                              {uiTier && (
+                                <button
+                                  onClick={() => { uiTier.setTier(minTier); setHintFor(null) }}
+                                  style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: 'var(--accent-light)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}
+                                >Switch to {TIER_INFO[minTier].name}</button>
+                              )}
+                            </div>
+                          )}
+                          {hintFor === f.name && !locked && (
                             <div style={{
                               fontSize: 11, color: '#facc15', padding: '2px 8px 6px',
                             }}>{f.hint ?? 'This control isn’t visible right now.'}</div>
                           )}
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   ))}
                 </>

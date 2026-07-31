@@ -9,6 +9,7 @@ import type { PodcastMeta } from '@/lib/project-serializer'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
 import { usePlan } from '@/hooks/usePlan'
 import { useUpgradeModal } from '@/components/UpgradeModal'
+import { useUITierOptional } from '../UITierProvider'
 
 // Resample to the chosen export rate via OfflineAudioContext — the browser's
 // resampler, no dependency. Skipped when the buffer is already at the target.
@@ -80,6 +81,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   const { project, engine } = useDaw()
   const { isPro, ent } = usePlan()
   const { showUpgrade } = useUpgradeModal()
+  const uiTier = useUITierOptional()
   const [phase, setPhase]                 = useState<'idle' | 'recording' | 'done' | 'error'>('idle')
   const phaseRef = useRef(phase)
   useEffect(() => { phaseRef.current = phase }, [phase])
@@ -282,6 +284,13 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
 
   const isPodcast = audioMode === 'podcast'
 
+  // Beginner tier: one-click export. Hide the format + sample-rate choices and
+  // just bounce a WebM mixdown. (Podcast keeps its options — WAV matters there.)
+  const simpleExport = (uiTier?.tier ?? 'full') === 'beginner' && !isPodcast
+  useEffect(() => {
+    if (simpleExport && format !== 'webm') setFormat('webm')
+  }, [simpleExport, format])
+
   const statusLabel: Record<StatusMessage, string> = {
     recording:   'Recording… do not close this window',
     converting:  'Converting to WAV…',
@@ -327,7 +336,8 @@ style={{
                 Plays your project from beat 1 to the end while capturing the master output.
               </p>
 
-              {/* Format selector */}
+              {/* Format selector — hidden in Simple mode (one-click WebM) */}
+              {!simpleExport && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>
                   Format
@@ -384,6 +394,7 @@ style={{
                   </div>
                 )}
               </div>
+              )}
 
               {/* Normalize — podcast + WAV only */}
               {isPodcast && format === 'wav' && (

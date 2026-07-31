@@ -15,6 +15,7 @@ import { fxHasAudibleField, FX_FIELDS, fieldIsSet } from '@/lib/roll-fx'
 import { copySound, getCopiedSound, countSetFields, SOUND_CLIPBOARD_EVENT } from '@/lib/fx-clipboard'
 import FxControls, { cleanFx } from './FxControls'
 import { clampToViewport } from './menu-clamp'
+import { useUITierOptional } from '../UITierProvider'
 
 const CYAN = 'var(--accent-light)'
 const SOUND_MODE_KEY = '100lights-sound-mode-v1'
@@ -100,6 +101,12 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     try { localStorage.setItem(SOUND_MODE_KEY, next) } catch { /* storage off */ }
   }
 
+  // Advanced sound controls live in the "Everything" UI tier. Simpler tiers
+  // (beginner + standard) stay on the curated basics with no toggle.
+  const tier = useUITierOptional()?.tier ?? 'full'
+  const soundAdvancedAllowed = tier === 'full'
+  const effectiveMode: 'basic' | 'advanced' = soundAdvancedAllowed ? mode : 'basic'
+
   useLayoutEffect(() => {
     // Re-clamp when the panel grows (e.g. switching to Advanced) so its bottom
     // never runs off screen.
@@ -107,7 +114,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     // focus the panel so Escape works regardless of what else listens on document
     panelRef.current?.focus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anchor, mode])
+  }, [anchor, effectiveMode])
 
   useEffect(() => {
     function onDown(e: MouseEvent) {
@@ -230,11 +237,13 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     }}>
       <div style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '4px 8px 6px 12px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid var(--border)', zIndex: 1 }}>
         <span>{multi ? `SOUND — ${targets.length} CLIPS TOGETHER` : 'CLIP SOUND — this clip only'}</span>
-        <button onClick={toggleMode}
-          title={mode === 'basic' ? 'Show all sound controls' : 'Show just the essentials'}
-          style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', flexShrink: 0, border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? CYAN : 'var(--text-secondary)' }}>
-          {mode === 'basic' ? 'ADVANCED ▸' : '◂ BASIC'}
-        </button>
+        {soundAdvancedAllowed && (
+          <button onClick={toggleMode}
+            title={mode === 'basic' ? 'Show all sound controls' : 'Show just the essentials'}
+            style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', flexShrink: 0, border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? CYAN : 'var(--text-secondary)' }}>
+            {mode === 'basic' ? 'ADVANCED ▸' : '◂ BASIC'}
+          </button>
+        )}
       </div>
 
       {/* Rename this track item (single clip only) */}
@@ -322,7 +331,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onCommit={commitFx}
         ranges={multi ? ranges : undefined}
         onField={multi ? applyField : undefined}
-        mode={mode}
+        mode={effectiveMode}
       />
 
       <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>

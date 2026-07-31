@@ -11,7 +11,7 @@ import { useUser } from '@clerk/nextjs'
 import { createPortal } from 'react-dom'
 import { Sparkles } from 'lucide-react'
 import {
-  type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss,
+  type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss, tierScaleCss,
 } from '@/lib/ui-tiers'
 
 const LS_KEY = '100lights-ui-tier'
@@ -64,7 +64,7 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
     if (!el || !el.isConnected) {
       el = el ?? document.createElement('style')
       el.id = 'ui-tiers'
-      el.textContent = tierVisibilityCss()
+      el.textContent = tierVisibilityCss() + '\n' + tierScaleCss()
       document.head.appendChild(el)
       styleRef.current = el
     }

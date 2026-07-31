@@ -68,13 +68,14 @@ export const ELEMENT_MIN_TIER: Record<string, UITier> = {
   // ── Show from Standard up (hidden for beginners) ──
   'loop': 'intermediate',
   'snap': 'intermediate',
-  'key-scale': 'intermediate',
+  'key-scale': 'full',
   'time-sig': 'intermediate',
   'tap-tempo': 'intermediate',
   'fx-lane': 'intermediate',
   'capture': 'intermediate',
   'versions': 'intermediate',
   'view-mixer': 'intermediate',
+  'view-session': 'intermediate',
   'automation': 'intermediate',
 
   // ── Show only in Everything (hidden for beginner + standard) ──
@@ -95,6 +96,27 @@ export const ELEMENT_MIN_TIER: Record<string, UITier> = {
   'practice': 'full',
   'inspect': 'full',
   'duplicate-cleanup': 'full',
+}
+
+/**
+ * How much to scale the whole studio per tier. Simpler tiers read bigger and
+ * roomier (fewer controls leave the space for it); Everything stays at 1:1.
+ * Implemented with CSS `zoom` on the editor root — the studio uses inline px
+ * font sizes, so a proportional zoom is the only thing that scales all of it,
+ * and the editor stays clamped to its container (no overflow).
+ */
+export const TIER_SCALE: Record<UITier, number> = {
+  beginner: 1.15,
+  intermediate: 1.06,
+  full: 1,
+}
+
+/** Zoom rules per tier (skips 1:1 tiers). */
+export function tierScaleCss(): string {
+  return UI_TIERS
+    .filter(t => TIER_SCALE[t] !== 1)
+    .map(t => `[data-ui-tier="${t}"] [data-editor="true"]{zoom:${TIER_SCALE[t]}}`)
+    .join('\n')
 }
 
 /**
