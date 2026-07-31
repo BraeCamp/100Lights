@@ -1218,7 +1218,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           data-track-id={track.id}
           data-track-type={track.type}
           style={{ flex: 1, height: rowH, position: 'relative', background: isSelected ? 'rgb(var(--accent-rgb) / 0.04)' : 'var(--bg-surface)', borderBottom: '1px solid var(--border)', overflow: 'hidden', transition: 'background 0.1s' }}
-          onMouseDown={e => { if (!e.altKey) { setSelectedClipIds(new Set()); setSelectedClipId(null) }; setCroppingClipId(null) }}
+          onMouseDown={e => { if (e.button === 0 && !e.altKey) { setSelectedClipIds(new Set()); setSelectedClipId(null) } setCroppingClipId(null) }}
           onContextMenu={e => {
             // Clips stop propagation for their own menu — this fires on empty lane
             e.preventDefault()
