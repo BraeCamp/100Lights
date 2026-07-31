@@ -2010,14 +2010,18 @@ export class DawEngine extends EventTarget {
   }
 
   private _getDistCurve(drive: number): Float32Array {
-    const key = Math.round(drive * 20)
+    // `drive` is the shaping amount 0..1. k scales from 0 (identity — no jump
+    // when a drive/distortion slider first leaves zero) up to a hard clip at 1.
+    // Finer cache key (×100) keeps the gentle low end from snapping to coarse steps.
+    const key = Math.round(drive * 100)
     let c = this._distCurves.get(key)
     if (!c) {
-      const k = 2 + drive * 48
+      const k = drive * 50
       c = new Float32Array(1024)
+      const norm = Math.tanh(k)
       for (let i = 0; i < 1024; i++) {
         const x = i / 511.5 - 1
-        c[i] = Math.tanh(k * x) / Math.tanh(k)
+        c[i] = norm < 1e-6 ? x : Math.tanh(k * x) / norm   // k→0 ⇒ identity, no NaN
       }
       this._distCurves.set(key, c)
     }
@@ -2124,7 +2128,9 @@ export class DawEngine extends EventTarget {
     // Drive — gentle soft-clip, distinct from the harder distortion below.
     if ((rfx.drive ?? 0) > 0) {
       const ws = ctx.createWaveShaper()
-      ws.curve = this._getDistCurve(0.15 + rfx.drive! * 0.55) as Float32Array<ArrayBuffer>
+      // Gentle soft-clip that scales from clean at 0. Max amount 0.5 keeps drive
+      // clearly softer than the harder `distortion` below (which reaches 1.0).
+      ws.curve = this._getDistCurve(rfx.drive! * 0.5) as Float32Array<ArrayBuffer>
       ws.oversample = '2x'
       const pg = gain(1 - rfx.drive! * 0.25)
       last.connect(ws); ws.connect(pg); last = pg; nodes.push(ws)
@@ -2335,7 +2341,7 @@ export class DawEngine extends EventTarget {
       sched(wet.gain, g => g)
       last = sum
     }
-    if (has('drive'))      crossfadeShaper(this._getDistCurve(0.15 + fx.drive! * 0.55) as Float32Array<ArrayBuffer>)
+    if (has('drive'))      crossfadeShaper(this._getDistCurve(fx.drive! * 0.5) as Float32Array<ArrayBuffer>)
     if (has('distortion')) crossfadeShaper(this._getDistCurve(fx.distortion!) as Float32Array<ArrayBuffer>)
     if (has('bitcrush')) {
       const bits = Math.max(1.5, 16 - fx.bitcrush! * 14.5), levels = Math.pow(2, bits)
