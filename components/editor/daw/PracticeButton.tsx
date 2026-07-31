@@ -199,10 +199,10 @@ export default function PracticeButton() {
               padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
               flexShrink: 0,
             }}>
-              {(activePath || activeSong) && (
+              {(activePath || activeSong || loadedRecipe) && (
                 <button
-                  onClick={() => { setActivePathId(null); setActiveSongId(null) }}
-                  title={activeSong ? 'All songs' : 'All paths'}
+                  onClick={() => { setActivePathId(null); setActiveSongId(null); setLoadedRecipe(null) }}
+                  title={activeSong ? 'All songs' : loadedRecipe ? 'All recipes' : 'All paths'}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
                 >
                   <ChevronLeft size={15} />
