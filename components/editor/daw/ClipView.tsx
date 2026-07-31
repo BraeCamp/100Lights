@@ -67,13 +67,13 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onDoubleClick, onSettings, onMove, onResize, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
   /** A collaborator holding this clip (selected, or editing = piano roll open) */
   collabHolder?: { name: string; color: string; editing: boolean }
-  onSelect(): void; onShiftSelect(): void; onDoubleClick(): void; onSettings?(): void
+  onSelect(): void; onShiftSelect(): void; onRangeSelect?(): void; onDoubleClick(): void; onSettings?(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
   onResizeStart?(): void
@@ -266,10 +266,13 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     if (e.button !== 0) return
     e.stopPropagation()
     if (isCropping) return  // don't drag while cropping
-    // Shift = add/remove from the selection (matches the piano roll + FX lane).
-    // Alt stays free for copy-on-drag (see onMove's altKey below).
-    const wasMultiSelected = multiSelected && !e.shiftKey
-    if (e.shiftKey) { onShiftSelect() } else if (!wasMultiSelected) { onSelect() }
+    // Cmd/Ctrl = add/remove this one item; Shift = select the range between the
+    // current item and this one (across tracks). Alt stays free for copy-on-drag.
+    const mod = e.metaKey || e.ctrlKey
+    const wasMultiSelected = multiSelected && !mod && !e.shiftKey
+    if (mod) { onShiftSelect() }
+    else if (e.shiftKey) { (onRangeSelect ?? onSelect)() }
+    else if (!wasMultiSelected) { onSelect() }
     onDragStart?.()
     dragRef.current = { startX: e.clientX, startBeat: clip.startBeat }
     let dragged = false

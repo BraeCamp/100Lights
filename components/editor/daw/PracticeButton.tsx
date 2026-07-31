@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { GraduationCap, Check, ChevronLeft, Sparkles, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
@@ -88,6 +88,12 @@ export default function PracticeButton() {
   const [progress, setProgress] = useState<Progress>(() =>
     typeof window === 'undefined' ? {} : loadProgress()
   )
+  // When a path is restarted, freeze its auto-verifier until the user actually
+  // does something new. Without this, the render-phase verifier immediately
+  // re-completes any leading step whose predicate is already satisfied by the
+  // current project (e.g. "add a track" when tracks already exist) — so Restart
+  // looked like it did nothing. Keyed by pathId → the snapshot signature at reset.
+  const restartBaseline = useRef<Record<string, string>>({})
 
   const snapshot: PracticeSnapshot = useMemo(() => ({
     trackCount: project.tracks.length,
@@ -126,12 +132,16 @@ export default function PracticeButton() {
   // passes the live snapshot. Derived during render (the sanctioned
   // adjust-state-on-change pattern) so it runs while the panel is closed too —
   // doing the work first and opening Practice later still counts.
+  const snapKey = JSON.stringify(snapshot)
   let advanced: Progress | null = null
   for (const path of PRACTICE_PATHS) {
+    // Frozen right after a Restart (until the project state changes) so already-
+    // satisfied steps don't instantly re-complete.
+    const suppressed = restartBaseline.current[path.id] === snapKey
     const done: Set<string> = new Set((advanced ?? progress)[path.id] ?? [])
     // Only the first incomplete step can complete — paths are sequential
     const current = path.steps.find(st => !done.has(st.id))
-    if (current && current.done(snapshot)) {
+    if (!suppressed && current && current.done(snapshot)) {
       done.add(current.id)
       advanced = {
         ...(advanced ?? progress),
@@ -140,6 +150,14 @@ export default function PracticeButton() {
     }
   }
   if (advanced) setProgress(advanced)
+
+  // Once the project changes, a frozen path's baseline no longer matches — drop
+  // it so normal verification resumes.
+  useEffect(() => {
+    for (const pid of Object.keys(restartBaseline.current)) {
+      if (restartBaseline.current[pid] !== snapKey) delete restartBaseline.current[pid]
+    }
+  }, [snapKey])
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)) } catch { /* private mode */ }
@@ -513,7 +531,12 @@ export default function PracticeButton() {
                 })}
                 {done.size > 0 && (
                   <button
-                    onClick={() => setProgress(p => { const n = { ...p }; delete n[activePath.id]; return n })}
+                    onClick={() => {
+                      // Freeze the verifier for this path at the current state so
+                      // clearing progress doesn't instantly re-complete satisfied steps.
+                      restartBaseline.current[activePath.id] = snapKey
+                      setProgress(p => { const n = { ...p }; delete n[activePath.id]; return n })
+                    }}
                     title="Clear this path's progress so you can run it again"
                     style={{ marginTop: 4, alignSelf: 'flex-start', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 12px' }}
                   >

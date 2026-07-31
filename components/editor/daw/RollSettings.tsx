@@ -4,14 +4,18 @@
 // ONLY this clip's notes. Sustain (a release ramp past each note's end) is
 // the headliner — it's what makes sampled instruments stop sounding gated —
 // plus reverb, distortion, and a lowpass filter, and the clip's sound preset.
+// A "Tone" row offers per-instrument flavour presets (Guitar → Rock / Metal /
+// Punk …) — each just dials in an editable RollFx starting point.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { fxHasAudibleField, FX_FIELDS, fieldIsSet } from '@/lib/roll-fx'
+import { getPresets } from '@/lib/midi-presets'
+import { tonesForGroup, applyTone, toneMatches } from '@/lib/tone-presets'
 import { copySound, getCopiedSound, countSetFields, SOUND_CLIPBOARD_EVENT } from '@/lib/fx-clipboard'
 import FxControls, { cleanFx } from './FxControls'
 import { clampToViewport } from './menu-clamp'
@@ -139,6 +143,14 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const targets: DawClip[] = clips && clips.length > 0 ? clips : [clip]
   const multi = targets.length > 1
   const showPreset = !multi && isMidiClip(clip)
+
+  // Tone presets — flavour options for the current instrument family (Guitar →
+  // Rock / Metal / Punk …). Each applies a curated, editable sound-settings bag.
+  const soundGroup = useMemo(() => {
+    if (multi || !isMidiClip(clip) || !clip.presetId || typeof window === 'undefined') return undefined
+    try { return getPresets().find(p => p.id === clip.presetId)?.group } catch { return undefined }
+  }, [multi, clip])
+  const tones = useMemo(() => (!multi && isMidiClip(clip) ? tonesForGroup(soundGroup) : []), [multi, clip, soundGroup])
 
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
@@ -286,6 +298,31 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           )}
         </div>
       )}
+      {/* Tone presets — flavours within the instrument (single MIDI clip) */}
+      {showPreset && tones.length > 0 && (
+        <div style={{ ...row, alignItems: 'flex-start', paddingTop: 3, paddingBottom: 2 }}>
+          <span style={{ ...label, paddingTop: 3 }}>Tone</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1, minWidth: 0 }}>
+            {tones.map(t => {
+              const on = toneMatches(clip.rollFx, t)
+              return (
+                <button key={t.name}
+                  onClick={() => commitFx(applyTone(clip.rollFx, t))}
+                  title={`${t.name} tone — a starting point you can fine-tune with the sliders below`}
+                  style={{
+                    fontSize: 9.5, fontWeight: 600, padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
+                    border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
+                    background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
+                    color: on ? CYAN : 'var(--text-secondary)',
+                  }}>
+                  {t.name}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {multi && (
         <div style={{ padding: '7px 12px 3px', fontSize: 9, color: '#f59e0b', lineHeight: 1.4 }}>
           Editing {targets.length} clips together — a heat band marks any setting that differs. Moving a slider sets it for all.

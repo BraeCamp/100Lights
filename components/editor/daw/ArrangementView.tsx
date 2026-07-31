@@ -31,6 +31,12 @@ const BAR_H   = 20
 const RULER_H = SEC_H + BAR_H
 const MIN_BEAT_W = 10
 const MAX_BEAT_W = 200
+// A small empty lead-in before beat 0. Because every coordinate is `beat*beatW -
+// scrollLeft`, letting the leftmost scroll sit at -START_GUTTER pushes beat 0 a
+// few px in from the edge — and the Math.max(0, …) clamps on ruler/lane clicks
+// make that whole gutter land the playhead exactly on 0, so 0 is easy to hit.
+const START_GUTTER = 14
+const MIN_SCROLL = -START_GUTTER
 
 // ── Ruler ─────────────────────────────────────────────────────────────────────
 
@@ -395,7 +401,7 @@ export default function ArrangementView() {
     return () => window.clearInterval(id)
   }, [isGuest, onSave])
   const [beatW, setBeatW]           = useState(40)
-  const [scrollLeft, setScrollLeft] = useState(0)
+  const [scrollLeft, setScrollLeft] = useState(MIN_SCROLL)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
   const [tsPopover, setTsPopover]   = useState<{ x: number; y: number; beat?: number } | null>(null)
   const [openComment, setOpenComment]   = useState<{ id: string; x: number; y: number } | null>(null)
@@ -707,21 +713,21 @@ export default function ArrangementView() {
     }
     // Shift+wheel pans the timeline (mouse wheels have no deltaX of their own)
     if (e.shiftKey) {
-      setScrollLeft(s => Math.max(0, s + (e.deltaX || e.deltaY)))
+      setScrollLeft(s => Math.max(MIN_SCROLL, s + (e.deltaX || e.deltaY)))
       return
     }
     // Axis lock: only a dominantly-horizontal gesture pans the timeline.
     // Vertical scrolling falls through to the lane's native overflowY scroll
     // instead of dragging the view sideways.
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-      setScrollLeft(s => Math.max(0, s + e.deltaX))
+      setScrollLeft(s => Math.max(MIN_SCROLL, s + e.deltaX))
     }
   }
 
   function fitToWindow() {
     const maxBeat = project.arrangementClips.reduce((m, c) => Math.max(m, c.startBeat + c.durationBeats), 32)
     setBeatW(Math.max(MIN_BEAT_W, viewWidth / maxBeat))
-    setScrollLeft(0)
+    setScrollLeft(MIN_SCROLL)
   }
 
   // Give a track a drum kit if it doesn't already have one, so beat hits sound.
@@ -836,7 +842,7 @@ export default function ArrangementView() {
 
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
-    const preSelected = new Set(selectedClipIds)   // for Shift-additive selection
+    const preSelected = new Set(selectedClipIds)   // for Cmd/Shift-additive selection
     const laneEl = laneRef.current
     if (!laneEl) return
     const laneRect = laneEl.getBoundingClientRect()
@@ -908,7 +914,7 @@ export default function ArrangementView() {
       // it overlaps (both ends), so a partial band still selects whole clips.
       let region: { start: number; end: number } | null
 
-      if (ev.shiftKey) {
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey) {
         const finalIds = new Set([...preSelected, ...newIds])
         setSelectedClipIds(finalIds)
         setSelectedEffectIds(prev => new Set([...prev, ...newEffIds]))
@@ -1634,7 +1640,7 @@ export default function ArrangementView() {
             if (g.locked === 'zoom') {
               setBeatW(Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, g.startBeatW * (dist / g.startDist))))
             } else {
-              setScrollLeft(Math.max(0, g.startSL - (midX - g.midX)))
+              setScrollLeft(Math.max(MIN_SCROLL, g.startSL - (midX - g.midX)))
               lane.scrollTop = Math.max(0, g.startST - (midY - g.midY))
             }
           } else if (g.mode === 'scrub' && e.touches.length === 1) {
@@ -1702,7 +1708,7 @@ export default function ArrangementView() {
             headWidth={hdrW}
             compactHead={isMobile && narrowHeads}
             snap={snap}
-            onScrollBy={delta => setScrollLeft(s => Math.max(0, s + delta))}
+            onScrollBy={delta => setScrollLeft(s => Math.max(MIN_SCROLL, s + delta))}
             waveformZoom={project.waveformZoom}
             selectedTrackIds={selectedTrackIds}
             onSelectTrack={ctrl => handleSelectTrack(track.id, ctrl)}

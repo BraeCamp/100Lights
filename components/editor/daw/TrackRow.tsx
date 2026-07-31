@@ -741,11 +741,20 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
   // ── Drag-to-reorder (native HTML5 drag on the track head) ────────────────
   const [dropPos, setDropPos] = useState<'before' | 'after' | null>(null)
+  // The native drag originates on the draggable header div even when the pointer
+  // is on an inner control, so dragstart's own e.target is always the div and
+  // can't tell. pointerdown DOES fire on the real target first, so we record
+  // there whether we're on a control and let the drag bow out. (Fixes the volume
+  // slider grabbing the whole track instead of sliding.)
+  const controlDownRef = useRef(false)
   const headDrag = onReorderDrop ? {
     draggable: true,
+    onPointerDownCapture: (e: React.PointerEvent) => {
+      controlDownRef.current = !!(e.target as HTMLElement).closest('input,button,select,textarea,[data-no-drag]')
+    },
     onDragStart: (e: React.DragEvent) => {
       // Let interactive controls (name, sliders, buttons) work normally.
-      if ((e.target as HTMLElement).closest('input,button,select')) { e.preventDefault(); return }
+      if (controlDownRef.current || (e.target as HTMLElement).closest('input,button,select')) { e.preventDefault(); return }
       e.dataTransfer.setData('application/x-daw-track', track.id)
       e.dataTransfer.effectAllowed = 'move'
     },
@@ -1289,6 +1298,32 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       return next
                     })
                     setSelectedClipId(clip.id)
+                  }}
+                  onRangeSelect={() => {
+                    // Select every clip in the rectangle between the anchor (the
+                    // current primary selection) and this clip — spanning tracks
+                    // and time. The anchor stays primary so successive Shift-clicks
+                    // re-extend from the same point.
+                    const anchor = selectedClipId ? project.arrangementClips.find(c => c.id === selectedClipId) : undefined
+                    if (!anchor) {
+                      setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])); setSelectedEffectIds(new Set())
+                      return
+                    }
+                    const order = project.tracks.map(t => t.id)
+                    const ti = (tid: string) => order.indexOf(tid)
+                    const tLo = Math.min(ti(anchor.trackId), ti(clip.trackId))
+                    const tHi = Math.max(ti(anchor.trackId), ti(clip.trackId))
+                    const bLo = Math.min(anchor.startBeat, clip.startBeat)
+                    const bHi = Math.max(anchor.startBeat, clip.startBeat)
+                    const ids = new Set<string>()
+                    for (const c of project.arrangementClips) {
+                      const cti = ti(c.trackId)
+                      if (cti >= tLo && cti <= tHi && c.startBeat >= bLo - 1e-6 && c.startBeat <= bHi + 1e-6) ids.add(c.id)
+                    }
+                    ids.add(anchor.id); ids.add(clip.id)
+                    setSelectedClipIds(ids)
+                    setSelectedClipId(anchor.id)
+                    setSelectedEffectIds(new Set())
                   }}
                   onDragStart={() => {
                     const origins: Record<string, number> = {}

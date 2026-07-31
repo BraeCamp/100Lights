@@ -60,7 +60,9 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     label: 'Arrangement — selection & editing',
     items: [
       { keys: 'Drag empty space', action: 'Box-select clips (replaces the current selection)' },
-      { keys: '⇧ click / ⇧ drag', action: 'Add or remove clips from the selection' },
+      { keys: '⌘ click', action: 'Add / remove a single clip from the selection' },
+      { keys: '⇧ click', action: 'Select the range of clips up to here (across tracks)' },
+      { keys: '⌘ drag', action: 'Add the box to the current selection' },
       { keys: '⌥ drag clip', action: 'Copy the clip as you drag' },
       { keys: '← / →', action: 'Nudge selected clips by snap (⇧ = 1 beat)' },
       { keys: '↑ / ↓', action: 'Move selected clips to the track above / below' },

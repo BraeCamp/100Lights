@@ -75,6 +75,11 @@ type NoteKey = string  // `${clipId}:${noteId}`
 
 const SCHEDULE_LOOKAHEAD = 0.15  // seconds
 const SCHEDULER_INTERVAL = 25    // ms
+// How far ahead to start decoding sampled-preset / clip buffers before their
+// notes are actually scheduled. A cache miss inside the 0.15s schedule window
+// skips the note (it fires late once the buffer finally decodes ~0.5s later),
+// so we warm buffers this far out to give decodeAudioData time to finish first.
+const PREFETCH_LOOKAHEAD = 2.5   // seconds
 
 function interpolateAutomation(lane: AutomationLane, beat: number): number {
   if (lane.points.length === 0) {
@@ -1275,6 +1280,30 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Kick off buffer decodes for notes/clips coming up within PREFETCH_LOOKAHEAD
+   *  seconds, so they're cached before the scheduler needs them. Only touches
+   *  buffers that aren't already cached or loading, so it's cheap per tick. */
+  private _prefetchUpcoming(now: number) {
+    const until = now + this.secondsToBeats(PREFETCH_LOOKAHEAD)
+    for (const clip of this._midiClips) {
+      if (!clip.presetId) continue
+      // A clip is "coming up" if it starts within the window or is still playing.
+      // Warm every pitch it uses (loops repeat the same pitches, so time-gating
+      // per note would miss later repetitions — the cache check dedups anyway).
+      if (clip.startBeat > until || clip.startBeat + clip.durationBeats < now) continue
+      for (const note of clip.notes) {
+        const key = `${clip.presetId}:${note.pitch}`
+        if (!this._presetBufCache.has(key) && !this._presetLoading.has(key)) {
+          void this._loadPresetBuffer(clip.presetId, note.pitch)
+        }
+      }
+    }
+    for (const clip of this._clips) {
+      if (clip.startBeat > until || clip.startBeat + clip.durationBeats < now) continue
+      if (!this.bufferCache.has(clip.id)) void this.loadClipBuffer(clip)
+    }
+  }
+
   // ── Arrangement scheduling ─────────────────────────────────────────────────
 
   private _startScheduler() {
@@ -1304,6 +1333,11 @@ export class DawEngine extends EventTarget {
     const now          = this.currentBeat
     const contextNow   = this.ctx.currentTime
     const aheadBeats   = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
+
+    // Warm sampled buffers well before their notes enter the schedule window, so
+    // decodeAudioData finishes in time and the note isn't skipped (and then fired
+    // late) on first encounter. Cheap: just cache checks + fire-and-forget loads.
+    this._prefetchUpcoming(now)
 
     // ── Arrangement audio clips ──────────────────────────────────────────
     // Overlay guard: identical clips stacked at (or within ~10ms of) the same
