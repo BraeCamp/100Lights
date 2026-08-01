@@ -88,12 +88,13 @@ export default function PracticeButton() {
   const [progress, setProgress] = useState<Progress>(() =>
     typeof window === 'undefined' ? {} : loadProgress()
   )
-  // When a path is restarted, freeze its auto-verifier until the user actually
-  // does something new. Without this, the render-phase verifier immediately
-  // re-completes any leading step whose predicate is already satisfied by the
-  // current project (e.g. "add a track" when tracks already exist) — so Restart
-  // looked like it did nothing. Keyed by pathId → the snapshot signature at reset.
-  const restartBaseline = useRef<Record<string, string>>({})
+  // Per-path baseline of the project state, captured when the session starts
+  // (and reset on "Restart this path"). A step only auto-completes on a genuine
+  // false→true transition SINCE this baseline — i.e. an action you actually take
+  // while using the app — so pre-existing project state (tracks/effects/notes you
+  // already had) no longer marks lessons "seen" that you never did.
+  const baseline = useRef<Record<string, PracticeSnapshot>>({})
+  const baselineInit = useRef(false)
 
   const snapshot: PracticeSnapshot = useMemo(() => ({
     trackCount: project.tracks.length,
@@ -128,20 +129,24 @@ export default function PracticeButton() {
     anyVolumeChanged: project.tracks.some(t => Math.abs(t.volume - 0.8) > 0.02),
   }), [project, playing, recording, metronome, view, expandedPianoRollClipId, expandedStepSeqClipId])
 
-  // The verifier: mark the current step of every path when its predicate
-  // passes the live snapshot. Derived during render (the sanctioned
-  // adjust-state-on-change pattern) so it runs while the panel is closed too —
-  // doing the work first and opening Practice later still counts.
-  const snapKey = JSON.stringify(snapshot)
+  // Capture the starting state once, so anything already true at load is the
+  // baseline (not a "completed" step).
+  if (!baselineInit.current) {
+    baselineInit.current = true
+    for (const p of PRACTICE_PATHS) baseline.current[p.id] = snapshot
+  }
+
+  // The verifier: complete the current step of a path only when its predicate
+  // goes from NOT satisfied at the baseline to satisfied now — i.e. you did the
+  // action during this session. Derived during render (the sanctioned
+  // adjust-state-on-change pattern) so it runs while the panel is closed too.
   let advanced: Progress | null = null
   for (const path of PRACTICE_PATHS) {
-    // Frozen right after a Restart (until the project state changes) so already-
-    // satisfied steps don't instantly re-complete.
-    const suppressed = restartBaseline.current[path.id] === snapKey
+    const base = baseline.current[path.id] ?? snapshot
     const done: Set<string> = new Set((advanced ?? progress)[path.id] ?? [])
     // Only the first incomplete step can complete — paths are sequential
     const current = path.steps.find(st => !done.has(st.id))
-    if (!suppressed && current && current.done(snapshot)) {
+    if (current && current.done(snapshot) && !current.done(base)) {
       done.add(current.id)
       advanced = {
         ...(advanced ?? progress),
@@ -150,14 +155,6 @@ export default function PracticeButton() {
     }
   }
   if (advanced) setProgress(advanced)
-
-  // Once the project changes, a frozen path's baseline no longer matches — drop
-  // it so normal verification resumes.
-  useEffect(() => {
-    for (const pid of Object.keys(restartBaseline.current)) {
-      if (restartBaseline.current[pid] !== snapKey) delete restartBaseline.current[pid]
-    }
-  }, [snapKey])
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)) } catch { /* private mode */ }
@@ -532,9 +529,10 @@ export default function PracticeButton() {
                 {done.size > 0 && (
                   <button
                     onClick={() => {
-                      // Freeze the verifier for this path at the current state so
-                      // clearing progress doesn't instantly re-complete satisfied steps.
-                      restartBaseline.current[activePath.id] = snapKey
+                      // Re-baseline this path to the current state so clearing
+                      // progress doesn't instantly re-complete already-satisfied
+                      // steps — only new actions count from here.
+                      baseline.current[activePath.id] = snapshot
                       setProgress(p => { const n = { ...p }; delete n[activePath.id]; return n })
                     }}
                     title="Clear this path's progress so you can run it again"

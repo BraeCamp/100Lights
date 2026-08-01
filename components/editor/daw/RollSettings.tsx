@@ -13,6 +13,8 @@ import { Settings2 } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx } from '@/lib/daw-types'
 import { isMidiClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
+import { useDaw } from '@/lib/daw-state'
+import EqCurve from './EqCurve'
 import { fxHasAudibleField, FX_FIELDS, fieldIsSet } from '@/lib/roll-fx'
 import { getPresets } from '@/lib/midi-presets'
 import { tonesForGroup, applyTone, toneMatches } from '@/lib/tone-presets'
@@ -143,6 +145,31 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const targets: DawClip[] = clips && clips.length > 0 ? clips : [clip]
   const multi = targets.length > 1
   const showPreset = !multi && isMidiClip(clip)
+
+  // Volume + Tone-EQ are TRACK-scoped and shared verbatim with the Mixer strip:
+  // both the mixer and this panel read/write the same track.volume + track.tone,
+  // so adjusting either place moves the other. The clip's own gain/EQ fields are
+  // hidden from the FX list below (see hideFields) — one system, two doorways.
+  const { project, engine } = useDaw()
+  const trackIds = useMemo(() => [...new Set(targets.map(t => t.trackId))], [targets.map(t => t.trackId).join(',')])
+  const eqTrack = project.tracks.find(t => t.id === trackIds[0])
+  const eqMultiTrack = trackIds.length > 1
+  const tone = eqTrack?.tone ?? {}
+  const trackVol = eqTrack?.volume ?? 0.8
+  const setTrackBand = (band: 'sub' | 'bass' | 'mid' | 'treble', v: number) => {
+    for (const id of trackIds) {
+      const t = project.tracks.find(x => x.id === id); if (!t) continue
+      const next = { ...(t.tone ?? {}), [band]: v || undefined }
+      dispatch({ type: 'UPDATE_TRACK', trackId: id, patch: { tone: next } })
+      engine.setTrackTone(id, next)
+    }
+  }
+  const setTrackVol = (v: number) => {
+    for (const id of trackIds) {
+      dispatch({ type: 'UPDATE_TRACK', trackId: id, patch: { volume: v } })
+      engine.setTrackVolume(id, v)
+    }
+  }
 
   // Tone presets — flavour options for the current instrument family (Guitar →
   // Rock / Metal / Punk …). Each applies a curated, editable sound-settings bag.
@@ -361,11 +388,40 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         <span style={{ flex: 1 }} />
       </div>
 
-      {/* Top-5 essentials + collapsible categories, shared with the preset &
-          per-note editors */}
+      {/* Volume + Tone EQ — one system, shared verbatim with the Mixer strip.
+          Edits track.volume + track.tone, so moving a band here moves the mixer's
+          EQ curve too (and vice-versa). Track-scoped by design. */}
+      {eqTrack && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '8px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>VOLUME &amp; EQ</span>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{eqMultiTrack ? `${trackIds.length} tracks · same as mixer` : 'same as mixer'}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>Volume</span>
+            <input type="range" min={0} max={1.2} step={0.005} value={trackVol}
+              onChange={e => setTrackVol(Number(e.target.value))}
+              style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
+            <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <EqCurve value={tone} onChange={setTrackBand} width={120} height={54} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.3 }}>
+              {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
+                const v = tone[b] ?? 0
+                return <span key={b} style={{ color: v ? 'var(--text-primary)' : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)} {v > 0 ? '+' : ''}{v || 0}dB</span>
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remaining clip-only effects (volume/EQ moved to the track block above) —
+          shared with the preset & per-note editors */}
       <FxControls
         value={clip.rollFx}
         onCommit={commitFx}
+        hideFields={['gain', 'sub', 'bass', 'mid', 'treble']}
         ranges={multi ? ranges : undefined}
         onField={multi ? applyField : undefined}
         mode={effectiveMode}

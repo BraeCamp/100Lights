@@ -21,11 +21,13 @@ export function cleanFx(fx: RollFx): RollFx | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-export default function FxControls({ value, onCommit, hideCats, ranges, onField, mode }: {
+export default function FxControls({ value, onCommit, hideCats, hideFields, ranges, onField, mode }: {
   value: RollFx | undefined
   onCommit: (next: RollFx | undefined) => void
   /** Categories to omit (e.g. ['env','pitch'] for a track effect bar). */
   hideCats?: FxCat[]
+  /** Individual field keys to omit — used when volume/EQ move to the track. */
+  hideFields?: (keyof RollFx)[]
   /** Per-field [normLo, normHi] spread across a multi-selection — draws a heat
    *  band showing the range. Present only for fields whose values differ. */
   ranges?: Partial<Record<string, [number, number]>>
@@ -56,7 +58,9 @@ export default function FxControls({ value, onCommit, hideCats, ranges, onField,
   }, [])
 
   const hidden = new Set<FxCat>(hideCats ?? [])
-  const topFields = TOP_FIELDS.filter(f => !hidden.has(f.cat))
+  const hiddenF = new Set<string>(hideFields ?? [])
+  const showF = (f: FxField) => !hiddenF.has(f.key)
+  const topFields = TOP_FIELDS.filter(f => !hidden.has(f.cat) && showF(f))
 
   // Basic mode: the curated essential macros, flat — no category menus. This set
   // is deliberately hand-picked (Volume, Release, Filter, Reverb, Drive), so it is
@@ -65,7 +69,7 @@ export default function FxControls({ value, onCommit, hideCats, ranges, onField,
   if (mode === 'basic') {
     return (
       <div style={{ padding: '4px 0 2px' }}>
-        {BASIC_FIELDS.map(f => (
+        {BASIC_FIELDS.filter(showF).map(f => (
           <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} />
         ))}
       </div>
@@ -81,7 +85,8 @@ export default function FxControls({ value, onCommit, hideCats, ranges, onField,
 
       {/* Category menus */}
       {FX_CATEGORIES.filter(cat => !hidden.has(cat.key)).map(cat => {
-        const fields = byCat[cat.key] ?? []
+        const fields = (byCat[cat.key] ?? []).filter(showF)
+        if (fields.length === 0) return null
         const activeCount = fields.filter(f => fieldIsSet(f.key, draft[f.key])).length
         const isOpen = open.has(cat.key)
         return (
