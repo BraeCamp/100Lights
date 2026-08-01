@@ -355,7 +355,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
         <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>
-          {mode === 'history' ? 'Build history' : 'Record session'}
+          {mode === 'history' ? 'History' : 'Record session'}
         </span>
         <button onClick={() => { restoreProject(); onClose() }} aria-label="Close"
           style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>

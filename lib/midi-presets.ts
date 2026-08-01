@@ -69,6 +69,21 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'Choir Aahs',      folder: 'Choir Aahs – All Notes',          loNote: 43, hiNote: 84,  category: 'synth-choir',    group: 'Synth'   },
   { name: 'Warm Pad',        folder: 'Warm Pad – All Notes',            loNote: 36, hiNote: 96,  category: 'synth-pad',      group: 'Synth'   },
   { name: 'Music Box',       folder: 'Music Box – All Notes',           loNote: 60, hiNote: 96,  category: 'other',          group: 'Mallets' },
+  // Real sampled — wave 2 (append only; keep order).
+  { name: 'Orchestral Harp', folder: 'Orchestral Harp – All Notes',     loNote: 24, hiNote: 103, category: 'other',          group: 'Strings'   },
+  { name: 'Nylon Guitar',    folder: 'Nylon Acoustic Guitar – All Notes', loNote: 40, hiNote: 84, category: 'other',         group: 'Guitar'    },
+  { name: 'Steel Guitar',    folder: 'Steel Acoustic Guitar – All Notes', loNote: 40, hiNote: 84, category: 'other',         group: 'Guitar'    },
+  { name: 'Clean Guitar',    folder: 'Clean Electric Guitar – All Notes', loNote: 40, hiNote: 86, category: 'other',         group: 'Guitar'    },
+  { name: 'Vibraphone',      folder: 'Vibraphone – All Notes',          loNote: 53, hiNote: 89,  category: 'other',          group: 'Mallets'   },
+  { name: 'Marimba',         folder: 'Marimba – All Notes',             loNote: 45, hiNote: 96,  category: 'other',          group: 'Mallets'   },
+  { name: 'Glockenspiel',    folder: 'Glockenspiel – All Notes',        loNote: 72, hiNote: 108, category: 'other',          group: 'Mallets'   },
+  { name: 'Kalimba',         folder: 'Kalimba – All Notes',             loNote: 48, hiNote: 84,  category: 'other',          group: 'Mallets'   },
+  { name: 'Violin',          folder: 'Solo Violin – All Notes',         loNote: 55, hiNote: 100, category: 'violin',         group: 'Strings'   },
+  { name: 'Pizzicato',       folder: 'Pizzicato Strings – All Notes',   loNote: 36, hiNote: 96,  category: 'other',          group: 'Strings'   },
+  { name: 'Oboe',            folder: 'Oboe – All Notes',                loNote: 58, hiNote: 91,  category: 'other',          group: 'Woodwinds' },
+  { name: 'Pan Flute',       folder: 'Pan Flute – All Notes',           loNote: 60, hiNote: 96,  category: 'other',          group: 'Woodwinds' },
+  { name: 'Church Organ',    folder: 'Church Organ – All Notes',        loNote: 36, hiNote: 96,  category: 'synth-organ',    group: 'Organ'     },
+  { name: 'Harpsichord',     folder: 'Harpsichord – All Notes',         loNote: 41, hiNote: 89,  category: 'other',          group: 'Piano'     },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

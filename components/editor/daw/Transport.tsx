@@ -1106,7 +1106,7 @@ export default function Transport() {
             />
             <CaptureItem
               icon={<History size={14} />}
-              label="Replay the build"
+              label="History"
               hint="Watch this project get made"
               active={showRecorder && recorderMode === 'history'}
               onClick={() => { setCaptureOpen(false); setRecorderMode('history'); setShowRecorder(true) }}

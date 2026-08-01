@@ -30,7 +30,7 @@ const BASS_SEEDED_KEY     = '100lights-bass-seeded-v1'
 const DARKKIT_SEEDED_KEY  = '100lights-darkkit-seeded-v1'  // 808/ride/shaker + sustained bass
 const BRASS_SEEDED_KEY    = '100lights-brass-seeded-v1'
 const WIND_SEEDED_KEY     = '100lights-wind-seeded-v1'
-const REAL_SF_SEEDED_KEY  = '100lights-real-sf-seeded-v1'  // real sampled piano/EP/strings/choir/pad/music box
+const REAL_SF_SEEDED_KEY  = '100lights-real-sf-seeded-v2'  // v2: + harp/guitars/mallets/violin/pizz/winds/organ/harpsichord
 const DEDUP_KEY           = '100lights-dedup-v5'  // v5: prefer deterministic seed ids over legacy random-id built-ins
 const MIGRATION_V7_KEY    = '100lights-migration-v7'
 
@@ -59,6 +59,20 @@ const STR_ENS_URL       = `${SF_BASE}/string_ensemble_1-mp3.js`
 const CHOIR_URL         = `${SF_BASE}/choir_aahs-mp3.js`
 const WARM_PAD_URL      = `${SF_BASE}/pad_2_warm-mp3.js`
 const MUSIC_BOX_URL     = `${SF_BASE}/music_box-mp3.js`
+const HARP_URL          = `${SF_BASE}/orchestral_harp-mp3.js`
+const NYLON_GTR_URL     = `${SF_BASE}/acoustic_guitar_nylon-mp3.js`
+const STEEL_GTR_URL     = `${SF_BASE}/acoustic_guitar_steel-mp3.js`
+const CLEAN_GTR_URL     = `${SF_BASE}/electric_guitar_clean-mp3.js`
+const VIBES_URL         = `${SF_BASE}/vibraphone-mp3.js`
+const MARIMBA_URL       = `${SF_BASE}/marimba-mp3.js`
+const GLOCK_URL         = `${SF_BASE}/glockenspiel-mp3.js`
+const KALIMBA_URL       = `${SF_BASE}/kalimba-mp3.js`
+const VIOLIN_SF_URL     = `${SF_BASE}/violin-mp3.js`
+const PIZZ_STR_URL      = `${SF_BASE}/pizzicato_strings-mp3.js`
+const OBOE_URL          = `${SF_BASE}/oboe-mp3.js`
+const PAN_FLUTE_URL     = `${SF_BASE}/pan_flute-mp3.js`
+const CHURCH_ORGAN_URL  = `${SF_BASE}/church_organ-mp3.js`
+const HARPSICHORD_URL   = `${SF_BASE}/harpsichord-mp3.js`
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
 
@@ -497,12 +511,46 @@ const SOUNDFONT_PACKS: SoundfontPack[] = [
     category: 'synth-pad', minMidi: 36, maxMidi: 96, typeTags: ['Synth'], charTags: ['Warm', 'Soft'] },
   { name: 'Music Box', url: MUSIC_BOX_URL, folder: 'Music Box – All Notes', parentGroup: 'Keyboards',
     category: 'other', minMidi: 60, maxMidi: 96, typeTags: ['Keys'], charTags: ['Bright', 'Soft'] },
+  // Real instruments — wave 2 (guitars, mallets, strings, winds, organ, keys)
+  { name: 'Orchestral Harp', url: HARP_URL, folder: 'Orchestral Harp – All Notes', parentGroup: 'Strings',
+    category: 'other', minMidi: 24, maxMidi: 103, typeTags: ['Strings'], charTags: ['Soft', 'Bright'] },
+  { name: 'Nylon Guitar', url: NYLON_GTR_URL, folder: 'Nylon Acoustic Guitar – All Notes', parentGroup: 'Guitar',
+    category: 'other', minMidi: 40, maxMidi: 84, typeTags: ['Guitar'], charTags: ['Warm', 'Soft'] },
+  { name: 'Steel Guitar', url: STEEL_GTR_URL, folder: 'Steel Acoustic Guitar – All Notes', parentGroup: 'Guitar',
+    category: 'other', minMidi: 40, maxMidi: 84, typeTags: ['Guitar'], charTags: ['Bright'] },
+  { name: 'Clean Electric Guitar', url: CLEAN_GTR_URL, folder: 'Clean Electric Guitar – All Notes', parentGroup: 'Guitar',
+    category: 'other', minMidi: 40, maxMidi: 86, typeTags: ['Guitar'], charTags: ['Warm'] },
+  { name: 'Vibraphone', url: VIBES_URL, folder: 'Vibraphone – All Notes', parentGroup: 'Keyboards',
+    category: 'other', minMidi: 53, maxMidi: 89, typeTags: ['Keys'], charTags: ['Soft', 'Warm'] },
+  { name: 'Marimba', url: MARIMBA_URL, folder: 'Marimba – All Notes', parentGroup: 'Keyboards',
+    category: 'other', minMidi: 45, maxMidi: 96, typeTags: ['Keys'], charTags: ['Warm'] },
+  { name: 'Glockenspiel', url: GLOCK_URL, folder: 'Glockenspiel – All Notes', parentGroup: 'Keyboards',
+    category: 'other', minMidi: 72, maxMidi: 108, typeTags: ['Keys'], charTags: ['Bright'] },
+  { name: 'Kalimba', url: KALIMBA_URL, folder: 'Kalimba – All Notes', parentGroup: 'Keyboards',
+    category: 'other', minMidi: 48, maxMidi: 84, typeTags: ['Keys'], charTags: ['Soft', 'Warm'] },
+  { name: 'Violin', url: VIOLIN_SF_URL, folder: 'Solo Violin – All Notes', parentGroup: 'Strings',
+    category: 'violin', minMidi: 55, maxMidi: 100, typeTags: ['Strings'], charTags: ['Warm'] },
+  { name: 'Pizzicato Strings', url: PIZZ_STR_URL, folder: 'Pizzicato Strings – All Notes', parentGroup: 'Strings',
+    category: 'other', minMidi: 36, maxMidi: 96, typeTags: ['Strings'], charTags: ['Soft'] },
+  { name: 'Oboe', url: OBOE_URL, folder: 'Oboe – All Notes', parentGroup: 'Wind',
+    category: 'other', minMidi: 58, maxMidi: 91, typeTags: ['Wind'], charTags: ['Warm'] },
+  { name: 'Pan Flute', url: PAN_FLUTE_URL, folder: 'Pan Flute – All Notes', parentGroup: 'Wind',
+    category: 'other', minMidi: 60, maxMidi: 96, typeTags: ['Wind'], charTags: ['Soft', 'Bright'] },
+  { name: 'Church Organ', url: CHURCH_ORGAN_URL, folder: 'Church Organ – All Notes', parentGroup: 'Keyboards',
+    category: 'synth-organ', minMidi: 36, maxMidi: 96, typeTags: ['Keys'], charTags: ['Warm'] },
+  { name: 'Harpsichord', url: HARPSICHORD_URL, folder: 'Harpsichord – All Notes', parentGroup: 'Keyboards',
+    category: 'other', minMidi: 41, maxMidi: 89, typeTags: ['Keys'], charTags: ['Bright'] },
 ]
 
 // Folders of the real sampled instruments above — seeded together on demand.
 const REAL_SF_FOLDERS = new Set([
   'Grand Piano – All Notes', 'Warm Electric Piano – All Notes', 'String Ensemble – All Notes',
   'Choir Aahs – All Notes', 'Warm Pad – All Notes', 'Music Box – All Notes',
+  'Orchestral Harp – All Notes', 'Nylon Acoustic Guitar – All Notes', 'Steel Acoustic Guitar – All Notes',
+  'Clean Electric Guitar – All Notes', 'Vibraphone – All Notes', 'Marimba – All Notes',
+  'Glockenspiel – All Notes', 'Kalimba – All Notes', 'Solo Violin – All Notes',
+  'Pizzicato Strings – All Notes', 'Oboe – All Notes', 'Pan Flute – All Notes',
+  'Church Organ – All Notes', 'Harpsichord – All Notes',
 ])
 
 // ── Stub builder ──────────────────────────────────────────────────────────────
