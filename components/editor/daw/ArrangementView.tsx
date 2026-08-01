@@ -31,6 +31,11 @@ const BAR_H   = 20
 const RULER_H = SEC_H + BAR_H
 const MIN_BEAT_W = 10
 const MAX_BEAT_W = 200
+// Zoom-per-wheel sensitivity. Multiplicative (constant %) so it feels the same at
+// any zoom level, but scaled by the ACTUAL scroll amount so a trackpad's many tiny
+// events don't compound into a 10× jump. A mouse notch (deltaY≈100) ≈ 13% step;
+// each event is clamped to ±43% so one flick can't leap across the whole range.
+const ZOOM_SENS = 0.0013
 // A small empty lead-in before beat 0. Because every coordinate is `beat*beatW -
 // scrollLeft`, letting the leftmost scroll sit at -START_GUTTER pushes beat 0 a
 // few px in from the edge — and the Math.max(0, …) clamps on ruler/lane clicks
@@ -708,7 +713,8 @@ export default function ArrangementView() {
   function handleWheel(e: React.WheelEvent) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
-      setBeatW(w => Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, w * (e.deltaY < 0 ? 1.15 : 0.87))))
+      const factor = Math.min(1.43, Math.max(0.7, Math.exp(-e.deltaY * ZOOM_SENS)))
+      setBeatW(w => Math.max(MIN_BEAT_W, Math.min(MAX_BEAT_W, w * factor)))
       return
     }
     // Shift+wheel pans the timeline (mouse wheels have no deltaX of their own)
