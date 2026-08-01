@@ -345,7 +345,7 @@ function PlayheadLine({ clipStart, clipDuration, beatW, scrollLeft }: {
       const el = lineRef.current
       if (el) {
         const { clipStart, clipDuration, beatW, scrollLeft } = geo.current
-        const rel = engine.currentBeat - clipStart
+        const rel = engine.displayBeat - clipStart
         if (rel >= 0 && rel <= clipDuration) {
           el.style.display = 'block'
           el.style.left = `${rel * beatW - scrollLeft}px`

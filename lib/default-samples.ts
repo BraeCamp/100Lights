@@ -30,6 +30,7 @@ const BASS_SEEDED_KEY     = '100lights-bass-seeded-v1'
 const DARKKIT_SEEDED_KEY  = '100lights-darkkit-seeded-v1'  // 808/ride/shaker + sustained bass
 const BRASS_SEEDED_KEY    = '100lights-brass-seeded-v1'
 const WIND_SEEDED_KEY     = '100lights-wind-seeded-v1'
+const REAL_SF_SEEDED_KEY  = '100lights-real-sf-seeded-v1'  // real sampled piano/EP/strings/choir/pad/music box
 const DEDUP_KEY           = '100lights-dedup-v5'  // v5: prefer deterministic seed ids over legacy random-id built-ins
 const MIGRATION_V7_KEY    = '100lights-migration-v7'
 
@@ -50,6 +51,14 @@ const TROMBONE_URL      = `${SF_BASE}/trombone-mp3.js`
 const FRENCH_HORN_URL   = `${SF_BASE}/french_horn-mp3.js`
 const FLUTE_URL         = `${SF_BASE}/flute-mp3.js`
 const CLARINET_URL      = `${SF_BASE}/clarinet-mp3.js`
+// Real sampled instruments — warmer/organic alternatives to the synth-rendered
+// defaults, and (piano/strings/choir/pad) they hold long sustained notes.
+const AC_GRAND_URL      = `${SF_BASE}/acoustic_grand_piano-mp3.js`
+const WARM_EP_URL       = `${SF_BASE}/electric_piano_1-mp3.js`
+const STR_ENS_URL       = `${SF_BASE}/string_ensemble_1-mp3.js`
+const CHOIR_URL         = `${SF_BASE}/choir_aahs-mp3.js`
+const WARM_PAD_URL      = `${SF_BASE}/pad_2_warm-mp3.js`
+const MUSIC_BOX_URL     = `${SF_BASE}/music_box-mp3.js`
 
 // ── Audio renderers ───────────────────────────────────────────────────────────
 
@@ -245,7 +254,26 @@ export async function renderSoundfont(
   if (semitones !== 0) src.detune.value = semitones * 100
   src.connect(ctx.destination)
   src.start(0)
-  return ctx.startRendering()
+  const rendered = await ctx.startRendering()
+
+  // Soundfont samples are recorded conservatively — ~15 dB below the
+  // synth-rendered library, so sampled instruments (piano, strings, …) came out
+  // nearly inaudible next to the synth ones. Peak-normalize each note up to a
+  // consistent reference; note velocity still supplies dynamics at playback.
+  let peak = 0
+  for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
+    const data = rendered.getChannelData(ch)
+    for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); if (a > peak) peak = a }
+  }
+  const TARGET = 0.6
+  if (peak > 1e-4 && peak < TARGET) {
+    const gain = Math.min(12, TARGET / peak)
+    for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
+      const data = rendered.getChannelData(ch)
+      for (let i = 0; i < data.length; i++) data[i] *= gain
+    }
+  }
+  return rendered
 }
 
 // ── Note tag helpers ──────────────────────────────────────────────────────────
@@ -456,7 +484,26 @@ const SOUNDFONT_PACKS: SoundfontPack[] = [
     category: 'other', minMidi: 60, maxMidi: 96, typeTags: ['Wind'], charTags: ['Bright', 'Soft'] },
   { name: 'Clarinet', url: CLARINET_URL, folder: 'Clarinet – All Notes', parentGroup: 'Wind',
     category: 'other', minMidi: 50, maxMidi: 93, typeTags: ['Wind'], charTags: ['Warm'] },
+  // Real instruments (rich sampled — warmer than the synth defaults, hold long notes)
+  { name: 'Grand Piano', url: AC_GRAND_URL, folder: 'Grand Piano – All Notes', parentGroup: 'Keyboards',
+    category: 'piano-grand', minMidi: 21, maxMidi: 108, typeTags: ['Keys', 'Piano'], charTags: ['Warm', 'Soft'] },
+  { name: 'Warm EP', url: WARM_EP_URL, folder: 'Warm Electric Piano – All Notes', parentGroup: 'Keyboards',
+    category: 'piano-electric', minMidi: 28, maxMidi: 103, typeTags: ['Keys'], charTags: ['Warm', 'Soft'] },
+  { name: 'String Ensemble', url: STR_ENS_URL, folder: 'String Ensemble – All Notes', parentGroup: 'Strings',
+    category: 'synth-strings', minMidi: 28, maxMidi: 96, typeTags: ['Strings'], charTags: ['Warm', 'Soft'] },
+  { name: 'Choir Aahs', url: CHOIR_URL, folder: 'Choir Aahs – All Notes', parentGroup: 'Vocals',
+    category: 'synth-choir', minMidi: 43, maxMidi: 84, typeTags: ['Vocals'], charTags: ['Soft', 'Warm'] },
+  { name: 'Warm Pad', url: WARM_PAD_URL, folder: 'Warm Pad – All Notes', parentGroup: 'Synth',
+    category: 'synth-pad', minMidi: 36, maxMidi: 96, typeTags: ['Synth'], charTags: ['Warm', 'Soft'] },
+  { name: 'Music Box', url: MUSIC_BOX_URL, folder: 'Music Box – All Notes', parentGroup: 'Keyboards',
+    category: 'other', minMidi: 60, maxMidi: 96, typeTags: ['Keys'], charTags: ['Bright', 'Soft'] },
 ]
+
+// Folders of the real sampled instruments above — seeded together on demand.
+const REAL_SF_FOLDERS = new Set([
+  'Grand Piano – All Notes', 'Warm Electric Piano – All Notes', 'String Ensemble – All Notes',
+  'Choir Aahs – All Notes', 'Warm Pad – All Notes', 'Music Box – All Notes',
+])
 
 // ── Stub builder ──────────────────────────────────────────────────────────────
 
@@ -617,6 +664,7 @@ export async function seedDefaultSamples(): Promise<void> {
     seedBass().catch(() => {})
     seedBrass().catch(() => {})
     seedWind().catch(() => {})
+    seedRealInstruments().catch(() => {})
     return
   }
 
@@ -646,6 +694,7 @@ export async function seedDefaultSamples(): Promise<void> {
   seedBass().catch(() => {})
   seedBrass().catch(() => {})
   seedWind().catch(() => {})
+  seedRealInstruments().catch(() => {})
 }
 
 // ── Individual seed functions ─────────────────────────────────────────────────
@@ -821,4 +870,16 @@ export async function seedWind(): Promise<void> {
   const windPacks = SOUNDFONT_PACKS.filter(p => p.parentGroup === 'Wind')
   for (const pack of windPacks) await seedSoundfontPack(pack, now)
   localStorage.setItem(sk(WIND_SEEDED_KEY), '1')
+}
+
+/** Real sampled instruments (grand piano, warm EP, string ensemble, choir, warm
+ *  pad, music box) — richer/warmer than the synth-rendered defaults, and they
+ *  sustain long notes. Identified by folder so they seed as one group. */
+export async function seedRealInstruments(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(sk(REAL_SF_SEEDED_KEY))) return
+  const now = new Date().toISOString()
+  const packs = SOUNDFONT_PACKS.filter(p => REAL_SF_FOLDERS.has(p.folder))
+  for (const pack of packs) await seedSoundfontPack(pack, now)
+  localStorage.setItem(sk(REAL_SF_SEEDED_KEY), '1')
 }

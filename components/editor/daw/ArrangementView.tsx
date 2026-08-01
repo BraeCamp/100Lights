@@ -491,7 +491,7 @@ export default function ArrangementView() {
   useEffect(() => {
     function frame() {
       const el = playheadRef.current
-      if (el) el.style.left = `${engine.currentBeat * beatW - scrollLeft}px`
+      if (el) el.style.left = `${engine.displayBeat * beatW - scrollLeft}px`
       rafRef.current = requestAnimationFrame(frame)
     }
     rafRef.current = requestAnimationFrame(frame)

@@ -61,6 +61,14 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'French Horn',     folder: 'French Horn – All Notes',     loNote: 35, hiNote: 77, category: 'other',      group: 'Brass'     },
   { name: 'Flute',           folder: 'Flute – All Notes',           loNote: 60, hiNote: 96, category: 'other',      group: 'Woodwinds' },
   { name: 'Clarinet',        folder: 'Clarinet – All Notes',        loNote: 50, hiNote: 93, category: 'other',      group: 'Woodwinds' },
+  // Real sampled instruments (FluidR3) — warm/organic, hold long sustained notes.
+  // APPEND ONLY (built-in ids are index-based); never reorder the entries above.
+  { name: 'Grand Piano',     folder: 'Grand Piano – All Notes',         loNote: 21, hiNote: 108, category: 'piano-grand',    group: 'Piano'   },
+  { name: 'Warm EP',         folder: 'Warm Electric Piano – All Notes', loNote: 28, hiNote: 103, category: 'piano-electric', group: 'Piano'   },
+  { name: 'String Ensemble', folder: 'String Ensemble – All Notes',     loNote: 28, hiNote: 96,  category: 'synth-strings',  group: 'Strings' },
+  { name: 'Choir Aahs',      folder: 'Choir Aahs – All Notes',          loNote: 43, hiNote: 84,  category: 'synth-choir',    group: 'Synth'   },
+  { name: 'Warm Pad',        folder: 'Warm Pad – All Notes',            loNote: 36, hiNote: 96,  category: 'synth-pad',      group: 'Synth'   },
+  { name: 'Music Box',       folder: 'Music Box – All Notes',           loNote: 60, hiNote: 96,  category: 'other',          group: 'Mallets' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -747,6 +747,20 @@ export class DawEngine extends EventTarget {
     return this._startBeat + (this.ctx.currentTime - this._startCtxTime) * (this.tempo / 60)
   }
 
+  /**
+   * Beat position for VISUAL playheads only — lagged by the output-path latency
+   * so the on-screen playhead lines up with what's actually heard. A note
+   * scheduled at ctx.currentTime doesn't reach the speakers until
+   * `outputLatency` later (Bluetooth/wireless adds ~150-250ms; wired ~5-20ms),
+   * so an uncompensated playhead visibly crosses a note before you hear it.
+   * NEVER use this for scheduling, recording, or edit positions — only drawing.
+   */
+  get displayBeat(): number {
+    if (!this.isPlaying) return this._startBeat
+    const lat = this.ctx.outputLatency ?? 0
+    return Math.max(0, this.currentBeat - this.secondsToBeats(lat))
+  }
+
   beatsToSeconds(beats: number): number { return beats * (60 / this.tempo) }
   secondsToBeats(seconds: number): number { return seconds * (this.tempo / 60) }
 
