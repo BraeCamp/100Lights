@@ -114,6 +114,17 @@ export class DawEngine extends EventTarget {
   private returnBuses = new Map<string, ReturnBus>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private _chainSigs = new Map<string, string>()
+  // Per-clip SHARED rollFx chain, built once and reused by every note in the
+  // clip (keyed by clipId). Every note in a clip has the same reverb/delay/EQ/
+  // filter/drive, so building that graph — Convolver included — per note was the
+  // main cause of playback stutter in dense arrangements. Torn down on stop /
+  // project change; rebuilt if the clip's sound signature changes.
+  private _clipFxChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; tailSec: number; sig: string }>()
+  // Per-clip cache of note occurrences + the unison-skip set. Both are position-
+  // INDEPENDENT (clip-relative), yet were recomputed every 25ms scheduler tick —
+  // and the unison guard is O(notes²), ~600k ops/tick for a 780-note clip. Cache
+  // it, rebuild only when the clip's notes change (cleared on project change).
+  private _unisonCache = new Map<string, { sig: string; occurrences: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number }[]; unisonSkip: Set<string> }>()
   private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private mixerEqNodes = new Map<string, { sub: BiquadFilterNode; low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
   private maskingAnalysers = new Map<string, AnalyserNode>()
@@ -368,6 +379,7 @@ export class DawEngine extends EventTarget {
 
   removeTrack(id: string) {
     this._chainSigs.delete(id)
+    this._clearClipFxChains()   // a removed track's clip buses would dangle on its old midiInput
     const nodes = this.trackNodes.get(id)
     if (!nodes) return
     const chain = this.effectsChains.get(id)
@@ -783,7 +795,9 @@ export class DawEngine extends EventTarget {
     this._stopScheduler()
     this._killAllSources()
     this._stopAllSessionSlots()
+    this._clearClipFxChains()   // release the shared reverb/delay graphs (frees CPU while paused)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear()
+    this._unisonCache.clear()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
   }
 
@@ -828,6 +842,9 @@ export class DawEngine extends EventTarget {
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._clips       = project.arrangementClips.filter(isAudioClip)
     this._midiClips   = project.arrangementClips.filter(isMidiClip)
+    // Notes may have changed — drop the cached occurrences/unison sets so they
+    // rebuild from the new note data on the next tick. (Fires only on edits.)
+    this._unisonCache.clear()
     // Pre-warm audio buffers too: clips resolving through slow paths (r2,
     // library fallback) were silent for the first pass after a reload and
     // "appeared" a few plays later once their buffer finally cached.
@@ -1415,42 +1432,53 @@ export class DawEngine extends EventTarget {
       const loopLen = clip.loopEnabled && clip.loopLengthBeats && clip.loopLengthBeats > 0
         ? clip.loopLengthBeats
         : null
-      const occurrences: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number }[] = []
-      for (const note of processedNotes) {
-        if (!loopLen) {
-          occurrences.push({
-            note, relBeat: note.startBeat,
-            key: `${clip.id}:${note.id}` as NoteKey,
-            maxDur: note.durationBeats,
-          })
-          continue
+      // Occurrences + the unison guard are clip-relative (position-independent)
+      // and only change when the clip's notes do — so cache them instead of
+      // rebuilding (and recomputing the O(notes²) guard) every 25ms tick.
+      const uSig = `${processedNotes.length}:${clip.durationBeats}:${loopLen ?? 0}:${processedNotes[0]?.id ?? ''}:${processedNotes[processedNotes.length - 1]?.id ?? ''}`
+      let uCached = this._unisonCache.get(clip.id)
+      if (!uCached || uCached.sig !== uSig) {
+        const occ: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number }[] = []
+        for (const note of processedNotes) {
+          if (!loopLen) {
+            occ.push({
+              note, relBeat: note.startBeat,
+              key: `${clip.id}:${note.id}` as NoteKey,
+              maxDur: note.durationBeats,
+            })
+            continue
+          }
+          const kMax = Math.ceil(clip.durationBeats / loopLen)
+          for (let k = 0; k < kMax; k++) {
+            const relBeat = k * loopLen + note.startBeat
+            if (relBeat >= clip.durationBeats) break
+            occ.push({
+              note, relBeat,
+              key: `${clip.id}:${note.id}:${k}` as NoteKey,
+              // Truncate the last repetition at the clip boundary
+              maxDur: Math.min(note.durationBeats, clip.durationBeats - relBeat),
+            })
+          }
         }
-        const kMax = Math.ceil(clip.durationBeats / loopLen)
-        for (let k = 0; k < kMax; k++) {
-          const relBeat = k * loopLen + note.startBeat
-          if (relBeat >= clip.durationBeats) break
-          occurrences.push({
-            note, relBeat,
-            key: `${clip.id}:${note.id}:${k}` as NoteKey,
-            // Truncate the last repetition at the clip boundary
-            maxDur: Math.min(note.durationBeats, clip.durationBeats - relBeat),
-          })
+        // Unison guard: two same-pitch notes overlapping inside one clip play the
+        // identical sound twice — a loudness accident (usually an invisible
+        // stacked paste), never a musical layer. The earlier note wins; a note
+        // starting inside another's span at the same pitch is skipped. O(n²), but
+        // now computed once per note-change instead of every tick.
+        const skip = new Set<string>()
+        for (const a of occ) {
+          for (const b of occ) {
+            if (a === b || a.note.pitch !== b.note.pitch) continue
+            const startsInside = b.relBeat > a.relBeat - 1e-6 && b.relBeat < a.relBeat + a.maxDur - 1e-6
+            const tieBreak = Math.abs(b.relBeat - a.relBeat) < 1e-6 ? a.key < b.key : a.relBeat < b.relBeat
+            if (startsInside && tieBreak && !skip.has(a.key)) skip.add(b.key)
+          }
         }
+        uCached = { sig: uSig, occurrences: occ, unisonSkip: skip }
+        this._unisonCache.set(clip.id, uCached)
       }
-
-      // Unison guard: two same-pitch notes overlapping inside one clip play the
-      // identical sound twice — a loudness accident (usually an invisible
-      // stacked paste), never a musical layer. The earlier note wins; a note
-      // starting inside another's span at the same pitch is skipped.
-      const unisonSkip = new Set<string>()
-      for (const a of occurrences) {
-        for (const b of occurrences) {
-          if (a === b || a.note.pitch !== b.note.pitch) continue
-          const startsInside = b.relBeat > a.relBeat - 1e-6 && b.relBeat < a.relBeat + a.maxDur - 1e-6
-          const tieBreak = Math.abs(b.relBeat - a.relBeat) < 1e-6 ? a.key < b.key : a.relBeat < b.relBeat
-          if (startsInside && tieBreak && !unisonSkip.has(a.key)) unisonSkip.add(b.key)
-        }
-      }
+      const occurrences = uCached.occurrences
+      const unisonSkip = uCached.unisonSkip
 
       for (const { note, relBeat, key: noteKey, maxDur } of occurrences) {
         if (this._scheduledNoteKeys.has(noteKey)) continue
@@ -1473,6 +1501,7 @@ export class DawEngine extends EventTarget {
         const rfx = this._resolveNoteFx(clip, note)
         const sustainSec = rfx.sustain ?? 0
         const fxCleanup: { nodes: AudioNode[]; oscs: OscillatorNode[] } = { nodes: [], oscs: [] }
+        let clipEffectActive = false
         {
           const overlapping = this._clipEffects.filter(e =>
             e.trackId === clip.trackId && e.type !== 'pitch' &&
@@ -1480,6 +1509,7 @@ export class DawEngine extends EventTarget {
             e.startBeat + e.durationBeats > noteAbsBeat
           )
           if (overlapping.length > 0) {
+            clipEffectActive = true
             const entry = this.ctx.createGain()
             fxCleanup.nodes.push(entry)
             let last: AudioNode = entry
@@ -1502,12 +1532,24 @@ export class DawEngine extends EventTarget {
           }
         }
 
-        // Resolved clip/preset/note sound wraps this note only
+        // Resolved clip/preset/note sound. When the clip's sound is uniform (no
+        // per-note override, no per-note filter sweep, no overlapping FX-lane
+        // region) every note routes through ONE cached chain — otherwise we'd
+        // rebuild a full reverb/delay/EQ graph (a Convolver!) per note, which is
+        // what made dense arrangements stutter. The per-note amplitude envelope
+        // that chain used to hold moves onto the note's own gain (`sharedEnv`).
+        let sharedEnv = false
         if (this._rollFxActive(rfx)) {
-          const chain = this._buildRollFxChain(rfx, noteDest, startAt, remaining)
-          noteDest = chain.input
-          const ttlMs = (startAt - contextNow + remaining + sustainSec + chain.tailSec + 1.5) * 1000
-          setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
+          const canShare = !note.fx && (rfx.filterEnv ?? 0) === 0 && !clipEffectActive
+          if (canShare) {
+            noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput).input
+            sharedEnv = true
+          } else {
+            const chain = this._buildRollFxChain(rfx, noteDest, startAt, remaining)
+            noteDest = chain.input
+            const ttlMs = (startAt - contextNow + remaining + sustainSec + chain.tailSec + 1.5) * 1000
+            setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
+          }
         }
 
         // Use clip-level preset if set, otherwise fall back to track instrument
@@ -1532,10 +1574,21 @@ export class DawEngine extends EventTarget {
             }
             const velGain = this.ctx.createGain()
             const target = (note.velocity ?? 100) / 127
-            // Fade in — 5ms entering mid-waveform, 3ms on a fresh onset:
-            // even sample starts click when they don't sit on a zero crossing.
+            // Fade in — 5ms entering mid-waveform, 3ms on a fresh onset: even
+            // sample starts click when they don't sit on a zero crossing. When
+            // this note uses the shared clip chain (`sharedEnv`), the attack /
+            // decay / sustain-level that used to live inside that chain are
+            // folded onto this gain so they still retrigger per note. Otherwise
+            // (sharedEnv false) this is exactly the old 3/5ms fade.
+            const baseAtk = offsetSec > 0 ? 0.005 : 0.003
+            const atk  = sharedEnv ? Math.max(baseAtk, rfx.attack ?? 0) : baseAtk
+            const dec  = sharedEnv ? (rfx.decay ?? 0) : 0
+            const susL = sharedEnv ? (rfx.sustainLevel ?? 1) : 1
+            const susTarget = (dec > 0 || susL < 1) ? target * susL : target
             velGain.gain.setValueAtTime(0.0001, startAt)
-            velGain.gain.linearRampToValueAtTime(target, startAt + (offsetSec > 0 ? 0.005 : 0.003))
+            velGain.gain.linearRampToValueAtTime(target, startAt + atk)
+            if (dec > 0) velGain.gain.linearRampToValueAtTime(target * susL, startAt + atk + dec)
+            else if (susL < 1) velGain.gain.setValueAtTime(target * susL, startAt + atk)
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
@@ -1548,17 +1601,17 @@ export class DawEngine extends EventTarget {
               if (sustainSec > 0) {
                 // Sustain: let the sample ring past the note's end with a release
                 // ramp instead of the hard cut — pedal-like, far more natural.
-                velGain.gain.setValueAtTime(target, startAt + remaining)
+                velGain.gain.setValueAtTime(susTarget, startAt + remaining)
                 velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining + sustainSec)
                 src.stop(startAt + remaining + sustainSec + 0.05)
               } else if (loop) {
                 // A looped note ends at full level — an 80ms release avoids the click
-                velGain.gain.setValueAtTime(target, Math.max(startAt + 0.005, startAt + remaining - 0.08))
+                velGain.gain.setValueAtTime(susTarget, Math.max(startAt + atk, startAt + remaining - 0.08))
                 velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining)
                 src.stop(startAt + remaining + 0.02)
               } else {
                 // micro-release — stopping mid-waveform clicks
-                velGain.gain.setValueAtTime(target, Math.max(startAt + 0.005, startAt + remaining - 0.008))
+                velGain.gain.setValueAtTime(susTarget, Math.max(startAt + atk, startAt + remaining - 0.008))
                 velGain.gain.linearRampToValueAtTime(0.0001, startAt + remaining)
                 src.stop(startAt + remaining + 0.01)
               }
@@ -2091,6 +2144,40 @@ export class DawEngine extends EventTarget {
       try { (nd as OscillatorNode).stop?.() } catch { /* not a source / already stopped */ }
       try { nd.disconnect() } catch { /* ok */ }
     }
+  }
+
+  /** Signature of the CLIP-shared portion of a resolved rollFx bag — everything
+   *  except the parts that legitimately vary per note (amplitude envelope +
+   *  filter-envelope sweep, folded onto the note's own gain instead). Two notes
+   *  with the same signature can share one FX graph. */
+  private _clipFxSig(rfx: RollFx): string {
+    const r = rfx as Record<string, unknown>
+    let s = ''
+    for (const k of Object.keys(r).sort()) {
+      if (k === 'attack' || k === 'decay' || k === 'sustainLevel' || k === 'sustain' || k === 'filterEnv') continue
+      const v = r[k]
+      if (v !== undefined && v !== null) s += k + ':' + v + ';'
+    }
+    return s
+  }
+
+  /** Get (or lazily build) the shared FX chain for a clip, rebuilding only if
+   *  the clip's sound signature changed. Built with no note timing, so it holds
+   *  none of the per-note envelope — just the static/continuous graph. */
+  private _getClipFxChain(clipId: string, rfx: RollFx, dest: AudioNode): { input: AudioNode; tailSec: number } {
+    const sig = this._clipFxSig(rfx)
+    const cached = this._clipFxChains.get(clipId)
+    if (cached && cached.sig === sig) return cached
+    if (cached) this._teardownFxNodes(cached.nodes)
+    const built = this._buildRollFxChain(rfx, dest, undefined, undefined)
+    const entry = { input: built.input, nodes: built.nodes, tailSec: built.tailSec, sig }
+    this._clipFxChains.set(clipId, entry)
+    return entry
+  }
+
+  private _clearClipFxChains() {
+    for (const c of this._clipFxChains.values()) this._teardownFxNodes(c.nodes)
+    this._clipFxChains.clear()
   }
 
   /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope

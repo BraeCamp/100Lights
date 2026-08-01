@@ -107,6 +107,26 @@ progression on a grid is not enough.
 - **Space & silence.** Don't fill every beat. Rests create tension; let notes
   ring into the reverb. Sparse beats *listenable*. (Petrichor = 275 notes over
   2:00; the busy tracks were ~1,000.)
+- **Breathing rhythm — this is what kills the "video-game" feel.** The problem
+  with the early songs was every instrument played *straight to the beat* with no
+  pauses. Instead give each part a **16th-grid pattern of hits (`o`) and rests
+  (`x`)** that syncopates and then releases — e.g. `oxoxoxooxoxooooo` stays locked
+  to the bar but the gaps build tension and the run of `o`s at the end spills a
+  fill into the next bar. Rules that worked (see `gen_rhythm_songs.py`, Signal
+  Fire + Paper Lanterns):
+  - **Give different instruments different patterns** so they interlock and leave
+    holes for each other — never all-on-the-beat together. Bass pushes on
+    off-beats and rests on 2/4; guitar/keys chop syncopated stabs; hats fill,
+    kick/snare leave space.
+  - **Vary the pattern by section** (sparse in verses, busier + end-of-bar fills
+    in the chorus) so the arrangement goes somewhere.
+  - Drive the whole thing off short `o/x` strings in code — trivial to audition
+    and re-shape, and it forces the rests instead of defaulting to every beat.
+- **Lead in chords / double-stops — occasionally.** A single-note lead reads flat.
+  Add a harmony note (a 3rd/6th below, or the chord) **only sometimes**: on a bar
+  downbeat for emphasis, or a stray double note mid-phrase for style. Constant
+  chords sound like a pad; the *occasional* double note sounds skilled and
+  dynamic. (Both 2026-08 songs mark ~2–3 double-stops per 4-bar lead phrase.)
 - **Long notes.** Use sustaining instruments (piano/strings/choir/pad) and write
   whole-/multi-bar notes. This is exactly what short one-shot samples can't do.
 - **Tension → release.** The core of feeling:
@@ -163,12 +183,20 @@ Render the busiest section with `stems:true`, then in the report watch:
 
 ## 5. Reference tracks (`Content/Audio/`)
 
-- **`petrichor.cfproj`** — rainy-day neoclassical: real piano + strings + choir +
-  pad + music box, drumless, real tension/release. **The template for
-  "listenable."**
-- **`rainy-window.cfproj`** — lo-fi / chillhop: Rhodes, warm bass, swing.
-- **`neon-skyline.cfproj`** — synth-pop: synth presets + drums, uplifting.
-- **`maneskin-rock*.cfproj`** — rock: driven guitar tones + drums.
+> 2026-08-01: the folder was cleared to start fresh on the *breathing-rhythm*
+> approach (§2). The two current references were built by `gen_rhythm_songs.py`
+> (a Python generator → `o/x` 16th patterns → `__dawDispatch`). Earlier tracks
+> (petrichor / rainy-window / neon-skyline / maneskin …) are the historical
+> templates but no longer on disk.
+
+- **`signal-fire.cfproj`** — moody indie-alt, Am, 92 bpm, ~1:40. Clean guitar +
+  bass + light drums + strings + piano + violin lead. Syncopated stabs, held-V
+  tension, lead double-stops on downbeats. The template for **rhythmic drive with
+  space**.
+- **`paper-lanterns.cfproj`** — warm neo-soul / trip-hop, Bm, 76 bpm swing, ~2:00.
+  Rhodes + bass + soft drums + vibraphone + choir pad + pan-flute lead. Laid-back
+  pockets, lots of rests, ii–V tension. Deliberately warm/dark (correct for the
+  genre — didn't EQ the soul out).
 
 ---
 
