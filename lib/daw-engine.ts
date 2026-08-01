@@ -11,7 +11,7 @@ import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-ef
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { libraryGetAll } from './sound-library'
-import { libraryFulfill } from './default-samples'
+import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import type { MidiPreset } from './midi-presets'
 import { captureAudioInput } from './audio-capture'
 
@@ -1284,9 +1284,17 @@ export class DawEngine extends EventTarget {
       }, null)
       if (!entry) { this._presetBufCache.set(key, null); return }
 
-      const fulfilled = await libraryFulfill(entry.id)
-      if (!fulfilled?.audioBlob || !this.ctx) { this._presetBufCache.set(key, null); return }
-      const buf = await this.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      let buf: AudioBuffer | null = null
+      if (exact) {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (fulfilled?.audioBlob && this.ctx) buf = await this.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      } else if (entry.renderSpec && this.ctx) {
+        // No native sample for this exact note — it's outside the instrument's
+        // seeded range. Render the instrument AT the requested pitch so it plays
+        // the right note instead of the nearest seeded one (e.g. Synth Lead's
+        // range was C3–C5, so a G5 lead note used to fold down to C5).
+        buf = await renderPresetAtPitch(entry.renderSpec, pitch)
+      }
       this._presetBufCache.set(key, buf)
     } catch {
       this._presetBufCache.set(key, null)

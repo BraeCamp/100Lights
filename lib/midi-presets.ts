@@ -37,12 +37,12 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'Piano',          folder: 'Piano – All Notes',          loNote: 36, hiNote: 84, category: 'piano-grand',    group: 'Piano'   },
   { name: 'Electric Piano', folder: 'Elec. Piano – All Notes',    loNote: 36, hiNote: 84, category: 'piano-electric', group: 'Piano'   },
   { name: 'Rhodes',         folder: 'Rhodes – All Notes',         loNote: 36, hiNote: 84, category: 'piano-rhodes',   group: 'Piano'   },
-  { name: 'Synth Lead',     folder: 'Synth Lead – All Notes',     loNote: 48, hiNote: 72, category: 'synth-lead',     group: 'Synth'   },
-  { name: 'Synth Bass',     folder: 'Synth Bass – All Notes',     loNote: 24, hiNote: 48, category: 'synth-bass',     group: 'Bass'    },
+  { name: 'Synth Lead',     folder: 'Synth Lead – All Notes',     loNote: 36, hiNote: 96, category: 'synth-lead',     group: 'Synth'   },
+  { name: 'Synth Bass',     folder: 'Synth Bass – All Notes',     loNote: 24, hiNote: 60, category: 'synth-bass',     group: 'Bass'    },
   { name: 'Organ',          folder: 'Organ – All Notes',          loNote: 36, hiNote: 84, category: 'synth-organ',    group: 'Organ'   },
   { name: 'Choir',          folder: 'Choir – All Notes',          loNote: 36, hiNote: 84, category: 'synth-choir',    group: 'Synth'   },
-  { name: 'Dark Synth',     folder: 'Dark Synth – All Notes',     loNote: 36, hiNote: 72, category: 'synth-dark',     group: 'Synth'   },
-  { name: 'Metallic Pluck', folder: 'Metallic Pluck – All Notes', loNote: 36, hiNote: 72, category: 'synth-pluck',    group: 'Synth'   },
+  { name: 'Dark Synth',     folder: 'Dark Synth – All Notes',     loNote: 24, hiNote: 96, category: 'synth-dark',     group: 'Synth'   },
+  { name: 'Metallic Pluck', folder: 'Metallic Pluck – All Notes', loNote: 36, hiNote: 96, category: 'synth-pluck',    group: 'Synth'   },
   { name: 'Synth Strings',  folder: 'Synth Strings – All Notes',  loNote: 36, hiNote: 84, category: 'synth-strings',  group: 'Strings' },
   { name: 'Violin',         folder: 'Violin – All Notes',         loNote: 55, hiNote: 88, category: 'violin',         group: 'Strings' },
   { name: 'Viola',          folder: 'Viola – All Notes',          loNote: 48, hiNote: 77, category: 'viola',          group: 'Strings' },
@@ -140,11 +140,19 @@ export function getPresets(): MidiPreset[] {
     return merged
   }
 
-  // Keep built-ins in canonical order, user presets at the end
+  // Keep built-ins in canonical order, user presets at the end. Overlay each
+  // built-in's metadata (note range, name, group) from the code definition so
+  // range widenings (e.g. Synth Lead) reach users whose localStorage still has
+  // the old values — playback is unaffected either way, this fixes the piano
+  // roll's out-of-range flag and the picker's displayed range.
+  const defByFolder = new Map(BUILT_IN.map(b => [b.folder, b]))
   const builtIns = stored.filter(p => p.builtIn).sort((a, b) => {
     const ai = BUILT_IN.findIndex(x => x.folder === a.folder)
     const bi = BUILT_IN.findIndex(x => x.folder === b.folder)
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+  }).map(p => {
+    const def = defByFolder.get(p.folder)
+    return def ? { ...p, name: def.name, loNote: def.loNote, hiNote: def.hiNote, category: def.category, group: def.group } : p
   })
   const userPresets = stored.filter(p => !p.builtIn)
   return [...builtIns, ...userPresets]

@@ -290,6 +290,18 @@ export async function renderSoundfont(
   return rendered
 }
 
+/** Render a preset's instrument at an ARBITRARY pitch — used for notes outside
+ *  the seeded sample range so any instrument can play any note. Synth voices
+ *  synthesize the exact note; soundfont voices pitch-shift the nearest sample.
+ *  (Fixes narrow-range presets like Synth Lead clamping high notes to C5.) */
+export async function renderPresetAtPitch(spec: RenderSpec, pitch: number): Promise<AudioBuffer | null> {
+  try {
+    if (spec.kind === 'soundfont' && spec.soundfontUrl) return await renderSoundfont(spec.soundfontUrl, pitch)
+    if (spec.kind === 'melodic') return await renderMelodic(spec.beatType as BeatType, pitch, spec.duration, spec.channels ?? 2)
+  } catch { /* fall through to null */ }
+  return null
+}
+
 // ── Note tag helpers ──────────────────────────────────────────────────────────
 
 const NOTE_LETTERS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
