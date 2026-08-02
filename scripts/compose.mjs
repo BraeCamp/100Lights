@@ -284,14 +284,22 @@ const PAL = {
   afrobeat: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-21', kit: 'disco', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
   reggaeton: { keys: 'builtin-1', bass: 'builtin-4', pad: 'builtin-12', lead: 'builtin-3', kit: 'pop', ext: 7, bassStyle: '808', leadStyle: 'stab', keyRhythm: 'offstab' },
 }
-// Alternate lead sounds per lead-style, so the seed can vary the timbre too.
+// Alternate sounds per role/style — the seed varies the TIMBRE, drawing from the
+// full 46-voice library (mallets, brass, strings, extra guitars, choir…) the
+// composer used to ignore. Ids are builtin-N (see lib/midi-presets.ts).
 const LEAD_ALTS = {
-  melody: ['builtin-36', 'builtin-40', 'builtin-24', 'builtin-2', 'builtin-38'],
-  arp: ['builtin-3', 'builtin-8', 'builtin-12', 'builtin-39'],
-  riff: ['builtin-15', 'builtin-3', 'builtin-21', 'builtin-34'],
-  stab: ['builtin-3', 'builtin-1', 'builtin-8'],
-  sustained: ['builtin-43', 'builtin-24', 'builtin-30', 'builtin-6'],
+  // melodic leads: mallets, winds, strings, plucks — bright, singable voices
+  melody: ['builtin-36', 'builtin-40', 'builtin-24', 'builtin-2', 'builtin-38', 'builtin-31', 'builtin-37', 'builtin-39', 'builtin-42', 'builtin-25', 'builtin-10', 'builtin-35', 'builtin-16'],
+  arp:    ['builtin-3', 'builtin-8', 'builtin-12', 'builtin-39', 'builtin-38', 'builtin-36'],
+  riff:   ['builtin-15', 'builtin-3', 'builtin-21', 'builtin-34', 'builtin-35', 'builtin-22'],
+  stab:   ['builtin-3', 'builtin-1', 'builtin-8', 'builtin-21', 'builtin-45'],
+  sustained: ['builtin-43', 'builtin-24', 'builtin-30', 'builtin-6', 'builtin-40', 'builtin-28', 'builtin-42'],
 }
+// Alternate keys / pad / bass timbres (role-appropriate), seed-picked so songs
+// don't all use the one house voice per role.
+const KEYS_ALTS = ['builtin-2', 'builtin-1', 'builtin-27', 'builtin-26', 'builtin-0', 'builtin-36', 'builtin-35', 'builtin-45', 'builtin-31']
+const PAD_ALTS  = ['builtin-30', 'builtin-12', 'builtin-28', 'builtin-9', 'builtin-29', 'builtin-6', 'builtin-13', 'builtin-44']
+const BASS_ALTS = ['builtin-4', 'builtin-18', 'builtin-19', 'builtin-17']
 
 // ── Per-track sound shaping (rollFx) ──────────────────────────────────────────
 // NOTE: reverb/delay/chorus now live in the VISIBLE track effect rack (see
@@ -594,6 +602,12 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const hook = makeHook(rand)
   const leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
+  // Seed-vary the keys/pad/bass timbre too — mostly the genre default, sometimes
+  // an alternate from the wider library, so songs draw on more of the 46 voices.
+  const altTimbre = (def, arr) => rand.chance(0.5) ? def : rand.pick(arr)
+  const keysPreset = altTimbre(pal.keys, KEYS_ALTS)
+  const padPreset  = altTimbre(pal.pad, PAD_ALTS)
+  const bassPreset = altTimbre(pal.bass, BASS_ALTS)
 
   // ── Technique palette — EVERY dynamic feature is OPTIONAL and seed-gated, so
   // each song draws a DIFFERENT subset. Two songs (even same genre) should share
@@ -620,9 +634,9 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   let n = 0; const uid = p => `${p}${(n++).toString(36)}`
   const TK = [
     { key: 'drums', name: 'Drums', instr: kit.instrument,        preset: null,       rf: null,               pan: 0,     vol: 0.6,  drum: true },
-    { key: 'bass',  name: 'Bass',  instr: { type: 'none', params: {} }, preset: pal.bass,   rf: RF.bass,            pan: 0,     vol: 0.58 },
-    { key: 'keys',  name: 'Keys',  instr: { type: 'none', params: {} }, preset: pal.keys,   rf: RF.keys(pal.ext),   pan: -0.12, vol: 0.46 },
-    { key: 'pad',   name: 'Pad',   instr: { type: 'none', params: {} }, preset: pal.pad,    rf: RF.pad,             pan: 0.14,  vol: 0.34 },
+    { key: 'bass',  name: 'Bass',  instr: { type: 'none', params: {} }, preset: bassPreset, rf: RF.bass,            pan: 0,     vol: 0.58 },
+    { key: 'keys',  name: 'Keys',  instr: { type: 'none', params: {} }, preset: keysPreset, rf: RF.keys(pal.ext),   pan: -0.12, vol: 0.46 },
+    { key: 'pad',   name: 'Pad',   instr: { type: 'none', params: {} }, preset: padPreset,  rf: RF.pad,             pan: 0.14,  vol: 0.34 },
     { key: 'lead',  name: 'Lead',  instr: { type: 'none', params: {} }, preset: leadPreset, rf: RF.lead,            pan: 0.08,  vol: 0.5 },
   ]
   const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.key, pal, genreId, rand, () => uid('e')) }))
