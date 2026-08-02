@@ -8,14 +8,20 @@ import { useRef, useEffect } from 'react'
 // slider) to set its ±12 dB gain, double-click for flat. Bands sit at their real
 // frequencies (log x-axis): sub 70 · bass 200 · mid 1k · treble 8k.
 export type EqBand = 'sub' | 'bass' | 'mid' | 'treble'
+export type EqVals = { sub?: number; bass?: number; mid?: number; treble?: number }
 
-export default function EqCurve({ value, onChange, width = 66, height = 42 }: {
-  value: { sub?: number; bass?: number; mid?: number; treble?: number }
+export default function EqCurve({ value, onChange, onChangeAll, width = 66, height = 42 }: {
+  value: EqVals
   onChange: (band: EqBand, v: number) => void
+  /** Preferred: set several bands at once (a horizontal draw touches many). Emits
+   *  the whole tone so the parent applies it in ONE update — per-band onChange
+   *  would rebuild `tone` from a stale closure and drop all but the last band. */
+  onChangeAll?: (v: EqVals) => void
   width?: number; height?: number
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const dragBand = useRef<number | null>(null)
+  const work = useRef<EqVals>({})   // working tone during a draw gesture
   const BANDS: EqBand[] = ['sub', 'bass', 'mid', 'treble']
   const XF = [0.13, 0.38, 0.63, 0.88]                       // x fraction per band
   const COLORS = ['var(--accent-light)', '#22c55e', '#eab308', '#3b82f6']
@@ -70,19 +76,55 @@ export default function EqCurve({ value, onChange, width = 66, height = 42 }: {
     XF.forEach((x, i) => { const d = Math.abs(x - fx); if (d < bd) { bd = d; best = i } })
     return best
   }
+  const clampG = (g: number) => Math.round(g * 2) / 2
+  // Emit the current working tone. onChangeAll (one update) is correct for a
+  // multi-band draw; onChange per band is the single-band fallback.
+  const emit = () => {
+    if (onChangeAll) onChangeAll({ ...work.current })
+    else BANDS.forEach(b => onChange(b, work.current[b] ?? 0))
+  }
   const onDown = (e: React.PointerEvent) => {
     const rect = ref.current!.getBoundingClientRect()
-    const b = bandAtX(e.clientX - rect.left)
-    dragBand.current = b
-    const apply = (clientY: number) => onChange(BANDS[b], Math.round(yToG(clientY - rect.top) * 2) / 2)
-    apply(e.clientY)
-    const mm = (ev: PointerEvent) => { if (dragBand.current != null) apply(ev.clientY) }
+    const at = (clientX: number, clientY: number) => ({ fx: (clientX - rect.left) / width, g: yToG(clientY - rect.top) })
+    // Paint every band the pointer SWEEPS OVER between two samples, interpolating
+    // the drawn line's height at each band's x — so dragging horizontally draws a
+    // curve through all four bands in one smooth gesture, while a vertical drag
+    // still moves just the band under the pointer. Only the 4 band values change,
+    // so nothing is added to the project (no perf/file-size cost).
+    const paint = (a: { fx: number; g: number }, b: { fx: number; g: number }) => {
+      // Bands whose x the segment sweeps over get the DRAWN line's height at
+      // their own x (interpolated) — that's what makes a horizontal drag sketch
+      // the curve correctly.
+      const lo = Math.min(a.fx, b.fx), hi = Math.max(a.fx, b.fx)
+      XF.forEach((bx, i) => {
+        if (bx >= lo - 1e-6 && bx <= hi + 1e-6) {
+          const t = Math.abs(b.fx - a.fx) < 1e-6 ? 1 : (bx - a.fx) / (b.fx - a.fx)
+          work.current[BANDS[i]] = clampG(a.g + (b.g - a.g) * Math.max(0, Math.min(1, t)))
+        }
+      })
+      // Until the gesture sweeps sideways it's a vertical adjust: pin the band we
+      // grabbed to the pointer's height. Once it sweeps past a band-gap we stop —
+      // interpolation above draws the curve, and pinning the "nearest" band to the
+      // pointer's y (whose x sits between bands) would otherwise flatten them.
+      if (Math.abs(b.fx - startFx) > 0.04) swept = true
+      if (!swept) work.current[grabbed] = clampG(b.g)
+      emit()
+    }
+    work.current = { ...value }
+    let last = at(e.clientX, e.clientY)
+    const startFx = last.fx
+    const grabbed = BANDS[bandAtX(last.fx * width)]
+    let swept = false
+    dragBand.current = 0
+    paint(last, last)
+    const mm = (ev: PointerEvent) => { const cur = at(ev.clientX, ev.clientY); paint(last, cur); last = cur }
     const mu = () => { dragBand.current = null; document.removeEventListener('pointermove', mm); document.removeEventListener('pointerup', mu) }
     document.addEventListener('pointermove', mm); document.addEventListener('pointerup', mu)
   }
+  const flat = () => { work.current = {}; onChangeAll ? onChangeAll({}) : BANDS.forEach(b => onChange(b, 0)) }
   return (
-    <canvas ref={ref} onPointerDown={onDown} onDoubleClick={() => BANDS.forEach(b => onChange(b, 0))}
-      title="Draw the EQ — drag a band up/down · double-click for flat"
-      style={{ width, height, borderRadius: 3, display: 'block', cursor: 'ns-resize', touchAction: 'none' }} />
+    <canvas ref={ref} onPointerDown={onDown} onDoubleClick={flat}
+      title="Draw the EQ — drag across to sketch the curve, or drag a band up/down · double-click for flat"
+      style={{ width, height, borderRadius: 3, display: 'block', cursor: 'crosshair', touchAction: 'none' }} />
   )
 }

@@ -74,12 +74,15 @@ function GraphCard({ graph, onPatch, onRemove, onRetarget, available }: {
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
+  const [drawMode, setDrawMode] = useState(false)
+  const painting = useRef(false)
+  const buckets = useRef<Map<number, number>>(new Map())
   const field = FX_FIELD_BY_KEY[graph.target]
   const pts = [...graph.points].sort((a, b) => a.pitch - b.pitch)
 
   function localXY(e: React.PointerEvent | React.MouseEvent) {
     const r = svgRef.current!.getBoundingClientRect()
-    return { x: e.clientX - r.left, y: e.clientY - r.top }
+    return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }
   }
   function movePoint(i: number, x: number, y: number) {
     const next = pts.map((p, j) => j === i ? { pitch: pitchForX(x), amount: amtForY(y) } : p)
@@ -88,6 +91,15 @@ function GraphCard({ graph, onPatch, onRemove, onRetarget, available }: {
   function addAt(e: React.MouseEvent) {
     const { x, y } = localXY(e)
     onPatch({ points: [...pts, { pitch: pitchForX(x), amount: amtForY(y) }].sort((a, b) => a.pitch - b.pitch) })
+  }
+  // Freehand: drag across to draw the curve. Points are bucketed by pitch, so a
+  // stroke leaves an even trail; the stroke replaces the graph.
+  function paint(e: React.PointerEvent) {
+    const { x, y } = localXY(e)
+    buckets.current.set(pitchForX(x), amtForY(y))
+    const arr = [...buckets.current.entries()].sort((a, b) => a[0] - b[0]).map(([pitch, amount]) => ({ pitch, amount }))
+    if (arr.length === 1) arr.push({ pitch: HI, amount: arr[0].amount })
+    onPatch({ points: arr })
   }
 
   return (
@@ -100,13 +112,16 @@ function GraphCard({ graph, onPatch, onRemove, onRetarget, available }: {
           {available.map(t => <option key={t} value={t}>{FX_FIELD_BY_KEY[t].label}</option>)}
         </select>
         <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 'auto' }}>pitch → amount</span>
+        <button onClick={() => setDrawMode(d => !d)} title={drawMode ? 'Drawing — drag across to sketch the curve' : 'Draw the curve freehand'}
+          style={{ background: drawMode ? 'rgb(var(--accent-rgb) / 0.18)' : 'none', border: `1px solid ${drawMode ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 5, color: drawMode ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '1px 6px' }}>✎</button>
         <button onClick={onRemove} title="Remove graph" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}>×</button>
       </div>
 
-      <svg ref={svgRef} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', touchAction: 'none', opacity: graph.enabled ? 1 : 0.45 }}
-        onDoubleClick={addAt}
-        onPointerMove={e => { if (drag !== null) { const { x, y } = localXY(e); movePoint(drag, x, y) } }}
-        onPointerUp={e => { if (drag !== null) { (e.target as Element).releasePointerCapture?.(e.pointerId) } setDrag(null) }}
+      <svg ref={svgRef} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', touchAction: 'none', opacity: graph.enabled ? 1 : 0.45, cursor: drawMode ? 'crosshair' : 'default' }}
+        onDoubleClick={drawMode ? undefined : addAt}
+        onPointerDown={e => { if (drawMode) { painting.current = true; buckets.current = new Map(); svgRef.current?.setPointerCapture?.(e.pointerId); paint(e) } }}
+        onPointerMove={e => { if (drawMode && painting.current) { paint(e) } else if (drag !== null) { const { x, y } = localXY(e); movePoint(drag, x, y) } }}
+        onPointerUp={e => { painting.current = false; if (drag !== null) { (e.target as Element).releasePointerCapture?.(e.pointerId) } setDrag(null) }}
       >
         <rect x={0} y={0} width={W} height={H} fill="var(--bg-base)" rx={5} />
         {/* mid gridline */}
@@ -115,8 +130,8 @@ function GraphCard({ graph, onPatch, onRemove, onRetarget, available }: {
           points={pts.map(p => `${xForPitch(p.pitch)},${yForAmt(p.amount)}`).join(' ')}
           fill="none" stroke="var(--accent-light)" strokeWidth={1.5} />
         {pts.map((p, i) => (
-          <circle key={i} cx={xForPitch(p.pitch)} cy={yForAmt(p.amount)} r={5}
-            fill="var(--accent-light)" stroke="#000" strokeWidth={0.5} style={{ cursor: 'grab' }}
+          <circle key={i} cx={xForPitch(p.pitch)} cy={yForAmt(p.amount)} r={drawMode ? 2.5 : 5}
+            fill="var(--accent-light)" stroke="#000" strokeWidth={0.5} style={{ cursor: 'grab', pointerEvents: drawMode ? 'none' : undefined }}
             onPointerDown={e => { e.stopPropagation(); (e.target as Element).setPointerCapture?.(e.pointerId); setDrag(i) }}
             onDoubleClick={e => { e.stopPropagation(); if (pts.length > 1) onPatch({ points: pts.filter((_, j) => j !== i) }) }}>
             <title>{`${noteName(p.pitch)} → ${field.fmt(pitchGraphValue(graph.target, p.amount))}`}</title>
@@ -125,7 +140,7 @@ function GraphCard({ graph, onPatch, onRemove, onRetarget, available }: {
       </svg>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8.5, color: 'var(--text-muted)', padding: '2px 2px 0' }}>
         <span>{noteName(LO)}</span>
-        <span>double-click to add · dbl-click a dot to remove</span>
+        <span>{drawMode ? 'drag across to draw the curve' : '✎ to draw · double-click to add a point'}</span>
         <span>{noteName(HI)}</span>
       </div>
     </div>

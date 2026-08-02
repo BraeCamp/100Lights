@@ -11,7 +11,7 @@ import LevelMeter from './LevelMeter'
 import ReferenceAB from './ReferenceAB'
 import { useMidiLearn } from '@/lib/midi-learn'
 import Knob from './Knob'
-import EqCurve, { type EqBand } from './EqCurve'
+import EqCurve, { type EqBand, type EqVals } from './EqCurve'
 import { ReturnDeviceChain } from './DeviceChain'
 
 // ── Vertical fader ─────────────────────────────────────────────────────────
@@ -91,13 +91,22 @@ function VerticalFader({ value, onChange, onCommit, color = 'var(--accent)' }: {
 
 // ── Channel strip ──────────────────────────────────────────────────────────
 
+/** Drop neutral (0) bands so a flat/near-flat tone stores nothing. */
+const cleanTone = (t: EqVals): EqVals => {
+  const out: EqVals = {}
+  for (const b of ['sub', 'bass', 'mid', 'treble'] as const) if (t[b]) out[b] = t[b]
+  return out
+}
+
 // The drawable Tone-EQ graph, opened full-size from a channel strip. Any band is
-// a big drag target (drag anywhere in its column up/down); double-tap flattens.
-function EqGraphModal({ trackName, color, value, onChange, onClose }: {
+// a big drag target — drag up/down on one, or drag ACROSS to sketch the whole
+// curve through all four in one gesture. Double-tap flattens.
+function EqGraphModal({ trackName, color, value, onChange, onChangeAll, onClose }: {
   trackName: string
   color: string
-  value: { sub?: number; bass?: number; mid?: number; treble?: number }
+  value: EqVals
   onChange: (band: EqBand, v: number) => void
+  onChangeAll: (v: EqVals) => void
   onClose: () => void
 }) {
   const isMobile = useIsMobile()
@@ -116,12 +125,12 @@ function EqGraphModal({ trackName, color, value, onChange, onClose }: {
       <div onClick={e => e.stopPropagation()} style={{ width: isMobile ? '100%' : 'auto', maxWidth: '96vw', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderTop: `3px solid ${color}`, borderRadius: isMobile ? '18px 18px 0 0' : 12, padding: isMobile ? '16px 16px calc(18px + env(safe-area-inset-bottom))' : 18, boxShadow: '0 12px 40px rgba(0,0,0,0.6)' }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, gap: 10 }}>
           <strong style={{ fontSize: 14, flex: 1 }}>{trackName} · Tone EQ</strong>
-          <button onClick={() => (['sub', 'bass', 'mid', 'treble'] as const).forEach(b => onChange(b, 0))}
+          <button onClick={() => onChangeAll({})}
             style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Flat</button>
           <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
         <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', width: w }}>
-          <EqCurve value={value} onChange={onChange} width={w} height={h} />
+          <EqCurve value={value} onChange={onChange} onChangeAll={onChangeAll} width={w} height={h} />
         </div>
         <div style={{ display: 'flex', marginTop: 10, gap: 6, width: w }}>
           {BANDS.map(([band, label, freq, c]) => {
@@ -317,6 +326,11 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } })
           engine.setTrackTone(track.id, next)
         }
+        const setTone = (t: EqVals) => {
+          const next = cleanTone(t)
+          dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } })
+          engine.setTrackTone(track.id, next)
+        }
         const BANDS = [
           ['sub', 'SUB', 'var(--accent-light)'], ['bass', 'BASS', '#22c55e'],
           ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6'],
@@ -362,7 +376,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
                 </div>
               )
             })}
-            {eqOpen && <EqGraphModal trackName={track.name} color={track.color ?? 'var(--accent)'} value={tone} onChange={setBand} onClose={() => setEqOpen(false)} />}
+            {eqOpen && <EqGraphModal trackName={track.name} color={track.color ?? 'var(--accent)'} value={tone} onChange={setBand} onChangeAll={setTone} onClose={() => setEqOpen(false)} />}
           </div>
         )
       })()}
@@ -380,14 +394,16 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
             style={{ width: '100%', accentColor: color, height: 22 }} />
         </div>
       )}
-      {!isMaster && !isMobile && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <Knob
-            value={pan} min={-1} max={1} defaultValue={0} size={26} color={color}
-            onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track!.id, patch: { pan: v } }); engine.setTrackPan(track!.id, v) }}
-            format={v => v === 0 ? 'Center' : v < 0 ? `L${Math.round(-v * 100)}` : `R${Math.round(v * 100)}`}
-          />
-          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{panLabel}</span>
+      {!isMaster && !isMobile && track && (
+        <div style={{ width: '100%' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, fontWeight: 700, marginBottom: 1, lineHeight: 1 }}>
+            <span style={{ color: 'var(--text-muted)', letterSpacing: '0.06em' }}>PAN</span>
+            <span style={{ color: pan ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{panLabel}</span>
+          </div>
+          <input type="range" min={-1} max={1} step={0.02} value={pan}
+            onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+            onDoubleClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: 0 } }); engine.setTrackPan(track.id, 0) }}
+            style={{ width: '100%', accentColor: color, height: 13 }} />
         </div>
       )}
 
@@ -656,6 +672,10 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
     const next = { ...tone, [band]: v || undefined }
     dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } }); engine.setTrackTone(track.id, next)
   }
+  const setTone = (t: EqVals) => {
+    const next = cleanTone(t)
+    dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { tone: next } }); engine.setTrackTone(track.id, next)
+  }
   const db = track.volume > 0.0001 ? (20 * Math.log10(track.volume)).toFixed(1) : '-∞'
   const panLabel = track.pan === 0 ? 'Center' : track.pan < 0 ? `L${Math.round(-track.pan * 100)}` : `R${Math.round(track.pan * 100)}`
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
@@ -748,7 +768,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
           </div>
         </div>
       </div>
-      {eqOpen && <EqGraphModal trackName={track.name} color={track.color ?? 'var(--accent)'} value={tone} onChange={setBand} onClose={() => setEqOpen(false)} />}
+      {eqOpen && <EqGraphModal trackName={track.name} color={track.color ?? 'var(--accent)'} value={tone} onChange={setBand} onChangeAll={setTone} onClose={() => setEqOpen(false)} />}
     </div>,
     document.body,
   )
