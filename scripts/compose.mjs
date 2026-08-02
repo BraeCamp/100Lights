@@ -11,6 +11,10 @@
 //   · MELODIC TECHNIQUE — a recurring HOOK motif (not random notes), developed
 //     across choruses; call-and-response phrasing; genre lead styles.
 //   · BASS TECHNIQUE — genre idiom (walking / offbeat / 808 / octave-arp / …).
+//   · DYNAMIC ARC — one CLIP PER SECTION, each with its own sound: a tension-
+//     driven low-pass (dark/quiet parts, bright peaks) + a sparse long-note
+//     "soft intro" so songs start slow and open up. These are SEED-GATED — a
+//     palette of options for variety, NOT a checklist every song must satisfy.
 //   · SEED-DRIVEN VARIETY — form, progressions, motif, styles, kit/preset all
 //     vary by seed, so re-running gives a different (still coherent) song.
 //
@@ -291,6 +295,20 @@ function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread) {
   })
 }
 
+// Long, held pad — merges runs of the same chord into one sustained note. Used
+// for sparse/low-tension sections so the music can "breathe" and open slowly.
+function fillPadLong(clip, rand, bar0, chords, base) {
+  let i = 0
+  while (i < chords.length) {
+    let j = i + 1
+    while (j < chords.length && chords[j].join() === chords[i].join()) j++
+    const spanBeats = (j - i) * 4
+    const voiced = [chords[i][0] - 12, ...chords[i].slice(1)]
+    for (const p of voiced) clip.notes.push(note(p, (bar0 + i) * 4, spanBeats * 0.99, hvel(rand, base, 0)))
+    i = j
+  }
+}
+
 // ── Lead: a recurring HOOK motif, developed across choruses ──────────────────
 // motif = list of {slot, tone, len}; `tone` indexes into the chord's tones (with
 // octave-up wraps) so it's always consonant, plus rests. Made once per song.
@@ -362,42 +380,80 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
 
-  // Tracks (one clip per track spanning the whole song).
-  let n = 0; const uid = p => `${p}${(n++).toString(36)}`
-  const tracks = [], clips = []
-  const mk = (name, instr, presetId, rollFx, pan, vol) => {
-    const tid = uid('t'); tracks.push({ id: tid, name, instrument: instr, volume: vol, pan })
-    const clip = { id: uid('c'), trackId: tid, presetId, rollFx, startBeat: 0, durationBeats: 0, notes: [], isDrumClip: instr.type === 'drum' }
-    clips.push(clip); return clip
+  // ── Technique palette — seed-gated, so NOT every song uses every idea. ───────
+  // (These are options for diversity between songs, not a checklist to satisfy.)
+  const useFilterArc = rand.chance(0.8)   // dull low-tension parts, open on peaks
+  const softIntro    = rand.chance(0.7)   // sparse, long-note, slow-opening intros
+  // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
+  // peaks fully open. Bass keeps some body so it never disappears.
+  const cutoffFor = (energy, isBass) => {
+    if (!useFilterArc) return null
+    const hz = Math.round(500 + Math.pow(Math.max(0, Math.min(1, energy)), 2.2) * 17500)
+    return isBass ? Math.max(900, hz) : hz
   }
-  const cDr = mk('Drums', kit.instrument, null, null, 0, 0.6)
-  const cBs = mk('Bass', { type: 'none', params: {} }, pal.bass, RF.bass, 0, 0.58)
-  const cKy = mk('Keys', { type: 'none', params: {} }, pal.keys, RF.keys(pal.ext), -0.12, 0.46)
-  const cPd = mk('Pad', { type: 'none', params: {} }, pal.pad, RF.pad, 0.14, 0.34)
-  const cLd = mk('Lead', { type: 'none', params: {} }, leadPreset, RF.lead, 0.08, 0.5)
+
+  // Track definitions — one TRACK per layer, but one CLIP PER SECTION so each
+  // part of the song carries its own sound (filter brightness, density). This is
+  // how a producer builds it: the intro clip is dull + sparse, the drop clip is
+  // bright + full, and the timbre steps with the tension as the song moves.
+  let n = 0; const uid = p => `${p}${(n++).toString(36)}`
+  const TK = [
+    { key: 'drums', name: 'Drums', instr: kit.instrument,        preset: null,       rf: null,               pan: 0,     vol: 0.6,  drum: true },
+    { key: 'bass',  name: 'Bass',  instr: { type: 'none', params: {} }, preset: pal.bass,   rf: RF.bass,            pan: 0,     vol: 0.58 },
+    { key: 'keys',  name: 'Keys',  instr: { type: 'none', params: {} }, preset: pal.keys,   rf: RF.keys(pal.ext),   pan: -0.12, vol: 0.46 },
+    { key: 'pad',   name: 'Pad',   instr: { type: 'none', params: {} }, preset: pal.pad,    rf: RF.pad,             pan: 0.14,  vol: 0.34 },
+    { key: 'lead',  name: 'Lead',  instr: { type: 'none', params: {} }, preset: leadPreset, rf: RF.lead,            pan: 0.08,  vol: 0.5 },
+  ]
+  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan }))
+  const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
+  const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
+  const clips = []
+
+  // Make a section-clip for a layer, stamping the tension-driven low-pass on it.
+  const secClip = (key, startBeat, bars, energy) => {
+    const tk = byKey[key]
+    let rf = tk.rf ? { ...tk.rf } : null
+    const cut = cutoffFor(energy, key === 'bass')
+    if (rf && cut != null) rf.filterHz = cut
+    return { id: uid('c'), trackId: tid[key], presetId: tk.preset, rollFx: rf, startBeat, durationBeats: bars * 4, notes: [], isDrumClip: !!tk.drum }
+  }
+  const push = c => { if (c.notes.length) clips.push(c) }
 
   let bar = 0
   for (const sec of form) {
     const prog = progs[sec.prog]
+    const e = sec.energy
     const L = layersFor(sec)
-    // chords for this section (repeat the 4-chord prog to fill the section)
-    const reps = Math.ceil(sec.bars / prog.length)
-    const seq = Array.from({ length: sec.bars }, (_, i) => prog[i % prog.length])
+    const sparse = softIntro && e < 0.42        // slow, long-note treatment
+    const secStart = bar * 4
+    // Sparse sections change chord half as often (doubled bars) so pad/bass hold
+    // long; busy sections walk the full progression.
+    const seq = sparse
+      ? Array.from({ length: sec.bars }, (_, i) => [prog[0], prog[2 % prog.length]][Math.floor(i / 2) % 2])
+      : Array.from({ length: sec.bars }, (_, i) => prog[i % prog.length])
     const chords = seq.map(nu => chordFor(nu, root, scale, 4, pal.ext))
-    const padCh = seq.map(nu => chordFor(nu, root, scale, 4, sec.energy > 0.8 ? pal.ext : 0))
+    const padCh = seq.map(nu => chordFor(nu, root, scale, 4, e > 0.8 ? pal.ext : 0))
     const roots = seq.map(nu => snapToScale(rootFor(nu, root, scale, 2), root, scale))
 
-    if (L.drums && genre.drums !== 'none') fillDrums(cDr, rand, bar, sec.bars, feel, sec)
-    else if (L.softDrums && genre.drums !== 'none') fillDrums(cDr, rand, bar, sec.bars, feel, { ...sec, breakdown: true })
-    if (L.bass) fillBass(cBs, rand, bar, roots, pal.bassStyle, 78, root, scale)
-    if (L.keys) fillChords(cKy, rand, bar, chords, keyRhythm, sec.energy > 0.8 ? 68 : 58, null, false)
-    if (L.pad) fillChords(cPd, rand, bar, padCh, KEY_RHYTHMS.sustain, sec.energy > 0.5 ? 48 : 40, 16, true)
-    if (L.lead) fillLead(cLd, rand, bar, chords, motif, 66, pal.leadStyle, root, scale)
-    else if (L.arp) fillLead(cLd, rand, bar, chords, motif, 56, 'arp', root, scale)
+    // Drums
+    if (genre.drums !== 'none') {
+      if (L.drums) { const c = secClip('drums', secStart, sec.bars, e); fillDrums(c, rand, 0, sec.bars, feel, sec); push(c) }
+      else if (L.softDrums) { const c = secClip('drums', secStart, sec.bars, Math.min(e, 0.5)); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, breakdown: true }); push(c) }
+    }
+    // Bass — long pedal roots when sparse, genre idiom otherwise
+    if (L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, root, scale); push(c) }
+    // Keys — sit out the sparse intro so it stays open
+    if (L.keys && !sparse) { const c = secClip('keys', secStart, sec.bars, e); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false); push(c) }
+    // Pad — always present; held long when sparse
+    { const c = secClip('pad', secStart, sec.bars, sparse ? e * 0.85 : e)
+      if (sparse) fillPadLong(c, rand, 0, padCh, 42)
+      else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true)
+      push(c) }
+    // Lead — never in a sparse section
+    if (L.lead && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, motif, 66, pal.leadStyle, root, scale); push(c) }
+    else if (L.arp && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, motif, 56, 'arp', root, scale); push(c) }
     bar += sec.bars
   }
-  const dur = bar * 4
-  for (const c of clips) c.durationBeats = dur
 
   return {
     name: `${genre.name} — ${keyStr || (KEY_NAMES[root] + ' ' + scale)}`,
@@ -424,7 +480,7 @@ async function main() {
   const seed = seedArg ? parseInt(seedArg.split('=')[1], 10) : 12345
   const spec = compose(libs, pos[0], pos[1] || '', seed)
   const nNotes = spec.clips.reduce((a, c) => a + c.notes.length, 0)
-  const end = Math.max(...spec.clips.flatMap(c => c.notes.map(nn => nn.startBeat + nn.durationBeats)), 0)
+  const end = Math.max(...spec.clips.map(c => c.startBeat + c.durationBeats), 0)
   const slug = `${spec.genre}-${(pos[1] || spec.scale).replace(/\s+/g, '')}`.toLowerCase()
   const out = outArg ? outArg.split('=')[1] : join(OUT_DIR, `${slug}.json`)
   mkdirSync(dirname(out), { recursive: true })
