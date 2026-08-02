@@ -1,14 +1,13 @@
 import type { CSSProperties } from 'react'
 
 // The 100Lights icon mark. Sits next to the "100Lights" wordmark in headers.
-// Uses the vector logo (crisp at any size). The gold badge is currently baked
-// into the art; a future themeable version would separate the symbol from the
-// background so the badge can follow light/dark + color customization.
+// The transparent (no-background) circular PNG, so the mark sits on any surface
+// without a baked-in badge/buffer.
 export function LogoMark({ size = 24, style, className }: { size?: number; style?: CSSProperties; className?: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/logo1yellow.svg"
+      src="/logo1yellowNObuffer.png"
       alt=""
       aria-hidden
       width={size}
