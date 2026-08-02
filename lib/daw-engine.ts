@@ -2653,6 +2653,15 @@ export class DawEngine extends EventTarget {
     // A curve for `param.setValueCurveAtTime`, mapping the graph (0..1) → values.
     const sched = (param: AudioParam, map: (g: number) => number) => {
       const { curve, durSec } = this._slicedCurve(graph, eff.durationBeats, effSeekOffsetSec, map)
+      // If this bar starts AFTER the note already began, pin the param at its
+      // NEUTRAL value (graph = 0) from the note's start until the bar's region.
+      // Otherwise the node's construction default (e.g. a lowpass biquad sits at
+      // 350 Hz, not "open") processes the note before the effect should exist —
+      // which reads as the OTHER effect getting cancelled during the wait. Only
+      // when the start is genuinely in the future (not a mid-effect seek-in).
+      if (effContextStart > _startAt + 1e-4) {
+        try { param.setValueAtTime(map(0), _startAt) } catch { /* ok */ }
+      }
       try { param.setValueCurveAtTime(curve, effContextStart, durSec) } catch { /* overlapping curve */ }
     }
     const has = (k: keyof typeof fx) => fieldIsSet(k, fx[k] as number | undefined)
