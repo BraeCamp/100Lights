@@ -10,6 +10,7 @@ import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject } from '@/lib/daw-state'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
+import { useUITierOptional } from '../UITierProvider'
 import dynamic from 'next/dynamic'
 
 const PadTuner    = dynamic(() => import('./PadTuner'),    { ssr: false })
@@ -99,6 +100,11 @@ export default function Transport() {
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
   const [micError, setMicError] = useState('')
   const [showMask, setShowMask] = useState(false)
+  // Toolbar overflow (item 14) — the less-used full-tier controls (swing, speed,
+  // masking) live in a "More" popover so the bar isn't a wall of sliders.
+  const [moreOpen, setMoreOpen] = useState(false)
+  const uiTier = useUITierOptional()
+  const showMore = (uiTier?.tier ?? 'full') === 'full'
 
   // Inject keyframes for recording pulse + guide blink (once per page)
   useEffect(() => {
@@ -900,71 +906,75 @@ export default function Transport() {
         <Music2 size={13} />
       </button>
 
-      <div style={divider} />
+      {showMore && <div style={divider} />}
 
-      {/* Swing */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-help-id="swing">
-        <span
-          onClick={() => {
-            // groove presets: click the label to cycle through named feels
-            const GROOVES = [0, 0.12, 0.25, 0.33, 0.5]
-            const cur = project.swing ?? 0
-            const idx = GROOVES.findIndex(g => Math.abs(g - cur) < 0.03)
-            const next = GROOVES[(idx + 1) % GROOVES.length] ?? 0
-            dispatch({ type: 'SET_SWING', swing: next })
-            engine.swing = next
-          }}
-          title="Click to cycle groove presets: straight → light → classic swing → triplet feel → hard shuffle"
-          style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em', cursor: 'pointer' }}
-        >SWING</span>
-        <input
-          type="range" min={0} max={0.5} step={0.01}
-          value={project.swing ?? 0}
-          onChange={e => {
-            const swing = parseFloat(e.target.value)
-            dispatch({ type: 'SET_SWING', swing })
-            engine.swing = swing
-          }}
-          className="cf-slider"
-          style={{ width: 56, accentColor: 'var(--accent)' }}
-          title={`Swing: ${Math.round((project.swing ?? 0) * 100)}%`}
-        />
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', minWidth: 26, textAlign: 'right' }}>
-          {Math.round((project.swing ?? 0) * 100)}%
-        </span>
-      </div>
-
-      <div style={divider} />
-
-      {/* Varispeed (tape mode) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-help-id="varispeed">
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-          <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em', lineHeight: 1 }}>SPEED</span>
-          <span style={{ fontSize: 6, color: varispeed !== 100 ? 'rgba(245,158,11,0.6)' : 'var(--text-muted)', letterSpacing: '0.04em', lineHeight: 1.4, opacity: 0.7 }}>tape</span>
-        </div>
-        <input
-          type="range" min={25} max={200} step={1}
-          value={varispeed}
-          onChange={e => {
-            const pct = parseInt(e.target.value)
-            setVarispeed(pct)
-            engine.setPlaybackRate(pct / 100)
-          }}
-          className="cf-slider"
-          style={{ width: 56, accentColor: varispeed !== 100 ? '#f59e0b' : 'var(--accent)' }}
-          title={`Varispeed: ${varispeed}% — tape mode (pitch follows speed). Drag to adjust.`}
-        />
-        <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', fontFamily: 'monospace', minWidth: 30, textAlign: 'right' }}>
-          {varispeed}%
-        </span>
-        {varispeed !== 100 && (
+      {/* More (item 14) — swing, tape speed, and the masking detector fold into
+          one popover so the bar isn't a wall of sliders. Full tier only (these
+          are all full-tier controls); frequent tools stay one click away. */}
+      {showMore && (
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
           <button
-            onClick={() => { setVarispeed(100); engine.setPlaybackRate(1.0) }}
-            style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', letterSpacing: '0.05em', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b' }}
-            title="Reset speed to 100%"
-          >100%</button>
-        )}
-      </div>
+            onClick={() => setMoreOpen(o => !o)}
+            title="More — swing, tape speed, masking"
+            style={{ ...base, width: 'auto', padding: '0 9px', fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', background: moreOpen ? 'var(--accent-subtle)' : '#1e1e1e', border: moreOpen ? '1px solid var(--accent)' : '1px solid var(--border)', color: moreOpen ? 'var(--accent-light)' : 'var(--text-secondary)' }}
+          >More ▾</button>
+          {moreOpen && (
+            <>
+              <div onClick={() => setMoreOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1400 }} />
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 1401, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 12, boxShadow: '0 14px 34px rgba(0,0,0,0.7)', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 232 }}>
+                {/* Swing */}
+                <div data-help-id="swing" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span
+                    onClick={() => {
+                      const GROOVES = [0, 0.12, 0.25, 0.33, 0.5]
+                      const cur = project.swing ?? 0
+                      const idx = GROOVES.findIndex(g => Math.abs(g - cur) < 0.03)
+                      const next = GROOVES[(idx + 1) % GROOVES.length] ?? 0
+                      dispatch({ type: 'SET_SWING', swing: next })
+                      engine.swing = next
+                    }}
+                    title="Click to cycle groove presets: straight → light → classic swing → triplet feel → hard shuffle"
+                    style={{ fontSize: 9, width: 42, color: 'var(--text-muted)', letterSpacing: '0.06em', cursor: 'pointer', flexShrink: 0 }}
+                  >SWING</span>
+                  <input
+                    type="range" min={0} max={0.5} step={0.01}
+                    value={project.swing ?? 0}
+                    onChange={e => { const swing = parseFloat(e.target.value); dispatch({ type: 'SET_SWING', swing }); engine.swing = swing }}
+                    className="cf-slider" style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }}
+                    title={`Swing: ${Math.round((project.swing ?? 0) * 100)}%`}
+                  />
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', width: 30, textAlign: 'right', flexShrink: 0 }}>{Math.round((project.swing ?? 0) * 100)}%</span>
+                </div>
+                {/* Varispeed (tape mode) */}
+                <div data-help-id="varispeed" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 9, width: 42, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em', flexShrink: 0 }} title="Tape speed — pitch follows speed">SPEED</span>
+                  <input
+                    type="range" min={25} max={200} step={1}
+                    value={varispeed}
+                    onChange={e => { const pct = parseInt(e.target.value); setVarispeed(pct); engine.setPlaybackRate(pct / 100) }}
+                    className="cf-slider" style={{ flex: 1, minWidth: 0, accentColor: varispeed !== 100 ? '#f59e0b' : 'var(--accent)' }}
+                    title={`Varispeed: ${varispeed}% — tape mode (pitch follows speed).`}
+                  />
+                  <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', fontFamily: 'monospace', width: 30, textAlign: 'right', flexShrink: 0 }}>{varispeed}%</span>
+                  {varispeed !== 100 && (
+                    <button onClick={() => { setVarispeed(100); engine.setPlaybackRate(1.0) }} title="Reset speed to 100%"
+                      style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b', flexShrink: 0 }}>↺</button>
+                  )}
+                </div>
+                {/* Masking detector */}
+                <button
+                  onClick={() => setShowMask(v => !v)}
+                  data-help-id="masking"
+                  title="Frequency masking detector — shows which tracks compete in the same bands"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7, cursor: 'pointer', textAlign: 'left', background: showMask ? 'rgba(239,68,68,0.12)' : 'var(--bg-card)', border: showMask ? '1px solid rgba(239,68,68,0.5)' : '1px solid var(--border-light)', color: showMask ? '#ef4444' : 'var(--text-secondary)', fontSize: 10, fontWeight: 700 }}>
+                  <span style={{ letterSpacing: '0.06em' }}>MASK</span>
+                  <span style={{ fontSize: 8.5, fontWeight: 400, color: 'var(--text-muted)' }}>frequency masking detector</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div style={divider} />
 
@@ -1028,22 +1038,7 @@ export default function Transport() {
         ♩
       </button>
 
-      {/* Masking detector toggle */}
-      <button
-        onClick={() => setShowMask(v => !v)}
-        title="Frequency masking detector — shows which tracks compete in the same bands"
-        data-help-id="masking"
-        style={{
-          ...base,
-          width: 'auto', padding: '0 8px',
-          fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.06em',
-          background: showMask ? 'rgba(239,68,68,0.15)' : '#1e1e1e',
-          border: showMask ? '1px solid rgba(239,68,68,0.5)' : '1px solid var(--border)',
-          color: showMask ? '#ef4444' : 'var(--text-secondary)',
-        }}
-      >
-        MASK
-      </button>
+      {/* (MASK moved into the "More" popover — item 14.) */}
 
       <input ref={fileInputRef} type="file" accept=".cfproj,application/json" onChange={handleOpenFile} style={{ display: 'none' }} />
       <button

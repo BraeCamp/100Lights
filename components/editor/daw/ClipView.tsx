@@ -110,6 +110,14 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const [shareOpen, setShareOpen] = useState(false)  // Share-to-community dialog
   const [justSaved, setJustSaved] = useState(false)  // 'Saved ✓' flash on the library item
   const [hovered, setHovered] = useState(false)
+  // Inline rename (from the context menu — the Name field moved out of the Sound panel).
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(clip.name)
+  const commitRename = () => {
+    const name = nameDraft.trim()
+    if (name && name !== clip.name) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { name } })
+    setRenaming(false)
+  }
   const [gainDragInfo, setGainDragInfo] = useState<{ gain: number; mouseX: number; mouseY: number } | null>(null)
   const [transientDialog, setTransientDialog] = useState<{
     sensitivity: number
@@ -524,6 +532,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           { label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: onDoubleClick },
           { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
+    ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     { label: 'Edit ▸', fn: () => setCtxSub('edit'), keepOpen: true },
@@ -776,11 +785,27 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           />
         )}
 
-        {/* Clip label */}
-        <div style={{ position: 'absolute', top: 2, left: 12, right: 12, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 5 }}>
-          {clip.name}
-          {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
-          {isAudioClip(clip) && clip.boomerang && <span style={{ marginLeft: 4, opacity: 0.7 }}>⇄</span>}
+        {/* Clip label (an inline input while renaming from the context menu) */}
+        <div style={{ position: 'absolute', top: 2, left: 12, right: 12, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: renaming ? 'auto' : 'none', zIndex: 5 }}>
+          {renaming ? (
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={e => setNameDraft(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); commitRename() } else if (e.key === 'Escape') { setRenaming(false) } }}
+              onMouseDown={e => e.stopPropagation()}
+              onPointerDown={e => e.stopPropagation()}
+              spellCheck={false}
+              style={{ width: '100%', boxSizing: 'border-box', fontSize: 9, padding: '0 3px', borderRadius: 3, border: '1px solid rgba(255,255,255,0.6)', background: 'rgba(0,0,0,0.4)', color: '#fff', outline: 'none' }}
+            />
+          ) : (
+            <>
+              {clip.name}
+              {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
+              {isAudioClip(clip) && clip.boomerang && <span style={{ marginLeft: 4, opacity: 0.7 }}>⇄</span>}
+            </>
+          )}
         </div>
 
         {/* Quick actions — visible on the selected clip so the context-menu tools are discoverable */}

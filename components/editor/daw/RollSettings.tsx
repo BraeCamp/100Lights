@@ -406,14 +406,6 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     setFlash(true); setTimeout(() => setFlash(false), 1100)
   }
 
-  // Rename the clip (track item) from here — single clip only.
-  const [nameDraft, setNameDraft] = useState(clip.name)
-  useEffect(() => { setNameDraft(clip.name) }, [clip.id, clip.name])
-  function commitName() {
-    const name = nameDraft.trim()
-    if (name && name !== clip.name) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { name } })
-    else if (!name) setNameDraft(clip.name)
-  }
 
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px' }
   const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 70, flexShrink: 0 }
@@ -443,21 +435,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         )}
       </div>
 
-      {/* Rename this track item (single clip only) */}
-      {!multi && (
-        <div style={{ ...row, paddingTop: 9 }}>
-          <span style={label}>Name</span>
-          <input
-            value={nameDraft}
-            onChange={e => setNameDraft(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
-            spellCheck={false}
-            placeholder="Clip name"
-            style={{ flex: 1, minWidth: 0, fontSize: 11, padding: '3px 7px', borderRadius: 4, border: '1px solid var(--border-light)', background: 'var(--bg-base)', color: 'var(--text-primary)', outline: 'none' }}
-          />
-        </div>
-      )}
+      {/* (Rename moved to the clip's right-click menu — item 11.) */}
 
       {/* Sound / preset (single MIDI clip only) */}
       {showPreset && (
@@ -544,42 +522,37 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         )
       })()}
 
-      {/* Articulation — connected-note phrasing, options depend on the instrument */}
+      {/* Articulation (item 13) — one compact row. Legato is a chip; Slide only
+          appears once Legato is engaged (it only affects connected notes). */}
       {showArtic && artOpts && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '7px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>ARTICULATION</span>
-            <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>connected notes only</span>
-          </div>
+        <div style={{ ...row, paddingTop: 4, paddingBottom: 4, gap: 8 }}>
+          <span style={{ ...label, width: 44 }}>Artic</span>
           {artOpts.legato.available && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: artOpts.slide.available ? 6 : 0 }}>
-              <button
-                onClick={() => commitFx({ ...(clip.rollFx || {}), legato: legatoOn ? 0 : 1 })}
-                title="Legato: across a run of touching/overlapping notes, only the first attacks — the rest keep the bow/breath moving (no re-attack). Notes after a gap start fresh."
-                style={{
-                  fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 4, cursor: 'pointer', flexShrink: 0,
-                  border: legatoOn ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
-                  background: legatoOn ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
-                  color: legatoOn ? CYAN : 'var(--text-secondary)',
-                }}>
-                {legatoOn ? '✓ Legato' : 'Legato'}
-              </button>
-              <span style={{ fontSize: 8.5, color: 'var(--text-muted)', flex: 1, lineHeight: 1.3 }}>
-                {legatoAuto ? 'auto for this instrument — first note attacks, the phrase flows' : legatoOn ? 'bow/breath carries across the phrase' : 'every note re-attacks'}
-              </span>
-            </div>
+            <button
+              onClick={() => commitFx({ ...(clip.rollFx || {}), legato: legatoOn ? 0 : 1 })}
+              title="Legato: across a run of touching/overlapping notes, only the first attacks — the rest keep the bow/breath moving. Notes after a gap start fresh."
+              style={{
+                fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', flexShrink: 0,
+                border: legatoOn ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
+                background: legatoOn ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
+                color: legatoOn ? CYAN : 'var(--text-secondary)',
+              }}>
+              {legatoOn ? '✓ Legato' : 'Legato'}{legatoAuto ? ' · auto' : ''}
+            </button>
           )}
-          {artOpts.slide.available && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>Slide</span>
+          {artOpts.slide.available && (legatoOn || !artOpts.legato.available) ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+              <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>Slide</span>
               <input type="range" min={0} max={1} step={0.02} value={slideAmt}
                 onChange={e => commitFx({ ...(clip.rollFx || {}), slide: Number(e.target.value) })}
                 title="Portamento: glide the pitch from the previous note into this one, between connected notes at different pitches."
                 style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
-              <span style={{ fontSize: 9.5, color: slideAmt > 0 ? 'var(--text-primary)' : 'var(--text-muted)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: 9, color: slideAmt > 0 ? 'var(--text-primary)' : 'var(--text-muted)', width: 34, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                 {slideAmt > 0 ? `${Math.round(slideAmt * 100)}%` : 'Off'}
               </span>
             </div>
+          ) : (
+            <span style={{ fontSize: 8.5, color: 'var(--text-muted)', flex: 1 }}>connected notes only</span>
           )}
         </div>
       )}
@@ -625,33 +598,23 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       {/* Volume + Tone EQ — one system, shared verbatim with the Mixer strip.
           Edits track.volume + track.tone, so moving a band here moves the mixer's
           EQ curve too (and vice-versa). Track-scoped by design. */}
+      {/* Volume + EQ collapse to one row → the modal (item 9). Volume stays
+          one-click on the track row + mixer; here it's a summary that opens the
+          modal (which now holds the Volume slider + the EQ curve). */}
       {eqTrack && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '8px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>VOLUME &amp; EQ</span>
-            <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{eqMultiTrack ? `${trackIds.length} tracks · same as mixer` : 'same as mixer'}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>Volume</span>
-            <input type="range" min={0} max={1.2} step={0.005} value={trackVol}
-              onChange={e => setTrackVol(Number(e.target.value))}
-              style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
-            <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
-          </div>
-          {/* EQ opens in the modal (item 6) — the row shows a live band summary. */}
-          <button onClick={() => setOpenGraph({ kind: 'eq' })}
-            title="Open the EQ — drag the bands"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '4px 4px', background: 'none', border: 'none', cursor: 'pointer' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>EQ</span>
-            <span style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8, fontSize: 9, color: 'var(--text-muted)' }}>
-              {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
-                const v = tone[b] ?? 0
-                return <span key={b} style={{ color: v ? CYAN : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)}{v ? ` ${v > 0 ? '+' : ''}${v}` : ''}</span>
-              })}
-            </span>
-            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>edit ▸</span>
-          </button>
-        </div>
+        <button onClick={() => setOpenGraph({ kind: 'eq' })}
+          title="Open Volume & EQ"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', borderTop: '1px solid var(--border)', padding: '8px 12px', background: 'none', border: 'none', borderTopWidth: 1, cursor: 'pointer' }}>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)', flexShrink: 0 }}>VOL &amp; EQ</span>
+          <span style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8, fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden' }}>
+            <span style={{ color: 'var(--text-primary)' }}>{Math.round(trackVol * 100)}%</span>
+            {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
+              const v = tone[b] ?? 0
+              return <span key={b} style={{ color: v ? CYAN : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)}{v ? ` ${v > 0 ? '+' : ''}${v}` : ''}</span>
+            })}
+          </span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>edit ▸</span>
+        </button>
       )}
 
       {/* Remaining clip-only effects (volume/EQ moved to the track block above) —
@@ -833,6 +796,14 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           onClose={() => setOpenGraph(null)}
           onReset={() => setTrackToneAll({})}
         >
+          {/* Volume lives here now (item 9) — still track-scoped, still one edit. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', width: 52, flexShrink: 0 }}>Volume</span>
+            <input type="range" min={0} max={1.2} step={0.005} value={trackVol}
+              onChange={e => setTrackVol(Number(e.target.value))}
+              style={{ flex: 1, minWidth: 0, accentColor: GRAPH_COLOR }} />
+            <span style={{ fontSize: 11, color: 'var(--text-primary)', width: 44, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
+          </div>
           <EqCurve value={tone} onChange={setTrackBand} onChangeAll={setTrackToneAll} width={520} height={190} />
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
             {(['sub', 'bass', 'mid', 'treble'] as const).map(band => {
