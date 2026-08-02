@@ -46,7 +46,7 @@ function toDawProject(spec) {
     sessionGrid: {},
     loopStart: 0, loopEnd, loopEnabled: false,
     masterVolume: spec.masterVolume ?? 0.8,
-    automationLanes: spec.automationLanes ?? [], clipEffects: [], returnTracks: [], takeLanes: [],
+    automationLanes: spec.automationLanes ?? [], clipEffects: spec.clipEffects ?? [], returnTracks: [], takeLanes: [],
     crossfaderValue: 0.5, waveformZoom: 1, swing: spec.swing ?? 0,
     cueMarkers: [], sections: [],
     key: spec.key ?? 0, scale: spec.scale ?? 'minor',

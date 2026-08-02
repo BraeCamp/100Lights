@@ -584,6 +584,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const fourFloor    = genre.drums === 'four-floor' || ['house', 'deep-house', 'techno', 'trance', 'disco', 'future-bass'].includes(genreId)
   const useSidechain = fourFloor && rand.chance(0.8)                 // kick pump on sustained layers
   const useSweeps    = rand.chance(0.7)                              // filter-sweep transitions into peaks
+  const useClipFx    = rand.chance(0.7)                              // drawn effect BARS on the track FX lanes
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
   const cutoffFor = (energy, isBass) => {
@@ -624,6 +625,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   // so sections arrive with a rising build instead of switching on instantly.
   const sweepFilterId = tracks[2].effects.find(e => e.type === 'filter')?.id
   const sweepTargets = []   // absolute start-beats of high-energy sections
+  const secList = []        // {start, bars, role, energy} for building FX bars
 
   // Make a section-clip for a layer, stamping the tension-driven low-pass on it.
   const secClip = (key, startBeat, bars, energy) => {
@@ -645,6 +647,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     const layered = introStyle === 'layered' && sec.role === 'intro'  // staggered build-up
     const secStart = bar * 4
     if (/drop|chorus|hook/.test(sec.role) && e >= 0.9) sweepTargets.push(secStart)
+    secList.push({ start: secStart, bars: sec.bars, role: sec.role, energy: e })
     // Lay the recipe across the whole section (8-bar recipe → no loop; 4-bar →
     // A + turnaround A′). Development: 2nd+ chorus gets richer extensions.
     let ext = recipe.ext ?? pal.ext
@@ -715,13 +718,37 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     })
   }
 
+  // ── Clip effect-BARS on the track FX lanes (the "trackhead FX" system). ──────
+  // A bar = { trackId, startBeat, durationBeats, fx:{param:target}, graph:0..1 }.
+  // Distinct from the rack: these are drawn, region-scoped moves you see on the
+  // FX lane under a track. Seed-gated so only some songs/sections get them.
+  const clipEffects = []
+  if (useClipFx) {
+    const ap = (t, v) => ({ id: uid('p'), t: +t.toFixed(3), v, smooth: false, h1: [0, 0], h2: [0, 0] })
+    const graph = { full: d => [ap(0, 1), ap(d, 1)], in: d => [ap(0, 0), ap(d, 1)], out: d => [ap(0, 1), ap(d, 0)] }
+    const bar = (key, start, durBeats, fx, shape) => clipEffects.push({ id: uid('x'), trackId: tid[key], startBeat: +start.toFixed(3), durationBeats: +durBeats.toFixed(3), fx, graph: graph[shape](durBeats) })
+    // grit on the peaks — drive bar over drops/choruses
+    const driveOn = rand.chance(0.6)
+    // pulsing breakdowns — tremolo bar on the pad
+    const tremOn = rand.chance(0.5)
+    // delay throws leading INTO a peak — a 2-beat delay swell on the keys
+    const throwOn = rand.chance(0.5)
+    for (const s of secList) {
+      const peak = /drop|chorus|hook/.test(s.role) && s.energy >= 0.9
+      const quiet = /break|bridge/.test(s.role) && s.energy < 0.7
+      if (peak && driveOn) bar('drums', s.start, s.bars * 4, { drive: rand.chance(0.5) ? 0.32 : 0.24 }, 'full')
+      if (quiet && tremOn) bar('pad', s.start, s.bars * 4, { tremoloDepth: 0.55, tremoloRate: rand.pick([4, 6, 8]) }, 'full')
+      if (peak && throwOn && s.start >= 2) bar('keys', s.start - 2, 2, { delayWet: 0.5 }, 'in')
+    }
+  }
+
   return {
     name: `${genre.name} — ${keyStr || (KEY_NAMES[root] + ' ' + scale)}`,
     genre: genre.id, tempo: genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
     swing: genre.swing, key: root, scale,
-    masterVolume: 0.5, tracks, clips, automationLanes,
+    masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweeps:${useSweeps && automationLanes.length ? 'on' : 'off'}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweeps:${useSweeps && automationLanes.length ? 'on' : 'off'} clipFx:${clipEffects.length}`,
   }
 }
 
