@@ -1646,10 +1646,29 @@ export class DawEngine extends EventTarget {
             const dec  = sharedEnv ? (rfx.decay ?? 0) : 0
             const susL = sharedEnv ? (rfx.sustainLevel ?? 1) : 1
             const susTarget = (dec > 0 || susL < 1) ? target * susL : target
-            velGain.gain.setValueAtTime(0.0001, startAt)
-            velGain.gain.linearRampToValueAtTime(target, startAt + atk)
-            if (dec > 0) velGain.gain.linearRampToValueAtTime(target * susL, startAt + atk + dec)
-            else if (susL < 1) velGain.gain.setValueAtTime(target * susL, startAt + atk)
+            // A hand-drawn amplitude envelope (clip.ampGraph, 0..1 over the note)
+            // replaces the ADSR ramps with a freehand shape, scaled by velocity.
+            const ampGraph = clip.ampGraph
+            const useAmp = !!ampGraph && ampGraph.length >= 2 && remaining > 0
+            const ampDur = Math.max(0.02, remaining + sustainSec)
+            if (useAmp) {
+              // Sample the whole envelope, then play the portion from where the
+              // note already is — entering mid-note continues the shape instead
+              // of restarting it.
+              const totalSec = Math.max(0.02, this.beatsToSeconds(maxDur) + sustainSec)
+              const N = Math.max(8, Math.ceil(totalSec * 90))
+              const full = sampleAutomation(ampGraph!, 1, N)
+              const startIdx = Math.min(N - 2, Math.max(0, Math.floor((alreadyBeats / Math.max(1e-6, maxDur)) * N)))
+              const slice = full.slice(startIdx)
+              const curve = new Float32Array(Math.max(2, slice.length))
+              for (let i = 0; i < curve.length; i++) curve[i] = Math.max(0.0001, (slice[i] ?? slice[slice.length - 1] ?? 0) * target)
+              velGain.gain.setValueCurveAtTime(curve, startAt, ampDur)
+            } else {
+              velGain.gain.setValueAtTime(0.0001, startAt)
+              velGain.gain.linearRampToValueAtTime(target, startAt + atk)
+              if (dec > 0) velGain.gain.linearRampToValueAtTime(target * susL, startAt + atk + dec)
+              else if (susL < 1) velGain.gain.setValueAtTime(target * susL, startAt + atk)
+            }
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
@@ -1660,7 +1679,10 @@ export class DawEngine extends EventTarget {
             velGain.connect(noteDest)
             this._registerMidiVoice(src, velGain)
             src.start(startAt, legatoSkip ? Math.min(LEGATO_ONSET_SKIP, buf.duration * 0.25) : offsetSec)
-            if (remaining > 0) {
+            if (useAmp) {
+              // The drawn envelope defines the whole shape (incl. its own tail).
+              src.stop(startAt + ampDur + 0.03)
+            } else if (remaining > 0) {
               if (sustainSec > 0) {
                 // Sustain: let the sample ring past the note's end with a release
                 // ramp instead of the hard cut — pedal-like, far more natural.

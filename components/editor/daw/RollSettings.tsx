@@ -239,6 +239,26 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxGraphs: g } })
   }
 
+  // Amplitude envelope drawn per note (0 = silent, top = full), replacing the
+  // attack/decay/sustain sliders. Switching resets the envelope either way.
+  const ampGraph = !multi && isMidiClip(clip) ? clip.ampGraph : undefined
+  const DEFAULT_AMP: AutoPoint[] = [
+    { id: 'a0', t: 0, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'a1', t: 0.08, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'a2', t: 0.6, v: 0.75, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'a3', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
+  ]
+  const toggleAmpGraph = (on: boolean) => {
+    if (on) {
+      const rf: RollFx = { ...(clip.rollFx ?? {}) }
+      delete rf.attack; delete rf.decay; delete rf.sustainLevel; delete rf.sustain
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: DEFAULT_AMP, rollFx: Object.keys(rf).length ? rf : undefined } })
+    } else {
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: undefined } })
+    }
+  }
+  const setAmpGraph = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: pts } })
+
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
   // the revert (drops the snapshot / untoggles the button) but keeps that change.
@@ -521,7 +541,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       <FxControls
         value={clip.rollFx}
         onCommit={commitFx}
-        hideFields={['gain', 'sub', 'bass', 'mid', 'treble']}
+        hideFields={ampGraph
+          ? (['gain', 'sub', 'bass', 'mid', 'treble', 'attack', 'decay', 'sustainLevel', 'sustain'] as (keyof RollFx)[])
+          : (['gain', 'sub', 'bass', 'mid', 'treble'] as (keyof RollFx)[])}
         ranges={multi ? ranges : undefined}
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
@@ -529,6 +551,27 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onToggleGraph={!multi && isMidiClip(clip) ? toggleFieldGraph : undefined}
         onGraphChange={!multi && isMidiClip(clip) ? setFieldGraph : undefined}
       />
+
+      {/* Amplitude envelope — draw the note's volume shape instead of the
+          attack/decay/sustain sliders. Single MIDI clip. */}
+      {!multi && isMidiClip(clip) && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>AMPLITUDE</span>
+            {ampGraph
+              ? <button onClick={() => toggleAmpGraph(false)} title="Back to attack/decay/sustain sliders" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Sliders</button>
+              : <button onClick={() => toggleAmpGraph(true)} title="Draw the note's volume shape" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
+          </div>
+          {ampGraph && (
+            <>
+              <MotionCurve points={ampGraph} onChange={setAmpGraph} width={276} height={78} color={CYAN} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
+                <span>note start</span><span>volume shape · per note · scaled by velocity</span><span>end</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* FX Motion — draw a curve over the whole clip that morphs chosen effects
           from neutral (bottom) → their dialed-in target (top). Single MIDI clip. */}

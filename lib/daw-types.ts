@@ -795,6 +795,10 @@ export interface MidiClip {
    *  its own curve (0 = off, top = full effect) over the clip / each note.
    *  Keyed by the RollFx field. Each renders as its own one-param effect-bar. */
   fxGraphs?: Partial<Record<keyof RollFx, ClipParamGraph>>
+  /** Drawn amplitude envelope: a hand-drawn 0..1 volume shape applied per note
+   *  (over the note's length, scaled by velocity), replacing the attack/decay/
+   *  sustain sliders. `t` is normalized 0..1 across the note. */
+  ampGraph?: AutoPoint[]
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */
