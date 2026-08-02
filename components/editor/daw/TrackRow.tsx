@@ -20,6 +20,7 @@ import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
 import { DEFAULT_KIT, DRUM_PATTERNS, patternToNotes } from '@/lib/drum-presets'
 import EffectLaneView, { EFFECT_H } from './EffectLane'
+import DeviceChain from './DeviceChain'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
 // Lazy: STFT worker + editor UI only load when the spectral editor is opened
@@ -371,6 +372,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
   const [showFx,         setShowFx]         = useState(false)
+  const [fxRackOpen,     setFxRackOpen]     = useState<{ x: number; y: number } | null>(null)
+  const fxRackRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!fxRackOpen) return
+    const onDown = (e: MouseEvent) => { if (fxRackRef.current && !fxRackRef.current.contains(e.target as Node)) setFxRackOpen(null) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFxRackOpen(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [fxRackOpen])
   const [isolateTgt,     setIsolateTgt]     = useState<number | null>(null)
   const [showInputCard,  setShowInputCard]  = useState(false)
   const [trackCtxMenu,   setTrackCtxMenu]  = useState<{ x: number; y: number } | null>(null)
@@ -1798,13 +1809,27 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       {/* Effects lane */}
       {!collapsed && showFx && (
         <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
-          <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>FX</span>
-            <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {(project.clipEffects ?? []).filter(e => e.trackId === track.id).length === 0
-                ? 'right-click lane to add'
-                : (project.clipEffects ?? []).filter(e => e.trackId === track.id).map(e => e.type).join(', ')}
-            </span>
+          {/* FX header — the track's RACK effects (device chain) live here, viewable
+              as chips and editable via a click-to-open popover. The lane to the
+              right holds the drawn clip-effect BARS. */}
+          <div
+            onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setFxRackOpen(v => v ? null : { x: r.left + 6, y: r.bottom + 4 }) }}
+            title="Track effects — click to open the device chain (add / edit / reorder)"
+            style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: fxRackOpen ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', cursor: 'pointer' }}
+          >
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', flexShrink: 0 }}>FX</span>
+            {track.effects.length > 0 ? (
+              <div style={{ display: 'flex', gap: 3, flex: 1, overflow: 'hidden', alignItems: 'center' }}>
+                {track.effects.slice(0, 5).map(e => (
+                  <span key={e.id} style={{ fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'rgb(var(--accent-rgb) / 0.16)', color: 'var(--accent-light)', whiteSpace: 'nowrap', flexShrink: 0, textTransform: 'uppercase' }}>
+                    {e.type === 'chorus' ? (e.params as { type?: string }).type ?? 'chorus' : e.type === 'transientshaper' ? 'transient' : e.type}
+                  </span>
+                ))}
+                {track.effects.length > 5 && <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>+{track.effects.length - 5}</span>}
+              </div>
+            ) : (
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>click to add effects</span>
+            )}
           </div>
           <EffectLaneView
             trackId={track.id}
@@ -1815,6 +1840,30 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             onPasteEffects={onPasteEffects}
           />
         </div>
+      )}
+
+      {/* Track-head FX device-chain popover — the rack effects, editable in place */}
+      {fxRackOpen && createPortal(
+        <div
+          ref={fxRackRef}
+          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position: 'fixed', zIndex: 1600,
+            left: Math.min(fxRackOpen.x, window.innerWidth - 320),
+            top: Math.min(fxRackOpen.y, window.innerHeight - 60),
+            width: 300, maxHeight: '62vh', overflowY: 'auto',
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
+            boxShadow: '0 14px 40px rgba(0,0,0,0.6)', padding: 10,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>{(track.name || 'TRACK').toUpperCase()} · EFFECTS</span>
+            <button onClick={() => setFxRackOpen(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}>×</button>
+          </div>
+          <DeviceChain trackId={track.id} />
+        </div>,
+        document.body,
       )}
 
       {/* Lane context menu (empty-lane right-click) */}
