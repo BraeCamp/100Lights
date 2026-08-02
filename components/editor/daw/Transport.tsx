@@ -635,7 +635,7 @@ export default function Transport() {
             animation: recording ? 'dawRecPulse 1s infinite' : undefined,
           }}
           onClick={handleRecord}
-          title="Record"
+          title="Record (R)"
           data-help-id="record"
         >
           <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
@@ -744,7 +744,7 @@ export default function Transport() {
           animation: recording ? 'dawRecPulse 1s infinite' : undefined,
         }}
         onClick={handleRecord}
-        title="Record"
+        title="Record (R)"
         data-help-id="record"
       >
         <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
