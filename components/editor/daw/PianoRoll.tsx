@@ -845,9 +845,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         return
       }
 
-      // Empty grid: shift+drag marquee-selects, plain click draws a note
+      // Empty grid: shift+drag marquee-selects, plain click draws a note.
+      // Shift = ADD, so each marquee UNIONS with the current selection — you can
+      // shift-drag several boxes in a row without the earlier ones deselecting.
       if (e.shiftKey) {
-        startMarquee(e, rect, ids => setSelectedNotes(ids))
+        startMarquee(e, rect, ids => setSelectedNotes(prev => new Set([...prev, ...ids])))
         return
       }
 
@@ -1439,7 +1441,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             {/* Scale lock */}
             <button
               onClick={() => setScaleLock(v => !v)}
-              title={`Lock new notes to: ${NOTE_NAMES[project.key]} ${project.scale}`}
+              title={`Scale lock — highlights the notes of ${NOTE_NAMES[project.key]} ${project.scale} on the keyboard and snaps notes you draw to that scale, so you stay in key. Toggle off to draw any note freely.`}
               style={{
                 ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0,
                 background: scaleLock ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
