@@ -14,6 +14,14 @@
 //   · MELODIC TECHNIQUE — a recurring HOOK motif (not random notes), developed
 //     across choruses; call-and-response phrasing; genre lead styles.
 //   · BASS TECHNIQUE — genre idiom (walking / offbeat / 808 / octave-arp / …).
+//   · DYNAMIC TRACK FX — real, automated mixer FX for movement (not static):
+//     a SIDECHAIN pump (bass+pad ducked by the kick) on four-on-the-floor
+//     genres, and a FILTER SWEEP automation on the keys that closes then opens
+//     across the 4 bars into every drop/chorus — a rising transition, not an
+//     instant switch. Emitted as automationLanes (fx:{id}:frequency) + a
+//     sidechained compressor; both render in the real-time bounce.
+//   · FORM VARIETY — buildForm() varies intro length (4–16 bars, sometimes a
+//     two-part intro) and outro length by seed, so songs don't share one makeup.
 //   · DYNAMIC ARC — one CLIP PER SECTION, each with its own sound: a tension-
 //     driven low-pass (dark/quiet parts, bright peaks) + a sparse long-note
 //     "soft intro" so songs start slow and open up. These are SEED-GATED — a
@@ -307,15 +315,32 @@ function trackFx(key, pal, rand, mkId) {
   const cp = (thr, ratio, mk) => ({ id: mkId(), type: 'compressor', params: { enabled: true, threshold: thr, ratio, attack: 0.003, release: 0.25, knee: 6, makeupGain: mk } })
   const ch = (mix) => ({ id: mkId(), type: 'chorus', params: { enabled: true, type: 'chorus', rate: 0.5, depth: 0.5, feedback: 0.3, mix, stages: 4 } })
   const sa = (drive) => ({ id: mkId(), type: 'saturator', params: { enabled: true, drive, color: 0.3, output: 0 } })
+  // Open low-pass at the FRONT of the keys chain — neutral at 18k, but its
+  // `frequency` is the target for the automated build/transition sweeps. Keys
+  // (bright chord stabs, present through builds) sweep audibly; a dark pad
+  // wouldn't, and filtering the drums would muddy the kick.
+  const flt = (hz) => ({ id: mkId(), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: hz, q: 1 } })
   const heavy = pal.bassStyle === '808'
   switch (key) {
     case 'drums': return [cp(-18, 4, 1), eq(2, 0, 1.5), ...(rand.chance(0.5) ? [sa(0.18)] : [])]
     case 'bass':  return [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.35)] : [])]
-    case 'keys':  return [rv(0.2, 1.8), ...(rand.chance(0.5) ? [dl(0.16, 0.5)] : [])]
+    case 'keys':  return [flt(18000), rv(0.2, 1.8), ...(rand.chance(0.5) ? [dl(0.16, 0.5)] : [])]
     case 'pad':   return [rv(0.42, 3.2, 0.03), ch(0.4)]
     case 'lead':  return [rand.chance(0.6) ? dl(0.22, 0.375, 0.38) : ch(0.35), rv(0.28, 2.2)]
     default: return []
   }
+}
+
+// Build a form with seed-driven variety so songs don't all share one makeup.
+// Intros breathe (4–16 bars, not a token 4) and the outro length varies too.
+function buildForm(family, rand) {
+  const base = FORMS[family].map(s => ({ ...s }))
+  base[0].bars = family === 'edm' ? rand.pick([8, 8, 16]) : rand.pick([4, 8, 8])
+  base[base.length - 1].bars = rand.pick([4, 8])
+  // Song/loop: occasionally hold the first verse longer, or double the intro
+  // into a two-part intro (adds structural variety between songs).
+  if (family !== 'edm' && rand.chance(0.4)) base.splice(1, 0, { role: 'intro', bars: rand.pick([4, 8]), prog: 'A', energy: 0.45 })
+  return base
 }
 
 // ── Song forms — sequences of sections (role, bars, which progression) ─────────
@@ -535,7 +560,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const progs = { A: recA, B: recB, C: recC }
   const seen = { A: 0, B: 0, C: 0 }   // section-appearance counter → development
 
-  const form = FORMS[FORM_FAMILY[genreId] || 'loop']
+  const form = buildForm(FORM_FAMILY[genreId] || 'loop', rand)
   const motif = makeMotif(rand)
   const leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
@@ -569,6 +594,23 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
   const clips = []
 
+  // ── Dynamic track FX ─────────────────────────────────────────────────────────
+  // (1) SIDECHAIN PUMP: on four-on-the-floor genres, duck the sustained layers
+  // against the kick so the whole track breathes with the beat — the signature
+  // house/techno movement. We point their compressors' key input at the drums.
+  const fourFloor = genre.drums === 'four-floor' || ['house', 'deep-house', 'techno', 'trance', 'disco', 'future-bass'].includes(genreId)
+  if (fourFloor) {
+    const bassComp = tracks[1].effects.find(e => e.type === 'compressor')
+    if (bassComp) bassComp.params.sidechainTrackId = tid.drums
+    // give the pad a ducking compressor too, so pads pump with the kick
+    tracks[3].effects.push({ id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -32, ratio: 6, attack: 0.004, release: 0.18, knee: 4, makeupGain: 0, sidechainTrackId: tid.drums } })
+  }
+  // (2) FILTER-SWEEP TRANSITIONS: the keys' front filter is automated to close
+  // then sweep wide open across the 4 bars leading INTO every drop/chorus/hook,
+  // so sections arrive with a rising build instead of switching on instantly.
+  const sweepFilterId = tracks[2].effects.find(e => e.type === 'filter')?.id
+  const sweepTargets = []   // absolute start-beats of high-energy sections
+
   // Make a section-clip for a layer, stamping the tension-driven low-pass on it.
   const secClip = (key, startBeat, bars, energy) => {
     const tk = byKey[key]
@@ -587,6 +629,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     const L = layersFor(sec)
     const sparse = softIntro && e < 0.42        // slow, long-note treatment
     const secStart = bar * 4
+    if (/drop|chorus|hook/.test(sec.role) && e >= 0.9) sweepTargets.push(secStart)
     // Lay the recipe across the whole section (8-bar recipe → no loop; 4-bar →
     // A + turnaround A′). Development: 2nd+ chorus gets richer extensions.
     let ext = recipe.ext ?? pal.ext
@@ -617,12 +660,38 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     else if (L.arp && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, motif, 56, 'arp', root, scale); push(c) }
     bar += sec.bars
   }
+  const totalBeats = bar * 4
+
+  // Build the pad filter-sweep automation lane from the collected targets. The
+  // filter sits open (1.0) by default, dips at 4 bars out, and ramps back open
+  // right on the downbeat — a rising transition into each drop/chorus.
+  const automationLanes = []
+  if (sweepFilterId && sweepTargets.length) {
+    const raw = [{ beat: 0, value: 1 }]
+    for (const S of sweepTargets) {
+      if (S < 8) continue                         // no room to sweep into the very first section
+      raw.push({ beat: S - 16.5, value: 1 }, { beat: S - 16, value: 0.1 }, { beat: S - 0.1, value: 1 })
+    }
+    raw.push({ beat: totalBeats, value: 1 })
+    raw.sort((a, b) => a.beat - b.beat)
+    const pts = []
+    for (const p of raw) {
+      if (p.beat < 0) continue
+      if (pts.length && Math.abs(pts[pts.length - 1].beat - p.beat) < 0.05) pts[pts.length - 1] = p
+      else pts.push(p)
+    }
+    if (pts.length > 2) automationLanes.push({
+      id: uid('a'), trackId: tid.keys, parameter: `fx:${sweepFilterId}:frequency`,
+      label: 'Filter sweep', min: 200, max: 18000, defaultValue: 1, expanded: false,
+      points: pts.map(p => ({ id: uid('p'), beat: +p.beat.toFixed(3), value: p.value })),
+    })
+  }
 
   return {
     name: `${genre.name} — ${keyStr || (KEY_NAMES[root] + ' ' + scale)}`,
     genre: genre.id, tempo: genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
     swing: genre.swing, key: root, scale,
-    masterVolume: 0.5, tracks, clips,
+    masterVolume: 0.5, tracks, clips, automationLanes,
     _form: form.map(s => s.role).join(' · '),
   }
 }
