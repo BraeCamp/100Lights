@@ -54,6 +54,7 @@ const LOADERS = {
   scaleid: () => import('@/components/ArticleScaleId'),
   abx: () => import('@/components/ArticleABX'),
   rhythmtap: () => import('@/components/ArticleRhythmTap'),
+  loopseam: () => import('@/components/ArticleLoopSeam'),
 } as const
 
 export type WidgetKind = keyof typeof LOADERS
@@ -89,6 +90,7 @@ type WidgetSpec =
   | { kind: 'scaleid'; props: { caption?: string } }
   | { kind: 'abx'; props: { caption?: string } }
   | { kind: 'rhythmtap'; props: { caption?: string } }
+  | { kind: 'loopseam'; props: { caption?: string } }
 
 type AnyWidget = React.ComponentType<Record<string, unknown>>
 

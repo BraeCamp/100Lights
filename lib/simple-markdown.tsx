@@ -141,6 +141,7 @@ const MIX_TOOLS = {
   '@scaleid':      { kind: 'scaleid' as const,      emoji: '🪜', text: 'Name that scale — a scale runs up; identify the mode by its flavour.' },
   '@abx':          { kind: 'abx' as const,          emoji: '🎧', text: 'Blind A/B/X — a hidden X is one of two versions; decide which. Trains the ear.' },
   '@rhythmtap':    { kind: 'rhythmtap' as const,    emoji: '🥁', text: 'Tap-back rhythm — a pattern plays; recreate it on the slots and check.' },
+  '@loopseam':     { kind: 'loopseam' as const,     emoji: '🔁', text: 'Loop-seam diagram — a clean zero-crossing seam vs a mid-waveform cut that clicks.' },
 }
 
 function MixToolFallback({ emoji, text, caption, href, label }: { emoji: string; text: string; caption?: string; href?: string; label?: string }) {

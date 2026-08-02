@@ -70,6 +70,22 @@ export default function ArticleAB({ spec }: { spec: ABSpec }) {
   return (
     <figure style={{ margin: '24px 0' }}>
       <div style={{ border: '1px solid rgba(52,211,153,0.35)', borderRadius: 12, padding: '16px 18px', background: 'rgba(52,211,153,0.05)' }}>
+        {/* Eyebrow: these are audio examples in the article, and this line always
+            says which clip is sounding right now. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 10px', fontSize: 10, fontWeight: 800, letterSpacing: '0.09em', color: playingSlot ? '#34d399' : 'var(--text-muted)' }}>
+          <span>🔊 A/B LISTENING TEST</span>
+          {playingSlot && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, letterSpacing: 0 }}>
+              <span aria-hidden style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2, height: 10 }}>
+                <span style={{ width: 2, background: '#34d399', height: '100%', animation: 'cf-ab-eq 0.8s ease-in-out infinite' }} />
+                <span style={{ width: 2, background: '#34d399', height: '60%', animation: 'cf-ab-eq 0.8s ease-in-out infinite 0.2s' }} />
+                <span style={{ width: 2, background: '#34d399', height: '80%', animation: 'cf-ab-eq 0.8s ease-in-out infinite 0.4s' }} />
+              </span>
+              Now playing Clip {playingSlot}
+            </span>
+          )}
+          <style>{'@keyframes cf-ab-eq{0%,100%{transform:scaleY(0.4)}50%{transform:scaleY(1)}}@media (prefers-reduced-motion: reduce){[style*="cf-ab-eq"]{animation:none!important}}'}</style>
+        </div>
         <p style={{ margin: '0 0 12px', fontSize: 13.5, color: 'var(--text-primary)', fontWeight: 600 }}>
           {spec.question}
         </p>

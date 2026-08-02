@@ -92,11 +92,27 @@ export default function ArticleAudio({ src, caption }: { src: string; caption?: 
 
   return (
     <figure style={{ margin: '22px 0' }}>
+      {/* Eyebrow so it's unmistakable this is an audio example baked into the
+          article — not the reader's own project, an ad, or page chrome. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 6px 2px', fontSize: 10, fontWeight: 800, letterSpacing: '0.09em', color: playing ? '#a78bfa' : 'var(--text-muted)' }}>
+        <span>🔊 AUDIO EXAMPLE</span>
+        {playing && (
+          <span aria-hidden style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2, height: 10 }}>
+            <span style={{ width: 2, background: '#a78bfa', animation: 'cf-eq 0.8s ease-in-out infinite', height: '100%' }} />
+            <span style={{ width: 2, background: '#a78bfa', animation: 'cf-eq 0.8s ease-in-out infinite 0.2s', height: '60%' }} />
+            <span style={{ width: 2, background: '#a78bfa', animation: 'cf-eq 0.8s ease-in-out infinite 0.4s', height: '80%' }} />
+          </span>
+        )}
+        {playing && <span style={{ letterSpacing: 0 }}>Playing…</span>}
+        <style>{'@keyframes cf-eq{0%,100%{transform:scaleY(0.4)}50%{transform:scaleY(1)}}@media (prefers-reduced-motion: reduce){[style*="cf-eq"]{animation:none!important}}'}</style>
+      </div>
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 14,
           padding: '12px 16px', borderRadius: 12,
-          border: '1px solid var(--border)', background: 'rgba(255,255,255,0.03)',
+          border: `1px solid ${playing ? 'rgba(167,139,250,0.6)' : 'var(--border)'}`,
+          background: playing ? 'rgba(167,139,250,0.08)' : 'rgba(255,255,255,0.03)',
+          transition: 'border-color 0.2s, background 0.2s',
         }}
       >
         <button
