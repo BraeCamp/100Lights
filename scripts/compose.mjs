@@ -496,51 +496,71 @@ function fillPadLong(clip, rand, bar0, chords, base) {
   }
 }
 
-// ── Lead: a recurring HOOK motif, developed across choruses ──────────────────
-// motif = list of {slot, tone, len}; `tone` indexes into the chord's tones (with
-// octave-up wraps) so it's always consonant, plus rests. Made once per song.
-function makeMotif(rand) {
-  const RHYTHMS = [
-    [[0, 3], [4, 2], [7, 3], [12, 4]],
-    [[0, 2], [2, 2], [6, 4], [10, 3], [13, 3]],
-    [[0, 6], [8, 2], [11, 2], [14, 2]],
-    [[2, 2], [4, 2], [8, 4], [12, 3]],
-  ]
-  const rhythm = rand.pick(RHYTHMS)
-  const tones = rhythm.map((_, i) => rand.int(0, 4)) // chord-tone index (0..4, wraps octave)
-  return rhythm.map(([slot, len], i) => ({ slot, len, tone: tones[i] }))
+// ── Lead: a repeating HOOK — a real melodic phrase, not one figure per bar ────
+// A hook is a 2- or 4-bar rhythmic phrase (statement bars busier, the LAST bar
+// sparse so it breathes) plus a fixed STEPWISE contour (`move` = scale steps).
+// fillLead applies it: strong beats anchor to a chord tone (outline the harmony),
+// weak beats step through the scale — so the line is melodic AND consonant, and
+// the same phrase recurs like a real hook instead of random notes.
+function makeHook(rand) {
+  const bars = rand.pick([2, 2, 4])
+  const CALL = [[0, 4, 7, 10], [0, 3, 6, 10], [0, 4, 6, 12], [0, 6, 8, 12], [2, 4, 8, 10], [0, 2, 4, 8, 12]]
+  const ANSW = [[0, 8], [0], [4, 12], [8], [0, 4]]
+  const MOVES = [1, 1, -1, -1, 2, -2, 1, -1, 3, -2]   // mostly stepwise, occasional leap
+  const events = []
+  for (let bar = 0; bar < bars; bar++) {
+    const last = bar === bars - 1
+    const slots = last ? rand.pick(ANSW) : (rand.chance(0.72) ? rand.pick(CALL) : rand.pick(ANSW))
+    for (let k = 0; k < slots.length; k++) {
+      const slot = slots[k], next = k + 1 < slots.length ? slots[k + 1] : 16
+      const strong = slot % 8 === 0
+      events.push({ bar, slot, len: Math.min(next - slot, 4), strong, move: strong ? 0 : rand.pick(MOVES) })
+    }
+  }
+  return { bars, events }
 }
 function chordToneAt(chord, idx) {
   const n = chord.length
   const oct = Math.floor(idx / n)
   return chord[((idx % n) + n) % n] + oct * 12 + 12 // an octave up = lead register
 }
-function fillLead(clip, rand, bar0, chords, motif, base, style, root, scale) {
-  chords.forEach((chord, b) => {
-    const bt = (bar0 + b) * 4
-    if (style === 'arp') {
-      // Fast up-arpeggio through chord tones over the bar.
+function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale) {
+  const steps = SCALES[scale], N = steps.length
+  // deg = position in the scale, in the lead register (root at octave 5).
+  const degPitch = d => root + 72 + steps[((d % N) + N) % N] + 12 * Math.floor(d / N)
+
+  if (style === 'arp') {
+    chords.forEach((chord, b) => {
+      const bt = (bar0 + b) * 4
       const seq = [...chord, chord[1] + 12, chord[2] + 12]
       for (let i = 0; i < 16; i += 2) clip.notes.push(note(seq[(i / 2) % seq.length] + 12, bt + i * STEP, 0.22, hvel(rand, base - 6, i)))
-      return
-    }
-    if (style === 'sustained') {
-      clip.notes.push(note(chordToneAt(chord, 2), bt, 4 * 0.98, hvel(rand, base - 10, 0)))
-      return
-    }
-    // melody / riff / stab: play the recurring motif on this chord's tones, with
-    // a call-and-response — even bars open (leave last note high), odd bars resolve.
-    const resolve = b % 2 === 1
-    for (let m = 0; m < motif.length; m++) {
-      if (rand.chance(0.12)) continue // breathe
-      const cell = motif[m]
-      let idx = cell.tone
-      if (m === motif.length - 1) idx = resolve ? 0 : 2 // land on root (answer) or 5th (question)
-      let pitch = chordToneAt(chord, idx)
-      // riff jumps octaves for bite; stab stays put and short.
-      if (style === 'riff' && rand.chance(0.3)) pitch += 12
-      const len = (style === 'stab' ? 1 : cell.len) * STEP
-      clip.notes.push(note(pitch, bt + cell.slot * STEP, len * 0.9, hvel(rand, base, cell.slot)))
+    })
+    return
+  }
+  if (style === 'sustained') {
+    chords.forEach((chord, b) => clip.notes.push(note(chordToneAt(chord, 2), (bar0 + b) * 4, 4 * 0.98, hvel(rand, base - 10, 0))))
+    return
+  }
+
+  // melody / riff / stab: walk the hook's contour, anchoring to chord tones on
+  // strong beats so the line outlines the harmony and never wanders out of key.
+  let cur = null
+  chords.forEach((chord, b) => {
+    const bt = (bar0 + b) * 4
+    const cds = []   // chord-tone scale-degrees in the lead register
+    for (let d = -2; d <= 14; d++) if (chord.some(p => ((p % 12) + 12) % 12 === ((degPitch(d) % 12) + 12) % 12)) cds.push(d)
+    const snap = to => cds.reduce((a, c) => Math.abs(c - to) < Math.abs(a - to) ? c : a, cds[0])
+    for (const ev of hook.events.filter(e => e.bar === (b % hook.bars))) {
+      if (cur === null) cur = snap(3)                 // open near mid-register
+      else if (ev.strong) cur = snap(cur)             // land on a chord tone
+      else {
+        cur += ev.move                                // step through the scale
+        if (cur > 13) cur -= N; else if (cur < -2) cur += N
+        if (rand.chance(0.28)) cur = snap(cur)        // don't drift too far off the chord
+      }
+      if (rand.chance(0.07)) continue                 // an occasional rest to breathe
+      const len = (style === 'stab' ? 1 : ev.len) * STEP
+      clip.notes.push(note(degPitch(cur), bt + ev.slot * STEP, len * 0.92, hvel(rand, base - (ev.strong ? 0 : 6), ev.slot)))
     }
   })
 }
@@ -571,7 +591,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const seen = { A: 0, B: 0, C: 0 }   // section-appearance counter → development
 
   const form = buildForm(FORM_FAMILY[genreId] || 'loop', rand)
-  const motif = makeMotif(rand)
+  const hook = makeHook(rand)
   const leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
 
@@ -687,8 +707,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
       else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true)
       push(c) }
     // Lead — never in a sparse section
-    if (L.lead && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, motif, 66, pal.leadStyle, root, scale); push(c) }
-    else if (L.arp && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, motif, 56, 'arp', root, scale); push(c) }
+    if (L.lead && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, root, scale); push(c) }
+    else if (L.arp && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', root, scale); push(c) }
     bar += sec.bars
   }
   const totalBeats = bar * 4
