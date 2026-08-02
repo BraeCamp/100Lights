@@ -27,7 +27,7 @@ function toDawProject(spec) {
     color: COLORS[i % COLORS.length],
     volume: t.volume ?? 0.8, pan: t.pan ?? 0,
     mute: false, solo: false, armed: false,
-    height: 64, effects: [], instrument: t.instrument,
+    height: 64, effects: t.effects ?? [], instrument: t.instrument,
   }))
   const arrangementClips = spec.clips.map(c => ({
     kind: 'midi', id: c.id, trackId: c.trackId, name: spec.tracks.find(t => t.id === c.trackId)?.name ?? 'Clip',

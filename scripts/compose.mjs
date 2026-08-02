@@ -159,11 +159,36 @@ const LEAD_ALTS = {
 }
 
 // ── Per-track sound shaping (rollFx) ──────────────────────────────────────────
+// NOTE: reverb/delay/chorus now live in the VISIBLE track effect rack (see
+// trackFx below), not here — so the user can see and tweak them in the mixer.
+// rollFx keeps only note-level shaping + the per-section filter ARC (filterHz is
+// overwritten per section by cutoffFor to move brightness with tension).
 const RF = {
-  bass: { reverbWet: 0.05, filterHz: 2600, gain: 1.4 },
-  keys: (ext) => ({ reverbWet: 0.2, reverbSize: 0.6, sustain: 0.5, gain: 1.4, ...(ext >= 9 ? { filterHz: 6500 } : {}) }),
-  pad: { reverbWet: 0.5, reverbSize: 0.85, attack: 0.5, gain: 1.6, filterHz: 5200 },
-  lead: { reverbWet: 0.3, reverbSize: 0.7, sustain: 0.35, gain: 1.7, vibratoDepth: 0.1 },
+  bass: { filterHz: 2600, gain: 1.4 },
+  keys: (ext) => ({ sustain: 0.5, gain: 1.4, ...(ext >= 9 ? { filterHz: 6500 } : {}) }),
+  pad: { attack: 0.5, gain: 1.6, filterHz: 5200 },
+  lead: { sustain: 0.35, gain: 1.7, vibratoDepth: 0.1 },
+}
+
+// ── Visible track effect racks — real, editable mixer effects per layer ───────
+// Genre/role-appropriate and lightly seed-varied, so loaded songs show effects
+// the user can open and change (reverb, delay, EQ, compression, chorus…).
+function trackFx(key, pal, rand, mkId) {
+  const rv = (wet, decay, pre = 0.02) => ({ id: mkId(), type: 'reverb', params: { enabled: true, wet, decay, preDelay: pre } })
+  const dl = (wet, beats, fb = 0.35) => ({ id: mkId(), type: 'delay', params: { enabled: true, wet, time: 0.375, feedback: fb, syncToTempo: true, syncBeats: beats } })
+  const eq = (lo, mid, hi) => ({ id: mkId(), type: 'eq3', params: { enabled: true, lowGain: lo, midGain: mid, highGain: hi, lowFreq: 200, midFreq: 1000, highFreq: 8000 } })
+  const cp = (thr, ratio, mk) => ({ id: mkId(), type: 'compressor', params: { enabled: true, threshold: thr, ratio, attack: 0.003, release: 0.25, knee: 6, makeupGain: mk } })
+  const ch = (mix) => ({ id: mkId(), type: 'chorus', params: { enabled: true, type: 'chorus', rate: 0.5, depth: 0.5, feedback: 0.3, mix, stages: 4 } })
+  const sa = (drive) => ({ id: mkId(), type: 'saturator', params: { enabled: true, drive, color: 0.3, output: 0 } })
+  const heavy = pal.bassStyle === '808'
+  switch (key) {
+    case 'drums': return [cp(-18, 4, 1), eq(2, 0, 1.5), ...(rand.chance(0.5) ? [sa(0.18)] : [])]
+    case 'bass':  return [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.35)] : [])]
+    case 'keys':  return [rv(0.2, 1.8), ...(rand.chance(0.5) ? [dl(0.16, 0.5)] : [])]
+    case 'pad':   return [rv(0.42, 3.2, 0.03), ch(0.4)]
+    case 'lead':  return [rand.chance(0.6) ? dl(0.22, 0.375, 0.38) : ch(0.35), rv(0.28, 2.2)]
+    default: return []
+  }
 }
 
 // ── Song forms — sequences of sections (role, bars, which progression) ─────────
@@ -404,7 +429,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     { key: 'pad',   name: 'Pad',   instr: { type: 'none', params: {} }, preset: pal.pad,    rf: RF.pad,             pan: 0.14,  vol: 0.34 },
     { key: 'lead',  name: 'Lead',  instr: { type: 'none', params: {} }, preset: leadPreset, rf: RF.lead,            pan: 0.08,  vol: 0.5 },
   ]
-  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan }))
+  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.key, pal, rand, () => uid('e')) }))
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
   const clips = []
