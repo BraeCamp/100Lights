@@ -1426,6 +1426,11 @@ export class DawEngine extends EventTarget {
       if (!nodes) continue
 
       const artic = this._clipArtic(clip)
+      // Groove (micro-timing per bar position) + drawn volume automation — sample
+      // each drawn curve into a 64-slot LUT once per clip; indexed per note below.
+      const grooveLut = clip.groove && clip.groove.length >= 2 ? sampleAutomation(clip.groove, 1, 64) : null
+      const volLut    = clip.volGraph && clip.volGraph.length >= 2 ? sampleAutomation(clip.volGraph, 1, 64) : null
+      const barBeats  = this._beatsPerBar || 4
       const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
 
       // Looped clips repeat the note pattern every loopLengthBeats until the
@@ -1500,7 +1505,8 @@ export class DawEngine extends EventTarget {
         if (this._scheduledNoteKeys.has(noteKey)) continue
         if (unisonSkip.has(noteKey)) { this._scheduledNoteKeys.add(noteKey); continue }
 
-        const noteAbsBeat = clip.startBeat + this._applySwing(relBeat)
+        const grooveOff = grooveLut ? (grooveLut[Math.min(63, Math.max(0, Math.floor(((relBeat % barBeats) / barBeats) * 64)))] - 0.5) * 2 * 0.06 : 0
+        const noteAbsBeat = clip.startBeat + this._applySwing(relBeat) + grooveOff
         const noteEnd     = clip.startBeat + relBeat + maxDur
         if (noteEnd < now) continue
         if (noteAbsBeat > now + aheadBeats) continue
@@ -1693,7 +1699,22 @@ export class DawEngine extends EventTarget {
                 : null
             }
             src.connect(velGain)
-            velGain.connect(noteDest)
+            // Drawn clip volume automation: a gain node after velGain that
+            // follows the volume curve over THIS note's slice of the clip, so a
+            // held note fades with the curve rather than a fixed level.
+            if (volLut) {
+              const volNode = this.ctx.createGain()
+              const cdur = Math.max(1e-6, clip.durationBeats)
+              const p0 = relBeat / cdur, p1 = Math.min(1, (relBeat + maxDur) / cdur)
+              const Nv = Math.max(4, Math.ceil((remaining + sustainSec) * 40))
+              const vcurve = new Float32Array(Nv)
+              for (let i = 0; i < Nv; i++) { const p = p0 + (p1 - p0) * (i / (Nv - 1)); vcurve[i] = Math.max(0.0001, volLut[Math.min(63, Math.max(0, Math.floor(p * 63)))]) }
+              try { volNode.gain.setValueCurveAtTime(vcurve, startAt, Math.max(0.02, remaining + sustainSec)) } catch { /* overlap */ }
+              velGain.connect(volNode); volNode.connect(noteDest)
+              setTimeout(() => { try { volNode.disconnect() } catch { /* ok */ } }, Math.max(0, (startAt - contextNow + remaining + sustainSec + 2) * 1000))
+            } else {
+              velGain.connect(noteDest)
+            }
             this._registerMidiVoice(src, velGain)
             src.start(startAt, legatoSkip ? Math.min(LEGATO_ONSET_SKIP, buf.duration * 0.25) : offsetSec)
             if (useAmp) {
@@ -2034,6 +2055,21 @@ export class DawEngine extends EventTarget {
     let lastNode: AudioNode = fadeGain
     const allExtraNodes: AudioNode[] = []
     const allExtraOscs: OscillatorNode[] = []
+    // Drawn volume automation across the clip (musical time), sliced from where
+    // we already are so seeking mid-clip continues the shape.
+    if (clip.volGraph && clip.volGraph.length >= 2) {
+      const total = this.beatsToSeconds(clip.durationBeats)
+      const N = Math.max(8, Math.ceil(total * 60))
+      const full = sampleAutomation(clip.volGraph, 1, N)
+      const sIdx = Math.min(N - 2, Math.max(0, Math.floor((alreadyPlayed / Math.max(1e-6, total)) * N)))
+      const slice = full.slice(sIdx)
+      const vg = this.ctx.createGain()
+      const curve = new Float32Array(Math.max(2, slice.length))
+      for (let i = 0; i < curve.length; i++) curve[i] = Math.max(0.0001, slice[i] ?? slice[slice.length - 1] ?? 1)
+      try { vg.gain.setValueCurveAtTime(curve, startAt, Math.max(0.02, total - alreadyPlayed)) } catch { /* overlap */ }
+      lastNode.connect(vg); lastNode = vg
+      allExtraNodes.push(vg)
+    }
     for (const eff of insertEffects) {
       // When seeking mid-clip, use now-relative timing so already-active effects start immediately
       const effContextStart   = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))

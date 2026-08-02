@@ -667,6 +667,8 @@ export interface AudioClip {
    *  a per-parameter graph). Rendered as effect-bars over the audio. */
   fxMotion?: ClipFxMotion
   fxGraphs?: Partial<Record<keyof RollFx, ClipParamGraph>>
+  /** Drawn volume automation across the clip (v 0..1). */
+  volGraph?: AutoPoint[]
   color?: string
   launchQuantization?: LaunchQuantization
   followAction?: FollowAction
@@ -812,6 +814,12 @@ export interface MidiClip {
   /** Custom LFO shape (one cycle, v 0.5 = centre) used by this clip's LFOs —
    *  tremolo, auto-pan, auto-wah, vibrato — instead of a sine. */
   lfoShape?: AutoPoint[]
+  /** Drawn volume automation across the whole clip (v 0..1 = silent…full),
+   *  multiplied on top of the notes. `t` normalized 0..1 over the clip. */
+  volGraph?: AutoPoint[]
+  /** Drawn groove: micro-timing per bar position (v 0.5 = on the grid, up =
+   *  later / laid-back, down = earlier / pushed). One bar wide, repeats. */
+  groove?: AutoPoint[]
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

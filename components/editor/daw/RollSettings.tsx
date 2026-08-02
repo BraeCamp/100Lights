@@ -287,6 +287,33 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const toggleLfoShape = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: on ? DEFAULT_LFO : undefined } })
   const setLfoShape = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: pts } })
 
+  // Drawn volume automation across the clip (MIDI or audio).
+  const volGraph = supportsFx ? clip.volGraph : undefined
+  const DEFAULT_VOL: AutoPoint[] = [
+    { id: 'v0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'v1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
+  ]
+  const toggleVol = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { volGraph: on ? DEFAULT_VOL : undefined } })
+  const setVol = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { volGraph: pts } })
+
+  // Drawn groove — micro-timing per bar position (MIDI only).
+  const groove = !multi && isMidiClip(clip) ? clip.groove : undefined
+  const DEFAULT_GROOVE: AutoPoint[] = [
+    { id: 'gv0', t: 0, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'gv1', t: 1, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
+  ]
+  const toggleGroove = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { groove: on ? DEFAULT_GROOVE : undefined } })
+  const setGroove = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { groove: pts } })
+
+  // Per-note vs whole-clip toggle for ALL per-parameter FX graphs at once.
+  const anyFieldGraph = !!fxGraphs && Object.keys(fxGraphs).length > 0
+  const graphsPerNote = anyFieldGraph && Object.values(fxGraphs!).every(g => g?.perNote)
+  const setGraphsPerNote = (pn: boolean) => {
+    const g = cloneGraphs()
+    for (const k of Object.keys(g) as (keyof RollFx)[]) g[k] = { ...(g[k] ?? { graph: [] }), perNote: pn }
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxGraphs: g } })
+  }
+
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
   // the revert (drops the snapshot / untoggles the button) but keeps that change.
@@ -580,6 +607,18 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onGraphChange={supportsFx && soundAdvancedAllowed ? setFieldGraph : undefined}
       />
 
+      {/* When any FX slider is in graph mode, choose whether those graphs span
+          the whole clip or re-trigger per note. */}
+      {anyFieldGraph && soundAdvancedAllowed && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px 2px' }}>
+          <span style={{ fontSize: 8.5, color: 'var(--text-muted)', flex: 1 }}>FX graphs run over</span>
+          {([['whole clip', false], ['per note', true]] as const).map(([lbl, pn]) => (
+            <button key={lbl} onClick={() => setGraphsPerNote(pn)}
+              style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: graphsPerNote === pn ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: graphsPerNote === pn ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: graphsPerNote === pn ? CYAN : 'var(--text-secondary)' }}>{lbl}</button>
+          ))}
+        </div>
+      )}
+
       {/* Amplitude envelope — draw the note's volume shape instead of the
           attack/decay/sustain sliders. Single MIDI clip. */}
       {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
@@ -673,6 +712,44 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
             </>
           ) : (
             <p style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.45, margin: 0 }}>Draw a curve that morphs chosen effects across the clip — e.g. a filter that opens over time, reverb that swells, or drive that fades. One or more effects can follow the same curve.</p>
+          )}
+        </div>
+      )}
+
+      {/* Volume automation — draw the clip's loudness over time (MIDI or audio). */}
+      {supportsFx && soundAdvancedAllowed && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>VOLUME</span>
+            {volGraph
+              ? <button onClick={() => toggleVol(false)} title="Remove volume automation" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Off</button>
+              : <button onClick={() => toggleVol(true)} title="Draw the clip's volume over time" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
+          </div>
+          {volGraph && (
+            <>
+              <MotionCurve points={volGraph} onChange={setVol} width={276} height={72} color={CYAN} />
+              <div style={{ display: 'flex', justifyContent: 'center', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}><span>loudness across the clip · top = full</span></div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Groove — draw the micro-timing (push/pull) across one bar. MIDI clip. */}
+      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>GROOVE</span>
+            {groove
+              ? <button onClick={() => toggleGroove(false)} title="Remove groove" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Off</button>
+              : <button onClick={() => toggleGroove(true)} title="Draw the timing feel (push/pull) across a bar" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
+          </div>
+          {groove && (
+            <>
+              <MotionCurve points={groove} onChange={setGroove} width={276} height={68} color={CYAN} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
+                <span>bar start</span><span>middle = on the grid · up = laid-back · down = pushed</span><span>end</span>
+              </div>
+            </>
           )}
         </div>
       )}
