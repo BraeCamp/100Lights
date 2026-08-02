@@ -246,18 +246,53 @@ function sectionNumerals(recipe, bars, appearance, scale) {
 const asRecipe = e => Array.isArray(e) ? { chords: e, bars: e.length } : e
 const recKey = r => r.chords.join('-')
 
-// ── Drum feel → base pattern; variants thin/thicken it per section ─────────────
+// ── Drum feel → a POOL of base patterns (16-step lanes); the seed picks one, and
+// fillDrums thins/thickens it per section. Multiple variants per feel so songs
+// of the same genre don't all share one groove. ───────────────────────────────
 const FEELS = {
-  'four-floor': { kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], oh: [2, 6, 10, 14], clap: [4, 12] },
-  backbeat: { kick: [0, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
-  boombap: { kick: [0, 6, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
-  trap: { kick: [0, 7, 10], snare: [8], hat: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14], oh: [], clap: [8] },
-  'half-time': { kick: [0, 11], snare: [8], hat: [0, 4, 8, 12], oh: [], clap: [8] },
-  breakbeat: { kick: [0, 3, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7, 15], clap: [] },
-  shuffle: { kick: [0, 8], snare: [4, 12], hat: [0, 3, 6, 8, 11, 14], oh: [], clap: [] },
-  syncopated: { kick: [0, 3, 6, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7], clap: [] },
-  dembow: { kick: [0, 6, 8, 14], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [4, 12] },
-  none: { kick: [], snare: [], hat: [], oh: [], clap: [] },
+  'four-floor': [
+    { kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], oh: [2, 6, 10, 14], clap: [4, 12] },
+    { kick: [0, 4, 8, 12], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [6, 14], clap: [4, 12] },
+    { kick: [0, 4, 8, 12], snare: [12], hat: [2, 6, 10, 14], oh: [2, 10], clap: [4, 12] },
+  ],
+  backbeat: [
+    { kick: [0, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
+    { kick: [0, 8], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
+    { kick: [0, 6, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [] },
+  ],
+  boombap: [
+    { kick: [0, 6, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
+    { kick: [0, 10, 11], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [15], clap: [] },
+    { kick: [0, 3, 8], snare: [4, 12], hat: [0, 4, 6, 8, 12, 14], oh: [7], clap: [] },
+  ],
+  trap: [
+    { kick: [0, 7, 10], snare: [8], hat: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14], oh: [], clap: [8] },
+    { kick: [0, 6, 10, 11], snare: [12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [12] },
+    { kick: [0, 10], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15], oh: [], clap: [8] },
+  ],
+  'half-time': [
+    { kick: [0, 11], snare: [8], hat: [0, 4, 8, 12], oh: [], clap: [8] },
+    { kick: [0, 6], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [8] },
+    { kick: [0, 10, 11], snare: [8], hat: [0, 4, 8, 12], oh: [14], clap: [8] },
+  ],
+  breakbeat: [
+    { kick: [0, 3, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7, 15], clap: [] },
+    { kick: [0, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
+    { kick: [0, 6, 10], snare: [4, 10, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [15], clap: [] },
+  ],
+  shuffle: [
+    { kick: [0, 8], snare: [4, 12], hat: [0, 3, 6, 8, 11, 14], oh: [], clap: [] },
+    { kick: [0, 6, 8], snare: [4, 12], hat: [0, 3, 6, 8, 11, 14], oh: [11], clap: [] },
+  ],
+  syncopated: [
+    { kick: [0, 3, 6, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7], clap: [] },
+    { kick: [0, 3, 6, 10, 11], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
+  ],
+  dembow: [
+    { kick: [0, 6, 8, 14], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [4, 12] },
+    { kick: [0, 6, 8, 14], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [3, 4, 11, 12] },
+  ],
+  none: [{ kick: [], snare: [], hat: [], oh: [], clap: [] }],
 }
 
 // ── Palette: per genre — kit, preset ids, and the STYLES that drive technique ──
@@ -477,7 +512,11 @@ function fillBass(clip, rand, bar0, chordRoots, style, base, root, scale) {
 const KEY_RHYTHMS = {
   stab: 'oxxxxxxxoxxxxxxx', offstab: 'xxoxxxoxxxoxxxox', lofi: 'oxxxxxxxxxxxoxxx', sustain: 'oxxxxxxxxxxxxxxx',
 }
-function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread) {
+// `strum` > 0 rolls a chord ASCENDING (lowest note first, each next one a hair
+// later) for emphasis — a harp/guitar-strum feel. Only the DOWNBEAT hit of each
+// bar rolls (so it stays an accent, not a constant effect), and the rolled chord
+// gets a small velocity lift. `strum` is in beats per note (e.g. 0.04).
+function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread, strum = 0) {
   const on = [...patStr].map((c, i) => (c === 'o' ? i : -1)).filter(i => i >= 0)
   chords.forEach((chord, b) => {
     for (let k = 0; k < on.length; k++) {
@@ -485,7 +524,12 @@ function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread) {
       const nxt = k + 1 < on.length ? on[k + 1] : 16
       const len = (ring ?? (nxt - i)) * STEP
       const voiced = spread ? [chord[0] - 12, ...chord.slice(1)] : chord
-      for (const p of voiced) clip.notes.push(note(p, (bar0 + b) * 4 + i * STEP, len * 0.97, hvel(rand, base, i)))
+      const roll = strum > 0 && i === 0 && voiced.length > 1
+      const seq = roll ? [...voiced].sort((a, b2) => a - b2) : voiced
+      seq.forEach((p, vi) => {
+        const off = roll ? vi * strum : 0
+        clip.notes.push(note(p, (bar0 + b) * 4 + i * STEP + off, Math.max(0.1, len - off) * 0.97, hvel(rand, base + (roll ? 5 : 0), i)))
+      })
     }
   })
 }
@@ -580,7 +624,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const rand = makeRand(seed)
   const pal = { ...DEF, ...(PAL[genreId] || {}) }
   const kit = DRUM_KITS.find(k => k.id === pal.kit) || DRUM_KITS[0]
-  const feel = FEELS[genre.drums] || FEELS.backbeat
+  const feel = rand.pick(FEELS[genre.drums] || FEELS.backbeat)
   const { root, scale } = parseKey(keyStr, genre.scale)
 
   // Progression bank: prefer the genre's own curated recipes for this mode; fall
@@ -619,6 +663,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const useSidechain = fourFloor && rand.chance(0.8)                 // kick pump on sustained layers
   const useSweeps    = rand.chance(0.7)                              // filter-sweep transitions into peaks
   const useClipFx    = rand.chance(0.7)                              // drawn effect BARS on the track FX lanes
+  const useRolls     = rand.chance(0.45)                             // ascending chord strums on high-energy downbeats
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
   const cutoffFor = (energy, isBass) => {
@@ -714,7 +759,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     // Bass — long pedal roots when sparse, genre idiom otherwise
     if (L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, root, scale); push(c) }
     // Keys — sit out the sparse intro so it stays open
-    if (L.keys && !sparse) { const c = secClip('keys', secStart, sec.bars, e); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false); push(c) }
+    if (L.keys && !sparse) { const c = secClip('keys', secStart, sec.bars, e); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0); push(c) }
     // Pad — always present; held long when sparse
     { const c = secClip('pad', secStart, sec.bars, sparse ? e * 0.85 : e)
       if (sparse) fillPadLong(c, rand, 0, padCh, 42)
@@ -782,7 +827,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     swing: genre.swing, key: root, scale,
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweeps:${useSweeps && automationLanes.length ? 'on' : 'off'} clipFx:${clipEffects.length}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweeps:${useSweeps && automationLanes.length ? 'on' : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'}`,
   }
 }
 
