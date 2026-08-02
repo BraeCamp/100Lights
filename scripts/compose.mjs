@@ -306,27 +306,37 @@ const RF = {
 }
 
 // ── Visible track effect racks — real, editable mixer effects per layer ───────
-// Genre/role-appropriate and lightly seed-varied, so loaded songs show effects
-// the user can open and change (reverb, delay, EQ, compression, chorus…).
-function trackFx(key, pal, rand, mkId) {
+// Genre/role-appropriate and seed-varied. Beyond the core mix chain (EQ / comp /
+// reverb / delay) each layer can also draw CHARACTER + MOVEMENT effects from the
+// app's full palette — autopan (stereo motion), an LFO wobbling a filter,
+// bitcrush grit, transient-shaper punch, phaser/flanger — all seed-gated, so
+// songs get different textures instead of one house sound.
+function trackFx(key, pal, genreId, rand, mkId) {
   const rv = (wet, decay, pre = 0.02) => ({ id: mkId(), type: 'reverb', params: { enabled: true, wet, decay, preDelay: pre } })
   const dl = (wet, beats, fb = 0.35) => ({ id: mkId(), type: 'delay', params: { enabled: true, wet, time: 0.375, feedback: fb, syncToTempo: true, syncBeats: beats } })
   const eq = (lo, mid, hi) => ({ id: mkId(), type: 'eq3', params: { enabled: true, lowGain: lo, midGain: mid, highGain: hi, lowFreq: 200, midFreq: 1000, highFreq: 8000 } })
   const cp = (thr, ratio, mk) => ({ id: mkId(), type: 'compressor', params: { enabled: true, threshold: thr, ratio, attack: 0.003, release: 0.25, knee: 6, makeupGain: mk } })
-  const ch = (mix) => ({ id: mkId(), type: 'chorus', params: { enabled: true, type: 'chorus', rate: 0.5, depth: 0.5, feedback: 0.3, mix, stages: 4 } })
+  // Modulation — randomly chorus / flanger / phaser for timbral variety.
+  const mo = (mix, type) => ({ id: mkId(), type: 'chorus', params: { enabled: true, type: type || rand.pick(['chorus', 'chorus', 'flanger', 'phaser']), rate: 0.45, depth: 0.5, feedback: 0.3, mix, stages: 4 } })
   const sa = (drive) => ({ id: mkId(), type: 'saturator', params: { enabled: true, drive, color: 0.3, output: 0 } })
+  const ap = (depth, rate = 0.5) => ({ id: mkId(), type: 'autopan', params: { enabled: true, rate, depth, waveform: 'sine', phase: 180 } })      // stereo motion
+  const lf = (rate, depth = 0.6) => ({ id: mkId(), type: 'lfo', params: { enabled: true, rate, depth, waveform: 'sine', target: 'filter', filterFreqMin: 500, filterFreqMax: 6500 } })  // filter wobble
+  const rx = (bits, sr) => ({ id: mkId(), type: 'redux', params: { enabled: true, bitDepth: bits, sampleRate: sr } })                             // bitcrush grit
+  const ts = (attack) => ({ id: mkId(), type: 'transientshaper', params: { enabled: true, attack, sustain: 0, gain: 0 } })                        // punch
   // Open low-pass at the FRONT of the keys chain — neutral at 18k, but its
   // `frequency` is the target for the automated build/transition sweeps. Keys
   // (bright chord stabs, present through builds) sweep audibly; a dark pad
   // wouldn't, and filtering the drums would muddy the kick.
   const flt = (hz) => ({ id: mkId(), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: hz, q: 1 } })
   const heavy = pal.bassStyle === '808'
+  const electronic = ['house', 'deep-house', 'techno', 'trance', 'dnb', 'dubstep', 'future-bass', 'synthwave', 'reggaeton'].includes(genreId)
+  const lofiish = ['lofi', 'boombap', 'trap', 'rnb'].includes(genreId)
   switch (key) {
-    case 'drums': return [cp(-18, 4, 1), eq(2, 0, 1.5), ...(rand.chance(0.5) ? [sa(0.18)] : [])]
+    case 'drums': return [cp(-18, 4, 1), eq(2, 0, 1.5), ...(rand.chance(0.5) ? [sa(0.18)] : []), ...(rand.chance(0.4) ? [ts(0.4)] : [])]
     case 'bass':  return [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.35)] : [])]
-    case 'keys':  return [flt(18000), rv(0.2, 1.8), ...(rand.chance(0.5) ? [dl(0.16, 0.5)] : [])]
-    case 'pad':   return [rv(0.42, 3.2, 0.03), ch(0.4)]
-    case 'lead':  return [rand.chance(0.6) ? dl(0.22, 0.375, 0.38) : ch(0.35), rv(0.28, 2.2)]
+    case 'keys':  return [flt(18000), rv(0.2, 1.8), ...(rand.chance(0.5) ? [dl(0.16, 0.5)] : []), ...(lofiish && rand.chance(0.5) ? [rx(11, 13000)] : []), ...(rand.chance(0.3) ? [ap(0.5)] : [])]
+    case 'pad':   return [rv(0.42, 3.2, 0.03), ...(rand.chance(0.55) ? [mo(0.4)] : []), ...(rand.chance(0.4) ? [ap(0.55, 0.3)] : []), ...(electronic && rand.chance(0.35) ? [lf(0.2, 0.5)] : [])]
+    case 'lead':  return [rand.chance(0.6) ? dl(0.22, 0.375, 0.38) : mo(0.35), rv(0.28, 2.2), ...(electronic && rand.chance(0.3) ? [lf(0.5, 0.5)] : [])]
     default: return []
   }
 }
@@ -594,7 +604,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     { key: 'pad',   name: 'Pad',   instr: { type: 'none', params: {} }, preset: pal.pad,    rf: RF.pad,             pan: 0.14,  vol: 0.34 },
     { key: 'lead',  name: 'Lead',  instr: { type: 'none', params: {} }, preset: leadPreset, rf: RF.lead,            pan: 0.08,  vol: 0.5 },
   ]
-  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.key, pal, rand, () => uid('e')) }))
+  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.key, pal, genreId, rand, () => uid('e')) }))
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
   const clips = []
