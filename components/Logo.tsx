@@ -1,19 +1,19 @@
 import type { CSSProperties } from 'react'
 
-// The 100Lights icon mark. Sits next to the "100Lights" wordmark in headers.
-// The transparent (no-background) circular PNG, so the mark sits on any surface
-// without a baked-in badge/buffer.
+// The 100Lights icon mark — the transparent circular spotlight badge. Sits next
+// to the "100Lights" wordmark in headers. `object-fit: contain` keeps the circle
+// round at any square `size` (the source isn't exactly square).
 export function LogoMark({ size = 24, style, className }: { size?: number; style?: CSSProperties; className?: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/logo1yellowNObuffer.png"
+      src="/FullLogo_Transparent.png"
       alt=""
       aria-hidden
       width={size}
       height={size}
       className={className}
-      style={{ display: 'block', flexShrink: 0, ...style }}
+      style={{ display: 'block', flexShrink: 0, objectFit: 'contain', ...style }}
     />
   )
 }
