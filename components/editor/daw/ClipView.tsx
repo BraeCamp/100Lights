@@ -530,6 +530,12 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         ]
       : [
           { label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: onDoubleClick },
+          // Flip the editing surface in place — no audio change, just which editor
+          // opens (piano roll ↔ step sequencer). Fixes clips that landed on the
+          // wrong surface without re-authoring them.
+          ...(isMidiClip(clip)
+            ? [{ label: clip.isDrumClip ? 'Convert to Piano Roll' : 'Convert to Beat', fn: () => { setCtxPos(null); dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { isDrumClip: !clip.isDrumClip } }) } }]
+            : []),
           { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
     ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),

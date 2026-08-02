@@ -31,8 +31,13 @@ class Song:
     def track(s,tid,name,instr,volume=0.8,pan=0.0):
         s.tracks.append(dict(id=tid,name=name,instrument=instr,volume=volume,pan=pan)); return tid
     def clip(s,cid,tid,presetId,rollFx,start,dur):
+        # A clip on a drum track opens in the STEP SEQUENCER (isDrumClip), not the
+        # piano roll — auto-detected from the track's instrument so drum patterns
+        # always land on the beat grid. (isDrumClip is a UI flag only; no audio effect.)
+        trk=next((t for t in s.tracks if t['id']==tid),None)
+        is_drum=bool(trk and (trk.get('instrument') or {}).get('type')=='drum')
         c=dict(id=cid,trackId=tid,presetId=presetId,rollFx=rollFx,
-               startBeat=start,durationBeats=dur,notes=[]); s.clips.append(c); return c
+               startBeat=start,durationBeats=dur,notes=[],isDrumClip=is_drum); s.clips.append(c); return c
     def dump(s,path):
         json.dump(dict(**s.meta,tracks=s.tracks,clips=s.clips),open(path,'w'))
         n=sum(len(c['notes']) for c in s.clips)
