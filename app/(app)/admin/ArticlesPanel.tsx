@@ -46,6 +46,9 @@ interface Row {
   /** True when a committed .md file exists for this slug — if the row is also
    *  DB-sourced, that file is being shadowed and can be resynced from. */
   hasRepo?: boolean
+  /** Author "needs work" flag + optional note (article_todo table). */
+  needsWork?: boolean
+  todoNote?: string
 }
 
 const input: React.CSSProperties = {
@@ -182,7 +185,7 @@ export default function ArticlesPanel() {
   })
   const [schedTime, setSchedTime] = useState('09:00')
   const [schedEvery, setSchedEvery] = useState(1)
-  const [filter, setFilter] = useState<'all' | 'live' | 'draft' | 'scheduled'>('all')
+  const [filter, setFilter] = useState<'all' | 'live' | 'draft' | 'scheduled' | 'todo'>('all')
   const [articleQuery, setArticleQuery] = useState('')
   const [trashOpen, setTrashOpen] = useState(false)
   const [trash, setTrash] = useState<TrashItem[] | null>(null)
@@ -293,6 +296,19 @@ export default function ArticlesPanel() {
       }
       setMsg('Synced from repo file ✓')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Sync failed') } finally { setBusy(null) }
+  }
+
+  // Flag / unflag an article as "needs work". Optimistic — the flag lives in
+  // its own table (article_todo) so it applies to repo and DB articles alike.
+  async function toggleTodo(row: Row, note?: string) {
+    const needsWork = !row.needsWork
+    setRows(prev => prev?.map(r => r.slug === row.slug ? { ...r, needsWork, todoNote: needsWork ? (note ?? r.todoNote ?? '') : '' } : r) ?? prev)
+    if (sel?.slug === row.slug) setSel(s => s ? { ...s, needsWork, todoNote: needsWork ? (note ?? s.todoNote ?? '') : '' } : s)
+    const r = await fetch('/api/admin/articles/todo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: row.slug, needsWork, note: note ?? row.todoNote ?? '' }),
+    }).catch(() => null)
+    if (!r?.ok) { setMsg('Could not update the to-do flag — reloading.'); await load() }
   }
 
   async function remove(slug: string) {
@@ -1083,6 +1099,7 @@ export default function ArticlesPanel() {
             ['live', 'Live', rows.filter(r => !r.draft).length],
             ['draft', 'Drafts', rows.filter(r => r.draft && !r.scheduledFor).length],
             ['scheduled', 'Scheduled', rows.filter(r => r.scheduledFor).length],
+            ['todo', '🔧 To do', rows.filter(r => r.needsWork).length],
           ] as const).map(([id, label, count]) => (
             <button
               key={id}
@@ -1156,6 +1173,7 @@ export default function ArticlesPanel() {
           const statusOk = filter === 'all' ? true
             : filter === 'live' ? !r.draft
             : filter === 'draft' ? r.draft && !r.scheduledFor
+            : filter === 'todo' ? !!r.needsWork
             : !!r.scheduledFor
           const query = articleQuery.trim().toLowerCase()
           const textOk = !query || r.title.toLowerCase().includes(query) || r.slug.toLowerCase().includes(query) || (r.description ?? '').toLowerCase().includes(query) || (r.tags ?? '').toLowerCase().includes(query)
@@ -1169,8 +1187,11 @@ export default function ArticlesPanel() {
             borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', cursor: 'pointer',
           }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>/learn/{r.slug} · {r.date}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {r.needsWork && <span title={r.todoNote || 'Flagged: needs work'} style={{ color: '#f59e0b', marginRight: 5 }}>🔧</span>}
+                {r.title}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>/learn/{r.slug} · {r.date}{r.needsWork && r.todoNote ? ` · ${r.todoNote}` : ''}</div>
             </div>
             <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 8px', borderRadius: 99, flexShrink: 0, color: r.source === 'repo' ? '#60a5fa' : '#a78bfa', border: `1px solid ${r.source === 'repo' ? 'rgba(96,165,250,0.4)' : 'rgba(167,139,250,0.4)'}` }}>
               {r.source === 'repo' ? 'REPO' : 'DB'}
@@ -1184,6 +1205,13 @@ export default function ArticlesPanel() {
                 {r.draft ? 'DRAFT' : 'LIVE'}
               </span>
             )}
+            <span
+              role="button" tabIndex={0}
+              onClick={e => { e.stopPropagation(); void toggleTodo(r) }}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); void toggleTodo(r) } }}
+              title={r.needsWork ? 'Clear the “needs work” flag' : 'Flag this article as needing work'}
+              style={{ fontSize: 12, lineHeight: 1, padding: '4px 7px', borderRadius: 7, cursor: 'pointer', flexShrink: 0, userSelect: 'none', background: r.needsWork ? 'rgba(245,158,11,0.15)' : 'transparent', border: `1px solid ${r.needsWork ? 'rgba(245,158,11,0.5)' : 'var(--border)'}`, color: r.needsWork ? '#f59e0b' : 'var(--text-muted)' }}
+            >🔧</span>
             <a
               href={`/learn/${r.slug}`} target="_blank" rel="noreferrer"
               onClick={e => e.stopPropagation()}

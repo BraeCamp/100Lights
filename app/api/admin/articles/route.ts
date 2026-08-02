@@ -2,6 +2,7 @@ import { revalidatePath } from 'next/cache'
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { getArticles, getRepoSlugs } from '@/lib/learn-articles'
+import { getTodoFlags } from '@/lib/article-todo'
 import { ensureLearnSchema } from '@/lib/learn-schema'
 import { submitToIndexNow } from '@/lib/indexnow'
 import { logAdmin } from '@/lib/admin-audit'
@@ -27,10 +28,12 @@ export async function GET() {
   // row that is shadowing a committed .md file, so the editor can offer to
   // resync its content from that file.
   const repoSlugs = getRepoSlugs()
+  const todo = await getTodoFlags()
   const articles = (await getArticles({ includeDrafts: true })).map(a => ({
     slug: a.slug, title: a.title, description: a.description, date: a.date,
     tags: a.tags.join(', '), draft: a.draft, scheduledFor: a.scheduledFor,
     body: a.body, source: a.source, hasRepo: repoSlugs.has(a.slug),
+    needsWork: a.slug in todo, todoNote: todo[a.slug] ?? '',
   }))
   return Response.json({ articles })
 }

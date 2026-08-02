@@ -143,10 +143,11 @@ const MIX_TOOLS = {
   '@rhythmtap':    { kind: 'rhythmtap' as const,    emoji: '🥁', text: 'Tap-back rhythm — a pattern plays; recreate it on the slots and check.' },
 }
 
-function MixToolFallback({ emoji, text, caption }: { emoji: string; text: string; caption?: string }) {
+function MixToolFallback({ emoji, text, caption, href, label }: { emoji: string; text: string; caption?: string; href?: string; label?: string }) {
   return (
     <figure style={{ margin: '24px 0', padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
       <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>{emoji} {text}</p>
+      {href && <p style={{ margin: '8px 0 0' }}><a href={href} style={{ fontSize: 12.5, fontWeight: 700, color: '#a78bfa', textDecoration: 'none' }}>Open the {label ?? 'full'} tool →</a></p>}
       {caption && <figcaption style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.6 }}>{caption}</figcaption>}
     </figure>
   )
@@ -543,7 +544,7 @@ export function renderMarkdown(md: string): React.ReactNode {
         if (def) {
           out.push(
             <LazyArticleWidget key={key} kind="tool" props={{ toolId: id, caption }}>
-              <MixToolFallback emoji={def.emoji} text={`${def.label} — ${def.blurb}`} caption={caption} />
+              <MixToolFallback emoji={def.emoji} text={`${def.label} — ${def.blurb}`} caption={caption} href={def.href} label={def.label} />
             </LazyArticleWidget>
           )
         }

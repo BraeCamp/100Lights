@@ -49,6 +49,8 @@ Every track feeds into a mixer. A mixer does two things you care about and about
 
 The two: volume, and left-right position. Turn things up, turn things down, push the hi-hats slightly to one side so they stop fighting the vocal. That's mixing. Ninety percent of the improvement in a beginner's mixes comes from pulling faders down, and specifically from pulling everything down that isn't the kick, the bass, and the lead.
 
+@mixer(daw-loop) Here's a channel strip over that same loop — the exact two moves. Pull the **volume** fader down and back; slide the **pan** left and right. The high-pass and cut band are the "nine you don't yet" — leave them off for now. This is the same strip you'll meet in the studio, so you already know where to reach.
+
 The nine you don't yet: EQ, compression, reverb, delay, sends, returns, and the rest of the effect chain. These are real and they matter and you should touch them roughly a month from now, when you've noticed a specific problem — "the vocal disappears when the chorus comes in" — and you want a specific tool.
 
 Here is my actual heresy: adding a compressor to a track you don't have a complaint about makes it worse. Every time. Effects are answers, and if you haven't got a question yet, you're just adding noise with a nice interface.

@@ -16,6 +16,7 @@ export interface ArticleToolDef {
   label: string
   emoji: string
   blurb: string
+  href: string           // the standalone /tools page for this tool (embed links out to it)
   needsMic?: boolean     // gated behind a Start button, but prompts for the mic
   wide?: boolean         // wider than the article column — scroll horizontally
   load: () => Promise<{ default: ComponentType<Record<string, unknown>> }>
@@ -26,14 +27,14 @@ const L = (fn: () => Promise<{ default: ComponentType<never> }>) =>
   fn as unknown as () => Promise<{ default: ComponentType<Record<string, unknown>> }>
 
 export const ARTICLE_TOOLS: ArticleToolDef[] = [
-  { id: 'metronome',       label: 'Metronome',            emoji: '🥁', blurb: 'Tap or set a tempo and play a click — for tempo/timing articles.',           load: L(() => import('@/components/tools/Metronome')) },
-  { id: 'circle-of-fifths',label: 'Circle of Fifths',     emoji: '🎡', blurb: 'Interactive circle of fifths — keys, relative minors, key signatures.',      load: L(() => import('@/components/tools/CircleOfFifths')) },
-  { id: 'chords',          label: 'Chord explorer',       emoji: '🎹', blurb: 'Build progressions, hear chords, identify them — theory/chord articles.',    load: L(() => import('@/components/tools/ChordTeacher')) },
-  { id: 'chord-identifier',label: 'Chord identifier',     emoji: '🔎', blurb: 'Click notes on a piano and name the chord — for chord-spelling articles.',    load: L(() => import('@/components/tools/ChordIdentifier')) },
-  { id: 'fretboard',       label: 'Scale fretboard',      emoji: '🎸', blurb: 'Guitar fretboard with scales lit up — for scale/guitar articles.',           wide: true, load: L(() => import('@/components/tools/Fretboard')) },
-  { id: 'delay-calculator',label: 'Delay calculator',     emoji: '⏱', blurb: 'BPM → note-value delay/reverb times in ms — for mixing/FX articles.',        load: L(() => import('@/components/tools/DelayCalculator')) },
-  { id: 'tuner',           label: 'Tuner',                emoji: '🎯', blurb: 'Mic-based instrument tuner — for tuning/recording articles.',                 needsMic: true, load: L(() => import('@/components/tools/StandaloneTuner')) },
-  { id: 'vocal-range',     label: 'Vocal range finder',   emoji: '🎤', blurb: 'Sing to find your range — for vocal/recording articles.',                    needsMic: true, load: L(() => import('@/components/tools/VocalRange')) },
+  { id: 'metronome',       label: 'Metronome',            emoji: '🥁', href: '/tools/metronome',         blurb: 'Tap or set a tempo and play a click — for tempo/timing articles.',           load: L(() => import('@/components/tools/Metronome')) },
+  { id: 'circle-of-fifths',label: 'Circle of Fifths',     emoji: '🎡', href: '/tools/circle-of-fifths',  blurb: 'Interactive circle of fifths — keys, relative minors, key signatures.',      load: L(() => import('@/components/tools/CircleOfFifths')) },
+  { id: 'chords',          label: 'Chord explorer',       emoji: '🎹', href: '/tools/chord-progressions',blurb: 'Build progressions, hear chords, identify them — theory/chord articles.',    load: L(() => import('@/components/tools/ChordTeacher')) },
+  { id: 'chord-identifier',label: 'Chord identifier',     emoji: '🔎', href: '/tools/chord-identifier',  blurb: 'Click notes on a piano and name the chord — for chord-spelling articles.',    load: L(() => import('@/components/tools/ChordIdentifier')) },
+  { id: 'fretboard',       label: 'Scale fretboard',      emoji: '🎸', href: '/tools/scales',            blurb: 'Guitar fretboard with scales lit up — for scale/guitar articles.',           wide: true, load: L(() => import('@/components/tools/Fretboard')) },
+  { id: 'delay-calculator',label: 'Delay calculator',     emoji: '⏱', href: '/tools/delay-calculator',  blurb: 'BPM → note-value delay/reverb times in ms — for mixing/FX articles.',        load: L(() => import('@/components/tools/DelayCalculator')) },
+  { id: 'tuner',           label: 'Tuner',                emoji: '🎯', href: '/tools/tuner',             blurb: 'Mic-based instrument tuner — for tuning/recording articles.',                 needsMic: true, load: L(() => import('@/components/tools/StandaloneTuner')) },
+  { id: 'vocal-range',     label: 'Vocal range finder',   emoji: '🎤', href: '/tools/vocal-range',       blurb: 'Sing to find your range — for vocal/recording articles.',                    needsMic: true, load: L(() => import('@/components/tools/VocalRange')) },
 ]
 
 export const toolById = (id: string): ArticleToolDef | undefined => ARTICLE_TOOLS.find(t => t.id === id)

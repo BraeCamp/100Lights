@@ -32,6 +32,16 @@ export async function ensureLearnSchema() {
       no   INTEGER NOT NULL DEFAULT 0
     )
   `
+  // Author "to-do / needs work" flags. A row's presence = the article needs
+  // work; `note` is an optional reminder. Keyed by slug so it applies to both
+  // repo-only and DB articles without touching learn_articles.
+  await sql`
+    CREATE TABLE IF NOT EXISTS article_todo (
+      slug    TEXT PRIMARY KEY,
+      note    TEXT NOT NULL DEFAULT '',
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
   ready = true
 }
 
