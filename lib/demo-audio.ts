@@ -62,6 +62,18 @@ function biquad(kind: 'lowpass' | 'highpass' | 'peaking', fc: number, q: number,
   return (x: number) => { const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x; y2 = y1; y1 = y; return y }
 }
 
+// Transparent below the knee, gently rounds only the peaks above it. Replaces
+// the old flat `tanh(bus*0.8)` master drive, which shaped EVERY sample — so it
+// rounded the body of the waveform, not just the peaks, adding harmonic grit
+// that read as "distortion"/"feedback". Here the bulk of the signal (kick body,
+// bass hum, pads) passes through untouched and only true transient peaks are
+// tamed, so transients stay clean and crest factor recovers.
+const softclip = (x: number) => {
+  const a = Math.abs(x)
+  if (a <= 0.75) return x
+  return Math.sign(x) * (0.75 + 0.22 * Math.tanh((a - 0.75) / 0.22))
+}
+
 function osc(type: 'sine' | 'square' | 'triangle' | 'sawtooth', phase: number) {
   const p = phase - Math.floor(phase)
   if (type === 'sine') return Math.sin(2 * Math.PI * p)
@@ -192,7 +204,7 @@ function renderMix(bars: number, opts: MixOpts, S: DemoSettings): Stereo {
     let busL = dry + sideL, busR = dry + sideR
     if (eqCut || eqBoost) { busL = busEqL(busL); busR = busEqR(busR) }
     if (reverbFb > 0) { const send = S.reverb.send; busL += verbL(wet) * send; busR += verbR(wet * 0.97) * send }
-    L[n] = Math.tanh(busL * 0.8); R[n] = Math.tanh(busR * 0.8)
+    L[n] = softclip(busL * 0.72); R[n] = softclip(busR * 0.72)
   }
   return { L, R }
 }
@@ -241,9 +253,25 @@ function renderMelody(midi: (number | null)[]): Stereo {
 
 function renderPedal(withDrone: boolean): Stereo {
   const prog = [[57, 60, 64], [53, 57, 60], [55, 59, 62], [52, 56, 59]], roots = [45, 41, 43, 40]
-  const M = Math.round((4 * BAR + 0.4) * SR); const buf = new Float32Array(M); const lp = biquad('lowpass', 1800, 0.8)
+  const M = Math.round((4 * BAR + 0.4) * SR); const buf = new Float32Array(M)
+  const chordLP = biquad('lowpass', 2200, 0.8)                                   // gentle top on the triangle chords
+  const bassHP = biquad('highpass', 34, 0.7), bassLP = biquad('lowpass', 430, 0.8) // hold the bass in its own low band
   const ph = new Float64Array(4); const dph = { p: 0 }, rph = { p: 0 }
-  for (let n = 0; n < M; n++) { const t = n / SR, bar = Math.min(3, Math.floor(t / BAR)); let s = 0; for (let v = 0; v < prog[bar].length; v++) { ph[v] += mtof(prog[bar][v]) / SR; s += osc('triangle', ph[v]) * 0.18 } if (withDrone) { dph.p += mtof(45) / SR; s += osc('sawtooth', dph.p) * 0.3 } else { rph.p += mtof(roots[bar]) / SR; s += osc('sawtooth', rph.p) * 0.3 } buf[n] = lp(s) }
+  for (let n = 0; n < M; n++) {
+    const t = n / SR, bar = Math.min(3, Math.floor(t / BAR))
+    let chord = 0
+    for (let v = 0; v < prog[bar].length; v++) { ph[v] += mtof(prog[bar][v]) / SR; chord += osc('triangle', ph[v]) * 0.2 }
+    chord = chordLP(chord)
+    // The bass (drone or moving roots) is a defined sine fundamental for clear
+    // pitch plus a touch of saw for body, band-limited under 430 Hz. The old
+    // raw full-band saw at 0.3 dumped 64% of the energy into the low-mids and
+    // buzzed — the pitch of the drone was mush. Now it grounds the chords.
+    let bass: number
+    if (withDrone) { dph.p += mtof(45) / SR; bass = osc('sine', dph.p) * 0.34 + osc('sawtooth', dph.p) * 0.11 }
+    else { rph.p += mtof(roots[bar]) / SR; bass = osc('sine', rph.p) * 0.34 + osc('sawtooth', rph.p) * 0.11 }
+    bass = bassLP(bassHP(bass))
+    buf[n] = softclip((chord + bass) * 0.9)
+  }
   let pk = 0; for (let i = 0; i < M; i++) pk = Math.max(pk, Math.abs(buf[i])); const g = 0.89 / (pk || 1); for (let i = 0; i < M; i++) buf[i] *= g
   return stereo(buf)
 }
@@ -273,7 +301,7 @@ function renderLoopClick(clean: boolean): Stereo {
     for (const k of KICK) s += drum('kick', t - k * STEP) * 0.8
     for (const sn of SNARE) s += drum('snare', t - sn * STEP) * 0.5
     for (const h of HATS) s += drum('hat', t - h * STEP) * 0.12
-    bar[n] = Math.tanh(s * 0.9)   // soft-limit so stacked kick + bass never blares
+    bar[n] = softclip(s * 0.82)   // knee soft-limit: clean under the knee, only peaks rounded
   }
   const fade = Math.round(0.004 * SR)
   if (clean) { for (let i = 0; i < fade; i++) { bar[i] *= i / fade; bar[oneBar - 1 - i] *= i / fade } } else bar[0] += 0.6
@@ -309,7 +337,9 @@ export function renderClip(id: string, s?: Partial<DemoSettings> | null): Stereo
     case 'loop-clean': case 'loop-click': { const [c, k] = pair(renderLoopClick(true), renderLoopClick(false)); return id === 'loop-clean' ? c : k }
     case 'pedal-roots': case 'pedal-drone': { const [r, d] = pair(renderPedal(false), renderPedal(true)); return id === 'pedal-roots' ? r : d }
     case 'hook-identical': case 'hook-moved': { const [i, m] = pair(renderMelody([60, 61, 63, 64, 60, 61, 63, 64]), renderMelody([60, 61, 63, 64, 62, 63, 65, 66])); return id === 'hook-identical' ? i : m }
-    case 'eight-static': case 'eight-developed': { const [st, dv] = pair(renderMix(16, { pad: true, lead: true }, S), renderMix(16, { pad: true, lead: true, dropBar: 7 }, S)); return id === 'eight-static' ? st : dv }
+    // Simpler arrangement (drums + bass + pad, no arp lead) so the single-bar
+    // drop at bar 8 is the only event the ear tracks — the busy lead buried it.
+    case 'eight-static': case 'eight-developed': { const [st, dv] = pair(renderMix(16, { pad: true }, S), renderMix(16, { pad: true, dropBar: 7 }, S)); return id === 'eight-static' ? st : dv }
     case 'snare-clean': case 'snare-layered': { const [c, l] = pair(renderSnareLayer(false), renderSnareLayer(true)); return id === 'snare-clean' ? c : l }
     case 'gear-competing': case 'gear-rebalanced': { const [c, r] = pair(renderMix(4, { pad: true, lead: true }, S), renderMix(4, { pad: true, lead: true, highpass: true }, S)); return id === 'gear-competing' ? c : r }
     case 'daw-loop': { const x = renderMix(8, { pad: true }, S); finalizePeak([x]); return x }
