@@ -804,6 +804,16 @@ export default function ArrangementView() {
     highlightHelpTargets(['track-head'])
   }
 
+  // Selecting an item (clicking a clip) is a different KIND of selection than an
+  // area (region + its tracks) or a track selection — only one kind at a time.
+  // So a clip click clears the area/track highlight. (The marquee drag is its
+  // own area selection and sets the region itself, so it isn't routed here.)
+  function clearAreaSelection() {
+    setSelectionRegion(null)
+    setSelectionTracks(new Set())
+    setSelectedTrackIds(new Set())
+  }
+
   function handleSelectTrack(trackId: string, ctrl: boolean) {
     if (ctrl) {
       setSelectedTrackIds(prev => {
@@ -1719,6 +1729,7 @@ export default function ArrangementView() {
             waveformZoom={project.waveformZoom}
             selectedTrackIds={selectedTrackIds}
             onSelectTrack={ctrl => handleSelectTrack(track.id, ctrl)}
+            onItemSelect={clearAreaSelection}
             foldedGroups={foldedGroups}
             onToggleFold={() => setFoldedGroups(prev => {
               const next = new Set(prev)

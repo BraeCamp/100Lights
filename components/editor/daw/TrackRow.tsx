@@ -280,7 +280,7 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
   )
 }
 
-export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, headWidth, compactHead, selectedTrackIds, onSelectTrack, foldedGroups, onToggleFold, onGroupTracks, onReorderDrop, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
+export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, onScrollBy, waveformZoom, headWidth, compactHead, selectedTrackIds, onSelectTrack, onItemSelect, foldedGroups, onToggleFold, onGroupTracks, onReorderDrop, rippleEdit, onCopyClips, onPasteClips, onCopyEffects, onPasteEffects, getSelectionRegion, selectionRegion, isSelectionTrack, onSelectionResize, onSelectionLoopCommit }: {
   track: DawTrack; beatW: number; scrollLeft: number; viewWidth: number; snap: SnapMode
   onScrollBy?: (delta: number) => void
   waveformZoom?: number
@@ -290,6 +290,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   compactHead?: boolean
   selectedTrackIds?: Set<string>
   onSelectTrack?: (ctrl: boolean) => void
+  /** Called when a clip (item) is clicked — clears the area/track selection,
+   *  since item vs area vs track are mutually-exclusive kinds of selection. */
+  onItemSelect?: () => void
   foldedGroups?: Set<string>
   onToggleFold?: () => void
   onGroupTracks?: () => void
@@ -1283,6 +1286,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fadeIn, fadeOut } })
                   } : undefined}
                   onSelect={() => {
+                    onItemSelect?.()
                     setSelectedClipId(clip.id); setSelectedClipIds(new Set([clip.id])); setSelectedEffectIds(new Set())
                     // An open editor follows the selection to the newly selected MIDI
                     // clip, switching editor type (roll/sequencer) to match it.
@@ -1292,6 +1296,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     }
                   }}
                   onShiftSelect={() => {
+                    onItemSelect?.()
                     setSelectedClipIds(prev => {
                       const next = new Set(prev)
                       if (next.has(clip.id)) { next.delete(clip.id) } else { next.add(clip.id) }
@@ -1300,6 +1305,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     setSelectedClipId(clip.id)
                   }}
                   onRangeSelect={() => {
+                    onItemSelect?.()
                     // Select every clip in the rectangle between the anchor (the
                     // current primary selection) and this clip — spanning tracks
                     // and time. The anchor stays primary so successive Shift-clicks
