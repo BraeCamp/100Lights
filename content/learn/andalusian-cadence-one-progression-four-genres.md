@@ -27,6 +27,8 @@ Same four chords. Change nothing about which notes are in them. Change this inst
 
 Give each chord a strummed rhythm instead of a held block — short, on the beat, then two quick ones off the beat. Put the chords high, near the middle of the keyboard, and stack the top note as a doubled octave. Put a nylon-guitar or plucked preset on the track. Let each chord ring only about half a bar, then leave silence.
 
+@audio(/api/demo-audio/andalusian-flamenco) The same Am–G–F–E, strummed high and dry with hand-claps — flamenco. Nothing in the harmony changed.
+
 @ear With the rhythm in, listen specifically to the *bottom* note of each chord as it moves. A, then G, then F, then E. Say those out loud as they pass. Does that shape remind you of a staircase or a circle?
 
 Staircase. Every time. It only goes down, one step at a time, and it never turns around.
@@ -34,6 +36,8 @@ Staircase. Every time. It only goes down, one step at a time, and it never turns
 ## Now play it as surf rock
 
 Delete the strum. Give every chord exactly eight even eighth notes, machine-steady. Drop the whole thing an octave. Swap the preset to something bright and thin with a fast attack. Add reverb on the track — a lot of it, more than feels tasteful, because tasteful is not what 1962 was doing.
+
+@audio(/api/demo-audio/andalusian-surf) Same chords, drenched in reverb over a backbeat — the surf/spy-theme skeleton.
 
 You have just written the skeleton of a thousand surf and spy-theme cues — the Andalusian cadence played by a man in a hurry.
 
@@ -43,11 +47,15 @@ You have just written the skeleton of a thousand surf and spy-theme cues — the
 
 Take only the lowest note of each chord. Just one note. A, G, F, E, down in the bass register. Give each one a chugging sixteenth-note rhythm with a distorted or heavily saturated sound. Add the fifth above each root if you want the weight; leave out the third entirely.
 
+@audio(/api/demo-audio/andalusian-metal) Roots and fifths only, distorted, chugging in sixteenths over a driving kick — no thirds, and the cadence is still unmistakable.
+
 The chords are gone. The progression isn't. That's not a small thing — you deleted two thirds of every chord and the identity survived, which tells you where the identity was actually living.
 
 ## Now play it as pop
 
 Slow it down. Give each chord a full bar again, held. Put a soft pad underneath, an arpeggio on top that just cycles through each chord's notes as eighth notes, and a kick on every beat. Keep the bass moving A, G, F, E.
+
+@audio(/api/demo-audio/andalusian-pop) Held chords, four-on-the-floor kick, a bright top — the same four chords as radio pop.
 
 @ear Play the pop version and the flamenco version back to back, one after the other, in the same project. Two tracks, same four chords, muted alternately. Ask a friend if it's the same progression. They will hesitate.
 

@@ -27,6 +27,8 @@ Keep the block chords. Move the whole thing so the top notes stay in a narrow ba
 
 Then, on top, play only the very top note of each chord as a sustained whole note.
 
+@audio(/api/demo-audio/sfc-pop) Block chords, four-on-the-floor, a near-static top note — the stadium-pop version of C–G–Am–F.
+
 @ear Listen to that top line by itself, chords muted. It barely moves. That near-motionless top note over shifting chords underneath is the sound of a stadium chorus, and it's why a crowd of forty thousand people can sing along without knowing the song.
 
 ## Two: neo-soul
@@ -34,6 +36,8 @@ Then, on top, play only the very top note of each chord as a sustained whole not
 Same four chords. Now add one note to each: the note a step below the root, up in the chord's own register. C becomes Cmaj7, G becomes G7, Am becomes Am7, F becomes Fmaj7.
 
 Then break the rhythm. Instead of each chord landing on the downbeat, push it a sixteenth note *late* — every chord arrives just after the beat, dragging. Shorten them: hit, release, silence, hit again in the second half of the bar. Use an electric-piano preset. Turn the velocities down and make them uneven — one chord at 70, the next at 95, the next at 60.
+
+@audio(/api/demo-audio/sfc-neosoul) The same four chords as Cmaj7–G7–Am7–Fmaj7 on a swung electric piano, dragging behind the beat.
 
 @ear Play the pop version and the neo-soul version back to back. Same chords, same order, same bar count. Ask yourself which one sounds *confident* and which one sounds like it's thinking. That difference is entirely rhythm and one extra note per chord.
 
@@ -46,6 +50,8 @@ Then break the rhythm. Instead of each chord landing on the downbeat, push it a 
 Strip everything back to bare triads, but spread them apart. Put the root down low, alone, in the bass register. Put the other two notes up high, far above it, with a large empty gap in the middle. Give each chord a full bar with no rhythm at all — just hold it, and let it overlap into the next chord by a beat.
 
 Use a pad with a slow attack. Add reverb, generously. Add nothing else. No drums. No bass line beyond the single low root.
+
+@audio(/api/demo-audio/sfc-cinematic) The same chords, voiced wide — low root, high pair, a hole in the middle — on a slow reverb-soaked pad.
 
 @ear Listen for the gap. The empty middle register is doing more work than any note you played. Now fill it in — copy the chord's middle notes into the space — and listen to it turn back into a keyboard part.
 
@@ -61,6 +67,8 @@ Then add the note that isn't in any of the chords: the flat third of the key, pl
 
 Bass plays quarter notes, one per beat, walking from each chord's root toward the next chord's root.
 
+@audio(/api/demo-audio/sfc-blues) The same four chords as swung dominant-7th stabs — C7–G7–Am7–F7 — landing late.
+
 @ear Play this version and then immediately play the pop version. The pop version will suddenly sound polite. That's not a criticism — it's the point. You didn't change the harmony. You changed whether the parts arrive on time.
 
 ## Five: electronic
@@ -70,6 +78,8 @@ Take only the top note of each chord and turn it into a sixteenth-note arpeggio:
 Underneath, put a sustained sub-bass on the root of each chord, and nothing in the middle at all.
 
 Then automate a low-pass filter on the arp so it opens gradually across eight bars.
+
+@audio(/api/demo-audio/sfc-electronic) The same chords as a fast sixteenth-note arp over a sub-bass root, a low-pass slowly opening — texture, not chords.
 
 @ear Loop it for eight bars with the filter opening. Notice you stopped hearing chords. You're hearing *texture that is slowly brightening*, and the harmony has become the thing underneath rather than the thing you're listening to.
 

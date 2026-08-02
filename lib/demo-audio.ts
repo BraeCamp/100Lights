@@ -310,6 +310,192 @@ function renderLoopClick(clean: boolean): Stereo {
   return stereo(buf)
 }
 
+// ── genre renditions ────────────────────────────────────────────────────────
+// One progression, several genres. Both "andalusian-cadence…" and "same-four-
+// chords…" make the same point: harmony is fixed, genre comes from rhythm,
+// register, timbre, and drums. renderStyled plays a fixed 4-chord progression
+// (one chord per bar) in a named style so the article can A/B the genres.
+
+interface StyleCfg {
+  onsets: number[]                 // 16th-step indices in a bar where the chord re-strikes
+  decay: number                    // per-strike note decay (s)
+  voice: 'pluck' | 'saw' | 'power' | 'piano' | 'rhodes' | 'pulse' | 'pad'
+  drums: 'none' | 'four' | 'back' | 'metal' | 'shuffle' | 'halftime'
+  transform: 'none' | 'power' | 'spread' | 'seventh' | 'dom7' | 'high'
+  bright: number                   // chord low-pass cutoff (Hz)
+  reverbSend: number
+  reverbFb: number
+  drive: number                    // >0 = distortion drive into tanh (metal)
+  sweep: boolean                   // low-pass opens across the clip (electronic)
+  swing: number                    // offbeat 16th delay, fraction of a step
+  bassLvl: number
+  chordLvl: number
+}
+
+// The DIATONIC seventh above the root, so the sevenths of a I–V–vi–IV in C are
+// Cmaj7, G7, Am7, Fmaj7 (the V is a dominant 7th, not a maj7) — matching how the
+// articles spell them. Pick +11 (major 7th) when that note is in the key, else
+// +10 (minor/dominant 7th).
+const CMAJOR = new Set([0, 2, 4, 5, 7, 9, 11])
+function seventhTone(chord: number[], scale: Set<number>): number {
+  const root = chord[0]
+  return root + (scale.has((root + 11) % 12) ? 11 : 10)
+}
+
+// All transforms assume `chord` is a ROOT-POSITION triad (chord[0] = root).
+function voiceChord(chord: number[], transform: StyleCfg['transform'], scale: Set<number>): number[] {
+  switch (transform) {
+    case 'power':   return [chord[0] - 12, chord[0] - 5]                    // root + fifth, dropped an octave
+    case 'spread':  return [chord[0] - 12, chord[1], chord[2] + 12]         // same pitch classes, wide
+    case 'seventh': return [...chord, seventhTone(chord, scale)]            // diatonic 7th (maj7 / dom7 / min7)
+    case 'dom7':    return [...chord, chord[0] + 10]                        // dominant 7th on every chord — the blues sound
+    case 'high':    return [...chord, chord[0] + 12]                        // add an octave top for a near-static top line
+    default:        return chord
+  }
+}
+
+// A single struck note for the chord voices. `age` seconds since the strike.
+function chordVoice(voice: StyleCfg['voice'], freq: number, phase: number, age: number, decay: number): number {
+  const env = age < 0 ? 0 : Math.min(1, age / 0.004) * Math.exp(-age / decay)
+  switch (voice) {
+    case 'pluck':  return (osc('sawtooth', phase) * 0.6 + osc('triangle', phase) * 0.4) * env        // nylon-ish
+    case 'saw':    return osc('sawtooth', phase) * env
+    case 'power':  return osc('sawtooth', phase) * env
+    case 'piano':  return (osc('triangle', phase) * 0.7 + osc('sine', phase * 2) * 0.25) * env
+    case 'rhodes': return (osc('sine', phase) * 0.7 + osc('sine', phase * 3) * 0.16) * env            // bell-ish tine
+    case 'pulse':  return osc('sawtooth', phase) * env
+    case 'pad':    return (osc('sawtooth', phase) + osc('sawtooth', phase * 1.004)) * 0.5 * env
+    default:       return osc('triangle', phase) * env
+  }
+}
+
+function renderStyled(chords: number[][], roots: number[], cfg: StyleCfg, scale: Set<number> = CMAJOR): Stereo {
+  const bars = chords.length
+  const M = Math.round((bars * BAR + 0.6) * SR)
+  const L = new Float32Array(M), R = new Float32Array(M)
+  resetNoise()
+  const chordLP_L = biquad('lowpass', cfg.bright, 0.8), chordLP_R = biquad('lowpass', cfg.bright, 0.8)
+  const bassHP = biquad('highpass', 34, 0.7), bassLP = biquad('lowpass', 440, 0.8)
+  const verbL = makeReverb(cfg.reverbFb), verbR = makeReverb(cfg.reverbFb)
+  const sweepL = biquad('lowpass', 500, 3), sweepR = biquad('lowpass', 500, 3)  // recreated per-sample below when sweeping
+
+  // Pre-voice each bar and build the strike schedule (absolute times per bar).
+  const voiced = chords.map(c => voiceChord(c, cfg.transform, scale))
+  const swingSec = cfg.swing * STEP
+  const strikes: { time: number; bar: number }[] = []
+  for (let b = 0; b < bars; b++) for (const st of cfg.onsets) {
+    const off = (st % 2 === 1) ? swingSec : 0
+    strikes.push({ time: b * BAR + st * STEP + off, bar: b })
+  }
+  // Phase accumulators: one per (bar-voice-tone) is overkill; track per tone index,
+  // reset phase at each strike so every hit starts coherent.
+  const phase: number[] = []
+  const bassPh = { p: 0 }
+
+  // For the electronic pulse, cutoff rises across the clip.
+  let sweepState = 0
+
+  for (let n = 0; n < M; n++) {
+    const t = n / SR
+    const bar = Math.min(bars - 1, Math.floor(t / BAR))
+    // Most recent strike at/under t.
+    let strike = strikes[0]
+    for (const s of strikes) { if (s.time <= t + 1e-9) strike = s; else break }
+    const age = t - strike.time
+    const tones = voiced[strike.bar]
+
+    let chord = 0
+    if (cfg.voice === 'pulse') {
+      // 16th arpeggio through the chord tones; one note at a time.
+      const step16 = Math.floor((t % BAR) / STEP)
+      const tone = tones[step16 % tones.length]
+      const f = mtof(tone)
+      phase[0] = (phase[0] ?? 0) + f / SR
+      const age = (t % STEP)
+      const env = Math.min(1, age / 0.003) * Math.exp(-age / 0.09)
+      chord = osc('sawtooth', phase[0]) * env
+    } else {
+      for (let v = 0; v < tones.length; v++) {
+        const f = mtof(tones[v])
+        phase[v] = (phase[v] ?? 0) + f / SR
+        // Palm-muted metal chugs get a very short decay; others use cfg.decay.
+        chord += chordVoice(cfg.voice, f, phase[v], age, cfg.decay) / Math.max(2, tones.length)
+      }
+    }
+    if (cfg.drive > 0) chord = Math.tanh(chord * cfg.drive) * 0.6           // metal grit (only where asked)
+    let cL = chordLP_L(chord), cR = chordLP_R(chord)
+    if (cfg.sweep) {
+      // Cutoff climbs 300→5000 Hz over the clip — filter the arpeggio so the
+      // texture "brightens" rather than the notes changing.
+      const frac = t / (bars * BAR)
+      const fc = 300 + frac * 4700
+      const a = Math.exp(-2 * Math.PI * fc / SR)
+      sweepState = (1 - a) * chord + a * sweepState
+      cL = cR = sweepState * 1.4
+    }
+
+    // Bass — the chord root, band-limited, defined pitch.
+    let bass = 0
+    if (cfg.bassLvl > 0) { bassPh.p += mtof(roots[bar]) / SR; bass = bassLP(bassHP(osc('sine', bassPh.p) * 0.8 + osc('sawtooth', bassPh.p) * 0.2)) * cfg.bassLvl }
+
+    // Drums.
+    let dry = 0, wet = 0
+    const barStart = bar * BAR
+    if (cfg.drums !== 'none') {
+      const inb = t - barStart
+      const kickAt = cfg.drums === 'four' ? KICK.map(k => k * STEP)
+        : cfg.drums === 'metal' ? [0, 1, 2, 3, 4, 5, 6, 7].map(k => k * (STEP * 2))   // driving 8ths
+        : cfg.drums === 'halftime' ? [0]
+        : [0, 8 * STEP]                                                                // back / shuffle: 1 and 3
+      for (const kt of kickAt) dry += drum('kick', inb - kt) * 0.85
+      const snareAt = cfg.drums === 'shuffle' ? [4 * STEP + swingSec, 12 * STEP + swingSec]
+        : cfg.drums === 'metal' ? [4 * STEP, 12 * STEP]
+        : [4 * STEP, 12 * STEP]
+      if (cfg.drums !== 'four') for (const st of snareAt) { const v = drum('snare', inb - st) * 0.5; dry += v; wet += v * 0.5 }
+      else for (const st of [4 * STEP, 12 * STEP]) { const v = drum('snare', inb - st) * 0.45; dry += v; wet += v * 0.4 }
+      const hatSteps = cfg.drums === 'metal' ? [] : HATS
+      for (const h of hatSteps) { const off = (h % 4 === 2) ? swingSec : 0; dry += drum('hat', inb - (h * STEP + off)) * 0.11 }
+      if (cfg.drums === 'shuffle') for (const c of [4 * STEP, 12 * STEP]) dry += drum('clap', inb - c) * 0.25
+    }
+
+    const chordOut = (cL + cR) * 0.5 * cfg.chordLvl
+    let busL = dry + bass + chordOut, busR = dry + bass + chordOut
+    if (cfg.reverbSend > 0) { busL += verbL(wet + chordOut * 0.5) * cfg.reverbSend; busR += verbR((wet + chordOut * 0.5) * 0.97) * cfg.reverbSend }
+    L[n] = softclip(busL * 0.7); R[n] = softclip(busR * 0.7)
+  }
+  // Loudness-match every genre to one perceived-loudness target so switching
+  // between them in an article is *character, not volume* (electronic and
+  // cinematic otherwise land ~5 dB hotter). K-weighted, then a peak safety net.
+  const target = 0.112
+  const k = kloud(L, R)
+  let g = target / (k || 1)
+  let peak = 0
+  for (let i = 0; i < L.length; i++) peak = Math.max(peak, Math.abs(L[i]) * g, Math.abs(R[i]) * g)
+  if (peak > 0.89) g *= 0.89 / peak
+  for (let i = 0; i < L.length; i++) { L[i] *= g; R[i] *= g }
+  return { L, R }
+}
+
+// The two progressions, exactly as the articles' @progression widgets spell them.
+// Root-position triads (chord[0] = root) so the voicing transforms are correct;
+// the pitch classes match the articles' @progression widgets (which show these
+// same chords in article-specific inversions — voicing being the article's point).
+const ANDALUSIAN = { chords: [[57, 60, 64], [55, 59, 62], [53, 57, 60], [52, 56, 59]], roots: [45, 43, 41, 40] }  // Am G F E
+const FOURCHORD  = { chords: [[60, 64, 67], [55, 59, 62], [57, 60, 64], [53, 57, 60]], roots: [36, 43, 45, 41] }  // C  G Am F
+
+const STYLES: Record<string, StyleCfg> = {
+  // Andalusian genres
+  flamenco:  { onsets: [0, 2, 4, 6, 8, 10, 12, 14], decay: 0.22, voice: 'pluck', drums: 'shuffle', transform: 'none',    bright: 3800, reverbSend: 0.08, reverbFb: 0.5,  drive: 0, sweep: false, swing: 0.35, bassLvl: 0.28, chordLvl: 0.85 },
+  surf:      { onsets: [0, 4, 8, 12],                decay: 1.2,  voice: 'saw',   drums: 'back',    transform: 'high',    bright: 2600, reverbSend: 0.5,  reverbFb: 0.9,  drive: 0, sweep: false, swing: 0,    bassLvl: 0.3,  chordLvl: 0.7  },
+  metal:     { onsets: [0, 2, 4, 6, 8, 10, 12, 14], decay: 0.14, voice: 'power', drums: 'metal',   transform: 'power',   bright: 2400, reverbSend: 0.05, reverbFb: 0.5,  drive: 3.2, sweep: false, swing: 0,   bassLvl: 0.34, chordLvl: 0.8  },
+  pop:       { onsets: [0, 4, 8, 12],                decay: 0.6,  voice: 'piano', drums: 'four',    transform: 'high',    bright: 3200, reverbSend: 0.12, reverbFb: 0.6,  drive: 0, sweep: false, swing: 0,    bassLvl: 0.3,  chordLvl: 0.7  },
+  // Same-four-chords genres (pop reused above)
+  neosoul:   { onsets: [0, 6, 8, 14],                decay: 0.9,  voice: 'rhodes',drums: 'shuffle', transform: 'seventh', bright: 2600, reverbSend: 0.16, reverbFb: 0.6,  drive: 0, sweep: false, swing: 0.4,  bassLvl: 0.28, chordLvl: 0.72 },
+  cinematic: { onsets: [0],                          decay: 3.5,  voice: 'pad',   drums: 'none',    transform: 'spread',  bright: 2200, reverbSend: 0.55, reverbFb: 0.92, drive: 0, sweep: false, swing: 0,    bassLvl: 0.26, chordLvl: 0.7  },
+  blues:     { onsets: [0, 3, 6, 8, 11, 14],         decay: 0.35, voice: 'piano', drums: 'shuffle', transform: 'dom7',    bright: 3000, reverbSend: 0.1,  reverbFb: 0.5,  drive: 0, sweep: false, swing: 0.5,  bassLvl: 0.32, chordLvl: 0.72 },
+  electronic:{ onsets: [0, 2, 4, 6, 8, 10, 12, 14], decay: 0.09, voice: 'pulse', drums: 'four',    transform: 'none',    bright: 6000, reverbSend: 0.12, reverbFb: 0.6,  drive: 0, sweep: true,  swing: 0,    bassLvl: 0.32, chordLvl: 0.7  },
+}
+
 // ── clips ─────────────────────────────────────────────────────────────────
 // Each PAIR renders two clips + a matcher; single clips render one. renderClip
 // returns exactly the named clip.
@@ -318,6 +504,9 @@ export const CLIP_IDS = [
   'hear-hats-0', 'hear-hats-plus1', 'duck-off', 'duck-on', 'mix-mud', 'mix-hp', 'mix-pan-center', 'mix-pan-wide',
   'loop-clean', 'loop-click', 'pedal-roots', 'pedal-drone', 'hook-identical', 'hook-moved',
   'eight-static', 'eight-developed', 'snare-clean', 'snare-layered', 'gear-competing', 'gear-rebalanced', 'daw-loop',
+  // The same progression in different genres (one clip each — not A/B pairs).
+  'andalusian-flamenco', 'andalusian-surf', 'andalusian-metal', 'andalusian-pop',
+  'sfc-pop', 'sfc-neosoul', 'sfc-cinematic', 'sfc-blues', 'sfc-electronic',
 ] as const
 export type ClipId = typeof CLIP_IDS[number]
 
@@ -343,6 +532,16 @@ export function renderClip(id: string, s?: Partial<DemoSettings> | null): Stereo
     case 'snare-clean': case 'snare-layered': { const [c, l] = pair(renderSnareLayer(false), renderSnareLayer(true)); return id === 'snare-clean' ? c : l }
     case 'gear-competing': case 'gear-rebalanced': { const [c, r] = pair(renderMix(4, { pad: true, lead: true }, S), renderMix(4, { pad: true, lead: true, highpass: true }, S)); return id === 'gear-competing' ? c : r }
     case 'daw-loop': { const x = renderMix(8, { pad: true }, S); finalizePeak([x]); return x }
+    // Genre renditions of a fixed progression (see renderStyled / STYLES).
+    case 'andalusian-flamenco': return renderStyled(ANDALUSIAN.chords, ANDALUSIAN.roots, STYLES.flamenco)
+    case 'andalusian-surf':     return renderStyled(ANDALUSIAN.chords, ANDALUSIAN.roots, STYLES.surf)
+    case 'andalusian-metal':    return renderStyled(ANDALUSIAN.chords, ANDALUSIAN.roots, STYLES.metal)
+    case 'andalusian-pop':      return renderStyled(ANDALUSIAN.chords, ANDALUSIAN.roots, STYLES.pop)
+    case 'sfc-pop':             return renderStyled(FOURCHORD.chords, FOURCHORD.roots, STYLES.pop)
+    case 'sfc-neosoul':         return renderStyled(FOURCHORD.chords, FOURCHORD.roots, STYLES.neosoul)
+    case 'sfc-cinematic':       return renderStyled(FOURCHORD.chords, FOURCHORD.roots, STYLES.cinematic)
+    case 'sfc-blues':           return renderStyled(FOURCHORD.chords, FOURCHORD.roots, STYLES.blues)
+    case 'sfc-electronic':      return renderStyled(FOURCHORD.chords, FOURCHORD.roots, STYLES.electronic)
     default: { const x = renderMix(4, { pad: true }, S); finalizePeak([x]); return x }
   }
 }

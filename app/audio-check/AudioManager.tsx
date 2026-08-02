@@ -33,6 +33,19 @@ const GROUPS: Group[] = [
   { title: 'Free sample packs', clips: [{ file: 'snare-clean', label: 'Clean snare' }, { file: 'snare-layered', label: 'Layered clap' }] },
   { title: 'You don’t need better gear', clips: [{ file: 'gear-competing', label: 'Competing' }, { file: 'gear-rebalanced', label: 'Rebalanced' }] },
   { title: 'What is a DAW', clips: [{ file: 'daw-loop', label: 'Bored-loop demo' }] },
+  { title: 'Andalusian — four genres', clips: [
+    { file: 'andalusian-flamenco', label: 'Flamenco' },
+    { file: 'andalusian-surf', label: 'Surf rock' },
+    { file: 'andalusian-metal', label: 'Metal' },
+    { file: 'andalusian-pop', label: 'Pop' },
+  ] },
+  { title: 'Same four chords — five genres', clips: [
+    { file: 'sfc-pop', label: 'Pop' },
+    { file: 'sfc-neosoul', label: 'Neo-soul' },
+    { file: 'sfc-cinematic', label: 'Cinematic' },
+    { file: 'sfc-blues', label: 'Blues' },
+    { file: 'sfc-electronic', label: 'Electronic' },
+  ] },
 ]
 
 export default function AudioManager() {
