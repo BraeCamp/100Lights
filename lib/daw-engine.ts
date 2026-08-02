@@ -1672,9 +1672,26 @@ export class DawEngine extends EventTarget {
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
-            const vibLfo = (fxHasPitchMod(rfx) || slideCents !== 0)
-              ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2, slideCents, artic.slideSec)
-              : null
+            // A drawn pitch contour (clip.pitchGraph) bends the note over its
+            // length: v 0.5 = in tune, 1 = +12 st, 0 = −12 st. It owns detune, so
+            // it replaces the pitch-env / slide / vibrato mods for this note.
+            const pitchG = clip.pitchGraph
+            let vibLfo: OscillatorNode | null = null
+            if (pitchG && pitchG.length >= 2) {
+              const totalSec = Math.max(0.02, this.beatsToSeconds(maxDur) + sustainSec)
+              const M = Math.max(8, Math.ceil(totalSec * 60))
+              const full = sampleAutomation(pitchG, 1, M)
+              const sIdx = Math.min(M - 2, Math.max(0, Math.floor((alreadyBeats / Math.max(1e-6, maxDur)) * M)))
+              const slice = full.slice(sIdx)
+              const base = rfx.detune ?? 0
+              const cents = new Float32Array(Math.max(2, slice.length))
+              for (let i = 0; i < cents.length; i++) cents[i] = base + ((slice[i] ?? 0.5) - 0.5) * 2 * 1200
+              try { src.detune.setValueCurveAtTime(cents, startAt, remaining + sustainSec) } catch { /* overlap */ }
+            } else {
+              vibLfo = (fxHasPitchMod(rfx) || slideCents !== 0)
+                ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2, slideCents, artic.slideSec)
+                : null
+            }
             src.connect(velGain)
             velGain.connect(noteDest)
             this._registerMidiVoice(src, velGain)

@@ -736,14 +736,17 @@ export type PitchGraphTarget =
 
 export interface PitchGraphPoint { pitch: number; amount: number } // pitch 0–127, amount 0–1
 
-// A curve mapping note pitch → an effect amount, so different notes get a
-// different amount of the same effect — e.g. to tame the brightness a sample
-// gains as it's pitched up. Lives on a preset's sound (per-effect).
+// A curve mapping a note property → an effect amount, so different notes get a
+// different amount of the same effect — e.g. tame brightness as pitch rises, or
+// open the filter the harder you play. Lives on a preset's sound (per-effect).
+// `source` picks the x-axis: note pitch (default) or note velocity. For a
+// velocity graph the point's `pitch` field holds the velocity (0–127).
 export interface PitchGraph {
   id: string
   target: PitchGraphTarget
   enabled: boolean
-  points: PitchGraphPoint[]  // ≥2, sorted ascending by pitch
+  source?: 'pitch' | 'velocity'
+  points: PitchGraphPoint[]  // ≥2, sorted ascending by x
 }
 
 export interface PresetSound {
@@ -799,6 +802,9 @@ export interface MidiClip {
    *  (over the note's length, scaled by velocity), replacing the attack/decay/
    *  sustain sliders. `t` is normalized 0..1 across the note. */
   ampGraph?: AutoPoint[]
+  /** Drawn pitch contour per note: v 0.5 = in tune, 1 = +12 st, 0 = −12 st.
+   *  Scoops, falls, bends. `t` is normalized 0..1 across the note. */
+  pitchGraph?: AutoPoint[]
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

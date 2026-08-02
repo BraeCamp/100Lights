@@ -192,7 +192,7 @@ export function mergeFx(base: RollFx | undefined, over: RollFx | undefined): Rol
 export function resolveNoteFx(
   presetSound: PresetSound | undefined,
   clipFx: RollFx | undefined,
-  note: { pitch: number; fx?: RollFx },
+  note: { pitch: number; velocity?: number; fx?: RollFx },
 ): RollFx {
   let fx = mergeFx(presetSound?.fx, clipFx)
   fx = mergeFx(fx, note.fx)
@@ -200,7 +200,9 @@ export function resolveNoteFx(
   if (graphs?.length) {
     for (const g of graphs) {
       if (!g.enabled || g.points.length < 1) continue
-      fx[g.target] = pitchGraphValue(g.target, evalPitchGraph(g.points, note.pitch))
+      // A velocity graph reads the note's velocity (0–127); a pitch graph its pitch.
+      const x = g.source === 'velocity' ? (note.velocity ?? 100) : note.pitch
+      fx[g.target] = pitchGraphValue(g.target, evalPitchGraph(g.points, x))
     }
   }
   return fx

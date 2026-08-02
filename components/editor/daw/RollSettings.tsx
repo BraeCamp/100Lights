@@ -259,6 +259,24 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   }
   const setAmpGraph = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: pts } })
 
+  // Drawn pitch contour per note (0.5 = in tune, up = sharp, down = flat).
+  const pitchGraph = !multi && isMidiClip(clip) ? clip.pitchGraph : undefined
+  const DEFAULT_PITCH: AutoPoint[] = [
+    { id: 'p0', t: 0, v: 0.4, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'p1', t: 0.12, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'p2', t: 1, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
+  ]
+  const togglePitchGraph = (on: boolean) => {
+    if (on) {
+      const rf: RollFx = { ...(clip.rollFx ?? {}) }
+      delete rf.pitchEnv; delete rf.pitchEnvTime; delete rf.vibratoDepth; delete rf.detune
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: DEFAULT_PITCH, rollFx: Object.keys(rf).length ? rf : undefined } })
+    } else {
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: undefined } })
+    }
+  }
+  const setPitchGraph = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: pts } })
+
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
   // the revert (drops the snapshot / untoggles the button) but keeps that change.
@@ -567,6 +585,26 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
               <MotionCurve points={ampGraph} onChange={setAmpGraph} width={276} height={78} color={CYAN} />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
                 <span>note start</span><span>volume shape · per note · scaled by velocity</span><span>end</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Pitch contour — draw the note's pitch bend (scoops, falls). Single MIDI clip. */}
+      {!multi && isMidiClip(clip) && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>PITCH</span>
+            {pitchGraph
+              ? <button onClick={() => togglePitchGraph(false)} title="Remove pitch contour" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Off</button>
+              : <button onClick={() => togglePitchGraph(true)} title="Draw a per-note pitch bend" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
+          </div>
+          {pitchGraph && (
+            <>
+              <MotionCurve points={pitchGraph} onChange={setPitchGraph} width={276} height={78} color={CYAN} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
+                <span>−12 st</span><span>middle line = in tune · per note</span><span>+12 st</span>
               </div>
             </>
           )}
