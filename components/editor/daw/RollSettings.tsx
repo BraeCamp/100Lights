@@ -11,7 +11,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
-import MotionCurve from './MotionCurve'
+import DrawnGraphSection from './DrawnGraphSection'
+import { GRAPH_AREAS, GRAPH_COLOR, defaultFieldGraph } from '@/lib/draw-graphs'
 import { isMidiClip, isAudioClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { useDaw } from '@/lib/daw-state'
@@ -111,9 +112,13 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
   // Advanced sound controls live in the "Everything" UI tier. Simpler tiers
   // (beginner + standard) stay on the curated basics with no toggle.
-  const tier = useUITierOptional()?.tier ?? 'full'
+  const uiCtx = useUITierOptional()
+  const tier = uiCtx?.tier ?? 'full'
   const soundAdvancedAllowed = tier === 'full'
   const effectiveMode: 'basic' | 'advanced' = soundAdvancedAllowed ? mode : 'basic'
+  // The drawn-graph suite is its own UI dimension (UI menu → "Drawn graphs"),
+  // independent of the tier — off by default so the panel stays uncluttered.
+  const graphsEnabled = uiCtx?.graphs ?? false
 
   useLayoutEffect(() => {
     // Re-clamp when the panel grows (e.g. switching to Advanced) so its bottom
@@ -207,10 +212,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   // FX Motion + per-parameter graphs work on any single clip (MIDI or audio).
   const supportsFx = !multi && (isMidiClip(clip) || isAudioClip(clip))
   const motion = supportsFx ? clip.fxMotion : undefined
-  const DEFAULT_MOTION: AutoPoint[] = [
-    { id: 'm0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'm1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
-  ]
+  // Default curves come from the registry (lib/draw-graphs.ts) so the whole
+  // drawn-graph system shares one source of truth.
+  const DEFAULT_MOTION: AutoPoint[] = GRAPH_AREAS.fxmotion.defaultCurve()
   const addMotion = () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { fx: { filterHz: 500 }, graph: DEFAULT_MOTION } } })
   const setMotionGraph = (graph: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { fx: motion?.fx ?? {}, perNote: motion?.perNote, graph } } })
   const setMotionFx = (fx: RollFx | undefined) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { ...(motion ?? { graph: DEFAULT_MOTION }), fx: fx ?? {} } } })
@@ -227,7 +231,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const toggleFieldGraph = (key: keyof RollFx, on: boolean) => {
     const g = cloneGraphs()
     const rf: RollFx = { ...(clip.rollFx ?? {}) }
-    if (on) { delete rf[key]; g[key] = { graph: DEFAULT_MOTION } }   // slider → graph, reset scalar
+    if (on) { delete rf[key]; g[key] = { graph: defaultFieldGraph() } }   // slider → graph, reset scalar
     else { delete g[key] }                                          // graph → slider, reset graph
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
       rollFx: Object.keys(rf).length ? rf : undefined,
@@ -242,17 +246,11 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   // Amplitude envelope drawn per note (0 = silent, top = full), replacing the
   // attack/decay/sustain sliders. Switching resets the envelope either way.
   const ampGraph = !multi && isMidiClip(clip) ? clip.ampGraph : undefined
-  const DEFAULT_AMP: AutoPoint[] = [
-    { id: 'a0', t: 0, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'a1', t: 0.08, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'a2', t: 0.6, v: 0.75, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'a3', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
-  ]
   const toggleAmpGraph = (on: boolean) => {
     if (on) {
       const rf: RollFx = { ...(clip.rollFx ?? {}) }
       delete rf.attack; delete rf.decay; delete rf.sustainLevel; delete rf.sustain
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: DEFAULT_AMP, rollFx: Object.keys(rf).length ? rf : undefined } })
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: GRAPH_AREAS.amplitude.defaultCurve(), rollFx: Object.keys(rf).length ? rf : undefined } })
     } else {
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { ampGraph: undefined } })
     }
@@ -261,16 +259,11 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
   // Drawn pitch contour per note (0.5 = in tune, up = sharp, down = flat).
   const pitchGraph = !multi && isMidiClip(clip) ? clip.pitchGraph : undefined
-  const DEFAULT_PITCH: AutoPoint[] = [
-    { id: 'p0', t: 0, v: 0.4, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'p1', t: 0.12, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'p2', t: 1, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
-  ]
   const togglePitchGraph = (on: boolean) => {
     if (on) {
       const rf: RollFx = { ...(clip.rollFx ?? {}) }
       delete rf.pitchEnv; delete rf.pitchEnvTime; delete rf.vibratoDepth; delete rf.detune
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: DEFAULT_PITCH, rollFx: Object.keys(rf).length ? rf : undefined } })
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: GRAPH_AREAS.pitch.defaultCurve(), rollFx: Object.keys(rf).length ? rf : undefined } })
     } else {
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: undefined } })
     }
@@ -280,29 +273,17 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   // Custom LFO shape (one cycle) used by this clip's tremolo / auto-pan / wah /
   // vibrato instead of a sine.
   const lfoShape = !multi && isMidiClip(clip) ? clip.lfoShape : undefined
-  const DEFAULT_LFO: AutoPoint[] = [
-    { id: 'l0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'l1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
-  ]
-  const toggleLfoShape = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: on ? DEFAULT_LFO : undefined } })
+  const toggleLfoShape = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: on ? GRAPH_AREAS.lfo.defaultCurve() : undefined } })
   const setLfoShape = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: pts } })
 
   // Drawn volume automation across the clip (MIDI or audio).
   const volGraph = supportsFx ? clip.volGraph : undefined
-  const DEFAULT_VOL: AutoPoint[] = [
-    { id: 'v0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'v1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
-  ]
-  const toggleVol = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { volGraph: on ? DEFAULT_VOL : undefined } })
+  const toggleVol = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { volGraph: on ? GRAPH_AREAS.volume.defaultCurve() : undefined } })
   const setVol = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { volGraph: pts } })
 
   // Drawn groove — micro-timing per bar position (MIDI only).
   const groove = !multi && isMidiClip(clip) ? clip.groove : undefined
-  const DEFAULT_GROOVE: AutoPoint[] = [
-    { id: 'gv0', t: 0, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
-    { id: 'gv1', t: 1, v: 0.5, smooth: false, h1: [0, 0], h2: [0, 0] },
-  ]
-  const toggleGroove = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { groove: on ? DEFAULT_GROOVE : undefined } })
+  const toggleGroove = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { groove: on ? GRAPH_AREAS.groove.defaultCurve() : undefined } })
   const setGroove = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { groove: pts } })
 
   // Per-note vs whole-clip toggle for ALL per-parameter FX graphs at once.
@@ -603,13 +584,13 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
         graphs={graphsForCtl}
-        onToggleGraph={supportsFx && soundAdvancedAllowed ? toggleFieldGraph : undefined}
-        onGraphChange={supportsFx && soundAdvancedAllowed ? setFieldGraph : undefined}
+        onToggleGraph={supportsFx && graphsEnabled ? toggleFieldGraph : undefined}
+        onGraphChange={supportsFx && graphsEnabled ? setFieldGraph : undefined}
       />
 
       {/* When any FX slider is in graph mode, choose whether those graphs span
           the whole clip or re-trigger per note. */}
-      {anyFieldGraph && soundAdvancedAllowed && (
+      {anyFieldGraph && graphsEnabled && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px 2px' }}>
           <span style={{ fontSize: 8.5, color: 'var(--text-muted)', flex: 1 }}>FX graphs run over</span>
           {([['whole clip', false], ['per note', true]] as const).map(([lbl, pn]) => (
@@ -619,139 +600,68 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         </div>
       )}
 
-      {/* Amplitude envelope — draw the note's volume shape instead of the
-          attack/decay/sustain sliders. Single MIDI clip. */}
-      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>AMPLITUDE</span>
-            {ampGraph
-              ? <button onClick={() => toggleAmpGraph(false)} title="Back to attack/decay/sustain sliders" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Sliders</button>
-              : <button onClick={() => toggleAmpGraph(true)} title="Draw the note's volume shape" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
-          </div>
-          {ampGraph && (
-            <>
-              <MotionCurve points={ampGraph} onChange={setAmpGraph} width={276} height={78} color={CYAN} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
-                <span>note start</span><span>volume shape · per note · scaled by velocity</span><span>end</span>
-              </div>
-            </>
+      {/* ── Drawn-graph suite ─────────────────────────────────────────────────
+          Its own UI dimension (UI menu → "Drawn graphs"), independent of the
+          tier. Every section renders through the shared <DrawnGraphSection>
+          driven by lib/draw-graphs.ts, so the whole system changes at once. */}
+      {graphsEnabled && (
+        <>
+          {/* Amplitude envelope — draw the note's volume shape (single MIDI clip). */}
+          {!multi && isMidiClip(clip) && (
+            <DrawnGraphSection area="amplitude" points={ampGraph} onToggle={toggleAmpGraph} onChange={setAmpGraph} />
           )}
-        </div>
-      )}
 
-      {/* LFO shape — draw one cycle used by the clip's tremolo/auto-pan/wah/vibrato. */}
-      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>LFO SHAPE</span>
-            {lfoShape
-              ? <button onClick={() => toggleLfoShape(false)} title="Back to a sine LFO" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Sine</button>
-              : <button onClick={() => toggleLfoShape(true)} title="Draw a custom LFO waveform" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
-          </div>
-          {lfoShape && (
-            <>
-              <MotionCurve points={lfoShape} onChange={setLfoShape} width={276} height={68} color={CYAN} />
-              <div style={{ display: 'flex', justifyContent: 'center', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
-                <span>one cycle · drives tremolo · auto-pan · wah · vibrato</span>
-              </div>
-            </>
+          {/* LFO shape — one cycle driving tremolo/auto-pan/wah/vibrato. */}
+          {!multi && isMidiClip(clip) && (
+            <DrawnGraphSection area="lfo" points={lfoShape} onToggle={toggleLfoShape} onChange={setLfoShape} />
           )}
-        </div>
-      )}
 
-      {/* Pitch contour — draw the note's pitch bend (scoops, falls). Single MIDI clip. */}
-      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>PITCH</span>
-            {pitchGraph
-              ? <button onClick={() => togglePitchGraph(false)} title="Remove pitch contour" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Off</button>
-              : <button onClick={() => togglePitchGraph(true)} title="Draw a per-note pitch bend" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
-          </div>
-          {pitchGraph && (
-            <>
-              <MotionCurve points={pitchGraph} onChange={setPitchGraph} width={276} height={78} color={CYAN} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
-                <span>−12 st</span><span>middle line = in tune · per note</span><span>+12 st</span>
-              </div>
-            </>
+          {/* Pitch contour — per-note pitch bend (scoops, falls). */}
+          {!multi && isMidiClip(clip) && (
+            <DrawnGraphSection area="pitch" points={pitchGraph} onToggle={togglePitchGraph} onChange={setPitchGraph} />
           )}
-        </div>
-      )}
 
-      {/* FX Motion — draw a curve over the whole clip that morphs chosen effects
-          from neutral (bottom) → their dialed-in target (top). MIDI or audio clip. */}
-      {supportsFx && soundAdvancedAllowed && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>FX MOTION</span>
-            {motion
-              ? <button onClick={clearMotion} title="Remove FX motion" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Remove</button>
-              : <button onClick={addMotion} title="Add an FX motion curve" style={{ fontSize: 9, fontWeight: 700, padding: '2px 9px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>+ Add</button>}
-          </div>
-          {motion ? (
-            <>
-              <MotionCurve points={motion.graph} onChange={setMotionGraph} width={276} height={88} color={CYAN} />
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 2px 8px' }}>
-                <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'per note' : 'clip start'}</span>
-                <div style={{ display: 'flex', gap: 3 }}>
-                  {([['Whole clip', false], ['Per note', true]] as const).map(([lbl, pn]) => {
-                    const on = !!motion.perNote === pn
-                    return (
-                      <button key={lbl} onClick={() => setMotionPerNote(pn)}
-                        title={pn ? 'Re-trigger the shape on every note' : 'One shape stretched across the whole clip'}
-                        style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: on ? CYAN : 'var(--text-secondary)' }}>{lbl}</button>
-                    )
-                  })}
-                </div>
-                <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'note end' : 'end'}</span>
-              </div>
-              <div style={{ fontSize: 8.5, color: 'var(--text-muted)', marginBottom: 3, lineHeight: 1.35 }}>Effects that follow the curve — pick one or more; the top of the graph = these values:</div>
-              <FxControls value={motion.fx} onCommit={setMotionFx} hideCats={['env', 'pitch']} mode="advanced" />
-            </>
-          ) : (
-            <p style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.45, margin: 0 }}>Draw a curve that morphs chosen effects across the clip — e.g. a filter that opens over time, reverb that swells, or drive that fades. One or more effects can follow the same curve.</p>
+          {/* FX Motion — a curve that morphs chosen effects over the clip. */}
+          {supportsFx && (
+            <DrawnGraphSection area="fxmotion"
+              points={motion?.graph}
+              onToggle={(on) => (on ? addMotion() : clearMotion())}
+              onChange={setMotionGraph}
+              emptyHint="Draw a curve that morphs chosen effects across the clip — e.g. a filter that opens over time, reverb that swells, or drive that fades. One or more effects can follow the same curve."
+            >
+              {motion && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 2px 8px' }}>
+                    <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'per note' : 'clip start'}</span>
+                    <div style={{ display: 'flex', gap: 3 }}>
+                      {([['Whole clip', false], ['Per note', true]] as const).map(([lbl, pn]) => {
+                        const on = !!motion.perNote === pn
+                        return (
+                          <button key={lbl} onClick={() => setMotionPerNote(pn)}
+                            title={pn ? 'Re-trigger the shape on every note' : 'One shape stretched across the whole clip'}
+                            style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: on ? CYAN : 'var(--text-secondary)' }}>{lbl}</button>
+                        )
+                      })}
+                    </div>
+                    <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'note end' : 'end'}</span>
+                  </div>
+                  <div style={{ fontSize: 8.5, color: 'var(--text-muted)', marginBottom: 3, lineHeight: 1.35 }}>Effects that follow the curve — pick one or more; the top of the graph = these values:</div>
+                  <FxControls value={motion.fx} onCommit={setMotionFx} hideCats={['env', 'pitch']} mode="advanced" />
+                </>
+              )}
+            </DrawnGraphSection>
           )}
-        </div>
-      )}
 
-      {/* Volume automation — draw the clip's loudness over time (MIDI or audio). */}
-      {supportsFx && soundAdvancedAllowed && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>VOLUME</span>
-            {volGraph
-              ? <button onClick={() => toggleVol(false)} title="Remove volume automation" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Off</button>
-              : <button onClick={() => toggleVol(true)} title="Draw the clip's volume over time" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
-          </div>
-          {volGraph && (
-            <>
-              <MotionCurve points={volGraph} onChange={setVol} width={276} height={72} color={CYAN} />
-              <div style={{ display: 'flex', justifyContent: 'center', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}><span>loudness across the clip · top = full</span></div>
-            </>
+          {/* Volume automation — the clip's loudness over time. */}
+          {supportsFx && (
+            <DrawnGraphSection area="volume" points={volGraph} onToggle={toggleVol} onChange={setVol} />
           )}
-        </div>
-      )}
 
-      {/* Groove — draw the micro-timing (push/pull) across one bar. MIDI clip. */}
-      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>GROOVE</span>
-            {groove
-              ? <button onClick={() => toggleGroove(false)} title="Remove groove" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Off</button>
-              : <button onClick={() => toggleGroove(true)} title="Draw the timing feel (push/pull) across a bar" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
-          </div>
-          {groove && (
-            <>
-              <MotionCurve points={groove} onChange={setGroove} width={276} height={68} color={CYAN} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
-                <span>bar start</span><span>middle = on the grid · up = laid-back · down = pushed</span><span>end</span>
-              </div>
-            </>
+          {/* Groove — micro-timing (push/pull) across one bar (MIDI clip). */}
+          {!multi && isMidiClip(clip) && (
+            <DrawnGraphSection area="groove" points={groove} onToggle={toggleGroove} onChange={setGroove} />
           )}
-        </div>
+        </>
       )}
 
       <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>

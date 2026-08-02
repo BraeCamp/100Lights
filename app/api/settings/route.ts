@@ -25,7 +25,7 @@ export async function GET() {
   await ensureTable()
   const rows = await sql`SELECT data FROM user_settings WHERE user_id = ${userId} LIMIT 1`
   const data = (rows[0]?.data ?? {}) as Record<string, unknown>
-  return Response.json({ theme: data.theme ?? null, uiTier: data.uiTier ?? null })
+  return Response.json({ theme: data.theme ?? null, uiTier: data.uiTier ?? null, uiGraphs: data.uiGraphs ?? null })
 }
 
 export async function PUT(req: Request) {
@@ -42,6 +42,10 @@ export async function PUT(req: Request) {
   if ('uiTier' in body) {
     const t = (body as { uiTier: unknown }).uiTier
     if (t === 'beginner' || t === 'intermediate' || t === 'full') patch.uiTier = t
+  }
+  if ('uiGraphs' in body) {
+    const g = (body as { uiGraphs: unknown }).uiGraphs
+    if (typeof g === 'boolean') patch.uiGraphs = g
   }
   if (Object.keys(patch).length === 0) return Response.json({ ok: true })
 

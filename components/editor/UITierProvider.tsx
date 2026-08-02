@@ -13,6 +13,7 @@ import { Sparkles } from 'lucide-react'
 import {
   type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss,
 } from '@/lib/ui-tiers'
+import { GRAPHS_LS_KEY } from '@/lib/draw-graphs'
 
 const LS_KEY = '100lights-ui-tier'
 
@@ -23,6 +24,10 @@ interface UITierCtx {
   chosen: boolean
   /** Is the current tier at least `t`? For conditional logic CSS can't express. */
   atLeast: (t: UITier) => boolean
+  /** The drawn-graph suite — its own UI dimension, independent of the tier.
+   *  Off by default so the Sound panel stays uncluttered until asked for. */
+  graphs: boolean
+  setGraphs: (on: boolean) => void
 }
 
 const Ctx = createContext<UITierCtx | null>(null)
@@ -46,11 +51,17 @@ function readLocal(): UITier | null {
   } catch { return null }
 }
 
+function readLocalGraphs(): boolean {
+  if (typeof window === 'undefined') return false
+  try { return localStorage.getItem(GRAPHS_LS_KEY) === 'on' } catch { return false }
+}
+
 export function UITierProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded } = useUser()
   const initial = readLocal()
   const [tier, setTierState] = useState<UITier>(initial ?? 'intermediate')
   const [chosen, setChosen] = useState<boolean>(initial !== null)
+  const [graphs, setGraphsState] = useState<boolean>(readLocalGraphs)
   // ready = we know enough to decide whether to show the first-run prompt
   // (after Clerk load + any account reconcile). Prevents a modal flash for
   // users who already chose on another device.
@@ -92,6 +103,11 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
             body: JSON.stringify({ uiTier: local }),
           }).catch(() => {})
         }
+        // The drawn-graph toggle rides the same settings blob.
+        if (typeof data?.uiGraphs === 'boolean') {
+          setGraphsState(data.uiGraphs)
+          try { localStorage.setItem(GRAPHS_LS_KEY, data.uiGraphs ? 'on' : 'off') } catch { /* ignore */ }
+        }
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setReady(true) })
@@ -116,11 +132,21 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
     persist(t)
   }, [persist])
 
+  const setGraphs = useCallback((on: boolean) => {
+    setGraphsState(on)
+    try { localStorage.setItem(GRAPHS_LS_KEY, on ? 'on' : 'off') } catch { /* ignore */ }
+    if (!isSignedIn) return
+    fetch('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uiGraphs: on }),
+    }).catch(() => {})
+  }, [isSignedIn])
+
   const atLeast = useCallback((t: UITier) => tierAtLeast(tier, t), [tier])
 
   return (
-    <Ctx.Provider value={{ tier, setTier, chosen, atLeast }}>
-      <div data-ui-tier={tier} style={{ display: 'contents' }}>{children}</div>
+    <Ctx.Provider value={{ tier, setTier, chosen, atLeast, graphs, setGraphs }}>
+      <div data-ui-tier={tier} data-ui-graphs={graphs ? 'on' : 'off'} style={{ display: 'contents' }}>{children}</div>
       {ready && !chosen && (
         <UITierFirstRun onChoose={(t) => {
           setTier(t)

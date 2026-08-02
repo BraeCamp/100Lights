@@ -11,7 +11,7 @@ import { UI_TIERS, TIER_INFO } from '@/lib/ui-tiers'
 import { clampToViewport } from './menu-clamp'
 
 export default function UITierSwitcher() {
-  const { tier, setTier } = useUITier()
+  const { tier, setTier, graphs, setGraphs } = useUITier()
   const [open, setOpen] = useState(false)
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -64,7 +64,7 @@ export default function UITierSwitcher() {
           setAnchor({ x: r.right - 280, y: r.bottom + 6 })
           setOpen(true)
         }}
-        title={`Studio setup: ${TIER_INFO[tier].name} — click to change how many controls you see`}
+        title={`UI: ${TIER_INFO[tier].name}${graphs ? ' · drawn graphs on' : ''} — change how many controls you see`}
         style={{
           display: 'flex', alignItems: 'center', gap: 5, height: 24, padding: '0 8px',
           borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
@@ -73,7 +73,7 @@ export default function UITierSwitcher() {
         }}
       >
         <SlidersHorizontal size={12} />
-        {TIER_INFO[tier].name}
+        UI
       </button>
 
       {open && anchor && createPortal(
@@ -115,6 +115,31 @@ export default function UITierSwitcher() {
               </button>
             )
           })}
+
+          {/* Drawn graphs — its own dimension, independent of the tier above. */}
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 6px' }} />
+          <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '2px 8px 2px' }}>
+            Drawing
+          </div>
+          <button
+            onClick={() => setGraphs(!graphs)}
+            role="switch" aria-checked={graphs}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left',
+              padding: '8px 8px', borderRadius: 8, cursor: 'pointer', border: 'none',
+              background: graphs ? 'var(--accent-subtle)' : 'transparent',
+            }}
+            onMouseEnter={e => { if (!graphs) e.currentTarget.style.background = 'var(--bg-card)' }}
+            onMouseLeave={e => { if (!graphs) e.currentTarget.style.background = 'transparent' }}
+          >
+            <span style={{ width: 14, flexShrink: 0, marginTop: 1, color: 'var(--accent-light)' }}>
+              {graphs && <Check size={13} />}
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Drawn graphs {graphs ? 'on' : 'off'}</span>
+              <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4, marginTop: 1 }}>Draw-your-own curves in the Sound panel — amplitude, pitch, LFO, volume, groove, FX motion.</span>
+            </span>
+          </button>
         </div>,
         document.body,
       )}
