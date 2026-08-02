@@ -12,7 +12,7 @@ import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
 import MotionCurve from './MotionCurve'
-import { isMidiClip } from '@/lib/daw-types'
+import { isMidiClip, isAudioClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { useDaw } from '@/lib/daw-state'
 import EqCurve, { type EqVals } from './EqCurve'
@@ -204,9 +204,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const legatoAuto = rfLegato === undefined
   const slideAmt = artOpts && isMidiClip(clip) ? (clip.rollFx?.slide ?? artOpts.slide.defaultAmount) : 0
 
-  // FX Motion — a hand-drawn curve over the whole clip that morphs chosen effects
-  // from neutral→target. Single MIDI clip only. Stored on clip.fxMotion.
-  const motion = !multi && isMidiClip(clip) ? clip.fxMotion : undefined
+  // FX Motion + per-parameter graphs work on any single clip (MIDI or audio).
+  const supportsFx = !multi && (isMidiClip(clip) || isAudioClip(clip))
+  const motion = supportsFx ? clip.fxMotion : undefined
   const DEFAULT_MOTION: AutoPoint[] = [
     { id: 'm0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
     { id: 'm1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
@@ -219,11 +219,11 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
   // Per-field graph mode (a single FX slider ↔ a drawn curve). Switching either
   // way resets that parameter, so there's no messy conversion.
-  const fxGraphs = !multi && isMidiClip(clip) ? clip.fxGraphs : undefined
+  const fxGraphs = supportsFx ? clip.fxGraphs : undefined
   const graphsForCtl = fxGraphs
     ? Object.fromEntries(Object.entries(fxGraphs).map(([k, g]) => [k, g!.graph]))
     : undefined
-  const cloneGraphs = () => ({ ...((isMidiClip(clip) && clip.fxGraphs) || {}) }) as NonNullable<MidiClip['fxGraphs']>
+  const cloneGraphs = () => ({ ...(clip.fxGraphs ?? {}) }) as NonNullable<MidiClip['fxGraphs']>
   const toggleFieldGraph = (key: keyof RollFx, on: boolean) => {
     const g = cloneGraphs()
     const rf: RollFx = { ...(clip.rollFx ?? {}) }
@@ -576,8 +576,8 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
         graphs={graphsForCtl}
-        onToggleGraph={!multi && isMidiClip(clip) ? toggleFieldGraph : undefined}
-        onGraphChange={!multi && isMidiClip(clip) ? setFieldGraph : undefined}
+        onToggleGraph={supportsFx ? toggleFieldGraph : undefined}
+        onGraphChange={supportsFx ? setFieldGraph : undefined}
       />
 
       {/* Amplitude envelope — draw the note's volume shape instead of the
@@ -642,8 +642,8 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       )}
 
       {/* FX Motion — draw a curve over the whole clip that morphs chosen effects
-          from neutral (bottom) → their dialed-in target (top). Single MIDI clip. */}
-      {!multi && isMidiClip(clip) && (
+          from neutral (bottom) → their dialed-in target (top). MIDI or audio clip. */}
+      {supportsFx && (
         <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>FX MOTION</span>

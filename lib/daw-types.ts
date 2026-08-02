@@ -663,6 +663,10 @@ export interface AudioClip {
   /** Clip sound settings — the same bag the piano-roll "Sound" panel edits, so
    *  samples and MIDI clips share one menu. Applied to this clip's playback. */
   rollFx?: RollFx
+  /** Drawn FX over the clip — same as MidiClip (a shared curve for chosen FX, or
+   *  a per-parameter graph). Rendered as effect-bars over the audio. */
+  fxMotion?: ClipFxMotion
+  fxGraphs?: Partial<Record<keyof RollFx, ClipParamGraph>>
   color?: string
   launchQuantization?: LaunchQuantization
   followAction?: FollowAction

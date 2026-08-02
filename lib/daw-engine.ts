@@ -2016,6 +2016,20 @@ export class DawEngine extends EventTarget {
     )
     const insertEffects = overlapping.filter(e => e.type !== 'pitch')
     const pitchEffects  = overlapping.filter(e => e.type === 'pitch')
+    // The clip's own drawn FX (FX Motion + per-parameter graphs) span the whole
+    // clip — synthesize them as bars so audio flows through the same renderer.
+    const mot = clip.fxMotion
+    if (mot && mot.graph.length >= 2 && activeBarFields(mot.fx).length > 0) {
+      insertEffects.push({ id: `motion:${clip.id}`, trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, fx: mot.fx, graph: mot.graph.map(p => ({ ...p, t: p.t * clip.durationBeats })) })
+    }
+    if (clip.fxGraphs) {
+      for (const key of Object.keys(clip.fxGraphs) as (keyof RollFx)[]) {
+        const pg = clip.fxGraphs[key]; const field = FX_FIELD_BY_KEY[key]
+        if (!pg || pg.graph.length < 2 || !field) continue
+        const target = key === 'filterHz' ? field.fromNorm(0) : field.fromNorm(1)
+        insertEffects.push({ id: `pg:${clip.id}:${key}`, trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, fx: { [key]: target } as RollFx, graph: pg.graph.map(p => ({ ...p, t: p.t * clip.durationBeats })) })
+      }
+    }
 
     let lastNode: AudioNode = fadeGain
     const allExtraNodes: AudioNode[] = []
