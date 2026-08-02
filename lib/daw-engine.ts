@@ -3,6 +3,7 @@
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
+import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
@@ -124,7 +125,7 @@ export class DawEngine extends EventTarget {
   // INDEPENDENT (clip-relative), yet were recomputed every 25ms scheduler tick —
   // and the unison guard is O(notes²), ~600k ops/tick for a 780-note clip. Cache
   // it, rebuild only when the clip's notes change (cleared on project change).
-  private _unisonCache = new Map<string, { sig: string; occurrences: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number }[]; unisonSkip: Set<string> }>()
+  private _unisonCache = new Map<string, { sig: string; occurrences: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number; connFrom?: number }[]; unisonSkip: Set<string> }>()
   private returnEffectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
   private mixerEqNodes = new Map<string, { sub: BiquadFilterNode; low: BiquadFilterNode; mid: BiquadFilterNode; hi: BiquadFilterNode }>()
   private maskingAnalysers = new Map<string, AnalyserNode>()
@@ -1424,6 +1425,7 @@ export class DawEngine extends EventTarget {
       const nodes = this.trackNodes.get(clip.trackId)
       if (!nodes) continue
 
+      const artic = this._clipArtic(clip)
       const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
 
       // Looped clips repeat the note pattern every loopLengthBeats until the
@@ -1438,7 +1440,7 @@ export class DawEngine extends EventTarget {
       const uSig = `${processedNotes.length}:${clip.durationBeats}:${loopLen ?? 0}:${processedNotes[0]?.id ?? ''}:${processedNotes[processedNotes.length - 1]?.id ?? ''}`
       let uCached = this._unisonCache.get(clip.id)
       if (!uCached || uCached.sig !== uSig) {
-        const occ: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number }[] = []
+        const occ: { note: MidiNote; relBeat: number; key: NoteKey; maxDur: number; connFrom?: number }[] = []
         for (const note of processedNotes) {
           if (!loopLen) {
             occ.push({
@@ -1474,13 +1476,27 @@ export class DawEngine extends EventTarget {
             if (startsInside && tieBreak && !skip.has(a.key)) skip.add(b.key)
           }
         }
+        // Connected-note runs (for articulation): link each playing note to the
+        // most recent note it touches/overlaps, so the scheduler can carry a
+        // bow / breath across the phrase and slide between pitches. A gap larger
+        // than ARTIC_GAP_BEATS breaks the run (the next note re-attacks).
+        // Position-independent, so it's cached with the occurrences.
+        const bySt = occ.filter(o => !skip.has(o.key)).sort((a, b) => a.relBeat - b.relBeat || a.note.pitch - b.note.pitch)
+        let runEnd = -Infinity, prevPitch = -1
+        for (const o of bySt) {
+          const connected = prevPitch >= 0 && o.relBeat <= runEnd + ARTIC_GAP_BEATS
+          if (connected) o.connFrom = prevPitch
+          const end = o.relBeat + o.maxDur
+          runEnd = connected ? Math.max(runEnd, end) : end
+          prevPitch = o.note.pitch
+        }
         uCached = { sig: uSig, occurrences: occ, unisonSkip: skip }
         this._unisonCache.set(clip.id, uCached)
       }
       const occurrences = uCached.occurrences
       const unisonSkip = uCached.unisonSkip
 
-      for (const { note, relBeat, key: noteKey, maxDur } of occurrences) {
+      for (const { note, relBeat, key: noteKey, maxDur, connFrom } of occurrences) {
         if (this._scheduledNoteKeys.has(noteKey)) continue
         if (unisonSkip.has(noteKey)) { this._scheduledNoteKeys.add(noteKey); continue }
 
@@ -1572,6 +1588,15 @@ export class DawEngine extends EventTarget {
               // Entering mid-note beyond the loop region: fold into the loop
               offsetSec = loop.start + ((offsetSec - loop.start) % (loop.end - loop.start))
             }
+            // Articulation. A note connected to a preceding one (same phrase)
+            // carries the bow / breath: suppress its re-attack, and on a fresh
+            // onset skip the sample's recorded attack transient (legato). If the
+            // instrument slides, glide the pitch in from the previous note.
+            const legatoAtk  = artic.legato && connFrom !== undefined
+            const legatoSkip = legatoAtk && offsetSec <= 0.0001
+            const slideCents = (artic.slideSec > 0 && connFrom !== undefined && connFrom !== note.pitch && offsetSec <= 0.0001)
+              ? (connFrom - note.pitch) * 100 : 0
+
             const velGain = this.ctx.createGain()
             const target = (note.velocity ?? 100) / 127
             // Fade in — 5ms entering mid-waveform, 3ms on a fresh onset: even
@@ -1579,9 +1604,11 @@ export class DawEngine extends EventTarget {
             // this note uses the shared clip chain (`sharedEnv`), the attack /
             // decay / sustain-level that used to live inside that chain are
             // folded onto this gain so they still retrigger per note. Otherwise
-            // (sharedEnv false) this is exactly the old 3/5ms fade.
+            // (sharedEnv false) this is exactly the old 3/5ms fade. A legato note
+            // keeps only the click-guard fade — no swell — so the line breathes
+            // as one bow.
             const baseAtk = offsetSec > 0 ? 0.005 : 0.003
-            const atk  = sharedEnv ? Math.max(baseAtk, rfx.attack ?? 0) : baseAtk
+            const atk  = legatoAtk ? 0.004 : (sharedEnv ? Math.max(baseAtk, rfx.attack ?? 0) : baseAtk)
             const dec  = sharedEnv ? (rfx.decay ?? 0) : 0
             const susL = sharedEnv ? (rfx.sustainLevel ?? 1) : 1
             const susTarget = (dec > 0 || susL < 1) ? target * susL : target
@@ -1592,11 +1619,13 @@ export class DawEngine extends EventTarget {
             const src = this.ctx.createBufferSource()
             src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
-            const vibLfo = fxHasPitchMod(rfx) ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2) : null
+            const vibLfo = (fxHasPitchMod(rfx) || slideCents !== 0)
+              ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2, slideCents, artic.slideSec)
+              : null
             src.connect(velGain)
             velGain.connect(noteDest)
             this._registerMidiVoice(src, velGain)
-            src.start(startAt, offsetSec)
+            src.start(startAt, legatoSkip ? Math.min(LEGATO_ONSET_SKIP, buf.duration * 0.25) : offsetSec)
             if (remaining > 0) {
               if (sustainSec > 0) {
                 // Sustain: let the sample ring past the note's end with a release
@@ -2182,13 +2211,17 @@ export class DawEngine extends EventTarget {
 
   /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope
    *  glide, and vibrato. Returns the vibrato LFO (to disconnect) or null. */
-  private _applyNotePitchMods(src: AudioBufferSourceNode, rfx: RollFx, startAt: number, stopAt: number): OscillatorNode | null {
+  private _applyNotePitchMods(src: AudioBufferSourceNode, rfx: RollFx, startAt: number, stopAt: number, slideCents = 0, slideSec = 0): OscillatorNode | null {
     const base = rfx.detune ?? 0
-    if (base !== 0) src.detune.value = base
-    if ((rfx.pitchEnv ?? 0) !== 0) {
-      const t = rfx.pitchEnvTime ?? 0.08
-      src.detune.setValueAtTime(base + rfx.pitchEnv! * 100, startAt)
-      src.detune.linearRampToValueAtTime(base, startAt + t)
+    // pitch-envelope and articulation slide are both "start detuned, glide to the
+    // note" — combine them into one ramp so they don't fight over src.detune.
+    const startOff = ((rfx.pitchEnv ?? 0) !== 0 ? rfx.pitchEnv! * 100 : 0) + slideCents
+    const glide = Math.max((rfx.pitchEnv ?? 0) !== 0 ? (rfx.pitchEnvTime ?? 0.08) : 0, slideSec)
+    if (startOff !== 0 && glide > 0) {
+      src.detune.setValueAtTime(base + startOff, startAt)
+      src.detune.linearRampToValueAtTime(base, startAt + glide)
+    } else if (base !== 0) {
+      src.detune.value = base
     }
     if ((rfx.vibratoDepth ?? 0) > 0) {
       const lfo = this.ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.vibratoRate ?? 5
@@ -2207,6 +2240,21 @@ export class DawEngine extends EventTarget {
     const sound = clip.presetId ? this._presets.find(p => p.id === clip.presetId)?.sound : undefined
     if (!sound && !clip.rollFx && !note.fx) return {}
     return resolveNoteFx(sound, clip.rollFx, note)
+  }
+
+  /** The clip's effective articulation (legato / slide), from its instrument
+   *  family default with any per-clip (or preset) override. Sampled-preset clips
+   *  only — synth track instruments don't carry family tags yet. */
+  private _clipArtic(clip: MidiClip): ClipArtic {
+    if (!clip.presetId) return { legato: false, slideSec: 0 }
+    const preset = this._presets.find(p => p.id === clip.presetId)
+    if (!preset) return { legato: false, slideSec: 0 }
+    const psFx = preset.sound?.fx
+    const fx = {
+      legato: clip.rollFx?.legato ?? psFx?.legato,
+      slide:  clip.rollFx?.slide  ?? psFx?.slide,
+    }
+    return resolveArtic(preset.group, preset.category, preset.name, fx)
   }
 
   /** Does a resolved bag need an audio chain? (sustain is applied to the gain

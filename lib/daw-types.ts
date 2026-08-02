@@ -702,6 +702,10 @@ export interface RollFx {
   phaser?: number        // 0–1
   // Tone EQ (4-band, dB)
   sub?: number; bass?: number; mid?: number; treble?: number
+  // Articulation (sampled-preset clips) — connected-note phrasing. Unset = the
+  // instrument-family default (see lib/articulation.ts); 0 = off, 1 = on.
+  legato?: number        // 0/1 — suppress re-attack across connected notes (bow/breath)
+  slide?: number         // 0–1 portamento between connected notes at different pitches
 }
 
 // Parameters a pitch graph can drive (excludes rates/times & the pure release).

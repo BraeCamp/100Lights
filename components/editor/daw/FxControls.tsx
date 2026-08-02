@@ -18,6 +18,11 @@ export function cleanFx(fx: RollFx): RollFx | undefined {
     const v = fx[f.key]
     if (v !== undefined && fieldIsSet(f.key, v)) out[f.key] = Math.round((v as number) * 1000) / 1000
   }
+  // Articulation (legato/slide) isn't part of FX_FIELDS but rides on the same
+  // bag — carry it through so editing an FX slider doesn't wipe it. 0 is a
+  // meaningful explicit "off" (overriding the family default), so keep it.
+  if (fx.legato !== undefined) out.legato = fx.legato
+  if (fx.slide !== undefined) out.slide = fx.slide
   return Object.keys(out).length ? out : undefined
 }
 

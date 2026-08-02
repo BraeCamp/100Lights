@@ -18,6 +18,7 @@ import EqCurve from './EqCurve'
 import { fxHasAudibleField, FX_FIELDS, fieldIsSet } from '@/lib/roll-fx'
 import { getPresets } from '@/lib/midi-presets'
 import { tonesForGroup, applyTone, toneMatches } from '@/lib/tone-presets'
+import { articOptions } from '@/lib/articulation'
 import { copySound, getCopiedSound, countSetFields, SOUND_CLIPBOARD_EVENT } from '@/lib/fx-clipboard'
 import FxControls, { cleanFx } from './FxControls'
 import { clampToViewport } from './menu-clamp'
@@ -178,6 +179,19 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     try { return getPresets().find(p => p.id === clip.presetId)?.group } catch { return undefined }
   }, [multi, clip])
   const tones = useMemo(() => (!multi && isMidiClip(clip) ? tonesForGroup(soundGroup) : []), [multi, clip, soundGroup])
+
+  // Articulation — which options this instrument offers (legato / slide) and its
+  // family defaults, keyed off the preset's tags. Unset on the clip = auto.
+  const artPreset = useMemo(() => {
+    if (multi || !isMidiClip(clip) || !clip.presetId || typeof window === 'undefined') return undefined
+    try { return getPresets().find(p => p.id === clip.presetId) } catch { return undefined }
+  }, [multi, clip])
+  const artOpts = artPreset ? articOptions(artPreset.group, artPreset.category, artPreset.name) : undefined
+  const showArtic = !!artOpts && (artOpts.legato.available || artOpts.slide.available)
+  const rfLegato = isMidiClip(clip) ? clip.rollFx?.legato : undefined
+  const legatoOn = artOpts ? ((rfLegato ?? (artOpts.legato.default ? 1 : 0)) > 0.5) : false
+  const legatoAuto = rfLegato === undefined
+  const slideAmt = artOpts && isMidiClip(clip) ? (clip.rollFx?.slide ?? artOpts.slide.defaultAmount) : 0
 
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
@@ -347,6 +361,46 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
               )
             })}
           </div>
+        </div>
+      )}
+
+      {/* Articulation — connected-note phrasing, options depend on the instrument */}
+      {showArtic && artOpts && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '7px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>ARTICULATION</span>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>connected notes only</span>
+          </div>
+          {artOpts.legato.available && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: artOpts.slide.available ? 6 : 0 }}>
+              <button
+                onClick={() => commitFx({ ...(clip.rollFx || {}), legato: legatoOn ? 0 : 1 })}
+                title="Legato: across a run of touching/overlapping notes, only the first attacks — the rest keep the bow/breath moving (no re-attack). Notes after a gap start fresh."
+                style={{
+                  fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 4, cursor: 'pointer', flexShrink: 0,
+                  border: legatoOn ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
+                  background: legatoOn ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
+                  color: legatoOn ? CYAN : 'var(--text-secondary)',
+                }}>
+                {legatoOn ? '✓ Legato' : 'Legato'}
+              </button>
+              <span style={{ fontSize: 8.5, color: 'var(--text-muted)', flex: 1, lineHeight: 1.3 }}>
+                {legatoAuto ? 'auto for this instrument — first note attacks, the phrase flows' : legatoOn ? 'bow/breath carries across the phrase' : 'every note re-attacks'}
+              </span>
+            </div>
+          )}
+          {artOpts.slide.available && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>Slide</span>
+              <input type="range" min={0} max={1} step={0.02} value={slideAmt}
+                onChange={e => commitFx({ ...(clip.rollFx || {}), slide: Number(e.target.value) })}
+                title="Portamento: glide the pitch from the previous note into this one, between connected notes at different pitches."
+                style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
+              <span style={{ fontSize: 9.5, color: slideAmt > 0 ? 'var(--text-primary)' : 'var(--text-muted)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                {slideAmt > 0 ? `${Math.round(slideAmt * 100)}%` : 'Off'}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
