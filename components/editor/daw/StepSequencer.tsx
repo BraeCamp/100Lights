@@ -85,6 +85,17 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
     }
   }
 
+  // ── Velocity row: draw across the steps to shape the accents. Sets the
+  // velocity of every hit at a step (all lanes) from the pointer's height. ──
+  const notesAtStep = (s: number) => clip.notes.filter(n => Math.abs(n.startBeat - s * STEP_BEATS) < STEP_BEATS / 2)
+  const stepVel = (s: number) => { const ns = notesAtStep(s); return ns.length ? Math.max(...ns.map(n => n.velocity ?? 100)) : 0 }
+  const paintVel = (s: number, e: React.PointerEvent) => {
+    const ns = notesAtStep(s); if (ns.length === 0) return
+    const r = e.currentTarget.getBoundingClientRect()
+    const vel = Math.max(1, Math.min(127, Math.round((1 - (e.clientY - r.top) / r.height) * 127)))
+    for (const n of ns) dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { velocity: vel } })
+  }
+
   // ── Kit & pattern libraries (built-in + user-saved) ──────────────────────────
   const [kits, setKits] = useState<DrumKit[]>(() => getKits())
   const [patterns, setPatterns] = useState<DrumPattern[]>(() => getPatterns())
@@ -365,10 +376,28 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
               })}
             </div>
           ))}
+          {/* Velocity row — drag across to draw the accents (louder/softer hits). */}
+          <div style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginTop: 6, alignItems: 'end' }}>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.05em', alignSelf: 'center' }} title="Drag across to shape the hits' loudness">VELOCITY ⇢ draw</span>
+            {Array.from({ length: steps }, (_, s) => {
+              const v = stepVel(s)
+              const has = v > 0
+              return (
+                <div key={`v${s}`}
+                  onPointerDown={e => { e.preventDefault(); paintVel(s, e) }}
+                  onPointerEnter={e => { if (e.buttons) paintVel(s, e) }}
+                  onPointerMove={e => { if (e.buttons) paintVel(s, e) }}
+                  title={has ? `${v}` : 'no hit here'}
+                  style={{ height: 30, borderRadius: 3, cursor: has ? 'ns-resize' : 'default', touchAction: 'none', position: 'relative', border: '1px solid #262626', background: 'rgba(255,255,255,0.02)', display: 'flex', alignItems: 'flex-end', borderLeft: s % stepsPerBar === 0 ? '2px solid var(--border-light)' : undefined }}>
+                  {has && <div style={{ width: '100%', height: `${(v / 127) * 100}%`, background: s === playStep ? 'rgba(248,113,113,1)' : 'rgba(220,38,38,0.6)', borderRadius: 3 }} />}
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
       <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0, padding: '0 12px 10px', lineHeight: 1.5 }}>
-        Click a cell to place a hit. The ◎ on a lane loads a sample onto it — the audio bakes into the kit, so saving the kit (＋ next to KIT) keeps it and it travels when you share.
+        Click a cell to place a hit; drag across the VELOCITY row to shape the accents. The ◎ on a lane loads a sample onto it — the audio bakes into the kit, so saving the kit (＋ next to KIT) keeps it and it travels when you share.
       </p>
 
       {samplePicker !== null && typeof document !== 'undefined' && createPortal(
