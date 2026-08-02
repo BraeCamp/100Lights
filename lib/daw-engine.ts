@@ -1190,7 +1190,7 @@ export class DawEngine extends EventTarget {
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
         if (this._rollFxActive(rfx)) {
-          const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur)
+          const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur, clip.lfoShape)
           noteDest = chain.input
           const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
           setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
@@ -1210,7 +1210,7 @@ export class DawEngine extends EventTarget {
             velGain.gain.linearRampToValueAtTime(target, noteStartAt + 0.003)
             const src = this.ctx.createBufferSource(); src.buffer = buf
             if (loop) { src.loop = true; src.loopStart = loop.start; src.loopEnd = loop.end }
-            const vibLfo = fxHasPitchMod(rfx) ? this._applyNotePitchMods(src, rfx, noteStartAt, noteStartAt + noteDur + sustainSec + 0.2) : null
+            const vibLfo = fxHasPitchMod(rfx) ? this._applyNotePitchMods(src, rfx, noteStartAt, noteStartAt + noteDur + sustainSec + 0.2, 0, 0, clip.lfoShape) : null
             src.connect(velGain); velGain.connect(noteDest)
             this._registerMidiVoice(src, velGain)
             src.start(noteStartAt)
@@ -1592,10 +1592,10 @@ export class DawEngine extends EventTarget {
         if (this._rollFxActive(rfx)) {
           const canShare = !note.fx && (rfx.filterEnv ?? 0) === 0 && !clipEffectActive
           if (canShare) {
-            noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput).input
+            noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput, clip.lfoShape).input
             sharedEnv = true
           } else {
-            const chain = this._buildRollFxChain(rfx, noteDest, startAt, remaining)
+            const chain = this._buildRollFxChain(rfx, noteDest, startAt, remaining, clip.lfoShape)
             noteDest = chain.input
             const ttlMs = (startAt - contextNow + remaining + sustainSec + chain.tailSec + 1.5) * 1000
             setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
@@ -1676,7 +1676,7 @@ export class DawEngine extends EventTarget {
             // length: v 0.5 = in tune, 1 = +12 st, 0 = −12 st. It owns detune, so
             // it replaces the pitch-env / slide / vibrato mods for this note.
             const pitchG = clip.pitchGraph
-            let vibLfo: OscillatorNode | null = null
+            let vibLfo: AudioScheduledSourceNode | null = null
             if (pitchG && pitchG.length >= 2) {
               const totalSec = Math.max(0.02, this.beatsToSeconds(maxDur) + sustainSec)
               const M = Math.max(8, Math.ceil(totalSec * 60))
@@ -1689,7 +1689,7 @@ export class DawEngine extends EventTarget {
               try { src.detune.setValueCurveAtTime(cents, startAt, remaining + sustainSec) } catch { /* overlap */ }
             } else {
               vibLfo = (fxHasPitchMod(rfx) || slideCents !== 0)
-                ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2, slideCents, artic.slideSec)
+                ? this._applyNotePitchMods(src, rfx, startAt, startAt + remaining + sustainSec + 0.2, slideCents, artic.slideSec, clip.lfoShape)
                 : null
             }
             src.connect(velGain)
@@ -2266,12 +2266,12 @@ export class DawEngine extends EventTarget {
   /** Get (or lazily build) the shared FX chain for a clip, rebuilding only if
    *  the clip's sound signature changed. Built with no note timing, so it holds
    *  none of the per-note envelope — just the static/continuous graph. */
-  private _getClipFxChain(clipId: string, rfx: RollFx, dest: AudioNode): { input: AudioNode; tailSec: number } {
-    const sig = this._clipFxSig(rfx)
+  private _getClipFxChain(clipId: string, rfx: RollFx, dest: AudioNode, lfoShape?: AutoPoint[]): { input: AudioNode; tailSec: number } {
+    const sig = this._clipFxSig(rfx) + (lfoShape ? '|lfo:' + lfoShape.length + ':' + (lfoShape[1]?.v ?? '') : '')
     const cached = this._clipFxChains.get(clipId)
     if (cached && cached.sig === sig) return cached
     if (cached) this._teardownFxNodes(cached.nodes)
-    const built = this._buildRollFxChain(rfx, dest, undefined, undefined)
+    const built = this._buildRollFxChain(rfx, dest, undefined, undefined, lfoShape)
     const entry = { input: built.input, nodes: built.nodes, tailSec: built.tailSec, sig }
     this._clipFxChains.set(clipId, entry)
     return entry
@@ -2284,7 +2284,7 @@ export class DawEngine extends EventTarget {
 
   /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope
    *  glide, and vibrato. Returns the vibrato LFO (to disconnect) or null. */
-  private _applyNotePitchMods(src: AudioBufferSourceNode, rfx: RollFx, startAt: number, stopAt: number, slideCents = 0, slideSec = 0): OscillatorNode | null {
+  private _applyNotePitchMods(src: AudioBufferSourceNode, rfx: RollFx, startAt: number, stopAt: number, slideCents = 0, slideSec = 0, lfoShape?: AutoPoint[]): AudioScheduledSourceNode | null {
     const base = rfx.detune ?? 0
     // pitch-envelope and articulation slide are both "start detuned, glide to the
     // note" — combine them into one ramp so they don't fight over src.detune.
@@ -2297,7 +2297,7 @@ export class DawEngine extends EventTarget {
       src.detune.value = base
     }
     if ((rfx.vibratoDepth ?? 0) > 0) {
-      const lfo = this.ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.vibratoRate ?? 5
+      const lfo = this._lfoNode(rfx.vibratoRate ?? 5, lfoShape)
       const lg = this.ctx.createGain(); lg.gain.value = rfx.vibratoDepth! * 100  // ±cents
       lfo.connect(lg); lg.connect(src.detune)
       lfo.start(startAt)
@@ -2343,7 +2343,31 @@ export class DawEngine extends EventTarget {
 
   /** Per-note chain from a resolved RollFx bag. `startAt`/`dur` enable the
    *  time-scheduled parts (amplitude envelope, filter envelope). */
-  private _buildRollFxChain(rfx: RollFx, dest: AudioNode, startAt?: number, dur?: number): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
+  // An LFO source: a drawn one-cycle shape looped as a buffer, or a plain sine.
+  // Both are AudioScheduledSourceNodes, so callers connect/start/stop uniformly.
+  private _lfoBufCache = new Map<string, AudioBuffer>()
+  private _lfoNode(rate: number, shape?: AutoPoint[]): AudioScheduledSourceNode {
+    if (shape && shape.length >= 2) {
+      const N = 256
+      const sig = shape.map(p => `${p.t.toFixed(3)}:${p.v.toFixed(3)}`).join('|')
+      let buf = this._lfoBufCache.get(sig)
+      if (!buf) {
+        buf = this.ctx.createBuffer(1, N, this.ctx.sampleRate)
+        const ch = buf.getChannelData(0)
+        const samp = sampleAutomation(shape, 1, N)
+        for (let i = 0; i < N; i++) ch[i] = (samp[i] - 0.5) * 2   // 0..1 → −1..1
+        this._lfoBufCache.set(sig, buf)
+      }
+      const src = this.ctx.createBufferSource()
+      src.buffer = buf; src.loop = true
+      src.playbackRate.value = Math.max(0.0001, rate * N / this.ctx.sampleRate)  // loop at `rate` Hz
+      return src
+    }
+    const osc = this.ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = rate
+    return osc
+  }
+
+  private _buildRollFxChain(rfx: RollFx, dest: AudioNode, startAt?: number, dur?: number, lfoShape?: AutoPoint[]): { input: AudioNode; nodes: AudioNode[]; tailSec: number } {
     const ctx = this.ctx
     const nodes: AudioNode[] = []
     const input = ctx.createGain()
@@ -2384,7 +2408,7 @@ export class DawEngine extends EventTarget {
         f.frequency.exponentialRampToValueAtTime(Math.max(30, base), startAt + envTime)
       }
       if ((rfx.filterLfoDepth ?? 0) > 0) {
-        const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.filterLfoRate ?? 5
+        const lfo = this._lfoNode(rfx.filterLfoRate ?? 5, lfoShape)
         const lg = gain(rfx.filterLfoDepth! * base * 0.6)
         lfo.connect(lg); lg.connect(f.frequency); lfo.start()
         nodes.push(lfo as unknown as AudioNode)
@@ -2471,7 +2495,7 @@ export class DawEngine extends EventTarget {
     if ((rfx.tremoloDepth ?? 0) > 0) {
       const depth = rfx.tremoloDepth!
       const amp = gain(1 - depth * 0.5)
-      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.tremoloRate ?? 5
+      const lfo = this._lfoNode(rfx.tremoloRate ?? 5, lfoShape)
       const lg = gain(depth * 0.5)
       lfo.connect(lg); lg.connect(amp.gain); lfo.start()
       last.connect(amp); last = amp; nodes.push(lfo as unknown as AudioNode)
@@ -2479,7 +2503,7 @@ export class DawEngine extends EventTarget {
     // Auto-pan — pan position LFO.
     if ((rfx.autopanDepth ?? 0) > 0) {
       const p = ctx.createStereoPanner()
-      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = rfx.autopanRate ?? 2
+      const lfo = this._lfoNode(rfx.autopanRate ?? 2, lfoShape)
       const lg = gain(Math.min(1, rfx.autopanDepth!))
       lfo.connect(lg); lg.connect(p.pan); lfo.start()
       last.connect(p); last = p; nodes.push(p, lfo as unknown as AudioNode)

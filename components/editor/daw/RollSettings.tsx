@@ -277,6 +277,16 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   }
   const setPitchGraph = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { pitchGraph: pts } })
 
+  // Custom LFO shape (one cycle) used by this clip's tremolo / auto-pan / wah /
+  // vibrato instead of a sine.
+  const lfoShape = !multi && isMidiClip(clip) ? clip.lfoShape : undefined
+  const DEFAULT_LFO: AutoPoint[] = [
+    { id: 'l0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'l1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
+  ]
+  const toggleLfoShape = (on: boolean) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: on ? DEFAULT_LFO : undefined } })
+  const setLfoShape = (pts: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { lfoShape: pts } })
+
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
   // the revert (drops the snapshot / untoggles the button) but keeps that change.
@@ -585,6 +595,26 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
               <MotionCurve points={ampGraph} onChange={setAmpGraph} width={276} height={78} color={CYAN} />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
                 <span>note start</span><span>volume shape · per note · scaled by velocity</span><span>end</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* LFO shape — draw one cycle used by the clip's tremolo/auto-pan/wah/vibrato. */}
+      {!multi && isMidiClip(clip) && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>LFO SHAPE</span>
+            {lfoShape
+              ? <button onClick={() => toggleLfoShape(false)} title="Back to a sine LFO" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Sine</button>
+              : <button onClick={() => toggleLfoShape(true)} title="Draw a custom LFO waveform" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>◠ Draw</button>}
+          </div>
+          {lfoShape && (
+            <>
+              <MotionCurve points={lfoShape} onChange={setLfoShape} width={276} height={68} color={CYAN} />
+              <div style={{ display: 'flex', justifyContent: 'center', fontSize: 8, color: 'var(--text-muted)', margin: '3px 2px 4px' }}>
+                <span>one cycle · drives tremolo · auto-pan · wah · vibrato</span>
               </div>
             </>
           )}

@@ -805,6 +805,9 @@ export interface MidiClip {
   /** Drawn pitch contour per note: v 0.5 = in tune, 1 = +12 st, 0 = −12 st.
    *  Scoops, falls, bends. `t` is normalized 0..1 across the note. */
   pitchGraph?: AutoPoint[]
+  /** Custom LFO shape (one cycle, v 0.5 = centre) used by this clip's LFOs —
+   *  tremolo, auto-pan, auto-wah, vibrato — instead of a sine. */
+  lfoShape?: AutoPoint[]
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */
