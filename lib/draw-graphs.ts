@@ -4,7 +4,7 @@
 //
 //  - `GRAPH_AREAS` is the registry of every drawable area (label, default shape,
 //    axis captions, which drawing primitive it uses). Add/retune an area here
-//    and the shared <DrawnGraphSection> picks it up.
+//    and the shared <DrawnGraphModal> + Sound-panel presentation pick it up.
 //  - `MotionCurve` (the freehand primitive) is what the 'motion' areas render;
 //    changing it changes all of them. 'eq' / 'pitch' areas use their own
 //    editors (EqCurve / PitchGraphEditor) — mapped here so the whole system is
@@ -26,12 +26,13 @@ export const isGraphsOn = (v: unknown): v is boolean => v === true || v === fals
 // ── the registry ────────────────────────────────────────────────────────────
 export type GraphEditor = 'motion' | 'eq' | 'pitch'
 
-/** The freehand curve (0..1) areas, rendered by the shared <DrawnGraphSection>. */
+/** The freehand curve (0..1) areas, opened in the shared <DrawnGraphModal>. */
 export type MotionAreaId = 'amplitude' | 'lfo' | 'pitch' | 'volume' | 'groove' | 'fxmotion'
 
 export interface GraphAreaDef {
   id: MotionAreaId
-  label: string                       // section header
+  label: string                       // section header (UPPERCASE)
+  short: string                       // compact display name (chips / menu / modal title)
   onLabel: string                     // button text to turn it on (e.g. '◠ Draw', '+ Add')
   offLabel: string                    // button text to turn it off (e.g. 'Sliders', 'Sine', 'Off', 'Remove')
   onTitle: string
@@ -49,37 +50,37 @@ const P = (t: number, v: number): AutoPoint => ({ id: `dg${_pid++}`, t, v, smoot
 
 export const GRAPH_AREAS: Record<MotionAreaId, GraphAreaDef> = {
   amplitude: {
-    id: 'amplitude', label: 'AMPLITUDE', onLabel: '◠ Draw', offLabel: 'Sliders',
+    id: 'amplitude', label: 'AMPLITUDE', short: 'Amplitude', onLabel: '◠ Draw', offLabel: 'Sliders',
     onTitle: "Draw the note's volume shape", offTitle: 'Back to attack/decay/sustain sliders',
     height: 78, axis: ['note start', 'volume shape · per note · scaled by velocity', 'end'],
     defaultCurve: () => [P(0, 0), P(0.08, 1), P(0.6, 0.75), P(1, 0)],
   },
   lfo: {
-    id: 'lfo', label: 'LFO SHAPE', onLabel: '◠ Draw', offLabel: 'Sine',
+    id: 'lfo', label: 'LFO SHAPE', short: 'LFO', onLabel: '◠ Draw', offLabel: 'Sine',
     onTitle: 'Draw a custom LFO waveform', offTitle: 'Back to a sine LFO',
     height: 68, axis: ['one cycle · drives tremolo · auto-pan · wah · vibrato'],
     defaultCurve: () => [P(0, 1), P(1, 0)],
   },
   pitch: {
-    id: 'pitch', label: 'PITCH', onLabel: '◠ Draw', offLabel: 'Off',
+    id: 'pitch', label: 'PITCH', short: 'Pitch', onLabel: '◠ Draw', offLabel: 'Off',
     onTitle: 'Draw a per-note pitch bend', offTitle: 'Remove pitch contour',
     height: 78, axis: ['−12 st', 'middle line = in tune · per note', '+12 st'],
     defaultCurve: () => [P(0, 0.4), P(0.12, 0.5), P(1, 0.5)],
   },
   volume: {
-    id: 'volume', label: 'VOLUME', onLabel: '◠ Draw', offLabel: 'Off',
+    id: 'volume', label: 'VOLUME', short: 'Volume', onLabel: '◠ Draw', offLabel: 'Off',
     onTitle: "Draw the clip's volume over time", offTitle: 'Remove volume automation',
     height: 72, axis: ['loudness across the clip · top = full'],
     defaultCurve: () => [P(0, 1), P(1, 0)],
   },
   groove: {
-    id: 'groove', label: 'GROOVE', onLabel: '◠ Draw', offLabel: 'Off',
+    id: 'groove', label: 'GROOVE', short: 'Groove', onLabel: '◠ Draw', offLabel: 'Off',
     onTitle: 'Draw the timing feel (push/pull) across a bar', offTitle: 'Remove groove',
     height: 68, axis: ['bar start', 'middle = on the grid · up = laid-back · down = pushed', 'end'],
     defaultCurve: () => [P(0, 0.5), P(1, 0.5)],
   },
   fxmotion: {
-    id: 'fxmotion', label: 'FX MOTION', onLabel: '+ Add', offLabel: 'Remove',
+    id: 'fxmotion', label: 'FX MOTION', short: 'FX Motion', onLabel: '+ Add', offLabel: 'Remove',
     onTitle: 'Add an FX motion curve', offTitle: 'Remove FX motion',
     height: 88, axis: [],   // custom children (per-note toggle + fx picker)
     defaultCurve: () => [P(0, 1), P(1, 0)],

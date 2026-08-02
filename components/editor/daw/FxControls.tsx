@@ -27,7 +27,7 @@ export function cleanFx(fx: RollFx): RollFx | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-export default function FxControls({ value, onCommit, hideCats, hideFields, ranges, onField, mode, graphs, onGraphChange, onToggleGraph }: {
+export default function FxControls({ value, onCommit, hideCats, hideFields, ranges, onField, mode, graphs, onGraphChange, onToggleGraph, onOpenGraph }: {
   value: RollFx | undefined
   onCommit: (next: RollFx | undefined) => void
   /** Categories to omit (e.g. ['env','pitch'] for a track effect bar). */
@@ -47,6 +47,9 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
   graphs?: Partial<Record<string, AutoPoint[]>>
   onGraphChange?: (key: keyof RollFx, pts: AutoPoint[]) => void
   onToggleGraph?: (key: keyof RollFx, on: boolean) => void
+  /** Modal mode: clicking a field's LABEL opens its graph in a modal instead of
+   *  the ◠ button + inline curve. When set, takes over from onToggleGraph. */
+  onOpenGraph?: (key: keyof RollFx) => void
 }) {
   const [draft, setDraft] = useState<RollFx>({ ...(value ?? {}) })
   // Categories that hold a set value start expanded so active settings show.
@@ -77,9 +80,10 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
   // (chain + graph) can toggle, and only when the host wires onToggleGraph.
   const gProps = (f: FxField) => ({
     graphPts: graphs?.[f.key],
-    graphable: !!onToggleGraph && !!f.graph && !!f.chain,
+    graphable: (!!onToggleGraph || !!onOpenGraph) && !!f.graph && !!f.chain,
     onToggleGraph: onToggleGraph ? (on: boolean) => onToggleGraph(f.key, on) : undefined,
     onGraph: onGraphChange ? (pts: AutoPoint[]) => onGraphChange(f.key, pts) : undefined,
+    onOpenGraph: onOpenGraph ? () => onOpenGraph(f.key) : undefined,
   })
 
   // Basic mode: the curated essential macros, flat — no category menus. This set
@@ -135,7 +139,7 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
   )
 }
 
-function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, onToggleGraph, onGraph }: {
+function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, onToggleGraph, onGraph, onOpenGraph }: {
   f: FxField
   draft: RollFx
   set: (f: FxField, norm: number) => void
@@ -147,6 +151,8 @@ function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, o
   graphable?: boolean
   onToggleGraph?: (on: boolean) => void
   onGraph?: (pts: AutoPoint[]) => void
+  /** Modal mode: clicking the label opens the graph; no ◠ button, no inline curve. */
+  onOpenGraph?: () => void
 }) {
   const v = (draft[f.key] as number | undefined) ?? f.neutral
   const on = fieldIsSet(f.key, draft[f.key])
@@ -156,6 +162,19 @@ function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, o
 
   // Graph mode: this field is drawn as a curve over time instead of a slider.
   if (graphPts) {
+    // Modal mode — a compact "graphed" row; the curve lives in the modal.
+    if (onOpenGraph) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: dim ? '3px 12px 3px 20px' : '4px 12px' }}>
+          <button onClick={onOpenGraph} title="Edit this effect's curve"
+            style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+            <span style={{ fontSize: dim ? 9.5 : 10, color: ACCENT, fontWeight: 600 }}>{f.label}</span>
+            <span style={{ fontSize: 8, color: ACCENT, letterSpacing: '0.04em' }}>◠ graph</span>
+          </button>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>edit ▸</span>
+        </div>
+      )
+    }
     return (
       <div style={{ padding: dim ? '3px 12px 4px 20px' : '4px 12px 5px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
@@ -169,9 +188,18 @@ function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, o
     )
   }
 
+  // A graphable field in modal mode gets a clickable label (opens the curve).
+  const labelClickable = graphable && !!onOpenGraph
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: dim ? '2px 12px 2px 20px' : '3px 12px' }}>
-      <span style={{ fontSize: dim ? 9.5 : 10, color: dim ? 'var(--text-muted)' : 'var(--text-secondary)', width: dim ? 62 : 70, flexShrink: 0 }}>{f.label}</span>
+      {labelClickable ? (
+        <button onClick={onOpenGraph} title="Click to draw this effect over time"
+          style={{ display: 'flex', alignItems: 'center', gap: 3, width: dim ? 62 : 70, flexShrink: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: dim ? 9.5 : 10, color: dim ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+          {f.label}<span style={{ fontSize: 7, color: 'var(--text-muted)', opacity: 0.7 }}>◠</span>
+        </button>
+      ) : (
+        <span style={{ fontSize: dim ? 9.5 : 10, color: dim ? 'var(--text-muted)' : 'var(--text-secondary)', width: dim ? 62 : 70, flexShrink: 0 }}>{f.label}</span>
+      )}
       <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
         {hasRange && (
           // Heat band: the spread of this setting across the selection. Bars mark
@@ -189,10 +217,10 @@ function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, o
           style={{ position: 'relative', zIndex: 1, width: '100%', minWidth: 0, accentColor: hasRange ? 'transparent' : ACCENT }}
         />
       </div>
-      <span style={{ fontSize: 9.5, color: hasRange ? '#f59e0b' : on ? 'var(--text-primary)' : 'var(--text-muted)', width: graphable ? 34 : 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ fontSize: 9.5, color: hasRange ? '#f59e0b' : on ? 'var(--text-primary)' : 'var(--text-muted)', width: graphable && !onOpenGraph ? 34 : 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
         {hasRange ? 'range' : f.fmt(v)}
       </span>
-      {graphable && (
+      {graphable && !onOpenGraph && (
         <button onClick={() => onToggleGraph?.(true)} title="Draw this effect over time (a graph)"
           style={{ fontSize: 10, lineHeight: 1, padding: '1px 5px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-muted)', flexShrink: 0 }}>◠</button>
       )}

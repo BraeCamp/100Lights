@@ -11,13 +11,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
-import DrawnGraphSection from './DrawnGraphSection'
-import { GRAPH_AREAS, GRAPH_COLOR, defaultFieldGraph } from '@/lib/draw-graphs'
+import DrawnGraphModal from './DrawnGraphModal'
+import { GRAPH_AREAS, GRAPH_COLOR, defaultFieldGraph, type MotionAreaId } from '@/lib/draw-graphs'
 import { isMidiClip, isAudioClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { useDaw } from '@/lib/daw-state'
 import EqCurve, { type EqVals } from './EqCurve'
-import { fxHasAudibleField, FX_FIELDS, fieldIsSet } from '@/lib/roll-fx'
+import { fxHasAudibleField, FX_FIELDS, FX_FIELD_BY_KEY, fieldIsSet } from '@/lib/roll-fx'
 import { getPresets } from '@/lib/midi-presets'
 import { tonesForGroup, applyTone, toneMatches } from '@/lib/tone-presets'
 import { articOptions } from '@/lib/articulation'
@@ -27,6 +27,8 @@ import { clampToViewport } from './menu-clamp'
 import { useUITierOptional } from '../UITierProvider'
 
 const CYAN = 'var(--accent-light)'
+// Comparison switch for the drawn-suite layout (temporary — button vs chips vs rows).
+const DRAW_PRESENTATION_KEY = '100lights-draw-presentation'
 const SOUND_MODE_KEY = '100lights-sound-mode-v1'
 
 export function RollSettings({ clip, dispatch, presetLabel, onChangeSound, onPreviewSound, canPreview }: {
@@ -120,6 +122,26 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   // independent of the tier — off by default so the panel stays uncluttered.
   const graphsEnabled = uiCtx?.graphs ?? false
 
+  // Which graph (if any) is open in the full-screen modal. Curves never render
+  // inline anymore — clicking a setting's name opens it here.
+  type OpenGraph = { kind: 'area'; area: MotionAreaId } | { kind: 'field'; key: keyof RollFx } | { kind: 'eq' } | null
+  const [openGraph, setOpenGraph] = useState<OpenGraph>(null)
+  // Tone popover (the tone row collapsed to one button).
+  const [toneOpen, setToneOpen] = useState(false)
+  // "Draw ▾" menu (the button layout for the drawn suite).
+  const [drawMenuOpen, setDrawMenuOpen] = useState(false)
+  // Drawn-suite presentation — a comparison switch across the three layouts.
+  const [drawMode, setDrawMode] = useState<'button' | 'chips' | 'rows'>(() => {
+    if (typeof window === 'undefined') return 'button'
+    const v = localStorage.getItem(DRAW_PRESENTATION_KEY)
+    return v === 'chips' || v === 'rows' || v === 'button' ? v : 'button'
+  })
+  const cycleDrawMode = () => setDrawMode(m => {
+    const next = m === 'button' ? 'chips' : m === 'chips' ? 'rows' : 'button'
+    try { localStorage.setItem(DRAW_PRESENTATION_KEY, next) } catch { /* off */ }
+    return next
+  })
+
   useLayoutEffect(() => {
     // Re-clamp when the panel grows (e.g. switching to Advanced) so its bottom
     // never runs off screen.
@@ -133,6 +155,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     function onDown(e: Event) {
       // Inside the panel (clicking/dragging a control) → keep open.
       if (panelRef.current?.contains(e.target as Node)) return
+      // The tone popover / "Draw" menu / graph modal are portaled to <body>
+      // (outside the panel), so ignore clicks inside them or the panel closes.
+      if ((e.target as HTMLElement).closest?.('[data-sound-overlay]')) return
       if (ignoreOutside?.current?.contains(e.target as Node)) return
       // Clicking another clip selects it → the panel retargets, so don't close.
       if (retargetOnClipClick && (e.target as HTMLElement).closest?.('[data-clip-id]')) return
@@ -295,6 +320,23 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxGraphs: g } })
   }
 
+  // One data-driven binding per drawn area — drives the presentation (which
+  // areas to list, active state) AND the modal (its points/onChange/off/reset).
+  const areaBind: Record<MotionAreaId, { points?: AutoPoint[]; onChange: (p: AutoPoint[]) => void; toggle: (on: boolean) => void; available: boolean }> = {
+    amplitude: { points: ampGraph, onChange: setAmpGraph, toggle: toggleAmpGraph, available: !multi && isMidiClip(clip) },
+    lfo: { points: lfoShape, onChange: setLfoShape, toggle: toggleLfoShape, available: !multi && isMidiClip(clip) },
+    pitch: { points: pitchGraph, onChange: setPitchGraph, toggle: togglePitchGraph, available: !multi && isMidiClip(clip) },
+    volume: { points: volGraph, onChange: setVol, toggle: toggleVol, available: supportsFx },
+    groove: { points: groove, onChange: setGroove, toggle: toggleGroove, available: !multi && isMidiClip(clip) },
+    fxmotion: { points: motion?.graph, onChange: setMotionGraph, toggle: (on) => (on ? addMotion() : clearMotion()), available: supportsFx },
+  }
+  const drawAreas = (Object.keys(GRAPH_AREAS) as MotionAreaId[]).filter(a => areaBind[a].available)
+  // Open an area's modal — create its default curve first if it isn't on yet.
+  const openArea = (area: MotionAreaId) => {
+    if (!areaBind[area].points) areaBind[area].toggle(true)
+    setOpenGraph({ kind: 'area', area })
+  }
+
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
   // the revert (drops the snapshot / untoggles the button) but keeps that change.
@@ -429,42 +471,78 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           ) : (
             <span style={{ flex: 1, fontSize: 10, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{presetLabel}</span>
           )}
+          {onChangeSound && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>tap to change</span>}
           {canPreview && onPreviewSound && (
             <button onClick={onPreviewSound} title="Listen — plays middle C"
-              style={{ border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 10, padding: '2px 4px', flexShrink: 0 }}>▶</button>
+              style={{ border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 11, padding: '2px 4px', flexShrink: 0 }}>▶</button>
           )}
-          {onChangeSound && (
-            <button onClick={onChangeSound}
-              style={{ fontSize: 9.5, fontWeight: 600, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)', flexShrink: 0 }}>
-              Change…
+        </div>
+      )}
+      {/* Tone — one button that opens the flavour options (single MIDI clip).
+          A tone applies its whole character bag (drive, EQ, distortion…) and the
+          engine renders all of it, so it transforms the sound in EVERY UI tier —
+          even where the sliders for those effects are hidden. */}
+      {showPreset && tones.length > 0 && (() => {
+        const activeTone = tones.find(t => toneMatches(clip.rollFx, t))
+        const extraFx = activeTone ? Math.max(0, countSetFields(activeTone.fx) - 1) : 0
+        return (
+          <div style={{ ...row, paddingTop: 3, paddingBottom: 3, position: 'relative' }}>
+            <span style={label}>Tone</span>
+            <button
+              onClick={() => setToneOpen(o => !o)}
+              title="Pick a tone — a curated sound character for this instrument"
+              style={{
+                flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left',
+                fontSize: 10, fontWeight: 600, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
+                border: activeTone ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
+                background: activeTone ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-card)',
+                color: activeTone ? CYAN : 'var(--text-secondary)',
+              }}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {activeTone ? activeTone.name : 'Choose a tone…'}
+                {activeTone && !soundAdvancedAllowed && extraFx > 0 && <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> · {extraFx} fx</span>}
+              </span>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▾</span>
             </button>
-          )}
-        </div>
-      )}
-      {/* Tone presets — flavours within the instrument (single MIDI clip) */}
-      {showPreset && tones.length > 0 && (
-        <div style={{ ...row, alignItems: 'flex-start', paddingTop: 3, paddingBottom: 2 }}>
-          <span style={{ ...label, paddingTop: 3 }}>Tone</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1, minWidth: 0 }}>
-            {tones.map(t => {
-              const on = toneMatches(clip.rollFx, t)
-              return (
-                <button key={t.name}
-                  onClick={() => commitFx(applyTone(clip.rollFx, t))}
-                  title={`${t.name} tone — a starting point you can fine-tune with the sliders below`}
+            {toneOpen && createPortal(
+              <div
+                data-editor="true" data-sound-overlay="true"
+                onClick={() => setToneOpen(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 10040 }}>
+                <div
+                  onClick={e => e.stopPropagation()}
                   style={{
-                    fontSize: 9.5, fontWeight: 600, padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
-                    border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
-                    background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
-                    color: on ? CYAN : 'var(--text-secondary)',
+                    position: 'fixed', left: anchor.x + 60, top: anchor.y + 74, width: 224, maxHeight: '60vh', overflowY: 'auto',
+                    background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
+                    padding: 5, boxShadow: '0 14px 34px rgba(0,0,0,0.7)', zIndex: 10041,
                   }}>
-                  {t.name}
-                </button>
-              )
-            })}
+                  <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '4px 8px 3px' }}>Tone</div>
+                  {tones.map(t => {
+                    const on = activeTone?.name === t.name
+                    return (
+                      <button key={t.name}
+                        onClick={() => { commitFx(applyTone(clip.rollFx, t)); setToneOpen(false) }}
+                        title={`${t.name} — sets ${countSetFields(t.fx)} sound setting${countSetFields(t.fx) === 1 ? '' : 's'}`}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left',
+                          padding: '7px 8px', borderRadius: 7, cursor: 'pointer', border: 'none',
+                          background: on ? 'var(--accent-subtle)' : 'transparent',
+                          color: on ? CYAN : 'var(--text-primary)', fontSize: 11.5, fontWeight: on ? 700 : 500,
+                        }}
+                        onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'var(--bg-card)' }}
+                        onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent' }}>
+                        <span style={{ width: 12, flexShrink: 0, color: CYAN }}>{on ? '✓' : ''}</span>
+                        {t.name}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>,
+              document.body,
+            )}
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Articulation — connected-note phrasing, options depend on the instrument */}
       {showArtic && artOpts && (
@@ -560,15 +638,19 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
               style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
             <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <EqCurve value={tone} onChange={setTrackBand} onChangeAll={setTrackToneAll} width={120} height={54} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.3 }}>
+          {/* EQ opens in the modal (item 6) — the row shows a live band summary. */}
+          <button onClick={() => setOpenGraph({ kind: 'eq' })}
+            title="Open the EQ — drag the bands"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '4px 4px', background: 'none', border: 'none', cursor: 'pointer' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>EQ</span>
+            <span style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8, fontSize: 9, color: 'var(--text-muted)' }}>
               {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
                 const v = tone[b] ?? 0
-                return <span key={b} style={{ color: v ? 'var(--text-primary)' : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)} {v > 0 ? '+' : ''}{v || 0}dB</span>
+                return <span key={b} style={{ color: v ? CYAN : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)}{v ? ` ${v > 0 ? '+' : ''}${v}` : ''}</span>
               })}
-            </div>
-          </div>
+            </span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>edit ▸</span>
+          </button>
         </div>
       )}
 
@@ -584,8 +666,10 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
         graphs={graphsForCtl}
-        onToggleGraph={supportsFx && graphsEnabled ? toggleFieldGraph : undefined}
-        onGraphChange={supportsFx && graphsEnabled ? setFieldGraph : undefined}
+        onOpenGraph={supportsFx && graphsEnabled ? (key) => {
+          if (!clip.fxGraphs?.[key]) toggleFieldGraph(key, true)   // create then open
+          setOpenGraph({ kind: 'field', key })
+        } : undefined}
       />
 
       {/* When any FX slider is in graph mode, choose whether those graphs span
@@ -601,72 +685,163 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       )}
 
       {/* ── Drawn-graph suite ─────────────────────────────────────────────────
-          Its own UI dimension (UI menu → "Drawn graphs"), independent of the
-          tier. Every section renders through the shared <DrawnGraphSection>
-          driven by lib/draw-graphs.ts, so the whole system changes at once. */}
-      {graphsEnabled && (
-        <>
-          {/* Amplitude envelope — draw the note's volume shape (single MIDI clip). */}
-          {!multi && isMidiClip(clip) && (
-            <DrawnGraphSection area="amplitude" points={ampGraph} onToggle={toggleAmpGraph} onChange={setAmpGraph} />
-          )}
+          Its own UI dimension (UI menu → "Drawn graphs"). The curves never sit
+          inline — each area opens the full-screen DrawnGraphModal from its name.
+          Three comparison layouts (button / chips / rows) share openArea(). */}
+      {graphsEnabled && drawAreas.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>DRAW GRAPHS</span>
+            <button onClick={cycleDrawMode} title="Compare the three layouts for these draw controls"
+              style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
+              {drawMode === 'button' ? 'Layout · Button' : drawMode === 'chips' ? 'Layout · Chips' : 'Layout · Rows'} ⇄
+            </button>
+          </div>
 
-          {/* LFO shape — one cycle driving tremolo/auto-pan/wah/vibrato. */}
-          {!multi && isMidiClip(clip) && (
-            <DrawnGraphSection area="lfo" points={lfoShape} onToggle={toggleLfoShape} onChange={setLfoShape} />
-          )}
-
-          {/* Pitch contour — per-note pitch bend (scoops, falls). */}
-          {!multi && isMidiClip(clip) && (
-            <DrawnGraphSection area="pitch" points={pitchGraph} onToggle={togglePitchGraph} onChange={setPitchGraph} />
-          )}
-
-          {/* FX Motion — a curve that morphs chosen effects over the clip. */}
-          {supportsFx && (
-            <DrawnGraphSection area="fxmotion"
-              points={motion?.graph}
-              onToggle={(on) => (on ? addMotion() : clearMotion())}
-              onChange={setMotionGraph}
-              emptyHint="Draw a curve that morphs chosen effects across the clip — e.g. a filter that opens over time, reverb that swells, or drive that fades. One or more effects can follow the same curve."
-            >
-              {motion && (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 2px 8px' }}>
-                    <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'per note' : 'clip start'}</span>
-                    <div style={{ display: 'flex', gap: 3 }}>
-                      {([['Whole clip', false], ['Per note', true]] as const).map(([lbl, pn]) => {
-                        const on = !!motion.perNote === pn
-                        return (
-                          <button key={lbl} onClick={() => setMotionPerNote(pn)}
-                            title={pn ? 'Re-trigger the shape on every note' : 'One shape stretched across the whole clip'}
-                            style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: on ? CYAN : 'var(--text-secondary)' }}>{lbl}</button>
-                        )
-                      })}
-                    </div>
-                    <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'note end' : 'end'}</span>
+          {/* 1a — a single "Draw ▾" button → a menu of the areas. */}
+          {drawMode === 'button' && (
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => setDrawMenuOpen(o => !o)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.1)', color: CYAN }}>
+                <span style={{ flex: 1 }}>Draw a graph</span>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                  {drawAreas.filter(a => areaBind[a].points).length || ''} {drawAreas.filter(a => areaBind[a].points).length ? 'on' : ''} ▾
+                </span>
+              </button>
+              {drawMenuOpen && createPortal(
+                <div data-editor="true" data-sound-overlay="true" onClick={() => setDrawMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10040 }}>
+                  <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', left: anchor.x + 24, top: anchor.y + 120, width: 210, maxHeight: '60vh', overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 5, boxShadow: '0 14px 34px rgba(0,0,0,0.7)' }}>
+                    {drawAreas.map(a => {
+                      const on = !!areaBind[a].points
+                      return (
+                        <button key={a} onClick={() => { setDrawMenuOpen(false); openArea(a) }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left', padding: '7px 8px', borderRadius: 7, cursor: 'pointer', border: 'none', background: on ? 'var(--accent-subtle)' : 'transparent', color: on ? CYAN : 'var(--text-primary)', fontSize: 11.5, fontWeight: on ? 700 : 500 }}
+                          onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'var(--bg-card)' }}
+                          onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent' }}>
+                          <span style={{ width: 12, flexShrink: 0, color: CYAN }}>{on ? '●' : ''}</span>
+                          {GRAPH_AREAS[a].short}
+                        </button>
+                      )
+                    })}
                   </div>
-                  <div style={{ fontSize: 8.5, color: 'var(--text-muted)', marginBottom: 3, lineHeight: 1.35 }}>Effects that follow the curve — pick one or more; the top of the graph = these values:</div>
-                  <FxControls value={motion.fx} onCommit={setMotionFx} hideCats={['env', 'pitch']} mode="advanced" />
-                </>
+                </div>,
+                document.body,
               )}
-            </DrawnGraphSection>
+            </div>
           )}
 
-          {/* Volume automation — the clip's loudness over time. */}
-          {supportsFx && (
-            <DrawnGraphSection area="volume" points={volGraph} onToggle={toggleVol} onChange={setVol} />
+          {/* 1b — a row of chips, active ones lit. */}
+          {drawMode === 'chips' && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+              {drawAreas.map(a => {
+                const on = !!areaBind[a].points
+                return (
+                  <button key={a} onClick={() => openArea(a)} title={`Draw ${GRAPH_AREAS[a].short}`}
+                    style={{ fontSize: 9.5, fontWeight: 700, padding: '3px 9px', borderRadius: 99, cursor: 'pointer', border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: on ? CYAN : 'var(--text-secondary)' }}>
+                    {on ? '● ' : ''}{GRAPH_AREAS[a].short}
+                  </button>
+                )
+              })}
+            </div>
           )}
 
-          {/* Groove — micro-timing (push/pull) across one bar (MIDI clip). */}
-          {!multi && isMidiClip(clip) && (
-            <DrawnGraphSection area="groove" points={groove} onToggle={toggleGroove} onChange={setGroove} />
+          {/* 1c — a lean row per area, name click opens the modal. */}
+          {drawMode === 'rows' && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {drawAreas.map(a => {
+                const on = !!areaBind[a].points
+                return (
+                  <button key={a} onClick={() => openArea(a)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 4px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <span style={{ width: 8, flexShrink: 0, color: CYAN, fontSize: 9 }}>{on ? '●' : ''}</span>
+                    <span style={{ flex: 1, fontSize: 10.5, fontWeight: on ? 700 : 500, color: on ? CYAN : 'var(--text-secondary)' }}>{GRAPH_AREAS[a].short}</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{on ? 'edit ▸' : 'draw ▸'}</span>
+                  </button>
+                )
+              })}
+            </div>
           )}
-        </>
+        </div>
       )}
 
       <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         Applies to this clip’s notes only — live and on export. To bake a sound into a reusable, shareable preset, use the sound menu’s <strong>New preset</strong>.
       </div>
+
+      {/* ── Graph modals — every curve opens here, never inline ─────────────── */}
+      {openGraph?.kind === 'area' && (() => {
+        const area = openGraph.area
+        const def = GRAPH_AREAS[area]
+        const b = areaBind[area]
+        const isFx = area === 'fxmotion'
+        return (
+          <DrawnGraphModal
+            title={def.short}
+            subtitle={isFx ? 'A curve that morphs the chosen effects across the clip.' : undefined}
+            axis={def.axis}
+            points={b.points ?? def.defaultCurve()}
+            onChange={b.onChange}
+            onClose={() => setOpenGraph(null)}
+            onReset={() => b.onChange(def.defaultCurve())}
+            onOff={() => { b.toggle(false); setOpenGraph(null) }}
+            offLabel={def.offLabel}
+            extra={isFx && motion ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 8px' }}>
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{motion.perNote ? 'per note' : 'clip start → end'}</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {([['Whole clip', false], ['Per note', true]] as const).map(([lbl, pn]) => {
+                      const on = !!motion.perNote === pn
+                      return (
+                        <button key={lbl} onClick={() => setMotionPerNote(pn)}
+                          title={pn ? 'Re-trigger the shape on every note' : 'One shape stretched across the whole clip'}
+                          style={{ fontSize: 9, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: on ? CYAN : 'var(--text-secondary)' }}>{lbl}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, lineHeight: 1.4 }}>Effects that follow the curve — the top of the graph = these values:</div>
+                <FxControls value={motion.fx} onCommit={setMotionFx} hideCats={['env', 'pitch']} mode="advanced" />
+              </div>
+            ) : undefined}
+          />
+        )
+      })()}
+
+      {openGraph?.kind === 'field' && (() => {
+        const key = openGraph.key
+        const f = FX_FIELD_BY_KEY[key as string]
+        return (
+          <DrawnGraphModal
+            title={f?.label ?? String(key)}
+            subtitle="Draw this effect across the clip — bottom = off, top = full."
+            axis={['clip start', '', 'clip end']}
+            points={clip.fxGraphs?.[key]?.graph ?? defaultFieldGraph()}
+            onChange={pts => setFieldGraph(key, pts)}
+            onClose={() => setOpenGraph(null)}
+            onReset={() => setFieldGraph(key, defaultFieldGraph())}
+            onOff={() => { toggleFieldGraph(key, false); setOpenGraph(null) }}
+            offLabel="Back to slider"
+          />
+        )
+      })()}
+
+      {openGraph?.kind === 'eq' && eqTrack && (
+        <DrawnGraphModal
+          title="Volume & EQ"
+          subtitle={eqMultiTrack ? `${trackIds.length} tracks · shared with the mixer` : 'Drag the bands — shared with the mixer strip.'}
+          onClose={() => setOpenGraph(null)}
+          onReset={() => setTrackToneAll({})}
+        >
+          <EqCurve value={tone} onChange={setTrackBand} onChangeAll={setTrackToneAll} width={520} height={190} />
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+            {(['sub', 'bass', 'mid', 'treble'] as const).map(band => {
+              const v = tone[band] ?? 0
+              return <span key={band} style={{ color: v ? 'var(--text-primary)' : 'var(--text-muted)' }}>{band[0].toUpperCase() + band.slice(1)} {v > 0 ? '+' : ''}{v || 0}dB</span>
+            })}
+          </div>
+        </DrawnGraphModal>
+      )}
     </div>,
     document.body,
   )
