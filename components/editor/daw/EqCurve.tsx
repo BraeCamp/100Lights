@@ -24,6 +24,11 @@ export default function EqCurve({ value, onChange, width = 66, height = 42 }: {
   const gToY = (g: number) => height / 2 - (g / 12) * (height / 2 - pad)
   const yToG = (y: number) => Math.max(-12, Math.min(12, ((height / 2 - y) / (height / 2 - pad)) * 12))
 
+  // Bigger points / thicker line / gridlines + labels once the graph is opened
+  // large, so every band is an easy drag target.
+  const large = height >= 100
+  const R = large ? 6 : 2.6
+  const LW = large ? 2.5 : 1.5
   useEffect(() => {
     const c = ref.current; if (!c) return
     const dpr = window.devicePixelRatio || 1
@@ -31,17 +36,34 @@ export default function EqCurve({ value, onChange, width = 66, height = 42 }: {
     const ctx = c.getContext('2d')!; ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
     ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fillRect(0, 0, width, height)
-    // 0 dB reference line
+    // dB gridlines: 0 dB solid, ±6 dB faint (only worth drawing when large)
+    if (large) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1
+      for (const g of [6, -6]) { const y = gToY(g); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke() }
+      // band frequency guides
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)'
+      XF.forEach(x => { ctx.beginPath(); ctx.moveTo(x * width, 0); ctx.lineTo(x * width, height); ctx.stroke() })
+    }
     ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2); ctx.stroke()
     // curve through the four band points (flat lead-in/out at the edges)
     const pts = XF.map((x, i) => [x * width, gToY(gains[i])] as const)
-    ctx.strokeStyle = 'var(--accent)'; ctx.lineWidth = 1.5; ctx.beginPath()
+    // subtle fill under the curve when large
+    if (large) {
+      ctx.beginPath(); ctx.moveTo(0, gToY(gains[0]))
+      for (const [x, y] of pts) ctx.lineTo(x, y)
+      ctx.lineTo(width, gToY(gains[3])); ctx.lineTo(width, height / 2); ctx.lineTo(0, height / 2); ctx.closePath()
+      ctx.fillStyle = 'rgb(var(--accent-rgb) / 0.12)'; ctx.fill()
+    }
+    ctx.strokeStyle = 'var(--accent)'; ctx.lineWidth = LW; ctx.beginPath()
     ctx.moveTo(0, gToY(gains[0]))
     for (const [x, y] of pts) ctx.lineTo(x, y)
     ctx.lineTo(width, gToY(gains[3])); ctx.stroke()
-    pts.forEach(([x, y], i) => { ctx.fillStyle = COLORS[i]; ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill() })
-  }, [gains.join(','), width, height])
+    pts.forEach(([x, y], i) => {
+      if (large) { ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.stroke() }
+      ctx.fillStyle = COLORS[i]; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill()
+    })
+  }, [gains.join(','), width, height, large, R, LW])
 
   const bandAtX = (px: number) => {
     const fx = px / width; let best = 0, bd = 9

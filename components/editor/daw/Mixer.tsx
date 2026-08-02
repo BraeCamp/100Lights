@@ -11,7 +11,7 @@ import LevelMeter from './LevelMeter'
 import ReferenceAB from './ReferenceAB'
 import { useMidiLearn } from '@/lib/midi-learn'
 import Knob from './Knob'
-import EqCurve from './EqCurve'
+import EqCurve, { type EqBand } from './EqCurve'
 import { ReturnDeviceChain } from './DeviceChain'
 
 // ── Vertical fader ─────────────────────────────────────────────────────────
@@ -91,11 +91,63 @@ function VerticalFader({ value, onChange, onCommit, color = 'var(--accent)' }: {
 
 // ── Channel strip ──────────────────────────────────────────────────────────
 
+// The drawable Tone-EQ graph, opened full-size from a channel strip. Any band is
+// a big drag target (drag anywhere in its column up/down); double-tap flattens.
+function EqGraphModal({ trackName, color, value, onChange, onClose }: {
+  trackName: string
+  color: string
+  value: { sub?: number; bass?: number; mid?: number; treble?: number }
+  onChange: (band: EqBand, v: number) => void
+  onClose: () => void
+}) {
+  const isMobile = useIsMobile()
+  const [w, setW] = useState(480)
+  useEffect(() => {
+    const fit = () => setW(Math.min(560, window.innerWidth - (isMobile ? 32 : 80)))
+    fit(); window.addEventListener('resize', fit); return () => window.removeEventListener('resize', fit)
+  }, [isMobile])
+  const h = isMobile ? 200 : 240
+  const BANDS = [
+    ['sub', 'Sub', '70 Hz', 'var(--accent-light)'], ['bass', 'Bass', '200 Hz', '#22c55e'],
+    ['mid', 'Mid', '1 kHz', '#eab308'], ['treble', 'Treble', '8 kHz', '#3b82f6'],
+  ] as const
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 240, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobile ? 0 : 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: isMobile ? '100%' : 'auto', maxWidth: '96vw', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderTop: `3px solid ${color}`, borderRadius: isMobile ? '18px 18px 0 0' : 12, padding: isMobile ? '16px 16px calc(18px + env(safe-area-inset-bottom))' : 18, boxShadow: '0 12px 40px rgba(0,0,0,0.6)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, gap: 10 }}>
+          <strong style={{ fontSize: 14, flex: 1 }}>{trackName} · Tone EQ</strong>
+          <button onClick={() => (['sub', 'bass', 'mid', 'treble'] as const).forEach(b => onChange(b, 0))}
+            style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Flat</button>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', width: w }}>
+          <EqCurve value={value} onChange={onChange} width={w} height={h} />
+        </div>
+        <div style={{ display: 'flex', marginTop: 10, gap: 6, width: w }}>
+          {BANDS.map(([band, label, freq, c]) => {
+            const v = value[band] ?? 0
+            return (
+              <div key={band} style={{ flex: 1, textAlign: 'center', padding: '6px 4px', borderRadius: 8, background: 'var(--bg-card)', border: `1px solid ${v ? c : 'var(--border)'}` }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: c }}>{label}</div>
+                <div style={{ fontSize: 8, color: 'var(--text-muted)' }}>{freq}</div>
+                <div style={{ fontSize: 12, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: v ? 'var(--text-primary)' : 'var(--text-muted)' }}>{v > 0 ? '+' : ''}{v}<span style={{ fontSize: 8, color: 'var(--text-muted)' }}> dB</span></div>
+              </div>
+            )
+          })}
+        </div>
+        <p style={{ margin: '10px 2px 0', fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>Drag any band up or down · double-tap the graph to flatten</p>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isMaster?: boolean; onOpenDetail?: (id: string) => void }) {
   const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
   const isMobile = useIsMobile()
   const [editing, setEditing]   = useState(false)
   const [nameDraft, setNameDraft] = useState(track?.name ?? 'MASTER')
+  const [eqOpen, setEqOpen]     = useState(false)   // large drawable EQ graph
 
   // LUFS metering (master only)
   const [lufsValue, setLufsValue] = useState<number | null>(null)
@@ -269,14 +321,25 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           ['sub', 'SUB', 'var(--accent-light)'], ['bass', 'BASS', '#22c55e'],
           ['mid', 'MID', '#eab308'], ['treble', 'TREB', '#3b82f6'],
         ] as const
-        // On a phone the 20px knobs are near-impossible to control, so the Tone
-        // EQ becomes a stack of labelled horizontal sliders (±12 dB each).
-        if (isMobile) return (
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Tone EQ</span>
+        // The strip shows the four bands as compact sliders (±12 dB each) — easy
+        // to nudge in place. For freehand shaping, the "Graph" button opens the
+        // curve full-size where any band is a big drag target.
+        return (
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: isMobile ? 5 : 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none', flex: 1 }}>Tone EQ</span>
+              <button onClick={() => setEqOpen(true)} title="Open the EQ graph — drag any band" aria-label="Open EQ graph"
+                style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 8, fontWeight: 700, letterSpacing: '0.03em', padding: isMobile ? '2px 6px' : '3px 5px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)', flexShrink: 0 }}>
+                <svg width="13" height="9" viewBox="0 0 13 9" fill="none" aria-hidden><path d="M1 6 L4 3 L7 5 L12 1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                {isMobile && 'GRAPH'}
+              </button>
+            </div>
             {BANDS.map(([band, label, c]) => {
               const val = tone[band] ?? 0
-              return (
+              // Mobile strips are wide enough for a roomy single row; the 72px
+              // desktop strip puts label + value above a full-width slider so it
+              // never overflows.
+              if (isMobile) return (
                 <div key={band} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 32, fontSize: 9, fontWeight: 700, color: c, flexShrink: 0 }}>{label}</span>
                   <input type="range" min={-12} max={12} step={0.5} value={val}
@@ -286,19 +349,20 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
                   <span style={{ width: 30, fontSize: 9, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', flexShrink: 0 }}>{val > 0 ? '+' : ''}{val}</span>
                 </div>
               )
+              return (
+                <div key={band}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, fontWeight: 700, marginBottom: 1, lineHeight: 1 }}>
+                    <span style={{ color: c }}>{label}</span>
+                    <span style={{ color: val ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{val > 0 ? '+' : ''}{val}</span>
+                  </div>
+                  <input type="range" min={-12} max={12} step={0.5} value={val}
+                    onChange={e => setBand(band, parseFloat(e.target.value))}
+                    onDoubleClick={() => setBand(band, 0)}
+                    style={{ width: '100%', accentColor: c, height: 13 }} />
+                </div>
+              )
             })}
-          </div>
-        )
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
-            <span style={{ fontSize: 7, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', userSelect: 'none' }}>Tone EQ</span>
-            <EqCurve value={tone} onChange={setBand} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: 66, fontSize: 6, color: 'var(--text-muted)', letterSpacing: '0.02em' }}>
-              {BANDS.map(([band, label]) => {
-                const v = tone[band] ?? 0
-                return <span key={band} style={{ color: v ? 'var(--text-secondary)' : undefined }}>{label}{v ? `${v > 0 ? '+' : ''}${v}` : ''}</span>
-              })}
-            </div>
+            {eqOpen && <EqGraphModal trackName={track.name} color={track.color ?? 'var(--accent)'} value={tone} onChange={setBand} onClose={() => setEqOpen(false)} />}
           </div>
         )
       })()}
@@ -584,6 +648,7 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
 // every control is large and thumb-friendly (EQ, pan, volume, sends, effects).
 function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => void }) {
   const { project, dispatch, engine } = useDaw()
+  const [eqOpen, setEqOpen] = useState(false)
   const track = project.tracks.find(t => t.id === trackId)
   if (!track) return null
   const tone = track.tone ?? {}
@@ -626,7 +691,14 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
 
           {/* Tone EQ */}
           <div>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Tone EQ</div>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--text-muted)', flex: 1 }}>Tone EQ</div>
+              <button onClick={() => setEqOpen(true)} title="Open the EQ graph — drag any band"
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
+                <svg width="15" height="10" viewBox="0 0 13 9" fill="none" aria-hidden><path d="M1 6 L4 3 L7 5 L12 1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Graph
+              </button>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {BANDS.map(([band, label, c]) => {
                 const v = tone[band] ?? 0
@@ -676,6 +748,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
           </div>
         </div>
       </div>
+      {eqOpen && <EqGraphModal trackName={track.name} color={track.color ?? 'var(--accent)'} value={tone} onChange={setBand} onClose={() => setEqOpen(false)} />}
     </div>,
     document.body,
   )
