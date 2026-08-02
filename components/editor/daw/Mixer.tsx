@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Circle } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useIsMobile } from '@/lib/use-is-mobile'
-import type { DawTrack, ReturnTrack } from '@/lib/daw-types'
+import type { DawTrack, ReturnTrack, AutoPoint } from '@/lib/daw-types'
+import DrawnGraphModal from './DrawnGraphModal'
 import { TRACK_COLORS } from '@/lib/daw-types'
 import LevelMeter from './LevelMeter'
 import ReferenceAB from './ReferenceAB'
@@ -175,6 +176,30 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
     else if (track) { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }
   }
   const midi = useMidiLearn(isMaster ? 'master:vol' : `track:${track?.id ?? 'x'}:vol`, setVol)
+
+  // ── Draw volume automation ("drawing on the mixer") ───────────────────────
+  // A freehand curve for this channel's volume over the whole song, written to
+  // the automation-lane system (same as the arrangement lanes). The engine
+  // applies it during playback; the fader/mute/solo keep their normal look.
+  const [drawOpen, setDrawOpen] = useState(false)
+  const songBeats = useMemo(
+    () => Math.max(4, ...project.arrangementClips.map(c => c.startBeat + c.durationBeats)),
+    [project.arrangementClips],
+  )
+  const volLane = !isMaster && track ? project.automationLanes.find(l => l.trackId === track.id && l.parameter === 'volume') : undefined
+  const ap = (t: number, v: number): AutoPoint => ({ id: `${t}`, t, v, smooth: false, h1: [0, 0], h2: [0, 0] })
+  const flatCurve = (): AutoPoint[] => [ap(0, Math.min(1, volume)), ap(1, Math.min(1, volume))]
+  const volCurve: AutoPoint[] = volLane && volLane.points.length >= 2
+    ? [...volLane.points].sort((a, b) => a.beat - b.beat).map(p => ap(songBeats ? p.beat / songBeats : 0, Math.max(0, Math.min(1, p.value))))
+    : flatCurve()
+  const writeVolAutomation = (pts: AutoPoint[]) => {
+    if (!track) return
+    const points = [...pts].sort((a, b) => a.t - b.t).map(p => ({ id: crypto.randomUUID(), beat: Math.round(p.t * songBeats * 1000) / 1000, value: Math.max(0, Math.min(1, p.v)) }))
+    if (volLane) dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: volLane.id, patch: { points } })
+    else dispatch({ type: 'ADD_AUTOMATION_LANE', lane: { id: crypto.randomUUID(), trackId: track.id, parameter: 'volume', label: 'Volume', min: 0, max: 1, defaultValue: Math.min(1, volume), points, expanded: false } })
+  }
+  const clearVolAutomation = () => { if (volLane) dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: volLane.id }) }
+
   const pan     = track?.pan ?? 0
   const muted   = track?.mute ?? false
   const soloed  = track?.solo ?? false
@@ -420,6 +445,10 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
             <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !soloed } })}
               style={{ ...ms, border: '1px solid var(--border)', background: soloed ? '#eab308' : 'var(--bg-surface)', color: soloed ? '#000' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700 }}
               title="Solo" data-help-id="solo">S</button>
+            {/* Draw volume automation — lit when a volume curve is active. */}
+            <button onClick={() => setDrawOpen(true)}
+              style={{ ...ms, border: `1px solid ${volLane ? 'var(--accent)' : 'var(--border)'}`, background: volLane ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: volLane ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              title="Draw volume automation across the song" aria-label="Draw volume automation">✎</button>
           </div>
         )
       })()}
@@ -513,6 +542,21 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
       )}
 
       {typeLabel && <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', fontFamily: 'monospace' }}>{typeLabel}</span>}
+
+      {/* Draw-volume-automation modal (freehand fader over the whole song). */}
+      {drawOpen && track && (
+        <DrawnGraphModal
+          title={`Volume automation — ${track.name}`}
+          subtitle="Draw the fader across the whole song. The channel follows this during playback; Remove goes back to the static fader."
+          axis={['song start', 'top = full', 'song end']}
+          points={volCurve}
+          onChange={writeVolAutomation}
+          onClose={() => setDrawOpen(false)}
+          onReset={() => writeVolAutomation(flatCurve())}
+          onOff={() => { clearVolAutomation(); setDrawOpen(false) }}
+          offLabel="Remove automation"
+        />
+      )}
     </div>
   )
 }
