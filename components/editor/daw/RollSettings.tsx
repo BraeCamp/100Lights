@@ -10,11 +10,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
-import type { MidiClip, DawClip, RollFx } from '@/lib/daw-types'
+import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
+import MotionCurve from './MotionCurve'
 import { isMidiClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { useDaw } from '@/lib/daw-state'
-import EqCurve from './EqCurve'
+import EqCurve, { type EqVals } from './EqCurve'
 import { fxHasAudibleField, FX_FIELDS, fieldIsSet } from '@/lib/roll-fx'
 import { getPresets } from '@/lib/midi-presets'
 import { tonesForGroup, applyTone, toneMatches } from '@/lib/tone-presets'
@@ -165,6 +166,16 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       engine.setTrackTone(id, next)
     }
   }
+  // Whole-tone setter for a horizontal draw (many bands at once) — one update per
+  // track so rapid per-band writes don't overwrite each other from a stale bag.
+  const setTrackToneAll = (t: EqVals) => {
+    const next: EqVals = {}
+    for (const b of ['sub', 'bass', 'mid', 'treble'] as const) if (t[b]) next[b] = t[b]
+    for (const id of trackIds) {
+      dispatch({ type: 'UPDATE_TRACK', trackId: id, patch: { tone: next } })
+      engine.setTrackTone(id, next)
+    }
+  }
   const setTrackVol = (v: number) => {
     for (const id of trackIds) {
       dispatch({ type: 'UPDATE_TRACK', trackId: id, patch: { volume: v } })
@@ -192,6 +203,19 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const legatoOn = artOpts ? ((rfLegato ?? (artOpts.legato.default ? 1 : 0)) > 0.5) : false
   const legatoAuto = rfLegato === undefined
   const slideAmt = artOpts && isMidiClip(clip) ? (clip.rollFx?.slide ?? artOpts.slide.defaultAmount) : 0
+
+  // FX Motion — a hand-drawn curve over the whole clip that morphs chosen effects
+  // from neutral→target. Single MIDI clip only. Stored on clip.fxMotion.
+  const motion = !multi && isMidiClip(clip) ? clip.fxMotion : undefined
+  const DEFAULT_MOTION: AutoPoint[] = [
+    { id: 'm0', t: 0, v: 1, smooth: false, h1: [0, 0], h2: [0, 0] },
+    { id: 'm1', t: 1, v: 0, smooth: false, h1: [0, 0], h2: [0, 0] },
+  ]
+  const addMotion = () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { fx: { filterHz: 500 }, graph: DEFAULT_MOTION } } })
+  const setMotionGraph = (graph: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { fx: motion?.fx ?? {}, perNote: motion?.perNote, graph } } })
+  const setMotionFx = (fx: RollFx | undefined) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { ...(motion ?? { graph: DEFAULT_MOTION }), fx: fx ?? {} } } })
+  const setMotionPerNote = (perNote: boolean) => { if (motion) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { ...motion, perNote } } }) }
+  const clearMotion = () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: undefined } })
 
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
@@ -459,7 +483,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
             <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <EqCurve value={tone} onChange={setTrackBand} width={120} height={54} />
+            <EqCurve value={tone} onChange={setTrackBand} onChangeAll={setTrackToneAll} width={120} height={54} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.3 }}>
               {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
                 const v = tone[b] ?? 0
@@ -480,6 +504,42 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
       />
+
+      {/* FX Motion — draw a curve over the whole clip that morphs chosen effects
+          from neutral (bottom) → their dialed-in target (top). Single MIDI clip. */}
+      {!multi && isMidiClip(clip) && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>FX MOTION</span>
+            {motion
+              ? <button onClick={clearMotion} title="Remove FX motion" style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Remove</button>
+              : <button onClick={addMotion} title="Add an FX motion curve" style={{ fontSize: 9, fontWeight: 700, padding: '2px 9px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: CYAN }}>+ Add</button>}
+          </div>
+          {motion ? (
+            <>
+              <MotionCurve points={motion.graph} onChange={setMotionGraph} width={276} height={88} color={CYAN} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 2px 8px' }}>
+                <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'per note' : 'clip start'}</span>
+                <div style={{ display: 'flex', gap: 3 }}>
+                  {([['Whole clip', false], ['Per note', true]] as const).map(([lbl, pn]) => {
+                    const on = !!motion.perNote === pn
+                    return (
+                      <button key={lbl} onClick={() => setMotionPerNote(pn)}
+                        title={pn ? 'Re-trigger the shape on every note' : 'One shape stretched across the whole clip'}
+                        style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)', background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)', color: on ? CYAN : 'var(--text-secondary)' }}>{lbl}</button>
+                    )
+                  })}
+                </div>
+                <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{motion.perNote ? 'note end' : 'end'}</span>
+              </div>
+              <div style={{ fontSize: 8.5, color: 'var(--text-muted)', marginBottom: 3, lineHeight: 1.35 }}>Effects that follow the curve — pick one or more; the top of the graph = these values:</div>
+              <FxControls value={motion.fx} onCommit={setMotionFx} hideCats={['env', 'pitch']} mode="advanced" />
+            </>
+          ) : (
+            <p style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.45, margin: 0 }}>Draw a curve that morphs chosen effects across the clip — e.g. a filter that opens over time, reverb that swells, or drive that fades. One or more effects can follow the same curve.</p>
+          )}
+        </div>
+      )}
 
       <div style={{ padding: '8px 12px 0', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         Applies to this clip’s notes only — live and on export. To bake a sound into a reusable, shareable preset, use the sound menu’s <strong>New preset</strong>.

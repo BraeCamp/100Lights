@@ -518,6 +518,18 @@ export function isEffectBar(e: ClipEffect): boolean {
   return !!e.fx
 }
 
+/** Per-clip "FX Motion": the chosen effects (`fx`, their full-on target) morph
+ *  from neutral→target following one hand-drawn `graph` (0..1) across the clip.
+ *  `graph.t` is NORMALIZED 0..1 (fraction of the clip) so it stretches on resize;
+ *  the engine scales it to beats when scheduling. Reuses the effect-bar renderer. */
+export interface ClipFxMotion {
+  fx: RollFx
+  graph: AutoPoint[]
+  /** true = re-trigger the shape on EACH note (over the note's length); default
+   *  false = one shape stretched across the whole clip. */
+  perNote?: boolean
+}
+
 // ── Automation ────────────────────────────────────────────────────────────────
 
 export interface AutomationPoint {
@@ -768,6 +780,10 @@ export interface MidiClip {
   /** Clip-local sound settings from the piano roll's "Sound" panel — applied
    *  to this clip's notes only, on top of the preset's own sound. See RollFx. */
   rollFx?: RollFx
+  /** FX Motion: a hand-drawn curve (0..1 over the whole clip) that morphs one or
+   *  more effects from neutral (0) to their dialed-in target (1) as the clip
+   *  plays — e.g. a filter that closes over time. Rendered as an effect-bar. */
+  fxMotion?: ClipFxMotion
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

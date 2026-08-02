@@ -1524,6 +1524,22 @@ export class DawEngine extends EventTarget {
             e.startBeat < noteAbsBeat + maxDur &&
             e.startBeat + e.durationBeats > noteAbsBeat
           )
+          // The clip's own FX Motion is an effect-bar spanning the whole clip, so
+          // notes thread through the SAME renderer. graph.t is normalized (0..1);
+          // scale it to the clip's beats here so it stretches with the clip.
+          const mot = clip.fxMotion
+          if (mot && mot.graph.length >= 2 && activeBarFields(mot.fx).length > 0) {
+            // Per-note: the shape spans each note (re-triggers). Whole-clip: one
+            // shape stretched over the clip, every note tapping it at its position.
+            const span  = mot.perNote ? maxDur : clip.durationBeats
+            const start = mot.perNote ? noteAbsBeat : clip.startBeat
+            overlapping.push({
+              id: `motion:${clip.id}`, trackId: clip.trackId,
+              startBeat: start, durationBeats: span,
+              fx: mot.fx,
+              graph: mot.graph.map(p => ({ ...p, t: p.t * span })),
+            })
+          }
           if (overlapping.length > 0) {
             clipEffectActive = true
             const entry = this.ctx.createGain()
