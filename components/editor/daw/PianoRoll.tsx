@@ -550,7 +550,31 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   }
 
   const gridRef   = useRef<HTMLDivElement>(null)
+  const bodyRef   = useRef<HTMLDivElement>(null)
   const selBoxRef = useRef<{ startX: number; startY: number; endX: number; endY: number } | null>(null)
+
+  // Scroll containment. React attaches onWheel as a PASSIVE listener (React 19),
+  // so preventDefault() inside it is a no-op and wheeling the roll also scrolls
+  // the page. Attach our own NON-passive wheel listener to the body so wheel
+  // (over keys, grid, or velocity lane) only ever scrolls/zooms the roll and
+  // never chains to the viewport. Dynamic row metrics come from a ref.
+  const wheelMetrics = useRef({ rowCount: 0, rowH: 0 })
+  wheelMetrics.current = { rowCount, rowH }
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) { setBeatW(w => Math.max(20, Math.min(200, w * (e.deltaY < 0 ? 1.15 : 0.87)))); e.preventDefault(); return }
+      if (e.altKey) { zoomVertical(e.deltaY < 0 ? 1.25 : 0.8); e.preventDefault(); return }
+      e.preventDefault()
+      if (Math.abs(e.deltaX) > 0) setScrollLeft(sl => Math.max(0, sl + e.deltaX))
+      const { rowCount, rowH } = wheelMetrics.current
+      const max = Math.max(0, rowCount * rowH - (gridRef.current?.clientHeight ?? 0))
+      setScrollTop(s => Math.max(0, Math.min(max, s + e.deltaY * 0.5)))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
   // FL-style "new notes inherit the last length": remembers the duration you
   // last drew or resized a note to; a plain click reuses it. 0 = unset → falls
   // back to the grid snap, so behaviour is unchanged until you set a length.
@@ -1485,7 +1509,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       </div>
 
       {/* ── Body ── */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
+      <div ref={bodyRef} style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden', overscrollBehavior: 'contain' }}>
         {/* Keys / drum lanes */}
         {isDrum ? (
           <DrumLaneKeys
@@ -1518,21 +1542,6 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             onTouchStart={isMobile ? onGridTouchStart : undefined}
             onTouchMove={isMobile ? onGridTouchMove : undefined}
             onTouchEnd={isMobile ? onGridTouchEnd : undefined}
-            onWheel={e => {
-              if (e.ctrlKey || e.metaKey) { setBeatW(w => Math.max(20, Math.min(200, w * (e.deltaY < 0 ? 1.15 : 0.87)))); e.preventDefault() }
-              else if (e.altKey) { zoomVertical(e.deltaY < 0 ? 1.25 : 0.8); e.preventDefault() }
-              else {
-                if (Math.abs(e.deltaX) > 0) setScrollLeft(sl => Math.max(0, sl + e.deltaX))
-                // Scroll the piano roll until it hits its top/bottom; only then
-                // let the wheel fall through to the page — never both at once.
-                const maxScroll = Math.max(0, NUM_NOTES * rowH - e.currentTarget.clientHeight)
-                const canScrollY = (e.deltaY < 0 && scrollTop > 0) || (e.deltaY > 0 && scrollTop < maxScroll)
-                if (canScrollY) {
-                  setScrollTop(s => Math.max(0, Math.min(maxScroll, s + e.deltaY * 0.5)))
-                  e.preventDefault()
-                }
-              }
-            }}
           >
             {/* Background rows. When scale-lock is on, the in-scale lanes are
                 washed with the account accent (var(--accent-rgb), which follows

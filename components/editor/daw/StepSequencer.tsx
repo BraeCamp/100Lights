@@ -237,6 +237,26 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   const [tall, setTall] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Contain wheel scrolling: this is a horizontal-only surface, so translate the
+  // wheel to horizontal scroll and preventDefault (native, non-passive — a React
+  // onWheel is passive in React 19 and can't preventDefault) so scrolling the
+  // sequencer never scrolls the whole page.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+      if (d === 0) return
+      el.scrollLeft += d
+      e.preventDefault()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // Pins the left label column so drum/lane names stay put while steps scroll.
+  const stickyCol: React.CSSProperties = { position: 'sticky', left: 0, zIndex: 2, background: 'var(--bg-surface)', boxShadow: '2px 0 5px rgba(0,0,0,0.28)' }
+
   const selStyle: React.CSSProperties = {
     fontSize: 10, fontWeight: 600, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
     border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-primary)',
@@ -327,11 +347,11 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
       )}
 
       {/* Grid */}
-      <div ref={scrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', padding: '10px 12px', maxHeight: tall ? 420 : 300 }}>
+      <div ref={scrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', padding: '10px 12px', maxHeight: tall ? 420 : 300 }}>
         <div style={{ display: 'inline-block', minWidth: '100%' }}>
           {/* Step numbers */}
           <div style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3 }}>
-            <span />
+            <span style={stickyCol} />
             {Array.from({ length: steps }, (_, s) => (
               <span key={`h${s}`} style={{ fontSize: 8, textAlign: 'center', color: s === playStep ? 'var(--accent-light)' : s % 4 === 0 ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                 {s % stepsPerBar === 0 ? `${s / stepsPerBar + 1}` : s % 4 === 0 ? '·' : ''}
@@ -340,7 +360,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
           </div>
           {DRUM_LANES.map(lane => (
             <div key={lane.key} style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3, alignItems: 'center' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 }}>
+              <span style={{ ...stickyCol, display: 'flex', alignItems: 'center', gap: 3, minWidth: 0, paddingRight: 5 }}>
                 <span style={{ flex: 1, fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
                   onClick={() => audition(lane.pitch)} title={padSample(lane.pitch) ? `${lane.label} — sample: ${padSample(lane.pitch)!.name ?? 'custom'} (click to preview)` : `Preview ${lane.label}`}>{lane.label}</span>
                 <input type="range" min={0} max={1.5} step={0.05} value={padVolume(lane.pitch)}
@@ -378,7 +398,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
           ))}
           {/* Velocity row — drag across to draw the accents (louder/softer hits). */}
           <div style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginTop: 6, alignItems: 'end' }}>
-            <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.05em', alignSelf: 'center' }} title="Drag across to shape the hits' loudness">VELOCITY ⇢ draw</span>
+            <span style={{ ...stickyCol, fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.05em', display: 'flex', alignItems: 'center' }} title="Drag across to shape the hits' loudness">VELOCITY ⇢ draw</span>
             {Array.from({ length: steps }, (_, s) => {
               const v = stepVel(s)
               const has = v > 0
