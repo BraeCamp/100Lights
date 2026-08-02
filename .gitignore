@@ -53,3 +53,6 @@ test-results/
 songs/
 .test-build
 .fixture-build
+
+# Generated song build-specs (scripts/compose.mjs, gen_rhythm_songs.py)
+public/_songgen/

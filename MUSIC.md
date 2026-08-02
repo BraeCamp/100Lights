@@ -11,6 +11,31 @@ notes, tension → release). Everything below serves those two.
 
 ---
 
+## The composer (`scripts/compose.mjs`) — start here
+
+A genre-driven generator that DRIVES FROM THE APP'S OWN LIBRARIES (bundles
+`lib/genres.ts` + `lib/drum-presets.ts`), so adding a genre/kit in the app
+expands what it can make. Pick a genre + key and it assembles drums (a real
+kit + a feel pattern, auto-tagged `isDrumClip`), bass (chord tones), chord
+keys/pad, and a lead across arrangement sections, with breathing-rhythm
+patterns + humanised velocities, gain-staged for headroom. Output = a
+build-spec (the format §0 dispatches).
+
+```
+node scripts/compose.mjs --list                 # 20 genres
+node scripts/compose.mjs lofi "F minor" 48      # → public/_songgen/lofi-fminor.json
+node scripts/compose.mjs deep-house "A minor" 48 --seed=7
+```
+
+Internals to tune: `PROGRESSIONS` (roman numerals per scale), `PALETTE`
+(genre → builtin-N preset ids + layers + 7ths), `FEELS` (drum-feel → 16-step
+pattern), the section `plan` (which layers per 4-bar section + drum density),
+and the track gains / `masterVolume` (headroom). Lead uses CHORD TONES ONLY —
+never a raw ±semitone nudge (that slipped chromatic notes; caught by the loop).
+Verified deep-house: 0 out-of-key notes, peak −1.9 dBFS (no clip), crest 14 dB,
+~−17 LUFS. Then feed the output through §0 (build → render → analyze → fix).
+The older hand-written `gen_rhythm_songs.py` is kept for reference.
+
 ## 0. The loop (build → hear → fix)
 
 I can't literally listen, so every track goes through a measurable feedback loop:
