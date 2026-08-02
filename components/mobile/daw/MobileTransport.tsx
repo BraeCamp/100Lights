@@ -46,8 +46,47 @@ function FxPad({ label, mode, engine, color }: { label: string; mode: 'lp' | 'hp
   )
 }
 
+// Full-width playhead scrubber. Represents the whole song (0 → end); dragging
+// the thumb seeks the transport. This is the ONLY way the playhead moves on
+// mobile now, so a one-finger drag on the timeline can pan/scroll freely.
+function ScrubBar({ engine, position, setPosition, end, sig }: {
+  engine: DawEngine; position: number; setPosition: (b: number) => void; end: number; sig: number
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const dragging = useRef(false)
+  const seek = (clientX: number) => {
+    const el = ref.current; if (!el || end <= 0) return
+    const r = el.getBoundingClientRect()
+    const frac = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
+    const beat = frac * end
+    engine.seek(beat); setPosition(beat)
+  }
+  const frac = end > 0 ? Math.max(0, Math.min(1, position / end)) : 0
+  const bars = Math.max(1, Math.round(end / sig))
+  const tickEvery = bars > 24 ? 8 : bars > 12 ? 4 : bars > 6 ? 2 : 1
+  return (
+    <div
+      onPointerDown={e => { dragging.current = true; try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ok */ } seek(e.clientX) }}
+      onPointerMove={e => { if (dragging.current) seek(e.clientX) }}
+      onPointerUp={e => { dragging.current = false; try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* ok */ } }}
+      onPointerCancel={() => { dragging.current = false }}
+      aria-label="Playhead position — drag to scrub"
+      style={{ position: 'relative', display: 'flex', alignItems: 'center', height: 30, padding: '0 14px', touchAction: 'none', cursor: 'pointer' }}
+    >
+      <div ref={ref} style={{ position: 'relative', width: '100%', height: 6, borderRadius: 3, background: 'var(--bg-card)' }}>
+        {/* bar ticks for orientation */}
+        {Array.from({ length: bars + 1 }, (_, b) => b).filter(b => b % tickEvery === 0).map(b => (
+          <div key={b} style={{ position: 'absolute', left: `${(b / bars) * 100}%`, top: -2, bottom: -2, width: 1, background: 'var(--border)', pointerEvents: 'none' }} />
+        ))}
+        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${frac * 100}%`, background: 'var(--accent)', borderRadius: 3, pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', left: `${frac * 100}%`, top: '50%', width: 16, height: 16, marginLeft: -8, marginTop: -8, borderRadius: '50%', background: '#fff', border: '2px solid var(--accent)', boxShadow: '0 1px 4px rgba(0,0,0,0.45)', pointerEvents: 'none' }} />
+      </div>
+    </div>
+  )
+}
+
 export function MobileTransport() {
-  const { engine, playing, position, project, dispatch, metronome, setMetronome, undo, redo, canUndo, canRedo } = useDaw()
+  const { engine, playing, position, project, dispatch, metronome, setMetronome, setPosition, undo, redo, canUndo, canRedo } = useDaw()
   const [settings, setSettings] = useState(false)
   const [fxOpen, setFxOpen] = useState(false)
   const taps = useRef<number[]>([])
@@ -65,6 +104,9 @@ export function MobileTransport() {
   const sig = project.timeSignatureNum || 4
   const bar = Math.floor(position / sig) + 1
   const beat = Math.floor(position % sig) + 1
+  // Song length for the scrub bar — last clip end, at least a few bars, + a
+  // bar of run-off so the playhead can sit just past the end.
+  const songEnd = Math.max(sig * 4, ...project.arrangementClips.map(c => c.startBeat + c.durationBeats)) + sig
 
   const toggleLoop = () => {
     if (!project.loopEnabled) {
@@ -88,6 +130,10 @@ export function MobileTransport() {
 
   return (
     <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+      {/* Playhead scrub bar — drag to move the playhead through the song. Lives
+          here (under the +Track button, above the tabs) so scrolling the
+          timeline never moves the playhead by accident. */}
+      <ScrubBar engine={engine} position={position} setPosition={setPosition} end={songEnd} sig={sig} />
       {fxOpen && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
           <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', flexShrink: 0 }}>HOLD FX</span>
