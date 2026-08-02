@@ -12,7 +12,7 @@ import { createPortal } from 'react-dom'
 import { Settings2 } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
 import DrawnGraphModal from './DrawnGraphModal'
-import { GRAPH_AREAS, GRAPH_COLOR, defaultFieldGraph, type MotionAreaId } from '@/lib/draw-graphs'
+import { GRAPH_AREAS, defaultFieldGraph, type MotionAreaId } from '@/lib/draw-graphs'
 import { isMidiClip, isAudioClip } from '@/lib/daw-types'
 import type { DawAction } from '@/lib/daw-state'
 import { useDaw } from '@/lib/daw-state'
@@ -595,26 +595,32 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         <span style={{ flex: 1 }} />
       </div>
 
-      {/* Volume + Tone EQ — one system, shared verbatim with the Mixer strip.
-          Edits track.volume + track.tone, so moving a band here moves the mixer's
-          EQ curve too (and vice-versa). Track-scoped by design. */}
-      {/* Volume + EQ collapse to one row → the modal (item 9). Volume stays
-          one-click on the track row + mixer; here it's a summary that opens the
-          modal (which now holds the Volume slider + the EQ curve). */}
+      {/* Volume + EQ — one system, shared verbatim with the Mixer strip (edits
+          track.volume + track.tone). Volume is its OWN inline slider (one click,
+          no graph attached); EQ is a separate button that opens the drawing
+          graph in the modal. */}
       {eqTrack && (
-        <button onClick={() => setOpenGraph({ kind: 'eq' })}
-          title="Open Volume & EQ"
-          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', borderTop: '1px solid var(--border)', padding: '8px 12px', background: 'none', border: 'none', borderTopWidth: 1, cursor: 'pointer' }}>
-          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)', flexShrink: 0 }}>VOL &amp; EQ</span>
-          <span style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8, fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden' }}>
-            <span style={{ color: 'var(--text-primary)' }}>{Math.round(trackVol * 100)}%</span>
-            {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
-              const v = tone[b] ?? 0
-              return <span key={b} style={{ color: v ? CYAN : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)}{v ? ` ${v > 0 ? '+' : ''}${v}` : ''}</span>
-            })}
-          </span>
-          <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>edit ▸</span>
-        </button>
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px 4px' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>Volume</span>
+            <input type="range" min={0} max={1.2} step={0.005} value={trackVol}
+              onChange={e => setTrackVol(Number(e.target.value))}
+              style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
+            <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
+          </div>
+          <button onClick={() => setOpenGraph({ kind: 'eq' })}
+            title="Open the EQ — draw the curve"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '4px 12px 8px', background: 'none', border: 'none', cursor: 'pointer' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>EQ</span>
+            <span style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8, fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden' }}>
+              {(['sub', 'bass', 'mid', 'treble'] as const).map(b => {
+                const v = tone[b] ?? 0
+                return <span key={b} style={{ color: v ? CYAN : 'var(--text-muted)' }}>{b[0].toUpperCase() + b.slice(1)}{v ? ` ${v > 0 ? '+' : ''}${v}` : ''}</span>
+              })}
+            </span>
+            <span style={{ fontSize: 9, color: CYAN, flexShrink: 0 }}>◠ draw ▸</span>
+          </button>
+        </div>
       )}
 
       {/* Remaining clip-only effects (volume/EQ moved to the track block above) —
@@ -791,19 +797,12 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
       {openGraph?.kind === 'eq' && eqTrack && (
         <DrawnGraphModal
-          title="Volume & EQ"
-          subtitle={eqMultiTrack ? `${trackIds.length} tracks · shared with the mixer` : 'Drag the bands — shared with the mixer strip.'}
+          title="EQ"
+          subtitle={eqMultiTrack ? `${trackIds.length} tracks · shared with the mixer` : 'Draw the curve — drag across to sketch, or a band up/down. Shared with the mixer strip.'}
           onClose={() => setOpenGraph(null)}
           onReset={() => setTrackToneAll({})}
         >
-          {/* Volume lives here now (item 9) — still track-scoped, still one edit. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)', width: 52, flexShrink: 0 }}>Volume</span>
-            <input type="range" min={0} max={1.2} step={0.005} value={trackVol}
-              onChange={e => setTrackVol(Number(e.target.value))}
-              style={{ flex: 1, minWidth: 0, accentColor: GRAPH_COLOR }} />
-            <span style={{ fontSize: 11, color: 'var(--text-primary)', width: 44, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
-          </div>
+          {/* Volume is a separate inline control in the panel — this graph is EQ only. */}
           <EqCurve value={tone} onChange={setTrackBand} onChangeAll={setTrackToneAll} width={520} height={190} />
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
             {(['sub', 'bass', 'mid', 'treble'] as const).map(band => {
