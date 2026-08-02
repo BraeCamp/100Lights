@@ -576,13 +576,13 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
         graphs={graphsForCtl}
-        onToggleGraph={supportsFx ? toggleFieldGraph : undefined}
-        onGraphChange={supportsFx ? setFieldGraph : undefined}
+        onToggleGraph={supportsFx && soundAdvancedAllowed ? toggleFieldGraph : undefined}
+        onGraphChange={supportsFx && soundAdvancedAllowed ? setFieldGraph : undefined}
       />
 
       {/* Amplitude envelope — draw the note's volume shape instead of the
           attack/decay/sustain sliders. Single MIDI clip. */}
-      {!multi && isMidiClip(clip) && (
+      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
         <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>AMPLITUDE</span>
@@ -602,7 +602,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       )}
 
       {/* LFO shape — draw one cycle used by the clip's tremolo/auto-pan/wah/vibrato. */}
-      {!multi && isMidiClip(clip) && (
+      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
         <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>LFO SHAPE</span>
@@ -622,7 +622,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       )}
 
       {/* Pitch contour — draw the note's pitch bend (scoops, falls). Single MIDI clip. */}
-      {!multi && isMidiClip(clip) && (
+      {!multi && isMidiClip(clip) && soundAdvancedAllowed && (
         <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>PITCH</span>
@@ -643,7 +643,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
       {/* FX Motion — draw a curve over the whole clip that morphs chosen effects
           from neutral (bottom) → their dialed-in target (top). MIDI or audio clip. */}
-      {supportsFx && (
+      {supportsFx && soundAdvancedAllowed && (
         <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>FX MOTION</span>
