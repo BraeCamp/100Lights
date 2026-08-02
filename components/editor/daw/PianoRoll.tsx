@@ -1534,15 +1534,25 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               }
             }}
           >
-            {/* Background rows */}
+            {/* Background rows. When scale-lock is on, the in-scale lanes are
+                washed with the account accent (var(--accent-rgb), which follows
+                the user's appearance customization) so you can see across the
+                whole roll exactly which notes the lock allows — matching the
+                same tint on the piano keys to the left. */}
             <div style={{ position: 'absolute', top: -scrollTop, left: 0, width: totalW }}>
               {Array.from({ length: rowCount }, (_, i) => {
                 const pitch = isDrum ? DRUM_LANES[i].pitch : NUM_NOTES - 1 - i
                 const black = !isDrum && isBlack(pitch)
                 const hover = hoverPitch === pitch
+                const inScale = scaleLock && !isDrum && inScalePitches.has(pitch % 12)
+                const bg = hover
+                  ? `${color}20`
+                  : inScale
+                    ? (black ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.14)')
+                    : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e'
                 return (
                   <div key={pitch} style={{
-                    height: rowH, background: hover ? `${color}20` : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e',
+                    height: rowH, background: bg,
                     borderBottom: !isDrum && pitch % 12 === 0 ? '1px solid var(--border-light)' : '1px solid #202020',
                     boxSizing: 'border-box',
                   }} />
