@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { SignUp } from '@clerk/nextjs'
 import { Zap } from 'lucide-react'
 
-export const metadata: Metadata = { title: 'Sign up' }
+export const metadata: Metadata = { title: 'Sign up', robots: { index: false, follow: false } }
 
 export default function SignUpPage() {
   return (
