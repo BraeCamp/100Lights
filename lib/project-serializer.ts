@@ -444,12 +444,29 @@ export async function openProjectsFromFile(): Promise<OpenProjectsResult> {
       throw err
     }
   }
-  // Fallback: hidden multi-file input
+  // Fallback: hidden multi-file input. Must resolve on CANCEL too — otherwise a
+  // caller that flips a spinner before awaiting this stays stuck ("Importing…")
+  // forever, because `change` never fires when the picker is dismissed.
   return new Promise((resolve) => {
     const input = Object.assign(document.createElement('input'), { type: 'file', accept: ACCEPT_ATTR, multiple: true })
-    input.onchange = async () => {
-      resolve(collect(await Promise.all([...(input.files ?? [])].map(read))))
+    let settled = false
+    const finish = (r: OpenProjectsResult) => {
+      if (settled) return
+      settled = true
+      window.removeEventListener('focus', onFocus)
+      resolve(r)
     }
+    input.onchange = async () => {
+      finish(collect(await Promise.all([...(input.files ?? [])].map(read))))
+    }
+    // Modern browsers fire 'cancel' on the input when the dialog is dismissed.
+    input.oncancel = () => finish(empty)
+    // Older browsers don't — but focus returns to the window when the dialog
+    // closes. Give `change` a beat to fire; if nothing was picked, it was a cancel.
+    const onFocus = () => {
+      window.setTimeout(() => { if (!settled && !(input.files && input.files.length)) finish(empty) }, 400)
+    }
+    window.addEventListener('focus', onFocus)
     input.click()
   })
 }
