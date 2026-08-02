@@ -5,7 +5,10 @@
 // same 5 layers over one 4-chord loop. v2 composes with real song-writing
 // technique so songs (even same genre) differ meaningfully:
 //   · SONG FORM — verse/chorus/bridge/drop/breakdown/outro, not "add layers".
-//   · HARMONIC CONTRAST — a different progression for verse vs chorus vs bridge.
+//   · HARMONIC CONTRAST — per-GENRE progression RECIPES (PROG_RECIPES), mostly
+//     8-bar so a section moves through 8 bars instead of looping 4; a 4-bar
+//     recipe filling 8 bars gets a turnaround (A + A′), and 2nd+ choruses
+//     develop (richer extensions). Different recipe for verse/chorus/bridge.
 //   · DRUM VARIATION — per-section intensity, fills at section ends, builds
 //     (snare rolls), drops (crash), breakdowns (drums out), genre hat styles.
 //   · MELODIC TECHNIQUE — a recurring HOOK motif (not random notes), developed
@@ -96,20 +99,144 @@ const note = (pitch, startBeat, durationBeats, velocity) => ({ pitch, startBeat:
 // ── Progression bank (roman numerals per scale) ───────────────────────────────
 // Split into "grounded" (good for verses, sit on i/I) and "lift" (good for
 // choruses, start off the tonic for a rise). Bridges pull a contrasting one.
+// Entries may be 4-bar OR 8-bar arrays; a 4-bar entry that has to fill 8 bars is
+// NOT looped verbatim — the repeat gets a turnaround (see sectionNumerals). This
+// scale-generic bank is the FALLBACK; per-genre recipes below take priority.
+// (Case in a numeral is cosmetic — chordFor stacks diatonic thirds either way.)
 const PROGS = {
   minor: {
-    ground: [['i', 'VI', 'III', 'VII'], ['i', 'iv', 'i', 'v'], ['i', 'VII', 'VI', 'VII'], ['i', 'i', 'iv', 'v']],
-    lift: [['VI', 'VII', 'i', 'i'], ['iv', 'VII', 'III', 'VI'], ['VI', 'III', 'VII', 'i'], ['iv', 'v', 'VI', 'VII']],
+    ground: [['i', 'VI', 'III', 'VII'], ['i', 'iv', 'i', 'v'], ['i', 'VII', 'VI', 'VII'], ['i', 'i', 'iv', 'v'],
+      ['i', 'VII', 'VI', 'v', 'iv', 'VII', 'III', 'i'], ['i', 'v', 'VI', 'iv', 'III', 'VI', 'ii', 'v']],
+    lift: [['VI', 'VII', 'i', 'i'], ['iv', 'VII', 'III', 'VI'], ['VI', 'III', 'VII', 'i'], ['iv', 'v', 'VI', 'VII'],
+      ['VI', 'iv', 'i', 'v', 'VI', 'iv', 'ii', 'v'], ['iv', 'v', 'VI', 'VII', 'III', 'VI', 'ii', 'v']],
   },
   major: {
-    ground: [['I', 'V', 'vi', 'IV'], ['I', 'IV', 'I', 'V'], ['I', 'vi', 'ii', 'V'], ['I', 'iii', 'IV', 'V']],
-    lift: [['vi', 'IV', 'I', 'V'], ['IV', 'V', 'iii', 'vi'], ['IV', 'I', 'V', 'vi'], ['ii', 'V', 'I', 'vi']],
+    ground: [['I', 'V', 'vi', 'IV'], ['I', 'IV', 'I', 'V'], ['I', 'vi', 'ii', 'V'], ['I', 'iii', 'IV', 'V'],
+      ['I', 'V', 'vi', 'IV', 'I', 'V', 'ii', 'IV'], ['I', 'vi', 'ii', 'V', 'I', 'vi', 'IV', 'V']],
+    lift: [['vi', 'IV', 'I', 'V'], ['IV', 'V', 'iii', 'vi'], ['IV', 'I', 'V', 'vi'], ['ii', 'V', 'I', 'vi'],
+      ['vi', 'IV', 'I', 'V', 'vi', 'IV', 'ii', 'V'], ['IV', 'V', 'I', 'vi', 'ii', 'V', 'I', 'I']],
   },
   dorian: { ground: [['i', 'IV', 'i', 'IV'], ['i', 'ii', 'IV', 'i']], lift: [['IV', 'i', 'ii', 'IV'], ['VII', 'IV', 'i', 'i']] },
   phrygian: { ground: [['i', 'II', 'i', 'VII'], ['i', 'VII', 'II', 'i']], lift: [['II', 'i', 'VII', 'i'], ['VII', 'II', 'i', 'i']] },
   mixolydian: { ground: [['I', 'VII', 'IV', 'I'], ['I', 'v', 'IV', 'I']], lift: [['IV', 'I', 'VII', 'I'], ['VII', 'IV', 'I', 'I']] },
   lydian: { ground: [['I', 'II', 'I', 'V'], ['I', 'II', 'vi', 'V']], lift: [['II', 'I', 'V', 'I'], ['V', 'II', 'I', 'I']] },
 }
+
+// ── Per-genre progression RECIPES (curated, mostly 8-bar, idiomatic) ──────────
+// A recipe = { chords:[…], bars, ext?, turn? }. `R('i iv VII III …', ext, turn)`
+// is a shorthand. Keyed by genre → mode (minor/major) → role. These take
+// PRIORITY over the scale-generic PROGS; genres/modes with no entry fall back.
+// This is where the "progression setting" lives — edit here to shape a genre.
+const R = (str, ext, turn) => { const chords = str.trim().split(/\s+/); return { chords, bars: chords.length, ...(ext ? { ext } : {}), ...(turn ? { turn } : {}) } }
+const PROG_RECIPES = {
+  lofi: { minor: {
+    ground: [R('i iv VII III VI ii v i', 9), R('i v VI iv III VI ii v', 9)],
+    lift:   [R('VI iv i v VI iv ii v', 9), R('iv VII III VI ii v i i', 9)],
+    bridge: [R('iv v VI VII III VI ii v', 9)],
+  } },
+  rnb: { minor: {
+    ground: [R('i ii v i iv VII III VI', 9), R('i iv i v VI ii v i', 9)],
+    lift:   [R('VI VII i iii VI iv ii v', 9), R('iv v i VI iv v III VI', 9)],
+    bridge: [R('iv ii v i VI VII iv v', 9)],
+  } },
+  boombap: { minor: {
+    ground: [R('i i VI VII i i iv v', 7), R('i VII VI VII i VII iv v', 7)],
+    lift:   [R('VI VII i v VI VII iv i', 9), R('iv v i VI iv v VI VII', 7)],
+  } },
+  trap: { minor: {
+    ground: [R('i VI i VII i VI iv v'), R('i i VII VI i i iv VII')],
+    lift:   [R('VI VII i i iv v VI VII'), R('iv v VI VII i VI iv v')],
+  } },
+  'deep-house': { minor: {
+    ground: [R('i VI iv v i VI ii v', 9), R('i iv VII III VI iv v i', 9)],
+    lift:   [R('iv v i VI iv v III VI', 9), R('VI iv v i VI iv ii v', 9)],
+  } },
+  house: { minor: {
+    ground: [R('i VI iv v i VI iv VII', 7), R('i iv v VI i iv ii v', 9)],
+    lift:   [R('iv v i VI iv v VI VII', 7), R('VI VII i v iv v i i', 7)],
+  } },
+  techno: { minor: {
+    ground: [R('i i VII VI i i iv v'), R('i VII i VI i VII iv v')],
+    lift:   [R('VI VII i i VI VII v i'), R('iv v i i iv v VI VII')],
+  } },
+  trance: { minor: {
+    ground: [R('i VI III VII iv VI v i', 7), R('i iv VI VII III VI v i', 7)],
+    lift:   [R('VI VII i iii iv v VI VII', 7), R('iv VI i v VI VII III i', 7)],
+  } },
+  dnb: { minor: {
+    ground: [R('i VII VI VII i VII iv v'), R('i VI iv v i VI VII i')],
+    lift:   [R('VI iv i v VI iv VII i'), R('iv v VI VII i VI iv v')],
+  } },
+  dubstep: { minor: {
+    ground: [R('i VI i VII i VI iv v'), R('i VII VI v i VII iv v')],
+    lift:   [R('VI VII i i iv v VI VII'), R('iv v i VI VII i iv v')],
+  } },
+  'future-bass': { minor: {
+    ground: [R('i VI III VII VI iv ii v', 9), R('i iv VI III VI iv v i', 9)],
+    lift:   [R('VI VII i iii iv v VI VII', 9), R('iv v VI III VI iv ii v', 9)],
+  } },
+  ambient: { minor: {
+    ground: [R('i iv i VI iv VII III i', 9), R('i VI iv III VI iv v i', 9)],
+    lift:   [R('VI iv i v VI III ii v', 9), R('iv VII III VI ii v i i', 9)],
+  } },
+  reggaeton: { minor: {
+    ground: [R('i VI VII v i VI iv v'), R('i VII VI v i VII iv v')],
+    lift:   [R('VI VII i v VI VII iv i'), R('iv v i VI VII i iv v')],
+  } },
+  synthwave: { minor: {
+    ground: [R('i VI VII v i VI iv VII'), R('i VII VI VII i VI III VII')],
+    lift:   [R('VI VII i i VI VII v i'), R('iv v VI VII i VI VII i')],
+    bridge: [R('iv v VI III VI iv v VII')],
+  } },
+  'bossa-nova': { minor: {
+    ground: [R('i ii v i iv VII III VI', 9), R('i iv ii v i VI ii v', 9)],
+    lift:   [R('iv VII III VI ii v i i', 9), R('VI ii v i iv ii v i', 9)],
+    bridge: [R('VI ii v i iv VII III VI', 9)],
+  } },
+  pop: { major: {
+    ground: [R('I V vi IV I V ii IV'), R('I vi ii V I vi IV V')],
+    lift:   [R('vi IV I V vi IV ii V'), R('IV I V vi IV I ii V')],
+    bridge: [R('IV V iii vi ii V I I')],
+  } },
+  disco: { major: {
+    ground: [R('I vi ii V I vi IV V', 7), R('I IV V IV I ii V V', 7)],
+    lift:   [R('IV V I vi IV V iii vi', 7), R('vi IV I V vi ii V I', 7)],
+  } },
+  funk: { major: {
+    ground: [R('I IV I IV I IV ii V', 9), R('I ii IV V I IV I V', 9)],
+    lift:   [R('IV V I vi ii V I I', 9), R('IV I V IV ii V I I', 9)],
+  } },
+  afrobeat: { major: {
+    ground: [R('I IV V IV I ii IV V'), R('I V IV I ii IV V I')],
+    lift:   [R('IV I V vi IV I ii V'), R('V IV I vi ii V I I')],
+  } },
+  rock: {
+    major: { ground: [R('I V vi IV I V IV IV'), R('I IV V IV I V vi IV')], lift: [R('vi IV I V vi IV V V'), R('IV I V vi IV V I I')] },
+    minor: { ground: [R('i VII VI VII i VII iv v'), R('i VI III VII i VI iv v')], lift: [R('VI VII i i VI VII v i'), R('iv v VI VII i VII VI i')] },
+  },
+}
+
+// Lay a recipe across `bars`. An 8-bar recipe fills 8 bars with no internal loop;
+// a 4-bar recipe filling 8 bars gets a TURNAROUND on the repeat (last chord →
+// dominant) so it never sounds like the same 4 chords twice. Later appearances
+// of the SAME section also get the turnaround, so verse 2 differs from verse 1.
+function sectionNumerals(recipe, bars, appearance, scale) {
+  const base = recipe.chords
+  const cadence = recipe.turn || (scale === 'major' ? 'V' : 'VII')
+  const out = []
+  let pass = 0
+  while (out.length < bars) {
+    let block = base.slice(0, Math.min(base.length, bars - out.length))
+    if ((pass > 0 || appearance > 0) && block.length === base.length && block.length > 1) {
+      block = block.slice(); block[block.length - 1] = cadence
+    }
+    out.push(...block); pass++
+  }
+  return out.slice(0, bars)
+}
+// Normalize a bank entry (array OR recipe) to a recipe; key it for de-duping.
+const asRecipe = e => Array.isArray(e) ? { chords: e, bars: e.length } : e
+const recKey = r => r.chords.join('-')
 
 // ── Drum feel → base pattern; variants thin/thicken it per section ─────────────
 const FEELS = {
@@ -392,13 +519,21 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const kit = DRUM_KITS.find(k => k.id === pal.kit) || DRUM_KITS[0]
   const feel = FEELS[genre.drums] || FEELS.backbeat
   const { root, scale } = parseKey(keyStr, genre.scale)
-  const bank = PROGS[scale] || PROGS.minor
 
-  // Distinct progressions for verse (A, grounded), chorus (B, lift), bridge (C).
-  const progA = rand.pick(bank.ground)
-  let progB = rand.pick(bank.lift); if (progB.join() === progA.join()) progB = rand.pick(bank.lift)
-  const progC = rand.pick([...bank.ground, ...bank.lift].filter(p => p.join() !== progA.join() && p.join() !== progB.join())) || rand.pick(bank.ground)
-  const progs = { A: progA, B: progB, C: progC }
+  // Progression bank: prefer the genre's own curated recipes for this mode; fall
+  // back to the scale-generic bank. Each role (ground/lift/bridge) is a list of
+  // recipes (4- or 8-bar); we pick a DISTINCT one for verse/chorus/bridge.
+  const gr = (PROG_RECIPES[genreId] || {})[scale]
+  const fb = PROGS[scale] || PROGS.minor
+  const groundBank = (gr && gr.ground || fb.ground).map(asRecipe)
+  const liftBank   = (gr && gr.lift   || fb.lift).map(asRecipe)
+  const bridgeBank = ((gr && gr.bridge) || [...fb.ground, ...fb.lift]).map(asRecipe)
+
+  const recA = rand.pick(groundBank)
+  let recB = rand.pick(liftBank); if (recKey(recB) === recKey(recA)) recB = rand.pick(liftBank)
+  const recC = rand.pick(bridgeBank.filter(r => recKey(r) !== recKey(recA) && recKey(r) !== recKey(recB))) || rand.pick(bridgeBank)
+  const progs = { A: recA, B: recB, C: recC }
+  const seen = { A: 0, B: 0, C: 0 }   // section-appearance counter → development
 
   const form = FORMS[FORM_FAMILY[genreId] || 'loop']
   const motif = makeMotif(rand)
@@ -446,18 +581,21 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
 
   let bar = 0
   for (const sec of form) {
-    const prog = progs[sec.prog]
+    const recipe = progs[sec.prog]
+    const appearance = seen[sec.prog]++        // 0 = first time this section plays
     const e = sec.energy
     const L = layersFor(sec)
     const sparse = softIntro && e < 0.42        // slow, long-note treatment
     const secStart = bar * 4
-    // Sparse sections change chord half as often (doubled bars) so pad/bass hold
-    // long; busy sections walk the full progression.
-    const seq = sparse
-      ? Array.from({ length: sec.bars }, (_, i) => [prog[0], prog[2 % prog.length]][Math.floor(i / 2) % 2])
-      : Array.from({ length: sec.bars }, (_, i) => prog[i % prog.length])
-    const chords = seq.map(nu => chordFor(nu, root, scale, 4, pal.ext))
-    const padCh = seq.map(nu => chordFor(nu, root, scale, 4, e > 0.8 ? pal.ext : 0))
+    // Lay the recipe across the whole section (8-bar recipe → no loop; 4-bar →
+    // A + turnaround A′). Development: 2nd+ chorus gets richer extensions.
+    let ext = recipe.ext ?? pal.ext
+    if (sec.prog === 'B' && appearance > 0) ext = Math.max(ext, 9)
+    let seq = sectionNumerals(recipe, sec.bars, appearance, scale)
+    // Sparse sections hold long: reduce to the first two chords, doubled.
+    if (sparse) { const a = seq[0], b = seq[Math.min(2, seq.length - 1)]; seq = Array.from({ length: sec.bars }, (_, i) => [a, b][Math.floor(i / 2) % 2]) }
+    const chords = seq.map(nu => chordFor(nu, root, scale, 4, ext))
+    const padCh = seq.map(nu => chordFor(nu, root, scale, 4, e > 0.8 ? ext : 0))
     const roots = seq.map(nu => snapToScale(rootFor(nu, root, scale, 2), root, scale))
 
     // Drums
@@ -484,7 +622,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     name: `${genre.name} — ${keyStr || (KEY_NAMES[root] + ' ' + scale)}`,
     genre: genre.id, tempo: genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
     swing: genre.swing, key: root, scale,
-    masterVolume: 0.55, tracks, clips,
+    masterVolume: 0.5, tracks, clips,
     _form: form.map(s => s.role).join(' · '),
   }
 }
