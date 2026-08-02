@@ -565,10 +565,15 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
 
-  // ── Technique palette — seed-gated, so NOT every song uses every idea. ───────
-  // (These are options for diversity between songs, not a checklist to satisfy.)
-  const useFilterArc = rand.chance(0.8)   // dull low-tension parts, open on peaks
-  const softIntro    = rand.chance(0.7)   // sparse, long-note, slow-opening intros
+  // ── Technique palette — EVERY dynamic feature is OPTIONAL and seed-gated, so
+  // each song draws a DIFFERENT subset. Two songs (even same genre) should share
+  // few of these: same-y makeup is the enemy. Each song still evolves its mood
+  // (via whichever techniques it drew) but no two sound built the same way.
+  const useFilterArc = rand.chance(0.7)                              // per-section brightness arc
+  const introStyle   = rand.pick(['layered', 'layered', 'soft', 'soft', 'plain'])  // how the song opens
+  const fourFloor    = genre.drums === 'four-floor' || ['house', 'deep-house', 'techno', 'trance', 'disco', 'future-bass'].includes(genreId)
+  const useSidechain = fourFloor && rand.chance(0.8)                 // kick pump on sustained layers
+  const useSweeps    = rand.chance(0.7)                              // filter-sweep transitions into peaks
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
   const cutoffFor = (energy, isBass) => {
@@ -598,8 +603,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   // (1) SIDECHAIN PUMP: on four-on-the-floor genres, duck the sustained layers
   // against the kick so the whole track breathes with the beat — the signature
   // house/techno movement. We point their compressors' key input at the drums.
-  const fourFloor = genre.drums === 'four-floor' || ['house', 'deep-house', 'techno', 'trance', 'disco', 'future-bass'].includes(genreId)
-  if (fourFloor) {
+  if (useSidechain) {
     const bassComp = tracks[1].effects.find(e => e.type === 'compressor')
     if (bassComp) bassComp.params.sidechainTrackId = tid.drums
     // give the pad a ducking compressor too, so pads pump with the kick
@@ -627,7 +631,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     const appearance = seen[sec.prog]++        // 0 = first time this section plays
     const e = sec.energy
     const L = layersFor(sec)
-    const sparse = softIntro && e < 0.42        // slow, long-note treatment
+    const sparse = introStyle === 'soft' && e < 0.42        // slow, long-note treatment
+    const layered = introStyle === 'layered' && sec.role === 'intro'  // staggered build-up
     const secStart = bar * 4
     if (/drop|chorus|hook/.test(sec.role) && e >= 0.9) sweepTargets.push(secStart)
     // Lay the recipe across the whole section (8-bar recipe → no loop; 4-bar →
@@ -640,6 +645,19 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     const chords = seq.map(nu => chordFor(nu, root, scale, 4, ext))
     const padCh = seq.map(nu => chordFor(nu, root, scale, 4, e > 0.8 ? ext : 0))
     const roots = seq.map(nu => snapToScale(rootFor(nu, root, scale, 2), root, scale))
+
+    // LAYERED INTRO — elements enter one at a time so the opening actively builds:
+    // pad from the top, bass a quarter in, filtered hats halfway, keys three-
+    // quarters in — then the first section hits with the full kit.
+    if (layered) {
+      const q = Math.max(1, Math.floor(sec.bars / 4))
+      { const c = secClip('pad', secStart, sec.bars, e * 0.85); fillPadLong(c, rand, 0, padCh, 42); push(c) }
+      if (sec.bars - q >= 1) { const c = secClip('bass', secStart + q * 4, sec.bars - q, 0.42); fillBass(c, rand, 0, roots.slice(q), 'pedal', 74, root, scale); push(c) }
+      if (genre.drums !== 'none' && sec.bars - 2 * q >= 1) { const c = secClip('drums', secStart + 2 * q * 4, sec.bars - 2 * q, 0.55); fillDrums(c, rand, 0, sec.bars - 2 * q, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.62, role: 'intro' }); push(c) }
+      if (sec.bars - 3 * q >= 1) { const c = secClip('keys', secStart + 3 * q * 4, sec.bars - 3 * q, 0.5); fillChords(c, rand, 0, chords.slice(3 * q), keyRhythm, 54, null, false); push(c) }
+      bar += sec.bars
+      continue
+    }
 
     // Drums
     if (genre.drums !== 'none') {
@@ -666,7 +684,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   // filter sits open (1.0) by default, dips at 4 bars out, and ramps back open
   // right on the downbeat — a rising transition into each drop/chorus.
   const automationLanes = []
-  if (sweepFilterId && sweepTargets.length) {
+  if (useSweeps && sweepFilterId && sweepTargets.length) {
     const raw = [{ beat: 0, value: 1 }]
     for (const S of sweepTargets) {
       if (S < 8) continue                         // no room to sweep into the very first section
@@ -693,6 +711,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     swing: genre.swing, key: root, scale,
     masterVolume: 0.5, tracks, clips, automationLanes,
     _form: form.map(s => s.role).join(' · '),
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweeps:${useSweeps && automationLanes.length ? 'on' : 'off'}`,
   }
 }
 
@@ -719,6 +738,7 @@ async function main() {
   writeFileSync(out, JSON.stringify(spec))
   console.log(`${spec.name}`)
   console.log(`  ${spec.tempo} bpm · swing ${spec.swing} · form: ${spec._form}`)
+  console.log(`  fx: ${spec._features}`)
   console.log(`  ${spec.tracks.length} tracks · ${nNotes} notes · ${(end / spec.tempo * 60).toFixed(0)}s → ${out}`)
 }
 main().catch(e => { console.error(e.message || e); process.exit(1) })
