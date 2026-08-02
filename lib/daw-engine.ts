@@ -1540,6 +1540,24 @@ export class DawEngine extends EventTarget {
               graph: mot.graph.map(p => ({ ...p, t: p.t * span })),
             })
           }
+          // Per-parameter graphs: each FX slider switched to "graph" mode is a
+          // one-param bar, target = the field's full-effect extreme so the curve
+          // reads 0 = off … top = full.
+          if (clip.fxGraphs) {
+            for (const key of Object.keys(clip.fxGraphs) as (keyof RollFx)[]) {
+              const pg = clip.fxGraphs[key]; const field = FX_FIELD_BY_KEY[key]
+              if (!pg || pg.graph.length < 2 || !field) continue
+              const target = key === 'filterHz' ? field.fromNorm(0) : field.fromNorm(1)
+              const span  = pg.perNote ? maxDur : clip.durationBeats
+              const start = pg.perNote ? noteAbsBeat : clip.startBeat
+              overlapping.push({
+                id: `pg:${clip.id}:${key}`, trackId: clip.trackId,
+                startBeat: start, durationBeats: span,
+                fx: { [key]: target } as RollFx,
+                graph: pg.graph.map(p => ({ ...p, t: p.t * span })),
+              })
+            }
+          }
           if (overlapping.length > 0) {
             clipEffectActive = true
             const entry = this.ctx.createGain()

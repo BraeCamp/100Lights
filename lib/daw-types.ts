@@ -530,6 +530,13 @@ export interface ClipFxMotion {
   perNote?: boolean
 }
 
+/** A single FX parameter drawn as a curve (0 = off, 1 = full effect) instead of a
+ *  static slider value. `graph.t` is normalized 0..1 across the clip / note. */
+export interface ClipParamGraph {
+  graph: AutoPoint[]
+  perNote?: boolean
+}
+
 // ── Automation ────────────────────────────────────────────────────────────────
 
 export interface AutomationPoint {
@@ -784,6 +791,10 @@ export interface MidiClip {
    *  more effects from neutral (0) to their dialed-in target (1) as the clip
    *  plays — e.g. a filter that closes over time. Rendered as an effect-bar. */
   fxMotion?: ClipFxMotion
+  /** Per-parameter graphs: any single FX slider switched to "graph" mode draws
+   *  its own curve (0 = off, top = full effect) over the clip / each note.
+   *  Keyed by the RollFx field. Each renders as its own one-param effect-bar. */
+  fxGraphs?: Partial<Record<keyof RollFx, ClipParamGraph>>
   /** Voice mapping: a sung pitch trace overlaid on the piano roll as a reference.
    *  Points are [beat relative to clip start, fractional MIDI pitch]. The audio
    *  itself is session-only; the trace persists. */

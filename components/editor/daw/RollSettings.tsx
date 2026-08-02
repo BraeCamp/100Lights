@@ -217,6 +217,28 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const setMotionPerNote = (perNote: boolean) => { if (motion) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { ...motion, perNote } } }) }
   const clearMotion = () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: undefined } })
 
+  // Per-field graph mode (a single FX slider ↔ a drawn curve). Switching either
+  // way resets that parameter, so there's no messy conversion.
+  const fxGraphs = !multi && isMidiClip(clip) ? clip.fxGraphs : undefined
+  const graphsForCtl = fxGraphs
+    ? Object.fromEntries(Object.entries(fxGraphs).map(([k, g]) => [k, g!.graph]))
+    : undefined
+  const cloneGraphs = () => ({ ...((isMidiClip(clip) && clip.fxGraphs) || {}) }) as NonNullable<MidiClip['fxGraphs']>
+  const toggleFieldGraph = (key: keyof RollFx, on: boolean) => {
+    const g = cloneGraphs()
+    const rf: RollFx = { ...(clip.rollFx ?? {}) }
+    if (on) { delete rf[key]; g[key] = { graph: DEFAULT_MOTION } }   // slider → graph, reset scalar
+    else { delete g[key] }                                          // graph → slider, reset graph
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
+      rollFx: Object.keys(rf).length ? rf : undefined,
+      fxGraphs: Object.keys(g).length ? g : undefined,
+    } })
+  }
+  const setFieldGraph = (key: keyof RollFx, pts: AutoPoint[]) => {
+    const g = cloneGraphs(); g[key] = { ...(g[key] ?? {}), graph: pts }
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxGraphs: g } })
+  }
+
   // Revert toggle — flip the clip(s) back to their default sound, and back
   // again if clicked before any edit. A change dialed in while reverted commits
   // the revert (drops the snapshot / untoggles the button) but keeps that change.
@@ -503,6 +525,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         ranges={multi ? ranges : undefined}
         onField={multi ? applyField : undefined}
         mode={effectiveMode}
+        graphs={graphsForCtl}
+        onToggleGraph={!multi && isMidiClip(clip) ? toggleFieldGraph : undefined}
+        onGraphChange={!multi && isMidiClip(clip) ? setFieldGraph : undefined}
       />
 
       {/* FX Motion — draw a curve over the whole clip that morphs chosen effects

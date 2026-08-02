@@ -7,7 +7,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { FX_FIELDS, FX_CATEGORIES, TOP_FIELDS, BASIC_FIELDS, fieldIsSet, type FxField, type FxCat } from '@/lib/roll-fx'
-import type { RollFx } from '@/lib/daw-types'
+import type { RollFx, AutoPoint } from '@/lib/daw-types'
+import MotionCurve from './MotionCurve'
 
 const ACCENT = 'var(--accent-light)'
 
@@ -26,7 +27,7 @@ export function cleanFx(fx: RollFx): RollFx | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-export default function FxControls({ value, onCommit, hideCats, hideFields, ranges, onField, mode }: {
+export default function FxControls({ value, onCommit, hideCats, hideFields, ranges, onField, mode, graphs, onGraphChange, onToggleGraph }: {
   value: RollFx | undefined
   onCommit: (next: RollFx | undefined) => void
   /** Categories to omit (e.g. ['env','pitch'] for a track effect bar). */
@@ -41,6 +42,11 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
   onField?: (key: keyof RollFx, value: number) => void
   /** 'basic' shows only the essential controls, flat; 'advanced' shows all. */
   mode?: 'basic' | 'advanced'
+  /** Per-field graphs: when a field is here it's drawn as a curve over time
+   *  instead of a slider. Presence of onToggleGraph enables the ◠ graph toggle. */
+  graphs?: Partial<Record<string, AutoPoint[]>>
+  onGraphChange?: (key: keyof RollFx, pts: AutoPoint[]) => void
+  onToggleGraph?: (key: keyof RollFx, on: boolean) => void
 }) {
   const [draft, setDraft] = useState<RollFx>({ ...(value ?? {}) })
   // Categories that hold a set value start expanded so active settings show.
@@ -67,6 +73,15 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
   const showF = (f: FxField) => !hiddenF.has(f.key)
   const topFields = TOP_FIELDS.filter(f => !hidden.has(f.cat) && showF(f))
 
+  // Per-field graph mode (a field's slider ↔ a drawn curve). Only barable fields
+  // (chain + graph) can toggle, and only when the host wires onToggleGraph.
+  const gProps = (f: FxField) => ({
+    graphPts: graphs?.[f.key],
+    graphable: !!onToggleGraph && !!f.graph && !!f.chain,
+    onToggleGraph: onToggleGraph ? (on: boolean) => onToggleGraph(f.key, on) : undefined,
+    onGraph: onGraphChange ? (pts: AutoPoint[]) => onGraphChange(f.key, pts) : undefined,
+  })
+
   // Basic mode: the curated essential macros, flat — no category menus. This set
   // is deliberately hand-picked (Volume, Release, Filter, Reverb, Drive), so it is
   // NOT subject to hideCats (which only collapses the advanced category sections);
@@ -75,7 +90,7 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
     return (
       <div style={{ padding: '4px 0 2px' }}>
         {BASIC_FIELDS.filter(showF).map(f => (
-          <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} />
+          <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} {...gProps(f)} />
         ))}
       </div>
     )
@@ -85,7 +100,7 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
     <div>
       {/* Top essentials */}
       <div style={{ padding: '4px 0 2px' }}>
-        {topFields.map(f => <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} />)}
+        {topFields.map(f => <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} {...gProps(f)} />)}
       </div>
 
       {/* Category menus */}
@@ -110,7 +125,7 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
             </button>
             {isOpen && (
               <div style={{ paddingBottom: 4 }}>
-                {fields.map(f => <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} dim={f.secondary} />)}
+                {fields.map(f => <FieldSlider key={f.key} f={f} draft={draft} set={set} commit={() => commitField(f)} range={ranges?.[f.key]} dim={f.secondary} {...gProps(f)} />)}
               </div>
             )}
           </div>
@@ -120,7 +135,7 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
   )
 }
 
-function FieldSlider({ f, draft, set, commit, range, dim }: {
+function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, onToggleGraph, onGraph }: {
   f: FxField
   draft: RollFx
   set: (f: FxField, norm: number) => void
@@ -128,12 +143,32 @@ function FieldSlider({ f, draft, set, commit, range, dim }: {
   /** [normLo, normHi] across a multi-selection when this field's values differ. */
   range?: [number, number]
   dim?: boolean
+  graphPts?: AutoPoint[]
+  graphable?: boolean
+  onToggleGraph?: (on: boolean) => void
+  onGraph?: (pts: AutoPoint[]) => void
 }) {
   const v = (draft[f.key] as number | undefined) ?? f.neutral
   const on = fieldIsSet(f.key, draft[f.key])
   const hasRange = !!range && Math.abs(range[1] - range[0]) > 0.005
   const lo = range ? Math.min(range[0], range[1]) : 0
   const hi = range ? Math.max(range[0], range[1]) : 0
+
+  // Graph mode: this field is drawn as a curve over time instead of a slider.
+  if (graphPts) {
+    return (
+      <div style={{ padding: dim ? '3px 12px 4px 20px' : '4px 12px 5px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+          <span style={{ fontSize: dim ? 9.5 : 10, color: 'var(--text-secondary)', flex: 1 }}>{f.label}</span>
+          <span style={{ fontSize: 8, color: ACCENT, letterSpacing: '0.04em' }}>GRAPH · 0→full</span>
+          <button onClick={() => onToggleGraph?.(false)} title="Back to a slider (resets this effect)"
+            style={{ fontSize: 10, lineHeight: 1, padding: '1px 6px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${ACCENT}`, background: 'rgb(var(--accent-rgb) / 0.18)', color: ACCENT }}>◠</button>
+        </div>
+        <MotionCurve points={graphPts} onChange={pts => onGraph?.(pts)} width={248} height={44} color={ACCENT} />
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: dim ? '2px 12px 2px 20px' : '3px 12px' }}>
       <span style={{ fontSize: dim ? 9.5 : 10, color: dim ? 'var(--text-muted)' : 'var(--text-secondary)', width: dim ? 62 : 70, flexShrink: 0 }}>{f.label}</span>
@@ -154,9 +189,13 @@ function FieldSlider({ f, draft, set, commit, range, dim }: {
           style={{ position: 'relative', zIndex: 1, width: '100%', minWidth: 0, accentColor: hasRange ? 'transparent' : ACCENT }}
         />
       </div>
-      <span style={{ fontSize: 9.5, color: hasRange ? '#f59e0b' : on ? 'var(--text-primary)' : 'var(--text-muted)', width: 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ fontSize: 9.5, color: hasRange ? '#f59e0b' : on ? 'var(--text-primary)' : 'var(--text-muted)', width: graphable ? 34 : 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
         {hasRange ? 'range' : f.fmt(v)}
       </span>
+      {graphable && (
+        <button onClick={() => onToggleGraph?.(true)} title="Draw this effect over time (a graph)"
+          style={{ fontSize: 10, lineHeight: 1, padding: '1px 5px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-muted)', flexShrink: 0 }}>◠</button>
+      )}
     </div>
   )
 }
