@@ -1,30 +1,35 @@
 {
   "song": "After Dark — Mr. Kitty (instrumental recreation)",
-  "note": "Build ONLY from known:true. Everything tagged VERIFY is my best attempt for Brae to check against Spotify and correct — then it becomes fact. Sources: (s)=looked-up metadata, (k)=my darkwave/structural knowledge, (b)=Brae's ear.",
-  "params": {
-    "key": "G# minor",
-    "tempo": 140,
-    "source": "s (songbpm/tunebat: G#, 140 BPM)",
+  "note": "Build ONLY from known:true. VERIFY items are my best attempt for Brae's Spotify check. Sources: (s)=metadata, (k)=my knowledge, (b)=Brae's ear (authoritative).",
+  "params": { "key": "G# minor", "tempo": 140, "length_min": 4, "known": true, "source": "s + b (length)" },
+  "elements": {
+    "known_present": [
+      "filtered PIANO (intro, important) — b",
+      "high sustained DRONE tone (across much of the song) — b",
+      "sub BASS — b ('the bass is more…' — INCOMPLETE, ask)",
+      "DRUMS (constant pattern, see below) — b"
+    ],
+    "known_absent": ["ARP (I invented it — NOT in the song) — b", "pad/stab (not mentioned; piano is the harmonic element)"]
+  },
+  "drums": {
+    "pattern": "boom-hat-hat-hat-clap-hat-hat-hat = kick[0] clap[8] hat[2,4,6,10,12,14] on the 16-step grid (kick beat1, clap beat3, hats on the other eighths)",
+    "constant": "repeats through the WHOLE song — no section drop-outs",
+    "source": "b",
     "known": true
   },
-  "elements": {
-    "known_present": ["bass (driving synth)", "bright arpeggio synth (the darkwave signature)", "dark pad", "drums"],
-    "absent": ["vocal — skipped (instrumental only); its melodic hook NOT reproduced"],
-    "source": "k — darkwave character; VERIFY the exact element list"
+  "structure": {
+    "status": "VERIFY — my attempt: filtered-piano+drone intro, then the constant beat + bass + piano + drone run to the end (~4 min), dynamics from the piano filter opening/closing, not from dropping the drums.",
+    "source": "k, partly b (drums constant, filtered piano intro)"
   },
   "harmony": {
-    "progression": "G#m - E - F# - D#m  (i - VI - VII - v)",
-    "status": "VERIFY — plausible G#-minor darkwave loop; could not confirm the exact chords (chord sources 403'd). All diatonic, so at worst it's the wrong right-key loop."
+    "progression": "G#m - E - F# - D#m (i-VI-VII-v)",
+    "status": "VERIFY — still my guess; chord sources 403'd."
   },
-  "structure": {
-    "status": "VERIFY — my attempt. Starts on the driving elements (arp + bass), NOT a pad swell; drums + pad enter after; a stripped break for contrast.",
-    "sections": ["intro: arp + bass", "verse: + drums + pad", "chorus: full", "break: stripped", "verse", "chorus", "outro"]
-  },
-  "questions_for_brae": [
-    "does it open with the arp, the bass, or the beat?",
-    "is the bass a driving pulse or a moving line?",
-    "the real chord progression (I guessed G#m-E-F#-D#m)",
-    "section order + lengths",
-    "any element I'm missing or that isn't actually there"
+  "open_questions_for_brae": [
+    "finish 'the bass is more …' — more prominent? more movement/notes? more distorted?",
+    "your message cut off at 'There are …' — what else is in the song?",
+    "the real chord progression",
+    "which note is the high drone (tonic G#? a fifth?)",
+    "does the piano play the full progression, or a riff/ostinato?"
   ]
 }
