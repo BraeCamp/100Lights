@@ -559,14 +559,24 @@ const KEY_RHYTHMS = {
 // later) for emphasis — a harp/guitar-strum feel. Only the DOWNBEAT hit of each
 // bar rolls (so it stays an accent, not a constant effect), and the rolled chord
 // gets a small velocity lift. `strum` is in beats per note (e.g. 0.04).
-function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread, strum = 0) {
+// Re-voice a chord (octave-shuffle its OWN tones — always in key/consonant) so
+// different songs sit the harmony differently: inversions, open, drop-2.
+function voiceChord(chord, style) {
+  const c = [...chord]
+  if (style === 'inv1' && c.length >= 2) { const r = c.shift(); return [...c, r + 12] }
+  if (style === 'inv2' && c.length >= 3) { const r = c.shift(), t = c.shift(); return [...c, r + 12, t + 12] }
+  if (style === 'open'  && c.length >= 3) return [c[0], c[2], c[1] + 12, ...c.slice(3)]
+  if (style === 'drop2' && c.length >= 3) { const a = [...c]; a[a.length - 2] -= 12; return a.sort((x, y) => x - y) }
+  return chord
+}
+function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread, strum = 0, voicing = 'close') {
   const on = [...patStr].map((c, i) => (c === 'o' ? i : -1)).filter(i => i >= 0)
   chords.forEach((chord, b) => {
     for (let k = 0; k < on.length; k++) {
       const i = on[k]
       const nxt = k + 1 < on.length ? on[k + 1] : 16
       const len = (ring ?? (nxt - i)) * STEP
-      const voiced = spread ? [chord[0] - 12, ...chord.slice(1)] : chord
+      const voiced = spread ? [chord[0] - 12, ...chord.slice(1)] : voiceChord(chord, voicing)
       const roll = strum > 0 && i === 0 && voiced.length > 1
       const seq = roll ? [...voiced].sort((a, b2) => a - b2) : voiced
       seq.forEach((p, vi) => {
@@ -575,6 +585,13 @@ function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread, strum 
       })
     }
   })
+}
+
+// Nudge each note's start by a small random amount for a human, un-quantized
+// feel — applied to melodic layers only (drums/bass stay tight to the grid).
+function humanizeClip(clip, amt, rand) {
+  if (!amt) return
+  for (const nte of clip.notes) nte.startBeat = +Math.max(0, nte.startBeat + (rand() * 2 - 1) * amt).toFixed(4)
 }
 
 // Long, held pad — merges runs of the same chord into one sustained note. Used
@@ -619,7 +636,7 @@ function chordToneAt(chord, idx) {
   const oct = Math.floor(idx / n)
   return chord[((idx % n) + n) % n] + oct * 12 + 12 // an octave up = lead register
 }
-function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale) {
+function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpDir = 'up', rate = 2) {
   const steps = SCALES[scale], N = steps.length
   // deg = position in the scale, in the lead register (root at octave 5).
   const degPitch = d => root + 72 + steps[((d % N) + N) % N] + 12 * Math.floor(d / N)
@@ -627,8 +644,11 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale) {
   if (style === 'arp') {
     chords.forEach((chord, b) => {
       const bt = (bar0 + b) * 4
-      const seq = [...chord, chord[1] + 12, chord[2] + 12]
-      for (let i = 0; i < 16; i += 2) clip.notes.push(note(seq[(i / 2) % seq.length] + 12, bt + i * STEP, 0.22, hvel(rand, base - 6, i)))
+      const nn = [...chord, chord[1] + 12, chord[2] + 12].map(p => p + 12)   // arp tones, lead register
+      let ord = nn
+      if (arpDir === 'down') ord = [...nn].reverse()
+      else if (arpDir === 'updown') ord = [...nn, ...[...nn].reverse().slice(1, -1)]
+      for (let i = 0, k = 0; i < 16; i += rate, k++) clip.notes.push(note(ord[k % ord.length], bt + i * STEP, rate * STEP * 0.9, hvel(rand, base - 6, i)))
     })
     return
   }
@@ -668,7 +688,15 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const pal = { ...DEF, ...(PAL[genreId] || {}) }
   const kit = DRUM_KITS.find(k => k.id === pal.kit) || DRUM_KITS[0]
   const feel = rand.pick(FEELS[genre.drums] || FEELS.backbeat)
-  const { root, scale } = parseKey(keyStr, genre.scale)
+  let { root, scale } = parseKey(keyStr, genre.scale)
+  // MODAL COLOR — occasionally lift a minor genre to dorian (brighter 6th) or a
+  // major one to mixolydian (bluesy ♭7), for genres where modes sit naturally.
+  const MODAL_OK = ['lofi', 'house', 'deep-house', 'funk', 'disco', 'rnb', 'bossa-nova', 'afrobeat', 'reggaeton', 'ambient']
+  let modeName = null
+  if (MODAL_OK.includes(genreId) && rand.chance(0.2)) {
+    if (scale === 'minor') { scale = 'dorian'; modeName = 'dorian' }
+    else if (scale === 'major') { scale = 'mixolydian'; modeName = 'mixolydian' }
+  }
 
   // Progression bank: prefer the genre's own curated recipes for this mode; fall
   // back to the scale-generic bank. Each role (ground/lift/bridge) is a list of
@@ -707,6 +735,12 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const useSweeps    = rand.chance(0.7)                              // filter-sweep transitions into peaks
   const useClipFx    = rand.chance(0.7)                              // drawn effect BARS on the track FX lanes
   const useRolls     = rand.chance(0.45)                             // ascending chord strums on high-energy downbeats
+  const voicing      = rand.pick(['close', 'close', 'inv1', 'inv2', 'open', 'drop2'])  // how chords sit
+  const arpDir       = rand.pick(['up', 'up', 'down', 'updown'])     // arp shape
+  const arpRate      = rand.pick([2, 2, 4])                          // 16ths vs 8ths
+  const useSwap      = rand.chance(0.4)                              // swap the keys timbre in the bridge
+  const swapPreset   = useSwap ? rand.pick(KEYS_ALTS.filter(p => p !== keysPreset)) : null
+  const humanize     = rand.chance(0.6) ? rand.pick([0.006, 0.01, 0.015]) : 0  // melodic timing jitter (beats)
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
   const cutoffFor = (energy, isBass) => {
@@ -734,6 +768,10 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     ['arp', 'pad', 'lead'],                              // arp-driven
     ['pad', 'lead', 'counter'],                          // dual melody, no keys
     ['keys', 'lead', 'arp'],                             // no pad, arp
+    ['keys', 'pad', 'lead', 'arp', 'counter'],           // big stack
+    ['keys', 'lead', 'counter'],                         // no pad, harmony
+    ['keys', 'pad', 'arp'],                              // texture-led, no distinct lead
+    ['pad', 'arp', 'lead'],                              // arp + pad wash
   ]
   const arpPreset = rand.pick(LEAD_ALTS.arp)
   const counterPreset = rand.pick(LEAD_ALTS.melody)
@@ -790,12 +828,12 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const secList = []        // {start, bars, role, energy} for building FX bars
 
   // Make a section-clip for a layer, stamping the tension-driven low-pass on it.
-  const secClip = (key, startBeat, bars, energy) => {
+  const secClip = (key, startBeat, bars, energy, presetOverride) => {
     const tk = byKey[key]
     let rf = tk.rf ? { ...tk.rf } : null
     const cut = cutoffFor(energy, key === 'bass')
     if (rf && cut != null) rf.filterHz = cut
-    return { id: uid('c'), trackId: tid[key], presetId: tk.preset, rollFx: rf, startBeat, durationBeats: bars * 4, notes: [], isDrumClip: !!tk.drum }
+    return { id: uid('c'), trackId: tid[key], presetId: presetOverride ?? tk.preset, rollFx: rf, startBeat, durationBeats: bars * 4, notes: [], isDrumClip: !!tk.drum }
   }
   const push = c => { if (c.notes.length) clips.push(c) }
 
@@ -844,23 +882,24 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     }
     // Bass
     if (has('bass') && L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, root, scale); push(c) }
-    // Keys — rhythmic chords (sit out the sparse intro)
-    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0); push(c) }
+    // Keys — rhythmic chords (voiced per the song's voicing; swaps timbre in the
+    // bridge for a mid-song "development" when this song drew useSwap).
+    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e, sec.role === 'bridge' ? swapPreset : null); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0, voicing); humanizeClip(c, humanize, rand); push(c) }
     // Arp — a rolling 16th layer, its own track when the ensemble has one
-    if (has('arp') && e >= 0.5 && !sparse) { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', root, scale); push(c) }
+    if (has('arp') && e >= 0.5 && !sparse) { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', root, scale, arpDir, arpRate); humanizeClip(c, humanize, rand); push(c) }
     // Pad — held long when sparse
     if (has('pad')) { const c = secClip('pad', secStart, sec.bars, sparse ? e * 0.85 : e)
       if (sparse) fillPadLong(c, rand, 0, padCh, 42)
-      else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true)
+      else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true, 0, voicing)
       push(c) }
     // Lead — melody at peaks; falls back to an arp during builds only if there's
     // no dedicated arp track.
     if (has('lead') && !sparse) {
-      if (peak && e >= 0.85) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, root, scale); push(c) }
-      else if (!has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', root, scale); push(c) }
+      if (peak && e >= 0.85) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, root, scale); humanizeClip(c, humanize, rand); push(c) }
+      else if (!has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', root, scale, arpDir, arpRate); push(c) }
     }
     // Counter — a second melodic line at peaks (its own hook, lower register)
-    if (has('counter') && peak && e >= 0.9 && !sparse) { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 60, 'melody', root, scale); push(c) }
+    if (has('counter') && peak && e >= 0.9 && !sparse) { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 60, 'melody', root, scale); humanizeClip(c, humanize, rand); push(c) }
     bar += sec.bars
   }
   const totalBeats = bar * 4
@@ -917,14 +956,15 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     }
   }
 
+  const keyLabel = modeName ? `${KEY_NAMES[root]} ${scale}` : (keyStr || `${KEY_NAMES[root]} ${scale}`)
   return {
-    name: `${genre.name} — ${keyStr || (KEY_NAMES[root] + ' ' + scale)}`,
+    name: `${genre.name} — ${keyLabel}`,
     genre: genre.id, tempo: genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
     swing: genre.swing, key: root, scale,
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
     _tracks: roleList.join('+'),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''}`,
   }
 }
 
