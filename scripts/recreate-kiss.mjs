@@ -62,14 +62,16 @@ const clips = []
 const clip = (role, startBar, bars, isDrum, presetId, rollFx) => ({ id: uid('c'), trackId: T[role].id, presetId: presetId ?? null, rollFx: rollFx || null, startBeat: startBar * 4, durationBeats: bars * 4, notes: [], isDrumClip: !!isDrum })
 const push = c => { if (c.notes.length) clips.push(c) }
 
-// ── Bass — driving sub: root re-articulated on each beat (a pulsing sub under
-// the four-floor kick), one note per beat, punchy. energy scales velocity.
-function bassDrive(c, sec) {
-  const vel = sec.bass === 'low' ? 70 : sec.bass === 'mid' ? 92 : 108
+// ── Bass — the driving sub that PROPELS the song. 'drive'/'driveHard' = a
+// relentless eighth-note pulse on the chord root; 'held' = a sustained sub for
+// the stripped break. (My reading of the track: bass is a constant driving
+// engine, not a sparse pulse — correct me if the real line moves more.)
+function bassLine(c, sec, mode) {
+  const vel = mode === 'driveHard' ? 108 : mode === 'drive' ? 94 : 74
   for (let b = 0; b < sec.bars; b++) {
     const r = ROOTS[b % 4]
-    if (sec.bass === 'low') { c.notes.push(note(r, b * 4, 4 * 0.99, hv(vel))); continue }   // held under breakdowns
-    for (const beat of [0, 1, 2, 3]) c.notes.push(note(r, b * 4 + beat, 0.92, hv(vel, beat * 4)))   // quarter-note pulse
+    if (mode === 'held') { c.notes.push(note(r, b * 4, 4 * 0.995, hv(vel))); continue }
+    for (let e = 0; e < 8; e++) c.notes.push(note(r, b * 4 + e * 0.5, 0.46, hv(vel + (e % 2 ? -6 : 0), e * 2)))   // driving eighths
   }
 }
 function padBar(c, b, chord, vel) { for (const p of chord) c.notes.push(note(p, b * 4, 4 * 0.98, hv(vel))) }
@@ -77,8 +79,8 @@ function stabBar(c, b, chord, slots, vel) { for (const s of slots) for (const p 
 
 // ── Drums — driving four-on-the-floor; verse lighter, hook full, fill in ──────
 const FEEL = {
-  verse: { kick: [0, 4, 8, 12], clap: [4, 12], hat: [2, 6, 10, 14], oh: [], crash: [] },
-  hook:  { kick: [0, 4, 8, 12], clap: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [2, 6, 10, 14], crash: [0] },
+  main: { kick: [0, 4, 8, 12], clap: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], crash: [] },       // driving four-on-the-floor
+  hook: { kick: [0, 4, 8, 12], clap: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [2, 6, 10, 14], crash: [0] },  // + open hats, crash
 }
 const LANE = { kick: [36, 0.5, 106], clap: [39, 0.4, 92], hat: [42, 0.14, 70], oh: [46, 0.3, 74], crash: [49, 1.4, 92] }
 function drumBar(c, b, feel, first, fill) {
@@ -86,21 +88,27 @@ function drumBar(c, b, feel, first, fill) {
   if (fill) for (let s = 8; s < 16; s += 1) c.notes.push(note(39, b * 4 + s * STEP, 0.18, Math.min(116, 60 + s * 4)))
 }
 
-// ── ARRANGEMENT — driving dark-pop; no fake lead ─────────────────────────────
-const FORM = [
-  { name: 'intro',  bars: 4, pad: 0.5, stab: [0, 8] },
-  { name: 'verse',  bars: 8, drums: 'verse', bass: 'mid', pad: 0.4, stab: [0, 6, 10] },
-  { name: 'pre',    bars: 4, drums: 'verse', bass: 'mid', pad: 0.46, stab: [0, 4, 8, 12], fillLast: true },
-  { name: 'hook',   bars: 8, drums: 'hook', bass: 'full', pad: 0.56, stab: [0, 3, 6, 8, 11, 14] },
-  { name: 'break',  bars: 2, bass: 'low', pad: 0.56, stab: [0, 8] },
-  { name: 'verse',  bars: 8, drums: 'verse', bass: 'mid', pad: 0.4, stab: [0, 6, 10] },
-  { name: 'hook',   bars: 8, drums: 'hook', bass: 'full', pad: 0.56, stab: [0, 3, 6, 8, 11, 14] },
-  { name: 'outro',  bars: 4, bass: 'low', pad: 0.44, stab: [0, 8] },
+// ── STRUCTURE — NOT a template. This is my reading of how THIS song is built:
+// it opens INTENSE on drums + driving bass (no atmospheric pad-swell), the dark
+// chords arrive in the verse, the hook goes full, and there's a stripped break
+// for contrast. Sections carry an `energy` (character) and the LAYERS that
+// actually play in this song's section — authored here, not inherited from a
+// generic form. `layers` values: bass mode | stab slot-list | pad level.
+const SECTIONS = [
+  { name: 'intro', bars: 4, energy: 0.7, layers: { drums: 'main', bass: 'drive' }, crashIn: true },            // starts intense: drums + bass
+  { name: 'verse', bars: 8, energy: 0.55, layers: { drums: 'main', bass: 'drive', stab: [0, 6, 10], pad: 0.32 } },
+  { name: 'pre',   bars: 4, energy: 0.75, layers: { drums: 'main', bass: 'drive', stab: [0, 4, 8, 12], pad: 0.42 }, fillLast: true },  // build
+  { name: 'hook',  bars: 8, energy: 1.0, layers: { drums: 'hook', bass: 'driveHard', stab: [0, 3, 6, 8, 11, 14], pad: 0.5 } },        // full
+  { name: 'break', bars: 4, energy: 0.35, layers: { bass: 'held', pad: 0.5 } },                                 // stripped — the contrast dip
+  { name: 'verse', bars: 8, energy: 0.55, layers: { drums: 'main', bass: 'drive', stab: [0, 6, 10], pad: 0.32 } },
+  { name: 'hook',  bars: 8, energy: 1.0, layers: { drums: 'hook', bass: 'driveHard', stab: [0, 3, 6, 8, 11, 14], pad: 0.5 } },
+  { name: 'outro', bars: 4, energy: 0.5, layers: { drums: 'main', bass: 'drive' } },                            // ends on the groove, not a fade
 ]
 
 let bar = 0
 const hookStarts = []
-for (const sec of FORM) {
+for (const sec of SECTIONS) {
+  const L = sec.layers
   if (sec.name === 'hook') hookStarts.push(bar * 4)
   const dc = clip('drums', bar, sec.bars, true)
   const bc = clip('bass', bar, sec.bars, false, null, null)
@@ -108,11 +116,11 @@ for (const sec of FORM) {
   const sc = clip('stab', bar, sec.bars, false, T.stab.preset, { ...STAB_FX })
   for (let b = 0; b < sec.bars; b++) {
     const ci = b % 4
-    if (sec.drums) drumBar(dc, b, FEEL[sec.drums], b === 0, sec.fillLast && b === sec.bars - 1)
-    if (sec.pad) padBar(pc, b, PAD[ci], sec.pad * 90)
-    if (sec.stab) stabBar(sc, b, CH[ci], sec.stab, 64)
+    if (L.drums) drumBar(dc, b, FEEL[L.drums], b === 0 && sec.crashIn, sec.fillLast && b === sec.bars - 1)
+    if (L.pad != null) padBar(pc, b, PAD[ci], L.pad * 90)
+    if (L.stab) stabBar(sc, b, CH[ci], L.stab, 64)
   }
-  if (sec.bass) bassDrive(bc, sec)
+  if (L.bass) bassLine(bc, sec, L.bass)
   ;[dc, bc, pc, sc].forEach(push)
   bar += sec.bars
 }
@@ -134,7 +142,7 @@ const spec = {
   genre: 'synthwave', tempo: 150, timeSignatureNum: 4, timeSignatureDen: 4, swing: 0,
   key: 8, scale: 'minor', masterVolume: 0.5,
   tracks, clips, automationLanes, clipEffects: [],
-  _form: FORM.map(s => s.name).join(' · '), _tracks: Object.keys(T).join('+'),
+  _form: SECTIONS.map(s => s.name).join(' · '), _tracks: Object.keys(T).join('+'),
 }
 const out = join(ROOT, 'public', '_songgen', 'artemas-kiss.json')
 mkdirSync(dirname(out), { recursive: true })
