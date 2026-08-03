@@ -21,30 +21,34 @@ type Item = { id: string; name: string; description: string; kind: string; votes
 type Stats = { shares: number; votes: number; downloads: number }
 type Collection = { id: string; name: string; count: number }
 
-const fetchCreator = cache(async (name: string): Promise<{ items: Item[]; stats: Stats; collections: Collection[] }> => {
+// Keyed on the stable author_username HANDLE (unique per user), not the display
+// name — so two producers with the same name get separate profiles. The display
+// name shown is the one from their most recent share.
+const fetchCreator = cache(async (handle: string): Promise<{ displayName: string; items: Item[]; stats: Stats; collections: Collection[] }> => {
   await ensureTables()
   try {
-    // Independent queries — run them in parallel (one round-trip, not three).
     const [items, s, collections] = await Promise.all([
       sql`
         SELECT id, name, description, kind, votes, downloads FROM community_items
-        WHERE author_name = ${name} AND removed_at IS NULL
+        WHERE author_username = ${handle} AND removed_at IS NULL
         ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 60
       `,
       sql`
-        SELECT COUNT(*)::int AS shares, COALESCE(SUM(votes),0)::int AS votes, COALESCE(SUM(downloads),0)::int AS downloads
-        FROM community_items WHERE author_name = ${name} AND removed_at IS NULL
+        SELECT COUNT(*)::int AS shares, COALESCE(SUM(votes),0)::int AS votes, COALESCE(SUM(downloads),0)::int AS downloads,
+               (SELECT author_name FROM community_items WHERE author_username = ${handle} AND removed_at IS NULL ORDER BY created_at DESC LIMIT 1) AS display_name
+        FROM community_items WHERE author_username = ${handle} AND removed_at IS NULL
       `,
       sql`
         SELECT c.id, c.name, COUNT(ci.item_id)::int AS count
         FROM community_collections c JOIN community_collection_items ci ON ci.collection_id = c.id
-        WHERE c.author_name = ${name} AND c.removed_at IS NULL
+        WHERE c.author_username = ${handle} AND c.removed_at IS NULL
         GROUP BY c.id ORDER BY c.created_at DESC LIMIT 12
       `,
-    ]) as [Item[], { shares: number; votes: number; downloads: number }[], Collection[]]
-    return { items, stats: s[0] ?? { shares: 0, votes: 0, downloads: 0 }, collections }
+    ]) as [Item[], { shares: number; votes: number; downloads: number; display_name: string | null }[], Collection[]]
+    const row = s[0]
+    return { displayName: row?.display_name ?? handle, items, stats: { shares: row?.shares ?? 0, votes: row?.votes ?? 0, downloads: row?.downloads ?? 0 }, collections }
   } catch {
-    return { items: [], stats: { shares: 0, votes: 0, downloads: 0 }, collections: [] }
+    return { displayName: handle, items: [], stats: { shares: 0, votes: 0, downloads: 0 }, collections: [] }
   }
 })
 
@@ -57,17 +61,18 @@ function hue(name: string): number {
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
   const { name: raw } = await params
-  const name = decodeURIComponent(raw)
-  const { stats } = await fetchCreator(name)
-  const title = `${name} — 100Lights Community`
+  const handle = decodeURIComponent(raw)
+  const { displayName, stats } = await fetchCreator(handle)
+  const title = `${displayName} — 100Lights Community`
   const description = stats.shares > 0
-    ? `${name} has shared ${stats.shares} sound${stats.shares === 1 ? '' : 's'} on 100Lights — samples, presets, chord recipes and more. Listen and remix in your browser.`
-    : `${name} on the 100Lights Community.`
+    ? `${displayName} has shared ${stats.shares} sound${stats.shares === 1 ? '' : 's'} on 100Lights — samples, presets, chord recipes and more. Listen and remix in your browser.`
+    : `${displayName} on the 100Lights Community.`
+  const url = `https://100lights.com/community/creator/${encodeURIComponent(handle)}`
   return {
     title,
     description,
-    alternates: { canonical: `https://100lights.com/community/creator/${encodeURIComponent(name)}` },
-    openGraph: { title, description, type: 'profile', siteName: '100Lights Community', url: `https://100lights.com/community/creator/${encodeURIComponent(name)}` },
+    alternates: { canonical: url },
+    openGraph: { title, description, type: 'profile', siteName: '100Lights Community', url },
     twitter: { card: 'summary_large_image', title, description },
     ...(stats.shares >= 1 ? {} : { robots: { index: false, follow: true } }),
   }
@@ -75,16 +80,17 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
 
 export default async function CreatorProfilePage({ params }: { params: Promise<{ name: string }> }) {
   const { name: raw } = await params
-  const name = decodeURIComponent(raw)
-  const { items, stats, collections } = await fetchCreator(name)
+  const handle = decodeURIComponent(raw)
+  const { displayName, items, stats, collections } = await fetchCreator(handle)
   if (stats.shares === 0) notFound()
 
-  const h = hue(name)
+  const h = hue(handle)
+  const url = `https://100lights.com/community/creator/${encodeURIComponent(handle)}`
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'ProfilePage',
-    mainEntity: { '@type': 'Person', name, url: `https://100lights.com/community/creator/${encodeURIComponent(name)}` },
-    url: `https://100lights.com/community/creator/${encodeURIComponent(name)}`,
+    mainEntity: { '@type': 'Person', name: displayName, url },
+    url,
   }
   const stat = (n: number, label: string) => (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -99,7 +105,7 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
       <nav style={{ fontSize: 12.5, color: 'var(--text-muted, #a3a2b5)', marginBottom: 16 }}>
         <Link href="/community" style={{ color: 'inherit', textDecoration: 'none' }}>Community</Link>
         <span style={{ margin: '0 6px' }}>/</span>
-        <span style={{ color: 'var(--text-secondary, #cfceda)' }}>{name}</span>
+        <span style={{ color: 'var(--text-secondary, #cfceda)' }}>{displayName}</span>
       </nav>
 
       <header style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 26 }}>
@@ -108,9 +114,9 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 24, fontWeight: 800, color: '#fff',
           background: `linear-gradient(135deg, hsl(${h} 70% 52%), hsl(${(h + 40) % 360} 70% 42%))`,
-        }}>{name.slice(0, 1).toUpperCase()}</div>
+        }}>{displayName.slice(0, 1).toUpperCase()}</div>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em', margin: '0 0 8px' }}>{name}</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em', margin: '0 0 8px' }}>{displayName}</h1>
           <div style={{ display: 'flex', gap: 22 }}>
             {stat(stats.shares, stats.shares === 1 ? 'share' : 'shares')}
             {stat(stats.votes, 'upvotes')}

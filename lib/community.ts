@@ -26,6 +26,8 @@ export interface CommunityItem {
   name: string
   description: string
   authorName: string
+  /** Stable creator handle (unique per user) — the key for creator-profile links. */
+  authorUsername?: string
   votes: number
   downloads: number
   createdAt: string

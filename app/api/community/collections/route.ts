@@ -1,6 +1,6 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { ensureTables, devTestUser, isUuid } from '@/lib/community-server'
+import { ensureTables, devTestUser, isUuid, communityHandle } from '@/lib/community-server'
 
 export const runtime = 'nodejs'
 
@@ -70,9 +70,10 @@ export async function POST(req: Request) {
 
   const user = clerkId ? await currentUser() : null
   const authorName = user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId)
+  const authorUsername = communityHandle(userId, false)
   const rows = await sql`
-    INSERT INTO community_collections (user_id, author_name, name, description)
-    VALUES (${userId}, ${authorName}, ${name.slice(0, 80)}, ${(body.description ?? '').slice(0, 300)})
+    INSERT INTO community_collections (user_id, author_name, author_username, name, description)
+    VALUES (${userId}, ${authorName}, ${authorUsername}, ${name.slice(0, 80)}, ${(body.description ?? '').slice(0, 300)})
     RETURNING id, name, description, author_name, created_at
   `
   return Response.json({ collection: { ...rows[0], count: 0 } })

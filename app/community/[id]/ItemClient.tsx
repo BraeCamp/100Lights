@@ -29,7 +29,7 @@ const KIND_HINT: Record<string, string> = {
   clip: 'Watch the clip, then head to the studio to try it yourself.',
 }
 
-export function ItemClient({ id, initialItem, related = [], byAuthor = [], remixes = [], source = null, author, kind }: { id: string; initialItem?: CommunityItem; related?: RelatedItem[]; byAuthor?: RelatedItem[]; remixes?: RelatedItem[]; source?: { id: string; name: string; author_name: string } | null; author?: string; kind?: string }) {
+export function ItemClient({ id, initialItem, related = [], byAuthor = [], remixes = [], source = null, author, authorHandle, kind }: { id: string; initialItem?: CommunityItem; related?: RelatedItem[]; byAuthor?: RelatedItem[]; remixes?: RelatedItem[]; source?: { id: string; name: string; author_name: string } | null; author?: string; authorHandle?: string; kind?: string }) {
   const { user, isLoaded, isSignedIn } = useUser()
   // Seeded from the server so the name/description/author are in the SSR HTML
   // (crawlable) instead of a "Loading…" placeholder; the fetch below then
@@ -94,7 +94,7 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], remix
         <FeedCard
           item={item} busy={busy} signedIn={!isLoaded || !!isSignedIn}
           commentsOpen
-          onAuthorClick={a => { window.location.href = `/community/creator/${encodeURIComponent(a)}` }}
+          onAuthorClick={() => { if (authorHandle) window.location.href = `/community/creator/${encodeURIComponent(authorHandle)}` }}
           onTagClick={t => { window.location.href = `/community?tag=${encodeURIComponent(t)}` }}
           onVote={async () => {
             try {
@@ -150,8 +150,8 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], remix
           <section style={{ marginTop: 30 }}>
             <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 12px' }}>
               More from {author}
-              {author && (
-                <Link href={`/community/creator/${encodeURIComponent(author)}`} style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#a78bfa', textDecoration: 'none', textTransform: 'none', letterSpacing: 0 }}>
+              {authorHandle && (
+                <Link href={`/community/creator/${encodeURIComponent(authorHandle)}`} style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#a78bfa', textDecoration: 'none', textTransform: 'none', letterSpacing: 0 }}>
                   see all →
                 </Link>
               )}

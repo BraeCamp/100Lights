@@ -15,14 +15,14 @@ const KIND_LABEL: Record<string, string> = {
   song: 'Song', sample: 'Sample', preset: 'Preset', recipe: 'Chord recipe', pack: 'Sample pack', project: 'Project starter', theme: 'Theme', kit: 'Drum kit', pattern: 'Beat pattern', post: 'Post', clip: 'Clip',
 }
 
-type Collection = { id: string; name: string; description: string; author_name: string }
+type Collection = { id: string; name: string; description: string; author_name: string; author_username: string | null }
 type Item = { id: string; name: string; kind: string; author_name: string }
 
 const fetchCollection = cache(async (id: string): Promise<{ collection: Collection; items: Item[] } | null> => {
   if (!isUuid(id)) return null
   await ensureTables()
   try {
-    const c = await sql`SELECT id, name, description, author_name FROM community_collections WHERE id = ${id} AND removed_at IS NULL`
+    const c = await sql`SELECT id, name, description, author_name, author_username FROM community_collections WHERE id = ${id} AND removed_at IS NULL`
     if (!c.length) return null
     const items = await sql`
       SELECT i.id, i.name, i.kind, i.author_name FROM community_collection_items ci
@@ -74,7 +74,7 @@ export default async function CollectionPage({ params }: { params: Promise<{ id:
       <nav style={{ fontSize: 12.5, color: 'var(--text-muted, #a3a2b5)', marginBottom: 16 }}>
         <Link href="/community" style={{ color: 'inherit', textDecoration: 'none' }}>Community</Link>
         <span style={{ margin: '0 6px' }}>/</span>
-        <Link href={`/community/creator/${encodeURIComponent(collection.author_name)}`} style={{ color: 'inherit', textDecoration: 'none' }}>{collection.author_name}</Link>
+        <Link href={`/community/creator/${encodeURIComponent(collection.author_username ?? collection.author_name)}`} style={{ color: 'inherit', textDecoration: 'none' }}>{collection.author_name}</Link>
       </nav>
 
       <header style={{ marginBottom: 24 }}>
@@ -82,7 +82,7 @@ export default async function CollectionPage({ params }: { params: Promise<{ id:
         <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.01em', margin: '0 0 8px' }}>{collection.name}</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted, #a3a2b5)', margin: 0 }}>
           {items.length} pick{items.length === 1 ? '' : 's'} · by{' '}
-          <Link href={`/community/creator/${encodeURIComponent(collection.author_name)}`} style={{ color: 'var(--text-secondary, #cfceda)', textDecoration: 'none', fontWeight: 600 }}>{collection.author_name}</Link>
+          <Link href={`/community/creator/${encodeURIComponent(collection.author_username ?? collection.author_name)}`} style={{ color: 'var(--text-secondary, #cfceda)', textDecoration: 'none', fontWeight: 600 }}>{collection.author_name}</Link>
         </p>
         {collection.description && (
           <p style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--text-secondary, #cfceda)', margin: '12px 0 0', maxWidth: 620 }}>{collection.description}</p>

@@ -107,16 +107,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily' as const,
       priority: 0.7,
     }))
-    // Creator profiles — one rich page per active producer (≥2 shares).
+    // Creator profiles — one page per active producer (≥2 shares), keyed on the
+    // stable handle (author_username) so same-named users don't collapse.
     const creators = await sql`
-      SELECT author_name, MAX(created_at) AS last FROM community_items
-      WHERE removed_at IS NULL AND author_name <> 'Anonymous'
-      GROUP BY author_name
+      SELECT author_username, MAX(created_at) AS last FROM community_items
+      WHERE removed_at IS NULL AND author_username IS NOT NULL
+      GROUP BY author_username
       HAVING COUNT(*) >= 2
       LIMIT 200
     `
     creatorPages = creators.map(c => ({
-      url: `${base}/community/creator/${encodeURIComponent(c.author_name as string)}`,
+      url: `${base}/community/creator/${encodeURIComponent(c.author_username as string)}`,
       lastModified: new Date(c.last as string),
       changeFrequency: 'weekly' as const,
       priority: 0.6,

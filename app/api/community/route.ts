@@ -1,6 +1,6 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, LARGE_MODE_LIMITS, isUuid } from '@/lib/community-server'
+import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, LARGE_MODE_LIMITS, isUuid, communityHandle } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { getSubscription } from '@/lib/subscription'
@@ -154,6 +154,7 @@ export async function POST(req: Request) {
   const RESERVED_NAMES = new Set(['100lights', '100 lights'])
   let authorName = official ? '100Lights' : (user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId))
   if (!official && RESERVED_NAMES.has(authorName.trim().toLowerCase())) authorName = 'Anonymous'
+  const authorUsername = communityHandle(userId, official)
 
   // Remix lineage (best-effort): keep the source id only if it's a real,
   // non-removed item — never fail the share over it.
@@ -166,8 +167,8 @@ export async function POST(req: Request) {
   }
 
   const rows = await sql`
-    INSERT INTO community_items (user_id, author_name, kind, name, description, payload, r2_key, remixed_from)
-    VALUES (${userId}, ${authorName}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null}, ${remixedFrom})
+    INSERT INTO community_items (user_id, author_name, author_username, kind, name, description, payload, r2_key, remixed_from)
+    VALUES (${userId}, ${authorName}, ${authorUsername}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null}, ${remixedFrom})
     RETURNING id
   `
   return Response.json({ id: rows[0].id })

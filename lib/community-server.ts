@@ -1,9 +1,19 @@
 import { sql } from './db'
+import { createHash } from 'node:crypto'
 
 // Server-side shared helpers for the community API routes.
 
 export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip'] as const
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
+
+/** Stable per-user handle used to key creator profiles + aggregation (author_name
+ *  is a spoofable, non-unique DISPLAY name — two "Alex"es would collapse into one
+ *  profile). Official content shares one handle. Derived from user_id so it never
+ *  changes and the SQL backfill (below) reproduces it exactly. */
+export function communityHandle(userId: string, official: boolean): string {
+  if (official) return '100lights'
+  return 'u' + createHash('md5').update(userId).digest('hex').slice(0, 12)
+}
 
 let tablesReady = false
 /** Route ids come straight from the URL — reject non-UUIDs before they hit
@@ -140,6 +150,24 @@ export async function ensureTables() {
   // community_votes PK is (item_id, user_id) — can't serve a user_id-leading
   // lookup, so the per-request "my votes" query would seq-scan without this.
   await sql`CREATE INDEX IF NOT EXISTS community_votes_user_idx ON community_votes (user_id)`
+
+  // Stable creator handle (see communityHandle) — the unique key for profiles +
+  // aggregation, replacing the collision-prone author_name. Backfill matches the
+  // JS helper: official → '100lights', else 'u'||first-12-of-md5(user_id).
+  await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS author_username TEXT`
+  await sql`ALTER TABLE community_collections ADD COLUMN IF NOT EXISTS author_username TEXT`
+  await sql`
+    UPDATE community_items SET author_username =
+      CASE WHEN author_name = '100Lights' OR user_id LIKE 'seed:%' THEN '100lights'
+           ELSE 'u' || substr(md5(user_id), 1, 12) END
+    WHERE author_username IS NULL`
+  await sql`
+    UPDATE community_collections SET author_username =
+      CASE WHEN author_name = '100Lights' OR user_id LIKE 'seed:%' THEN '100lights'
+           ELSE 'u' || substr(md5(user_id), 1, 12) END
+    WHERE author_username IS NULL`
+  await sql`CREATE INDEX IF NOT EXISTS community_items_username_idx ON community_items (author_username)`
+  await sql`CREATE INDEX IF NOT EXISTS community_collections_username_idx ON community_collections (author_username)`
   tablesReady = true
 }
 
@@ -159,7 +187,7 @@ export function devTestUser(req: Request): string | null {
 export function rowToItem(r: Record<string, unknown>, userId: string | null, votedIds: Set<string>, reactions: Map<string, Record<string, number>>, myReactions: Map<string, string[]>, comments?: Map<string, number>, proAuthors?: Set<string>) {
   return {
     id: r.id, kind: r.kind, name: r.name, description: r.description,
-    authorName: r.author_name, votes: r.votes, downloads: r.downloads,
+    authorName: r.author_name, authorUsername: r.author_username, votes: r.votes, downloads: r.downloads,
     createdAt: r.created_at, payload: r.payload, r2Key: r.r2_key,
     votedByMe: votedIds.has(r.id as string),
     mine: userId !== null && r.user_id === userId,

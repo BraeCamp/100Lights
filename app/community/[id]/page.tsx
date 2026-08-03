@@ -83,13 +83,15 @@ const fetchSource = cache(async (sourceId: string | null): Promise<{ id: string;
   }
 })
 
-// Other shares by the same creator — discovery + a lightweight creator surface.
-const fetchByAuthor = cache(async (author: string, excludeId: string): Promise<RelatedItem[]> => {
+// Other shares by the same creator — keyed on the stable handle (author_username)
+// so it's the same person, not everyone who happens to share their display name.
+const fetchByAuthor = cache(async (handle: string | null, excludeId: string): Promise<RelatedItem[]> => {
+  if (!handle) return []
   await ensureTables()
   try {
     return await sql`
       SELECT id, name, description, author_name, kind FROM community_items
-      WHERE author_name = ${author} AND id <> ${excludeId} AND removed_at IS NULL
+      WHERE author_username = ${handle} AND id <> ${excludeId} AND removed_at IS NULL
       ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 4
     ` as RelatedItem[]
   } catch {
@@ -159,7 +161,7 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
   const initialItem = rowToItem(item, null, new Set<string>(), new Map(), new Map()) as unknown as CommunityItem
   const [related, byAuthor, remixes, source] = await Promise.all([
     fetchRelated(item.kind as string, id),
-    fetchByAuthor(item.author_name as string, id),
+    fetchByAuthor((item.author_username as string | null) ?? null, id),
     fetchRemixes(id),
     fetchSource((item.remixed_from as string | null) ?? null),
   ])
@@ -169,7 +171,7 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
       {/* key={id}: soft-navigating between two /community/[id] pages reuses this
           client instance, so its useState(initialItem) would keep showing the
           previous item. Keying on id forces a fresh mount per item. */}
-      <ItemClient key={id} id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} remixes={remixes} source={source} author={item.author_name as string} kind={item.kind as string} />
+      <ItemClient key={id} id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} remixes={remixes} source={source} author={item.author_name as string} authorHandle={(item.author_username as string | null) ?? undefined} kind={item.kind as string} />
     </>
   )
 }
