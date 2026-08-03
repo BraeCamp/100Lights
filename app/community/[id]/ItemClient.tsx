@@ -28,7 +28,7 @@ const KIND_HINT: Record<string, string> = {
   clip: 'Watch the clip, then head to the studio to try it yourself.',
 }
 
-export function ItemClient({ id, initialItem, related = [], byAuthor = [], author, kind }: { id: string; initialItem?: CommunityItem; related?: RelatedItem[]; byAuthor?: RelatedItem[]; author?: string; kind?: string }) {
+export function ItemClient({ id, initialItem, related = [], byAuthor = [], remixes = [], source = null, author, kind }: { id: string; initialItem?: CommunityItem; related?: RelatedItem[]; byAuthor?: RelatedItem[]; remixes?: RelatedItem[]; source?: { id: string; name: string; author_name: string } | null; author?: string; kind?: string }) {
   const { user, isLoaded, isSignedIn } = useUser()
   // Seeded from the server so the name/description/author are in the SSR HTML
   // (crawlable) instead of a "Loading…" placeholder; the fetch below then
@@ -56,6 +56,12 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], autho
   const hint = KIND_HINT[itemKind]
   const engagement = (item.votes ?? 0) + (item.downloads ?? 0)
   const popular = engagement >= 8
+  const copyEmbed = () => {
+    const h = itemKind === 'song' || itemKind === 'sample' ? 200 : 150
+    const code = `<iframe src="https://100lights.com/embed/${id}" width="480" height="${h}" style="border:0;border-radius:12px" loading="lazy" title="${item.name.replace(/"/g, '')} on 100Lights"></iframe>`
+    if (navigator.clipboard) navigator.clipboard.writeText(code).then(() => flash('Embed code copied — paste it anywhere')).catch(() => flash('Copy failed'))
+    else flash('Copy isn’t available here')
+  }
 
   return (
     <div style={{ height: '100%', overflowY: 'auto' }}>
@@ -71,11 +77,16 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], autho
               <Link href={`/community/browse/${itemKind}`} style={{ color: 'inherit', textDecoration: 'none' }}>{kindLabel}</Link>
             </>
           )}
-          {popular && (
-            <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 800, letterSpacing: '0.03em', color: '#fb923c', background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.4)', borderRadius: 999, padding: '2px 9px' }}>
-              🔥 Popular
-            </span>
-          )}
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            {popular && (
+              <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.03em', color: '#fb923c', background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.4)', borderRadius: 999, padding: '2px 9px' }}>
+                🔥 Popular
+              </span>
+            )}
+            <button onClick={copyEmbed} title="Copy an embed code for this — paste it into a blog or Discord" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 999, padding: '3px 10px', cursor: 'pointer' }}>
+              {'</>'} Embed
+            </button>
+          </span>
         </nav>
 
         <FeedCard
@@ -98,10 +109,39 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], autho
           onToast={flash}
         />
 
+        {source && (
+          <p style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span aria-hidden>🔀</span>
+            <span>Remixed from <Link href={`/community/${source.id}`} style={{ color: '#a78bfa', textDecoration: 'none', fontWeight: 600 }}>{source.name}</Link> by {source.author_name}</span>
+          </p>
+        )}
+
         {hint && (
           <p style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-muted)', display: 'flex', gap: 7 }}>
             <span aria-hidden>💡</span><span>{hint}</span>
           </p>
+        )}
+
+        {remixes.length > 0 && (
+          <section style={{ marginTop: 30 }}>
+            <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+              🔀 {remixes.length} remix{remixes.length === 1 ? '' : 'es'} — made from this
+            </h2>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+              {remixes.map(r => (
+                <li key={r.id}>
+                  <Link href={`/community/${r.id}`} style={{
+                    display: 'block', textDecoration: 'none', color: 'inherit',
+                    background: 'var(--bg-surface, #17171b)', border: '1px solid var(--border)',
+                    borderRadius: 9, padding: '11px 13px',
+                  }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{r.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>by {r.author_name}</div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
         {byAuthor.length > 0 && (

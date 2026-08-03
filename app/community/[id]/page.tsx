@@ -55,6 +55,32 @@ const fetchRelated = cache(async (kind: string, excludeId: string): Promise<Rela
   }
 })
 
+// Remix lineage: projects shared after opening THIS as a starter.
+const fetchRemixes = cache(async (id: string): Promise<RelatedItem[]> => {
+  await ensureTables()
+  try {
+    return await sql`
+      SELECT id, name, description, author_name, kind FROM community_items
+      WHERE remixed_from = ${id} AND removed_at IS NULL
+      ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 12
+    ` as RelatedItem[]
+  } catch {
+    return []
+  }
+})
+
+// The original this item was remixed FROM (backlink), if any.
+const fetchSource = cache(async (sourceId: string | null): Promise<{ id: string; name: string; author_name: string } | null> => {
+  if (!sourceId) return null
+  await ensureTables()
+  try {
+    const rows = await sql`SELECT id, name, author_name FROM community_items WHERE id = ${sourceId} AND removed_at IS NULL LIMIT 1`
+    return (rows[0] as { id: string; name: string; author_name: string }) ?? null
+  } catch {
+    return null
+  }
+})
+
 // Other shares by the same creator — discovery + a lightweight creator surface.
 const fetchByAuthor = cache(async (author: string, excludeId: string): Promise<RelatedItem[]> => {
   await ensureTables()
@@ -129,14 +155,16 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
         ...(item.description ? { description: item.description } : {}),
       }
   const initialItem = rowToItem(item, null, new Set<string>(), new Map(), new Map()) as unknown as CommunityItem
-  const [related, byAuthor] = await Promise.all([
+  const [related, byAuthor, remixes, source] = await Promise.all([
     fetchRelated(item.kind as string, id),
     fetchByAuthor(item.author_name as string, id),
+    fetchRemixes(id),
+    fetchSource((item.remixed_from as string | null) ?? null),
   ])
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <ItemClient id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} author={item.author_name as string} kind={item.kind as string} />
+      <ItemClient id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} remixes={remixes} source={source} author={item.author_name as string} kind={item.kind as string} />
     </>
   )
 }

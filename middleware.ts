@@ -28,6 +28,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/learn-audio',
   '/legal/(.*)',
   '/community(.*)',
+  '/embed/(.*)',
   '/inspector',
   '/assistant',
   '/api/community(.*)',

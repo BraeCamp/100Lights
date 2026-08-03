@@ -35,6 +35,11 @@ export async function ensureTables() {
   await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS removed_at     TIMESTAMPTZ`
   await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS removed_by     TEXT`
   await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS removed_reason TEXT`
+  // Remix lineage: a project shared after opening another shared project as a
+  // starter records the source id, so item pages can show "remixed from" +
+  // the tree of remixes. Nullable; indexed for the derivatives lookup.
+  await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS remixed_from UUID`
+  await sql`CREATE INDEX IF NOT EXISTS community_items_remixed_from_idx ON community_items (remixed_from)`
   // Older tables carry a narrower kind constraint — rebuild it only when it
   // actually differs, and tolerate the race where two requests migrate at
   // once (page render + generateMetadata run ensureTables in parallel).

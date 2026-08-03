@@ -255,9 +255,11 @@ export async function sharePack(entries: LibraryEntry[], name: string, descripti
 
 /** Shares the whole arrangement as a remixable starter (audio resolves via r2Keys). */
 export async function shareProjectStarter(dawProject: unknown, name: string, description: string, meta: { tempo?: number; key?: string; tracks?: number; clips?: number; tags?: string[] } = {}): Promise<string> {
+  // If this project was opened from another shared starter, record the lineage.
+  const remixedFrom = (dawProject as { remixedFrom?: string } | null)?.remixedFrom
   const res = await fetch('/api/community', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'project', name, description, payload: { dawProject, ...meta } }),
+    body: JSON.stringify({ kind: 'project', name, description, payload: { dawProject, ...meta }, ...(remixedFrom ? { remixedFrom } : {}) }),
   })
   if (!res.ok) {
     if (res.status === 413) throw new Error('project too large to share as a starter')

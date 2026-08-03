@@ -309,7 +309,10 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       .then(r => r.ok ? r.json() : null)
       .then((d: { item?: { kind?: string; payload?: { dawProject?: DawProject } } } | null) => {
         if (!alive) return
-        if (d?.item?.kind === 'project' && d.item.payload?.dawProject) setStarterProject(d.item.payload.dawProject)
+        if (d?.item?.kind === 'project' && d.item.payload?.dawProject) {
+          // Record the source so re-sharing this project logs remix lineage.
+          setStarterProject({ ...d.item.payload.dawProject, remixedFrom: starterId })
+        }
         setStarterLoading(false)
       })
       .catch(() => { if (alive) setStarterLoading(false) })

@@ -1,6 +1,6 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, LARGE_MODE_LIMITS } from '@/lib/community-server'
+import { COMMUNITY_KINDS, ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, LARGE_MODE_LIMITS, isUuid } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { getSubscription } from '@/lib/subscription'
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   await ensureTables()
 
-  let body: { kind?: string; name?: string; description?: string; payload?: unknown; r2Key?: string; asOfficial?: boolean }
+  let body: { kind?: string; name?: string; description?: string; payload?: unknown; r2Key?: string; asOfficial?: boolean; remixedFrom?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
   const { kind, name } = body
@@ -146,9 +146,19 @@ export async function POST(req: Request) {
   const official = body.asOfficial === true && await isAdminEmail()
   const authorName = official ? '100Lights' : (user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId))
 
+  // Remix lineage (best-effort): keep the source id only if it's a real,
+  // non-removed item — never fail the share over it.
+  let remixedFrom: string | null = null
+  if (typeof body.remixedFrom === 'string' && isUuid(body.remixedFrom)) {
+    try {
+      const src = await sql`SELECT 1 FROM community_items WHERE id = ${body.remixedFrom} AND removed_at IS NULL LIMIT 1`
+      if (src.length) remixedFrom = body.remixedFrom
+    } catch { /* ignore — lineage is optional */ }
+  }
+
   const rows = await sql`
-    INSERT INTO community_items (user_id, author_name, kind, name, description, payload, r2_key)
-    VALUES (${userId}, ${authorName}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null})
+    INSERT INTO community_items (user_id, author_name, kind, name, description, payload, r2_key, remixed_from)
+    VALUES (${userId}, ${authorName}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null}, ${remixedFrom})
     RETURNING id
   `
   return Response.json({ id: rows[0].id })

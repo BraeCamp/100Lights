@@ -963,6 +963,9 @@ export interface DawProject {
   comments?: TimelineComment[]
   key: number               // 0-11 (C=0), displayed in transport
   scale: string             // 'major' | 'minor' | etc.
+  /** Community item id this project was opened FROM (a shared starter). Carried
+   *  so that re-sharing records remix lineage. Set on ?starter= load. */
+  remixedFrom?: string
   /** Ordered construction log for the History capture/replay mode — folded from
    *  empty through the reducer to re-play how the project was built. */
   history?: DawHistoryEntry[]

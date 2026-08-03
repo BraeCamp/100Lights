@@ -531,7 +531,7 @@ function CommentsSection({ itemId, signedIn, onToast, onCount }: { itemId: strin
 
 // ── Song / sample player (public audio endpoint, instant peaks, auto-advance) ──
 
-function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
+export function AudioPreview({ item, color }: { item: CommunityItem; color: string }) {
   const prePeaks = ((item.payload ?? {}) as ItemMeta).peaks
   const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [playing, setPlaying] = useState(false)
