@@ -736,11 +736,16 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpD
 // the SPIRIT of the artist (not a clone). `sig`: 'space' = huge reverb wash;
 // 'guitar' = electric-guitar lead; 'crush' = distorted / bit-crushed grit.
 const STYLES = {
-  darkwave: { genre: 'synthwave', bpm: 90,  key: 'C# minor', sig: 'space' },   // Mr. Kitty
-  altpop:   { genre: 'synthwave', bpm: 118, key: 'F# minor', sig: 'guitar' },  // Artemas (dark alt-pop)
-  hyperpop: { genre: 'trap',      bpm: 156, key: 'G minor',  sig: 'crush' },    // ThxSoMuch
-  phonk:    { genre: 'trap',      bpm: 130, key: 'A minor',  sig: 'crush' },
-  dreampop: { genre: 'synthwave', bpm: 104, key: 'D minor',  sig: 'space' },
+  darkwave:   { genre: 'synthwave', bpm: 90,  key: 'C# minor', sig: 'space' },   // Mr. Kitty
+  altpop:     { genre: 'synthwave', bpm: 118, key: 'F# minor', sig: 'guitar' },  // Artemas (dark alt-pop)
+  hyperpop:   { genre: 'trap',      bpm: 156, key: 'G minor',  sig: 'crush' },    // ThxSoMuch
+  phonk:      { genre: 'trap',      bpm: 130, key: 'A minor',  sig: 'crush' },
+  dreampop:   { genre: 'synthwave', bpm: 104, key: 'D minor',  sig: 'space' },
+  synthpop80s:{ genre: 'synthwave', bpm: 120, key: 'C minor',  sig: 'space' },   // The Weeknd — big saw lead + reverb, dorian tug
+  frenchhouse:{ genre: 'disco',     bpm: 123, key: 'A minor',  sig: 'pump' },     // Daft Punk — filter disco + heavy sidechain
+  futurebass: { genre: 'future-bass', bpm: 150, key: 'B minor', sig: 'space' },   // Flume — supersaw 9th chords, wide
+  dubstepBig: { genre: 'dubstep',   bpm: 140, key: 'F minor',  sig: 'crush' },    // Skrillex — aggressive, distorted
+  chillfuture:{ genre: 'future-bass', bpm: 100, key: 'E minor', sig: 'space' },   // ODESZA — lush, airy
 }
 
 function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
@@ -795,7 +800,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const useFilterArc = rand.chance(0.7)                              // per-section brightness arc
   const introStyle   = rand.pick(['layered', 'layered', 'soft', 'soft', 'plain'])  // how the song opens
   const fourFloor    = genre.drums === 'four-floor' || ['house', 'deep-house', 'techno', 'trance', 'disco', 'future-bass'].includes(genreId)
-  const useSidechain = fourFloor && rand.chance(0.8)                 // kick pump on sustained layers
+  const useSidechain = (fourFloor && rand.chance(0.8)) || opts.sig === 'pump'  // kick pump on sustained layers
   const useSweeps    = rand.chance(0.7)                              // filter-sweep transitions into peaks
   const useClipFx    = rand.chance(0.7)                              // drawn effect BARS on the track FX lanes
   const useRolls     = rand.chance(0.45)                             // ascending chord strums on high-energy downbeats
@@ -859,6 +864,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   // Style signature — stamp the artist flavor onto the racks.
   if (opts.sig === 'space') for (const t of tracks) if (/Pad|Lead/.test(t.name)) { const rv = t.effects.find(e => e.type === 'reverb'); if (rv) { rv.params.wet = Math.min(0.75, rv.params.wet + 0.22); rv.params.decay = Math.max(rv.params.decay, 3.6) } else t.effects.push({ id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.5, decay: 3.8, preDelay: 0.03 } }) }
   if (opts.sig === 'crush') for (const t of tracks) if (/Bass|Lead/.test(t.name)) { if (!t.effects.some(e => e.type === 'saturator')) t.effects.unshift({ id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.5, color: 0.4, output: 0 } }); if (!t.effects.some(e => e.type === 'redux')) t.effects.push({ id: uid('e'), type: 'redux', params: { enabled: true, bitDepth: 9, sampleRate: 14000 } }) }
+  if (opts.sig === 'pump') for (const t of tracks) if (/Keys|Pad/.test(t.name)) { if (!t.effects.some(e => e.type === 'chorus')) t.effects.push({ id: uid('e'), type: 'chorus', params: { enabled: true, type: 'phaser', rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.35, stages: 4 } }) }
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
   const has = k => byKey[k] != null
