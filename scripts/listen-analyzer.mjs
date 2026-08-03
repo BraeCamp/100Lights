@@ -84,6 +84,108 @@ export function spectrum(signal, sr, fftSize = 4096) {
   return { centroid: Math.round(centroid), rolloff: Math.round(rolloff), bandPct, energy: total }
 }
 
+// ── RHYTHM + SUSTAIN: hear how a part moves in TIME, not just its spectrum ────
+// Amplitude envelope (short-window RMS over time). Returns {t:[sec], e:[rms]}.
+export function envelope(signal, sr, win = 1024, hop = 256) {
+  const t = [], e = []
+  for (let s = 0; s + win <= signal.length; s += hop) {
+    let sq = 0; for (let j = 0; j < win; j++) sq += signal[s + j] * signal[s + j]
+    e.push(Math.sqrt(sq / win)); t.push((s + win / 2) / sr)
+  }
+  return { t, e }
+}
+// Onset detection — "hears the rhythm": how many hits, where, inter-onset gaps.
+// Hysteresis threshold-crossing on the amplitude envelope (arm above openRel of
+// the peak, re-arm only after dropping below closeRel). Robust to instant note
+// starts and to soft attacks; a held note = ONE onset, silence between notes =
+// a new onset. (For notes that change pitch without an amplitude dip, drive the
+// per-note check from the known MIDI note times instead — see noteProfiles.)
+export function detectOnsets(signal, sr, { minGapSec = 0.06, openRel = 0.18, closeRel = 0.10 } = {}) {
+  const { t, e } = envelope(signal, sr, 512, 128)
+  const mx = Math.max(1e-9, ...e)
+  const openT = openRel * mx, closeT = closeRel * mx
+  const times = []; let active = false, last = -1e9
+  for (let i = 0; i < e.length; i++) {
+    if (!active) { if (e[i] > openT && t[i] - last > minGapSec) { times.push(+t[i].toFixed(3)); last = t[i]; active = true } }
+    else if (e[i] < closeT) active = false
+  }
+  const iois = times.slice(1).map((x, i) => +(x - times[i]).toFixed(3))
+  return { times, count: times.length, iois }
+}
+// Per-note sustain profile — does the note HOLD FLAT, or decay / release early?
+// For each note region: held duration (env above 30% of its peak), sustain
+// flatness (CV of the held portion — low = steady), attack time, and the near-
+// silent GAP before the next onset (a re-trigger/release chop).
+export function noteProfiles(signal, sr, onsetTimes) {
+  const { t, e } = envelope(signal, sr, 1024, 256)
+  const at = sec => { let i = 0; while (i < t.length - 1 && t[i] < sec) i++; return i }
+  const out = []
+  const bounds = [...onsetTimes, t[t.length - 1] + 1]
+  for (let k = 0; k < onsetTimes.length; k++) {
+    const a = at(bounds[k]), z = at(bounds[k + 1])
+    let peak = 0, pi = a; for (let i = a; i < z; i++) if (e[i] > peak) { peak = e[i]; pi = i }
+    if (peak < 1e-5) continue
+    const floor = 0.30 * peak
+    let end = pi; for (let i = pi; i < z; i++) { if (e[i] >= floor) end = i; else if (e[i] < 0.12 * peak) break }
+    const heldSec = +(t[end] - t[a]).toFixed(3)
+    // sustained portion = from just after the peak to end
+    const s0 = Math.min(pi + 1, end); const seg = e.slice(s0, end + 1)
+    const mean = seg.reduce((x, y) => x + y, 0) / (seg.length || 1)
+    const sd = Math.sqrt(seg.reduce((x, y) => x + (y - mean) ** 2, 0) / (seg.length || 1))
+    const cv = mean > 0 ? +(sd / mean).toFixed(3) : 0
+    const attackMs = Math.round((t[pi] - t[a]) * 1000)
+    const gapMs = k + 1 < onsetTimes.length ? Math.round(Math.max(0, bounds[k + 1] - t[end]) * 1000) : 0
+    out.push({ onset: +t[a].toFixed(3), heldSec, sustainCV: cv, attackMs, gapMs, peak: +peak.toFixed(4) })
+  }
+  return out
+}
+// Harmonic content around a fundamental — "hears the tone": is it a PURE sub
+// (energy in the fundamental) or harmonically rich? purity = f0 share of the
+// harmonic series; richness = overtone energy / fundamental.
+export function detectF0(signal, sr, fmax = 400, fftSize = 8192) {
+  const { bandPct } = spectrum(signal, sr, fftSize)   // unused, ensures power-of-2 path
+  const half = fftSize / 2, hann = new Float32Array(fftSize)
+  for (let i = 0; i < fftSize; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1))
+  const re = new Float64Array(fftSize), im = new Float64Array(fftSize)
+  const start = Math.max(0, Math.floor(signal.length / 2) - fftSize)   // mid, past the attack
+  for (let i = 0; i < fftSize; i++) { re[i] = (signal[start + i] || 0) * hann[i]; im[i] = 0 }
+  fft(re, im)
+  const binHz = sr / fftSize; let best = 0, bf = 0
+  for (let i = 1; i < half; i++) { const f = i * binHz; if (f < 20 || f > fmax) continue; const m = re[i] * re[i] + im[i] * im[i]; if (m > best) { best = m; bf = f } }
+  return Math.round(bf)
+}
+export function harmonics(signal, sr, f0, fftSize = 8192) {
+  const half = fftSize / 2, hann = new Float32Array(fftSize)
+  for (let i = 0; i < fftSize; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1))
+  const re = new Float64Array(fftSize), im = new Float64Array(fftSize)
+  const start = Math.max(0, Math.floor(signal.length / 2) - fftSize)
+  for (let i = 0; i < fftSize; i++) { re[i] = (signal[start + i] || 0) * hann[i]; im[i] = 0 }
+  fft(re, im)
+  const binHz = sr / fftSize
+  const magAt = f => { const b = Math.round(f / binHz); let m = 0; for (let i = Math.max(1, b - 2); i <= b + 2 && i < half; i++) m = Math.max(m, Math.sqrt(re[i] * re[i] + im[i] * im[i])); return m }
+  const partials = []; for (let k = 1; k <= 8; k++) partials.push(+magAt(k * f0).toFixed(4))
+  const p2 = partials.map(m => m * m); const tot = p2.reduce((a, b) => a + b, 0) || 1
+  return { f0, partials, purity: +(p2[0] / tot).toFixed(3), richness: +((tot - p2[0]) / (p2[0] || 1)).toFixed(3) }
+}
+// Package: hear a stem's rhythm + sustain + tone, with verdicts. opts.expectHeldSec
+// = the shortest a note should sustain; opts.expectPureSub = check sub purity.
+export function analyzeStem(signal, sr, opts = {}) {
+  const on = detectOnsets(signal, sr)
+  const notes = noteProfiles(signal, sr, on.times)
+  const f0 = opts.f0 || detectF0(signal, sr)
+  const harm = f0 > 0 ? harmonics(signal, sr, f0) : null
+  const verdicts = []
+  const held = notes.map(n => n.heldSec)
+  const medHeld = held.length ? held.slice().sort((a, b) => a - b)[Math.floor(held.length / 2)] : 0
+  if (opts.expectHeldSec && medHeld < opts.expectHeldSec) verdicts.push(`notes too short — median hold ${medHeld}s < expected ${opts.expectHeldSec}s (re-triggering / not sustaining)`)
+  const wob = notes.filter(n => n.sustainCV > 0.28).length
+  if (wob > notes.length / 2) verdicts.push(`notes don't hold FLAT — ${wob}/${notes.length} have sustainCV>0.28 (decay/wobble instead of a steady drone)`)
+  const chops = notes.filter(n => n.gapMs > 60).length
+  if (chops) verdicts.push(`${chops} release GAP(s) >60ms between notes — the drone is being chopped, not held`)
+  if (opts.expectPureSub && harm && harm.purity < 0.6) verdicts.push(`not a pure sub — fundamental is only ${(harm.purity * 100).toFixed(0)}% of the harmonic energy (${f0}Hz, richness ${harm.richness}); heavier lowpass / less saturation`)
+  return { onsets: on, notes, f0, harmonics: harm, medHeldSec: medHeld, verdicts }
+}
+
 const rms = s => { let sq = 0; for (let i = 0; i < s.length; i++) sq += s[i] * s[i]; return Math.sqrt(sq / (s.length || 1)) }
 const peak = s => { let p = 0; for (let i = 0; i < s.length; i++) { const a = Math.abs(s[i]); if (a > p) p = a } return p }
 const dbfs = r => r > 0 ? +(20 * Math.log10(r)).toFixed(1) : -99

@@ -38,5 +38,28 @@ console.log('a present stab passes presence check:')
 const r3 = analyzeMix({ sampleRate: sr, master: mix(sine(80, 0.5), sine(2500, 0.4)), stems: { Bass: sine(80, 0.5), Stab: sine(2500, 0.4) } }, { genre: 'dark-pop' })
 ok(!r3.verdicts.some(v => v.tag === 'part-dull'), 'bright stab not flagged dull', r3.verdicts.map(v => v.tag))
 
+console.log('rhythm — onset detection:')
+const held = (f, dur, a = 0.5) => { const n = Math.floor(sr * dur), s = new Float32Array(n); for (let i = 0; i < n; i++) s[i] = a * Math.sin(2 * Math.PI * f * i / sr); return s }
+const gap = n => new Float32Array(Math.floor(sr * n))
+const concat = (...xs) => { const n = xs.reduce((a, b) => a + b.length, 0), s = new Float32Array(n); let o = 0; for (const x of xs) { s.set(x, o); o += x.length } return s }
+import { detectOnsets, analyzeStem } from './listen-analyzer.mjs'
+ok(detectOnsets(held(50, 2), sr).count === 1, 'one held 2s note → 1 onset', detectOnsets(held(50, 2), sr).count)
+const four = concat(held(50, 0.4), gap(0.1), held(50, 0.4), gap(0.1), held(50, 0.4), gap(0.1), held(50, 0.4))
+ok(detectOnsets(four, sr).count === 4, 'four re-triggered notes → 4 onsets', detectOnsets(four, sr).count)
+
+console.log('sustain — hold flat vs decay, and the drone check:')
+const rs1 = analyzeStem(held(46, 2), sr, { f0: 46, expectHeldSec: 1.5, expectPureSub: true })
+ok(rs1.medHeldSec >= 1.6, 'held sine sustains ~2s', rs1.medHeldSec)
+ok(rs1.notes[0].sustainCV < 0.1, 'held sine is FLAT (low CV)', rs1.notes[0]?.sustainCV)
+ok(rs1.harmonics.purity > 0.9, 'pure sine → high sub purity', rs1.harmonics.purity)
+ok(rs1.verdicts.length === 0, 'clean 2s sub drone → no verdicts', rs1.verdicts)
+// decaying note: should NOT read as a flat 2s hold
+const dec = (() => { const n = Math.floor(sr * 2), s = new Float32Array(n); for (let i = 0; i < n; i++) s[i] = 0.6 * Math.exp(-3 * i / sr) * Math.sin(2 * Math.PI * 46 * i / sr); return s })()
+const rs2 = analyzeStem(dec, sr, { f0: 46, expectHeldSec: 1.5 })
+ok(rs2.medHeldSec < 1.5 || rs2.verdicts.some(v => /short|hold/.test(v)), 'decaying note flagged as not sustaining', { held: rs2.medHeldSec, v: rs2.verdicts })
+// harmonically rich → not a pure sub
+const rich = (() => { const n = Math.floor(sr * 2), s = new Float32Array(n); for (let i = 0; i < n; i++) { const p = 2 * Math.PI * 46 * i / sr; s[i] = 0.4 * (Math.sin(p) + 0.8 * Math.sin(2 * p) + 0.6 * Math.sin(3 * p)) } return s })()
+ok(analyzeStem(rich, sr, { f0: 46, expectPureSub: true }).verdicts.some(v => /pure sub/.test(v)), 'rich tone flagged not-pure-sub', analyzeStem(rich, sr, { f0: 46, expectPureSub: true }).harmonics.purity)
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

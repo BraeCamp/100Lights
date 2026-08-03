@@ -24,7 +24,13 @@ var Listen = (() => {
     GENRE_TARGETS: () => GENRE_TARGETS,
     PRESENCE_BANDS: () => PRESENCE_BANDS,
     analyzeMix: () => analyzeMix,
+    analyzeStem: () => analyzeStem,
+    detectF0: () => detectF0,
+    detectOnsets: () => detectOnsets,
+    envelope: () => envelope,
     fft: () => fft,
+    harmonics: () => harmonics,
+    noteProfiles: () => noteProfiles,
     roleOf: () => roleOf,
     spectrum: () => spectrum
   });
@@ -127,6 +133,132 @@ var Listen = (() => {
     const bandPct = {};
     for (const b in bandP) bandPct[b] = total > 0 ? +(bandP[b] / total).toFixed(4) : 0;
     return { centroid: Math.round(centroid), rolloff: Math.round(rolloff), bandPct, energy: total };
+  }
+  function envelope(signal, sr, win = 1024, hop = 256) {
+    const t = [], e = [];
+    for (let s = 0; s + win <= signal.length; s += hop) {
+      let sq = 0;
+      for (let j = 0; j < win; j++) sq += signal[s + j] * signal[s + j];
+      e.push(Math.sqrt(sq / win));
+      t.push((s + win / 2) / sr);
+    }
+    return { t, e };
+  }
+  function detectOnsets(signal, sr, { minGapSec = 0.06, openRel = 0.18, closeRel = 0.1 } = {}) {
+    const { t, e } = envelope(signal, sr, 512, 128);
+    const mx = Math.max(1e-9, ...e);
+    const openT = openRel * mx, closeT = closeRel * mx;
+    const times = [];
+    let active = false, last = -1e9;
+    for (let i = 0; i < e.length; i++) {
+      if (!active) {
+        if (e[i] > openT && t[i] - last > minGapSec) {
+          times.push(+t[i].toFixed(3));
+          last = t[i];
+          active = true;
+        }
+      } else if (e[i] < closeT) active = false;
+    }
+    const iois = times.slice(1).map((x, i) => +(x - times[i]).toFixed(3));
+    return { times, count: times.length, iois };
+  }
+  function noteProfiles(signal, sr, onsetTimes) {
+    const { t, e } = envelope(signal, sr, 1024, 256);
+    const at = (sec) => {
+      let i = 0;
+      while (i < t.length - 1 && t[i] < sec) i++;
+      return i;
+    };
+    const out = [];
+    const bounds = [...onsetTimes, t[t.length - 1] + 1];
+    for (let k = 0; k < onsetTimes.length; k++) {
+      const a = at(bounds[k]), z = at(bounds[k + 1]);
+      let peak2 = 0, pi = a;
+      for (let i = a; i < z; i++) if (e[i] > peak2) {
+        peak2 = e[i];
+        pi = i;
+      }
+      if (peak2 < 1e-5) continue;
+      const floor = 0.3 * peak2;
+      let end = pi;
+      for (let i = pi; i < z; i++) {
+        if (e[i] >= floor) end = i;
+        else if (e[i] < 0.12 * peak2) break;
+      }
+      const heldSec = +(t[end] - t[a]).toFixed(3);
+      const s0 = Math.min(pi + 1, end);
+      const seg = e.slice(s0, end + 1);
+      const mean = seg.reduce((x, y) => x + y, 0) / (seg.length || 1);
+      const sd = Math.sqrt(seg.reduce((x, y) => x + (y - mean) ** 2, 0) / (seg.length || 1));
+      const cv = mean > 0 ? +(sd / mean).toFixed(3) : 0;
+      const attackMs = Math.round((t[pi] - t[a]) * 1e3);
+      const gapMs = k + 1 < onsetTimes.length ? Math.round(Math.max(0, bounds[k + 1] - t[end]) * 1e3) : 0;
+      out.push({ onset: +t[a].toFixed(3), heldSec, sustainCV: cv, attackMs, gapMs, peak: +peak2.toFixed(4) });
+    }
+    return out;
+  }
+  function detectF0(signal, sr, fmax = 400, fftSize = 8192) {
+    const { bandPct } = spectrum(signal, sr, fftSize);
+    const half = fftSize / 2, hann = new Float32Array(fftSize);
+    for (let i = 0; i < fftSize; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
+    const re = new Float64Array(fftSize), im = new Float64Array(fftSize);
+    const start = Math.max(0, Math.floor(signal.length / 2) - fftSize);
+    for (let i = 0; i < fftSize; i++) {
+      re[i] = (signal[start + i] || 0) * hann[i];
+      im[i] = 0;
+    }
+    fft(re, im);
+    const binHz = sr / fftSize;
+    let best = 0, bf = 0;
+    for (let i = 1; i < half; i++) {
+      const f = i * binHz;
+      if (f < 20 || f > fmax) continue;
+      const m = re[i] * re[i] + im[i] * im[i];
+      if (m > best) {
+        best = m;
+        bf = f;
+      }
+    }
+    return Math.round(bf);
+  }
+  function harmonics(signal, sr, f0, fftSize = 8192) {
+    const half = fftSize / 2, hann = new Float32Array(fftSize);
+    for (let i = 0; i < fftSize; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
+    const re = new Float64Array(fftSize), im = new Float64Array(fftSize);
+    const start = Math.max(0, Math.floor(signal.length / 2) - fftSize);
+    for (let i = 0; i < fftSize; i++) {
+      re[i] = (signal[start + i] || 0) * hann[i];
+      im[i] = 0;
+    }
+    fft(re, im);
+    const binHz = sr / fftSize;
+    const magAt = (f) => {
+      const b = Math.round(f / binHz);
+      let m = 0;
+      for (let i = Math.max(1, b - 2); i <= b + 2 && i < half; i++) m = Math.max(m, Math.sqrt(re[i] * re[i] + im[i] * im[i]));
+      return m;
+    };
+    const partials = [];
+    for (let k = 1; k <= 8; k++) partials.push(+magAt(k * f0).toFixed(4));
+    const p2 = partials.map((m) => m * m);
+    const tot = p2.reduce((a, b) => a + b, 0) || 1;
+    return { f0, partials, purity: +(p2[0] / tot).toFixed(3), richness: +((tot - p2[0]) / (p2[0] || 1)).toFixed(3) };
+  }
+  function analyzeStem(signal, sr, opts = {}) {
+    const on = detectOnsets(signal, sr);
+    const notes = noteProfiles(signal, sr, on.times);
+    const f0 = opts.f0 || detectF0(signal, sr);
+    const harm = f0 > 0 ? harmonics(signal, sr, f0) : null;
+    const verdicts = [];
+    const held = notes.map((n) => n.heldSec);
+    const medHeld = held.length ? held.slice().sort((a, b) => a - b)[Math.floor(held.length / 2)] : 0;
+    if (opts.expectHeldSec && medHeld < opts.expectHeldSec) verdicts.push(`notes too short \u2014 median hold ${medHeld}s < expected ${opts.expectHeldSec}s (re-triggering / not sustaining)`);
+    const wob = notes.filter((n) => n.sustainCV > 0.28).length;
+    if (wob > notes.length / 2) verdicts.push(`notes don't hold FLAT \u2014 ${wob}/${notes.length} have sustainCV>0.28 (decay/wobble instead of a steady drone)`);
+    const chops = notes.filter((n) => n.gapMs > 60).length;
+    if (chops) verdicts.push(`${chops} release GAP(s) >60ms between notes \u2014 the drone is being chopped, not held`);
+    if (opts.expectPureSub && harm && harm.purity < 0.6) verdicts.push(`not a pure sub \u2014 fundamental is only ${(harm.purity * 100).toFixed(0)}% of the harmonic energy (${f0}Hz, richness ${harm.richness}); heavier lowpass / less saturation`);
+    return { onsets: on, notes, f0, harmonics: harm, medHeldSec: medHeld, verdicts };
   }
   var rms = (s) => {
     let sq = 0;
