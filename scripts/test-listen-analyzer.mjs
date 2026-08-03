@@ -1,5 +1,5 @@
 // Calibration + logic tests for the listen analyzer. Run: node scripts/test-listen-analyzer.mjs
-import { spectrum, roleOf, analyzeMix } from './listen-analyzer.mjs'
+import { spectrum, roleOf, analyzeMix, autoBalance } from './listen-analyzer.mjs'
 
 const sr = 48000, N = sr
 const sine = (f, a = 0.5) => { const s = new Float32Array(N); for (let i = 0; i < N; i++) s[i] = a * Math.sin(2 * Math.PI * f * i / sr); return s }
@@ -60,6 +60,14 @@ ok(rs2.medHeldSec < 1.5 || rs2.verdicts.some(v => /short|hold/.test(v)), 'decayi
 // harmonically rich → not a pure sub
 const rich = (() => { const n = Math.floor(sr * 2), s = new Float32Array(n); for (let i = 0; i < n; i++) { const p = 2 * Math.PI * 46 * i / sr; s[i] = 0.4 * (Math.sin(p) + 0.8 * Math.sin(2 * p) + 0.6 * Math.sin(3 * p)) } return s })()
 ok(analyzeStem(rich, sr, { f0: 46, expectPureSub: true }).verdicts.some(v => /pure sub/.test(v)), 'rich tone flagged not-pure-sub', analyzeStem(rich, sr, { f0: 46, expectPureSub: true }).harmonics.purity)
+
+console.log('auto-mix-balance:')
+{
+  const b = autoBalance({ Bass: { dBFS: -8, role: 'bass' }, Stab: { dBFS: -26, role: 'stab' }, Drums: { dBFS: -13, role: 'drums' } }, { genre: 'dark-pop' })
+  ok(b.Bass.adjustDb < -3, 'too-loud bass → cut', b.Bass.adjustDb)
+  ok(b.Stab.adjustDb > 3, 'buried stab → boost', b.Stab.adjustDb)
+  ok(Math.abs(b.Drums.adjustDb) < 1.5, 'on-target drums → ~no change', b.Drums.adjustDb)
+}
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

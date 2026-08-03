@@ -21,10 +21,12 @@ var Listen = (() => {
   // scripts/listen-analyzer.mjs
   var listen_analyzer_exports = {};
   __export(listen_analyzer_exports, {
+    BALANCE_TARGETS: () => BALANCE_TARGETS,
     GENRE_TARGETS: () => GENRE_TARGETS,
     PRESENCE_BANDS: () => PRESENCE_BANDS,
     analyzeMix: () => analyzeMix,
     analyzeStem: () => analyzeStem,
+    autoBalance: () => autoBalance,
     detectF0: () => detectF0,
     detectOnsets: () => detectOnsets,
     envelope: () => envelope,
@@ -295,6 +297,23 @@ var Listen = (() => {
     if (!list.length) return new Float32Array(0);
     const n = list[0].length, out = new Float32Array(n);
     for (const s of list) for (let i = 0; i < n && i < s.length; i++) out[i] += s[i];
+    return out;
+  }
+  var BALANCE_TARGETS = {
+    "dark-pop": { drums: -13, bass: -13, stab: -17, lead: -16, pad: -24, other: -20 },
+    "synthwave": { drums: -13, bass: -14, stab: -16, lead: -14, pad: -23, other: -19 },
+    default: { drums: -13, bass: -14, stab: -17, lead: -15, pad: -24, other: -20 }
+  };
+  function autoBalance(stems, opts = {}) {
+    const T = BALANCE_TARGETS[opts.genre] || BALANCE_TARGETS.default;
+    const out = {};
+    for (const name in stems) {
+      const v = stems[name], role = v.role || roleOf(name);
+      const target = T[role] != null ? T[role] : T.other;
+      let mult = Math.pow(10, (target - v.dBFS) / 20);
+      mult = Math.max(0.35, Math.min(2.8, mult));
+      out[name] = { role, currentDb: v.dBFS, targetDb: target, gainMult: +mult.toFixed(3), adjustDb: +(20 * Math.log10(mult)).toFixed(1) };
+    }
     return out;
   }
   function analyzeMix(render, opts = {}) {

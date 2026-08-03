@@ -36,14 +36,14 @@ const NONE = { type: 'none', params: {} }
 const SUB_SINE = { type: 'poly', params: { preset: 'Sub Sine', waveform: 'sine', attack: 0.004, decay: 0.0, sustain: 1.0, release: 0.08, detune: 0, filterType: 'lowpass', filterCutoff: 130, filterResonance: 0.7, lfoEnabled: false, lfoRate: 4, lfoDepth: 0, lfoTarget: 'filter', lfoWaveform: 'sine' } }
 
 const T = {
-  drums: { name: 'Drums', instrument: kit.instrument, volume: 0.7, pan: 0, fx: [
+  drums: { name: 'Drums', instrument: kit.instrument, volume: 0.9, pan: 0, fx: [
     { id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -15, ratio: 3, attack: 0.004, release: 0.11, knee: 6, makeupGain: 1 } },
   ] },
   bass: { name: 'Bass', instrument: SUB_SINE, volume: 0.42, pan: 0, preset: null, fx: [
     { id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.16, color: 0.28, output: -1 } },
     { id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -18, ratio: 3, attack: 0.008, release: 0.14, knee: 6, makeupGain: 0, sidechainTrackId: null } },
   ] },
-  pad: { name: 'Pad', instrument: NONE, volume: 0.34, pan: 0.12, preset: 'builtin-12', fx: [
+  pad: { name: 'Pad', instrument: NONE, volume: 0.52, pan: 0.12, preset: 'builtin-12', fx: [
     { id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.36, decay: 3, preDelay: 0.03 } },
     { id: uid('e'), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: 6000, q: 0.9 } },
   ] },

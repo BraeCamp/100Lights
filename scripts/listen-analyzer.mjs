@@ -221,6 +221,29 @@ function sumSignals(list) {
   return out
 }
 
+// ── AUTO-MIX-BALANCE — turn per-stem levels into concrete gain trims ──────────
+// Target loudness per ROLE (dBFS, dark-pop-ish). autoBalance() returns, per
+// stem, the gain multiplier to move it toward its role target — so instead of
+// hand-nudging one level per slow render, apply these to the track volumes and
+// re-render once. Clamped so it never makes a wild jump.
+export const BALANCE_TARGETS = {
+  'dark-pop':  { drums: -13, bass: -13, stab: -17, lead: -16, pad: -24, other: -20 },
+  'synthwave': { drums: -13, bass: -14, stab: -16, lead: -14, pad: -23, other: -19 },
+  default:     { drums: -13, bass: -14, stab: -17, lead: -15, pad: -24, other: -20 },
+}
+export function autoBalance(stems, opts = {}) {
+  const T = BALANCE_TARGETS[opts.genre] || BALANCE_TARGETS.default
+  const out = {}
+  for (const name in stems) {
+    const v = stems[name], role = v.role || roleOf(name)
+    const target = T[role] != null ? T[role] : T.other
+    let mult = Math.pow(10, (target - v.dBFS) / 20)
+    mult = Math.max(0.35, Math.min(2.8, mult))
+    out[name] = { role, currentDb: v.dBFS, targetDb: target, gainMult: +mult.toFixed(3), adjustDb: +(20 * Math.log10(mult)).toFixed(1) }
+  }
+  return out
+}
+
 // render = { sampleRate, master:Float32, stems:{ name:Float32 } }
 export function analyzeMix(render, opts = {}) {
   const sr = render.sampleRate || 48000
