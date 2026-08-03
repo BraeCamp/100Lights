@@ -1,0 +1,30 @@
+{
+  "song": "After Dark — Mr. Kitty (instrumental recreation)",
+  "note": "Build ONLY from known:true. Everything tagged VERIFY is my best attempt for Brae to check against Spotify and correct — then it becomes fact. Sources: (s)=looked-up metadata, (k)=my darkwave/structural knowledge, (b)=Brae's ear.",
+  "params": {
+    "key": "G# minor",
+    "tempo": 140,
+    "source": "s (songbpm/tunebat: G#, 140 BPM)",
+    "known": true
+  },
+  "elements": {
+    "known_present": ["bass (driving synth)", "bright arpeggio synth (the darkwave signature)", "dark pad", "drums"],
+    "absent": ["vocal — skipped (instrumental only); its melodic hook NOT reproduced"],
+    "source": "k — darkwave character; VERIFY the exact element list"
+  },
+  "harmony": {
+    "progression": "G#m - E - F# - D#m  (i - VI - VII - v)",
+    "status": "VERIFY — plausible G#-minor darkwave loop; could not confirm the exact chords (chord sources 403'd). All diatonic, so at worst it's the wrong right-key loop."
+  },
+  "structure": {
+    "status": "VERIFY — my attempt. Starts on the driving elements (arp + bass), NOT a pad swell; drums + pad enter after; a stripped break for contrast.",
+    "sections": ["intro: arp + bass", "verse: + drums + pad", "chorus: full", "break: stripped", "verse", "chorus", "outro"]
+  },
+  "questions_for_brae": [
+    "does it open with the arp, the bass, or the beat?",
+    "is the bass a driving pulse or a moving line?",
+    "the real chord progression (I guessed G#m-E-F#-D#m)",
+    "section order + lengths",
+    "any element I'm missing or that isn't actually there"
+  ]
+}
