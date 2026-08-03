@@ -248,6 +248,12 @@ const EXTRA = {
     bridge: [
       R('iv v VI III'), R('VI ii v i', 9), R('III VI iv v'), R('ii v i VI', 9), R('iv III VI VII'),
     ],
+    // more darkness / jazz / tension — added for vocabulary growth
+    extra: [
+      R('i VI ii v', 9), R('i iv VII VI'), R('i VII III VI'), R('VI v iv III'),
+      R('i ii III VI v iv VII i', 9), R('iv VI v i VII III VI ii', 9),
+      R('i i VII VI v v iv III'), R('VI VII v i iv v VI VII'),
+    ],
   },
   major: {
     ground: [
@@ -744,10 +750,10 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   // recipes (4- or 8-bar); we pick a DISTINCT one for verse/chorus/bridge.
   const gr = (PROG_RECIPES[genreId] || {})[scale]
   const fb = PROGS[scale] || PROGS.minor
-  const ex = EXTRA[scale] || {}   // shared 35+-recipe pool, added to every song's options
-  const groundBank = [...((gr && gr.ground) || fb.ground), ...(ex.ground || [])].map(asRecipe)
-  const liftBank   = [...((gr && gr.lift)   || fb.lift),   ...(ex.lift   || [])].map(asRecipe)
-  const bridgeBank = [...((gr && gr.bridge) || [...fb.ground, ...fb.lift]), ...(ex.bridge || [])].map(asRecipe)
+  const ex = EXTRA[scale] || {}   // shared ~45-recipe pool, added to every song's options
+  const groundBank = [...((gr && gr.ground) || fb.ground), ...(ex.ground || []), ...(ex.extra || [])].map(asRecipe)
+  const liftBank   = [...((gr && gr.lift)   || fb.lift),   ...(ex.lift   || []), ...(ex.extra || [])].map(asRecipe)
+  const bridgeBank = [...((gr && gr.bridge) || [...fb.ground, ...fb.lift]), ...(ex.bridge || []), ...(ex.extra || [])].map(asRecipe)
 
   const recA = rand.pick(groundBank)
   let recB = rand.pick(liftBank); if (recKey(recB) === recKey(recA)) recB = rand.pick(liftBank)
@@ -998,6 +1004,39 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     }
   }
 
+  // ── PRESSURE & RELEASE ───────────────────────────────────────────────────────
+  // The section ENERGIES are the map. A big jump up into a peak is a moment to
+  // build tension then RELEASE it — so the drop lands harder than a straight cut.
+  // Per real rise we seed-pick an emphasis move:
+  //   · gap     — cut EVERYTHING for the last beat → silence → impact
+  //   · dropout — kill the drums for the last bar; the beat slams back on the 1
+  //   · solo    — strip to ONE exposed layer for the run-up (tension by reduction)
+  //   · muffle  — filter a sustained layer DOWN over the run-up, released at the drop
+  const dyn = []
+  {
+    const silence = (c, a, b) => {
+      c.notes = c.notes.filter(nte => {
+        const t = c.startBeat + nte.startBeat
+        if (t < a && t + nte.durationBeats > a) nte.durationBeats = +Math.max(0.05, a - t).toFixed(4)  // truncate crossing notes
+        return !(t >= a - 1e-6 && t < b - 1e-6)                                                        // drop notes inside the window
+      })
+    }
+    const ap0 = (t, v) => ({ id: uid('p'), t: +t.toFixed(3), v, smooth: false, h1: [0, 0], h2: [0, 0] })
+    for (let i = 1; i < secList.length; i++) {
+      const cur = secList[i], prev = secList[i - 1]
+      if (!(/drop|chorus|hook/.test(cur.role) && cur.energy >= 0.9)) continue
+      if (cur.energy - prev.energy < 0.2 || cur.start < 8) continue
+      const S = cur.start
+      const move = rand.pick(['gap', 'gap', 'dropout', 'solo', 'muffle', 'straight', 'straight'])
+      if (move === 'straight') continue
+      dyn.push(move)
+      if (move === 'gap') { const g = rand.pick([0.5, 1, 1]); for (const c of clips) silence(c, S - g, S) }
+      else if (move === 'dropout') { if (has('drums')) for (const c of clips) if (c.trackId === tid.drums) silence(c, S - 4, S) }
+      else if (move === 'solo') { const keep = tid[['lead', 'arp', 'keys'].find(has) || 'lead']; const back = rand.pick([1, 2]) * 4; for (const c of clips) if (c.trackId !== keep) silence(c, S - back, S) }
+      else if (move === 'muffle') { const mR = ['pad', 'keys', 'arp'].find(has); if (mR) clipEffects.push({ id: uid('x'), trackId: tid[mR], startBeat: +(S - 8).toFixed(3), durationBeats: 8, fx: { filterHz: 400 }, graph: [ap0(0, 0), ap0(6.5, 1), ap0(8, 0)] }) }
+    }
+  }
+
   const keyLabel = modeName ? `${KEY_NAMES[root]} ${scale}` : (keyStr || `${KEY_NAMES[root]} ${scale}`)
   return {
     name: `${genre.name} — ${keyLabel}`,
@@ -1006,7 +1045,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
     _tracks: roleList.join('+'),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}]`,
   }
 }
 
