@@ -84,6 +84,12 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'Pan Flute',       folder: 'Pan Flute – All Notes',           loNote: 60, hiNote: 96,  category: 'other',          group: 'Woodwinds' },
   { name: 'Church Organ',    folder: 'Church Organ – All Notes',        loNote: 36, hiNote: 96,  category: 'synth-organ',    group: 'Organ'     },
   { name: 'Harpsichord',     folder: 'Harpsichord – All Notes',         loNote: 41, hiNote: 89,  category: 'other',          group: 'Piano'     },
+  // A sustained SUB DRONE: a deep sampled bass shaped to start strong (instant
+  // attack + a short pitch-drop thump + a punchy filter-open front) then hold as
+  // a long, low drone (near-full sustain + a release pedal, sub/bass weight).
+  // Built for held one-note-per-chord basslines (Artemas-style), not repeated hits.
+  { name: 'Sub Drone', folder: 'Synth Bass – All Notes', loNote: 24, hiNote: 60, category: 'synth-bass', group: 'Bass',
+    sound: { fx: { attack: 0, decay: 0.09, sustainLevel: 0.92, sustain: 0.35, gain: 1.12, filterHz: 2400, filterQ: 1.1, filterEnv: 0.45, drive: 0.18, sub: 0.7, bass: 0.5, pitchEnv: -3, pitchEnvTime: 0.05 } } },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -123,8 +129,12 @@ function save(presets: MidiPreset[]): void {
  */
 export function getPresets(): MidiPreset[] {
   const stored = load()
-  const builtInIds = new Set(BUILT_IN.map(b => b.folder))
-  const hasAllBuiltIns = BUILT_IN.every(b => stored.some(p => p.folder === b.folder && p.builtIn))
+  // Identity is folder + name (not folder alone) so a second built-in can reuse
+  // an existing sample folder as a distinct preset (e.g. "Sub Drone" over the
+  // Synth Bass samples with its own sound shaping). Samples still resolve by
+  // folder; only the preset's identity/metadata is name-scoped.
+  const bkey = (p: { folder: string; name: string }) => `${p.folder} ${p.name}`
+  const hasAllBuiltIns = BUILT_IN.every(b => stored.some(p => p.builtIn && bkey(p) === bkey(b)))
 
   if (!hasAllBuiltIns) {
     const now = new Date().toISOString()
@@ -145,13 +155,13 @@ export function getPresets(): MidiPreset[] {
   // range widenings (e.g. Synth Lead) reach users whose localStorage still has
   // the old values — playback is unaffected either way, this fixes the piano
   // roll's out-of-range flag and the picker's displayed range.
-  const defByFolder = new Map(BUILT_IN.map(b => [b.folder, b]))
+  const defByFolder = new Map(BUILT_IN.map(b => [bkey(b), b]))
   const builtIns = stored.filter(p => p.builtIn).sort((a, b) => {
-    const ai = BUILT_IN.findIndex(x => x.folder === a.folder)
-    const bi = BUILT_IN.findIndex(x => x.folder === b.folder)
+    const ai = BUILT_IN.findIndex(x => bkey(x) === bkey(a))
+    const bi = BUILT_IN.findIndex(x => bkey(x) === bkey(b))
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
   }).map(p => {
-    const def = defByFolder.get(p.folder)
+    const def = defByFolder.get(bkey(p))
     return def ? { ...p, name: def.name, loNote: def.loNote, hiNote: def.hiNote, category: def.category, group: def.group } : p
   })
   const userPresets = stored.filter(p => !p.builtIn)
