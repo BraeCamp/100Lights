@@ -38,6 +38,7 @@ import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { analyzeSpec } from './analyze-arrangement.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(ROOT, 'public', '_songgen')
@@ -1112,7 +1113,20 @@ async function main() {
     keyStr = pos[1] || st.key
     opts = { tempo: st.bpm, sig: st.sig, styleName: styleArg.split('=')[1] }
   }
-  const spec = compose(libs, genreId, keyStr, seed, opts)
+  // SELF-SELECT: with --best=K, generate K candidates and keep the one whose
+  // arrangement scores highest (score minus a penalty per flat-spot flag). The
+  // composer critiquing its own output and picking the most dynamic take.
+  const bestArg = argv.find(a => a.startsWith('--best='))
+  const K = bestArg ? Math.max(1, Math.min(24, parseInt(bestArg.split('=')[1], 10) || 1)) : 1
+  let spec, pick = null
+  for (let i = 0; i < K; i++) {
+    const s = compose(libs, genreId, keyStr, seed + i * 7919, opts)
+    const r = analyzeSpec(s)
+    const rank = r.score - r.flags.length * 10
+    if (!pick || rank > pick.rank) pick = { spec: s, r, rank, seedUsed: seed + i * 7919 }
+  }
+  spec = pick.spec
+  if (K > 1) console.log(`  self-select: best of ${K} — seed ${pick.seedUsed} · score ${pick.r.score}/100 · ${pick.r.flags.length} flag(s) · density ${pick.r.spark.density}`)
   const nNotes = spec.clips.reduce((a, c) => a + c.notes.length, 0)
   const end = Math.max(...spec.clips.map(c => c.startBeat + c.durationBeats), 0)
   const slug = `${styleArg ? styleArg.split('=')[1] + '-' : ''}${spec.genre}-${(keyStr || spec.scale).replace(/\s+/g, '')}`.toLowerCase()

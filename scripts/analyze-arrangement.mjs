@@ -10,22 +10,16 @@
 
 import { readFileSync } from 'node:fs'
 
-function loadSpec(path) {
-  const j = JSON.parse(readFileSync(path, 'utf8'))
-  const dp = j._type === '100lights-project' ? j.dawProject : j
-  const clipsSrc = dp.arrangementClips ?? dp.clips ?? []
-  const trackName = id => (dp.tracks.find(t => t.id === id) || {}).name
-  return {
-    tempo: dp.tempo,
-    clips: clipsSrc.map(c => ({ name: trackName(c.trackId), startBeat: c.startBeat, durationBeats: c.durationBeats, isDrum: !!c.isDrumClip, notes: c.notes || [] })),
-  }
-}
-
 const SPARK = '▁▂▃▄▅▆▇█'
 const spark = arr => { const mx = Math.max(...arr, 1); return arr.map(v => SPARK[Math.min(7, Math.round(v / mx * 7))]).join('') }
 
-export function analyze(path) {
-  const { tempo, clips } = loadSpec(path)
+// Works on a raw build-spec, a .cfproj object, or a loaded dawProject.
+export function analyzeSpec(input) {
+  const dp = input._type === '100lights-project' ? input.dawProject : input
+  const clipsSrc = dp.arrangementClips ?? dp.clips ?? []
+  const tname = id => (dp.tracks.find(t => t.id === id) || {}).name
+  const tempo = dp.tempo
+  const clips = clipsSrc.map(c => ({ name: tname(c.trackId), startBeat: c.startBeat, durationBeats: c.durationBeats, isDrum: !!(c.isDrumClip ?? c.isDrum), notes: c.notes || [] }))
   const end = Math.max(0, ...clips.map(c => c.startBeat + c.durationBeats))
   const bars = Math.max(1, Math.ceil(end / 4))
   const density = new Array(bars).fill(0), layers = new Array(bars).fill(0), drumsOn = new Array(bars).fill(0)
@@ -54,8 +48,10 @@ export function analyze(path) {
   if (maxflat * 4 >= 16) flags.push(`FLAT stretch ~${maxflat * 4} bars of near-constant density — break it up (fill / drop-out / muffle)`)
   if (!hasBreakdown) flags.push('No true breakdown block (drums never drop out) — a moment of space makes drops hit harder')
   const score = Math.round(Math.max(0, Math.min(100, cv * 120 + (laymax - laymin) * 8 + (hasBreakdown ? 15 : 0))))
-  return { path, tempo, bars, blocks, cv: +cv.toFixed(2), layRange: [laymin, laymax], maxFlatBars: maxflat * 4, score, flags }
+  return { tempo, bars, blocks, cv: +cv.toFixed(2), layRange: [laymin, laymax], maxFlatBars: maxflat * 4, score, flags, spark: { density: spark(blocks.map(b => b.dens)), layers: spark(blocks.map(b => b.lay)) } }
 }
+
+export function analyze(path) { return { path, ...analyzeSpec(JSON.parse(readFileSync(path, 'utf8'))) } }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const paths = process.argv.slice(2)
