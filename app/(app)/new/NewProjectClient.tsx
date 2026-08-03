@@ -8,6 +8,7 @@ import { Film, AudioLines, Palette, ArrowLeft, ArrowRight, Check } from 'lucide-
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import ProjectEditor from '@/components/editor/ProjectEditor'
+import { BUILT_IN_TEMPLATES } from '@/lib/templates'
 import type { PlatformFlags } from '@/lib/platform-flags'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import MobileDawClient from '@/components/mobile/MobileDawClient'
@@ -29,8 +30,9 @@ export default function NewProjectClient({ flags }: Props) {
   const communityItemParam = searchParams.get('communityItem')
   const fixtureParam = searchParams.get('fixture')
   const demoProjectParam = searchParams.get('demoProject')   // editable recreation of an article clip
-  // Community deep-links and demo fixtures always target the DAW
-  const deepLink = starterParam || communityItemParam || fixtureParam || demoProjectParam
+  const templateParam = searchParams.get('template')         // built-in starter template
+  // Community deep-links, demo fixtures and templates always target the (audio) DAW
+  const deepLink = starterParam || communityItemParam || fixtureParam || demoProjectParam || templateParam
   const moduleParam   = searchParams.get('modules') ?? (deepLink ? 'audio' : null)
   const audioModeParam = searchParams.get('audioMode') ?? (deepLink ? 'music' : null)
 
@@ -47,6 +49,10 @@ export default function NewProjectClient({ flags }: Props) {
   const [phase, setPhase]       = useState<'pick' | 'edit'>(initModule !== null ? 'edit' : 'pick')
   const [projectName, setProjectName] = useState('')
   const [selected, setSelected] = useState<ModuleKey | null>(initModule)
+  const [templateId, setTemplateId] = useState<string | null>(templateParam)
+  const audioAvailable = visibleMods.some(m => m.key === 'audio')
+  // Start a new AUDIO project pre-loaded from a built-in template.
+  function startTemplate(id: string | null) { setTemplateId(id); setSelected('audio'); setPhase('edit') }
   const nameRef = useRef<HTMLInputElement>(null)
 
   function toggle(key: ModuleKey) {
@@ -69,6 +75,7 @@ export default function NewProjectClient({ flags }: Props) {
           starterId={starterParam ?? undefined}
           fixtureId={fixtureParam ?? undefined}
           demoProjectId={demoProjectParam ?? undefined}
+          templateId={templateId ?? undefined}
         />
       </div>
     )
@@ -192,6 +199,45 @@ export default function NewProjectClient({ flags }: Props) {
               })}
             </div>
           </div>
+
+          {/* Start from a template (audio) — so users don't begin from a blank timeline */}
+          {audioAvailable && (
+            <div style={{ marginBottom: 44 }}>
+              <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>
+                Start from a template
+              </label>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 14 }}>
+                Optional — opens an audio project pre-loaded with a few instruments so you have something to build on.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+                {BUILT_IN_TEMPLATES.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => startTemplate(t.id)}
+                    aria-label={`Start from template ${t.name}`}
+                    style={{
+                      textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 10,
+                      background: 'var(--bg-card)', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8,
+                      transition: 'border-color 0.12s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{t.name}</span>
+                      <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{t.keyLabel} · {t.tempo}</span>
+                    </div>
+                    <div style={{ fontSize: 10, lineHeight: 1.5, color: 'var(--text-secondary)' }}>{t.description}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {t.instruments.map(i => (
+                        <span key={i} style={{ fontSize: 8.5, padding: '1px 6px', borderRadius: 3, background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>{i}</span>
+                      ))}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Manifest bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, paddingTop: 20, borderTop: '1px solid var(--border)' }}>

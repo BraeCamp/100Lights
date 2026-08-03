@@ -18,6 +18,7 @@ let _effectClipboard: import('@/lib/daw-types').ClipEffect[] | null = null
 let _lastCopied: 'clips' | 'effects' | null = null
 import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
+import { useUITierOptional } from '../UITierProvider'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
 import VersionHistory from './VersionHistory'
@@ -408,6 +409,12 @@ export default function ArrangementView() {
   const [beatW, setBeatW]           = useState(40)
   const [scrollLeft, setScrollLeft] = useState(MIN_SCROLL)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
+  const [snapMenu, setSnapMenu]     = useState(false)   // desktop snap dropdown
+  const snapLabelOf = (m: SnapMode) => (m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m)
+  // "Everything" tier only: split the timeline with full-height dividers at every
+  // tempo change (and section boundary — where a time-signature change is marked).
+  const uiTier = useUITierOptional()
+  const showTimelineDividers = (uiTier?.atLeast('full') ?? false)
   const [tsPopover, setTsPopover]   = useState<{ x: number; y: number; beat?: number } | null>(null)
   const [openComment, setOpenComment]   = useState<{ id: string; x: number; y: number } | null>(null)
   const [newCommentAt, setNewCommentAt] = useState<{ beat: number; x: number; y: number } | null>(null)
@@ -1400,12 +1407,25 @@ export default function ArrangementView() {
         <button onClick={fitToWindow} style={toolBtn} title="Fit to window" data-help-id="fit-window"><Maximize2 size={13} /></button>
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>SNAP</span>
-        {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
-          <button key={m} onClick={() => setSnap(m)} data-help-id="snap"
-            style={{ ...toolBtn, background: snap === m ? 'var(--bg-card)' : 'transparent', color: snap === m ? 'var(--text-primary)' : 'var(--text-muted)', border: snap === m ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
-            {m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m}
+        <div style={{ position: 'relative' }} data-help-id="snap">
+          <button onClick={() => setSnapMenu(v => !v)} title="Grid snap"
+            style={{ ...toolBtn, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border)', fontSize: 9, padding: '2px 7px', display: 'flex', alignItems: 'center', gap: 4, minWidth: 40 }}>
+            {snapLabelOf(snap)} <span style={{ fontSize: 7, opacity: 0.7 }}>▾</span>
           </button>
-        ))}
+          {snapMenu && (
+            <>
+              <div onClick={() => setSnapMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+              <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: 3, zIndex: 41, minWidth: 70, boxShadow: '0 4px 14px rgba(0,0,0,0.35)' }}>
+                {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
+                  <button key={m} onClick={() => { setSnap(m); setSnapMenu(false) }}
+                    style={{ ...toolBtn, display: 'block', width: '100%', textAlign: 'left', background: snap === m ? 'var(--bg-surface)' : 'transparent', color: snap === m ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', fontSize: 10, padding: '4px 8px' }}>
+                    {snapLabelOf(m)}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 2 }} title="Hold ⌥ Option while dragging to bypass snap">⌥=free</span>
         <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
         {/* Waveform zoom control */}
@@ -1762,6 +1782,22 @@ export default function ArrangementView() {
         }) : undefined}
         onTouchEnd={isMobile ? (e => { if (e.touches.length === 0) laneGesture.current = null }) : undefined}
       >
+        {/* "Everything" tier: full-height timeline dividers at every tempo change
+             (orange) and section boundary (section colour) — a change of BPM or
+             time signature (marked with a section) splits the timeline. */}
+        {showTimelineDividers && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
+            {[
+              ...(project.tempoMarkers ?? []).map(m => ({ beat: m.beat, color: '#fb923c', key: 'tm' + m.id })),
+              ...(project.sections ?? []).map(s => ({ beat: s.beat, color: s.color || 'var(--text-muted)', key: 'sec' + s.id })),
+            ].map(d => {
+              const x = hdrW + d.beat * beatW - scrollLeft
+              if (x < hdrW - 1) return null
+              return <div key={d.key} style={{ position: 'absolute', top: 0, bottom: 0, left: x, width: 1, background: d.color, opacity: 0.4 }} />
+            })}
+          </div>
+        )}
+
         {/* Music empty-state hint: point brand-new users at the library */}
         {audioMode !== 'podcast' && project.arrangementClips.length === 0 && project.tracks.length > 0 && (
           <div style={{

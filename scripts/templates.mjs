@@ -79,8 +79,18 @@ function buildTemplate(cfg) {
   const out = join(ROOT, 'public', '_songgen', `${cfg.file}.json`)
   mkdirSync(dirname(out), { recursive: true })
   writeFileSync(out, JSON.stringify(spec))
+  // Also emit the editor-ready dawProject the /new template gallery loads.
+  const dawProject = {
+    id: cfg.file, name: cfg.name, tempo: cfg.tempo, timeSignatureNum: 4, timeSignatureDen: 4,
+    tracks: tracks.map(t => ({ id: t.id, name: t.name, type: 'audio', color: '#888', volume: t.volume, pan: t.pan, mute: false, solo: false, armed: false, height: 64, effects: t.effects || [], instrument: t.instrument })),
+    arrangementClips: clips.map(c => ({ kind: 'midi', id: c.id, trackId: c.trackId, name: 'clip', startBeat: c.startBeat, durationBeats: c.durationBeats, notes: c.notes.map((nt, j) => ({ id: c.id + '-' + j, ...nt })), isDrumClip: !!c.isDrumClip, ...(c.presetId ? { presetId: c.presetId } : {}), ...(c.rollFx ? { rollFx: c.rollFx } : {}) })),
+    scenes: [], sessionGrid: {}, loopStart: 0, loopEnd: totalBeats, loopEnabled: false, masterVolume: spec.masterVolume,
+    automationLanes: [], clipEffects: [], returnTracks: [], takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0, cueMarkers: [], sections: [], key: cfg.key, scale: cfg.scale,
+  }
+  const tdir = join(ROOT, 'public', 'templates'); mkdirSync(tdir, { recursive: true })
+  writeFileSync(join(tdir, `${cfg.file}.json`), JSON.stringify(dawProject))
   const clipsPerTrack = tracks.map(t => clips.filter(c => c.trackId === t.id).length)
-  console.log(`${cfg.name} — ${cfg.tempo}bpm · ${(totalBeats / cfg.tempo * 60).toFixed(0)}s · ${bar} bars · clips/track [${clipsPerTrack}] → ${cfg.file}.json`)
+  console.log(`${cfg.name} — ${cfg.tempo}bpm · ${(totalBeats / cfg.tempo * 60).toFixed(0)}s · ${bar} bars · clips/track [${clipsPerTrack}] → templates/${cfg.file}.json`)
 }
 
 // A layer-in/out arc reused by all three (intro sparse → build → stripped break → build → resolve).

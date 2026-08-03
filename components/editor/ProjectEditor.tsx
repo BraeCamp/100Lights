@@ -80,6 +80,9 @@ export interface ProjectEditorProps {
   /** Build an editable recreation of a learn-article demo clip (id from
    *  lib/demo-projects.ts) as the starting state — the admin "Open in studio". */
   demoProjectId?: string
+  /** Built-in starter TEMPLATE id (lib/templates.ts) — loads its dawProject from
+   *  /templates/<id>.json as the starting state. Static, same-origin, id-restricted. */
+  templateId?: string
   audioMode?: 'music' | 'podcast'
 }
 
@@ -288,7 +291,7 @@ style={{
 
 // ── Main component ────────────────────────────────────────────
 
-export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId, demoProjectId }: ProjectEditorProps) {
+export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId, demoProjectId, templateId }: ProjectEditorProps) {
   const isNewProject = !projectId
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
     isNewProject ? (moduleProp ?? ['video']) : null
@@ -297,7 +300,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
   const [outputs, setOutputs]           = useState<Output[]>([])
   const [savedData, setSavedData]       = useState<CfProjFile | null>(null)
   const [starterProject, setStarterProject] = useState<DawProject | null>(null)
-  const [starterLoading, setStarterLoading] = useState(!!starterId || !!fixtureId)
+  const [starterLoading, setStarterLoading] = useState(!!starterId || !!fixtureId || !!templateId)
   useEffect(() => {
     if (!starterId) return
     let alive = true
@@ -320,6 +323,16 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       .catch(() => { if (alive) setStarterLoading(false) })
     return () => { alive = false }
   }, [fixtureId])
+  // Built-in starter TEMPLATE — load its dawProject from /templates/<id>.json.
+  useEffect(() => {
+    if (!templateId || !/^[a-z0-9-]+$/.test(templateId)) return
+    let alive = true
+    fetch(`/templates/${templateId}.json`)
+      .then(r => r.ok ? r.json() : null)
+      .then((p: DawProject | null) => { if (alive && p) setStarterProject(p); if (alive) setStarterLoading(false) })
+      .catch(() => { if (alive) setStarterLoading(false) })
+    return () => { alive = false }
+  }, [templateId])
   // Editable recreation of an article demo clip — built synchronously, no fetch.
   useEffect(() => {
     if (!demoProjectId) return
