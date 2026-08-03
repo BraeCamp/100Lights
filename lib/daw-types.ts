@@ -431,6 +431,11 @@ export const POLY_PRESETS: Record<string, PolyInstrumentParams> = {
   // (Params are principled recipes; audition and tweak by ear to taste.)
   'Super Saw':       { waveform: 'sawtooth', attack: 0.01,  decay: 0.2,  sustain: 0.8,  release: 0.4,  detune: 0,   oscillators: [defaultOscLayer({ waveform: 'sawtooth', unison: 7, spread: 22 })], filterType: 'lowpass', filterCutoff: 4200, filterResonance: 1.4, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0,    lfoTarget: 'filter', lfoWaveform: 'sine' },
   'Deep Sub':        { waveform: 'sine',     attack: 0.008, decay: 0.15, sustain: 0.95, release: 0.35, detune: 0,   filterType: 'lowpass', filterCutoff: 220,  filterResonance: 0.7, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0,    lfoTarget: 'filter', lfoWaveform: 'sine' },
+  // A pure-sine SUBWOOFER drone: instant attack, DEAD-FLAT sustain (no decay dip),
+  // tiny release → a long held sub note that hits and holds "without much change
+  // or release". A synth oscillator, so it plays the true sub octave (<60Hz) that
+  // sampled basses can't reach, and never decays like a sample. purity ≈ 1.0.
+  'Sub Sine':        { waveform: 'sine',     attack: 0.004, decay: 0.0,  sustain: 1.0,  release: 0.08, detune: 0,   filterType: 'lowpass', filterCutoff: 130,  filterResonance: 0.7, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0,    lfoTarget: 'filter', lfoWaveform: 'sine' },
   'Acid Line':       { waveform: 'sawtooth', attack: 0.002, decay: 0.12, sustain: 0.25, release: 0.14, detune: 0,   filterType: 'lowpass', filterCutoff: 700,  filterResonance: 11,  lfoEnabled: true,  lfoRate: 2.2,  lfoDepth: 0.45, lfoTarget: 'filter', lfoWaveform: 'triangle' },
   'Wobble Bass':     { waveform: 'sawtooth', attack: 0.004, decay: 0.1,  sustain: 0.85, release: 0.14, detune: 8,   filterType: 'lowpass', filterCutoff: 640,  filterResonance: 7,   lfoEnabled: true,  lfoRate: 3.8,  lfoDepth: 0.55, lfoTarget: 'filter', lfoWaveform: 'sine' },
   'House Stab':      { waveform: 'sawtooth', attack: 0.003, decay: 0.09, sustain: 0.0,  release: 0.12, detune: 9,   filterType: 'lowpass', filterCutoff: 2600, filterResonance: 2.5, lfoEnabled: false, lfoRate: 4,    lfoDepth: 0,    lfoTarget: 'filter', lfoWaveform: 'sine' },

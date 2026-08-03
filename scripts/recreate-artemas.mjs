@@ -28,29 +28,30 @@ const rnd = () => { _s = (_s * 1664525 + 1013904223) >>> 0; return _s / 0xffffff
 const hv = (base, slot = 0) => { let v = base + (rnd() * 8 - 4); if (slot % 16 === 0) v += 6; else if (slot % 8 === 0) v += 3; else if (slot % 2 === 1) v -= 6; return Math.max(28, Math.min(122, Math.round(v))) }
 const note = (pitch, startBeat, dur, velocity) => ({ pitch, startBeat: +startBeat.toFixed(4), durationBeats: +Math.max(0.05, dur).toFixed(4), velocity })
 
-// ── Harmony: F# minor, loop F#m–A–D–D. Bass roots in OCTAVE 2 — the SUSTAINED
-// Drone sample only covers ≥C2, and SUSTAIN matters more than an extra octave of
-// depth (a decaying sample can't hold a 2s note). Heavy lowpass drops it to a
-// deep sub-ish tone anyway. (A true <60Hz sustained sub needs a synth source.)
-const ROOTS = [42, 45, 38, 38]                        // F#2≈92, A2≈110, D2≈73 Hz
+// ── Harmony: F# minor, loop F#m–A–D–D. Bass roots in OCTAVE 1 = TRUE sub range
+// — now possible because the bass is a SYNTH oscillator (Sub Sine), not a sample:
+// an oscillator has no low-note limit and never decays, so it holds a deep
+// (F#1≈46, A1≈55, D1≈37 Hz) note flat for the whole bar.
+const ROOTS = [30, 33, 26, 26]                        // F#1, A1, D1, D1
 const CH = [[54, 57, 61], [57, 61, 64], [50, 54, 57], [50, 54, 57]]   // F#m, A, D, D triads (mid register)
 const PAD = CH.map((c, i) => [c[0] - 12, ...c])
 const kit = DRUM_KITS.find(k => k.id === 'trap808') || DRUM_KITS[0]
 const NONE = { type: 'none', params: {} }
+// The synth Sub Sine (mirrors POLY_PRESETS['Sub Sine'] in lib/daw-types.ts):
+// pure sine, instant attack, dead-flat sustain, tiny release → a subwoofer drone.
+const SUB_SINE = { type: 'poly', params: { preset: 'Sub Sine', waveform: 'sine', attack: 0.004, decay: 0.0, sustain: 1.0, release: 0.08, detune: 0, filterType: 'lowpass', filterCutoff: 130, filterResonance: 0.7, lfoEnabled: false, lfoRate: 4, lfoDepth: 0, lfoTarget: 'filter', lfoWaveform: 'sine' } }
 
 // ── Tracks — minimal dark lineup ─────────────────────────────────────────────
 const T = {
   drums: { name: 'Drums', instrument: kit.instrument, volume: 0.72, pan: 0, fx: [
     { id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -16, ratio: 3, attack: 0.005, release: 0.12, knee: 6, makeupGain: 1 } },
   ] },
-  // SUB BASS — a long SUSTAINED subwoofer tone. Uses the DRONE sample (builtin-13,
-  // which holds indefinitely) not a decaying bass pluck, so a 2-3s note actually
-  // sustains flat with no release chop. Heavily lowpassed to ~110Hz → deep sub-ish
-  // tone. One held note per chord.
-  bass: { name: 'Bass', instrument: NONE, volume: 0.6, pan: 0, preset: 'builtin-5', fx: [   // Organ: instant attack, dead-flat sustain
-    { id: uid('e'), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: 110, q: 0.7 } },
-    { id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.16, color: 0.2, output: -1 } },
-    { id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -20, ratio: 4, attack: 0.01, release: 0.16, knee: 6, makeupGain: 2 } },
+  // SUB BASS — the SYNTH Sub Sine (poly oscillator), not a sample: instant attack,
+  // dead-flat sustain, true sub octave, purity ≈ 1.0. A gentle saturator adds a
+  // little harmonic so it's audible on small speakers without losing the sub.
+  bass: { name: 'Bass', instrument: SUB_SINE, volume: 0.42, pan: 0, preset: null, fx: [
+    { id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.14, color: 0.25, output: -1 } },
+    { id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -18, ratio: 3, attack: 0.01, release: 0.16, knee: 6, makeupGain: 0 } },
   ] },
   pad: { name: 'Pad', instrument: NONE, volume: 0.26, pan: 0.12, preset: 'builtin-30', fx: [
     { id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.4, decay: 3.4, preDelay: 0.03 } },
@@ -64,7 +65,6 @@ const T = {
 }
 for (const k in T) T[k].id = uid('t')
 const tracks = Object.entries(T).map(([k, t]) => ({ id: t.id, name: t.name, instrument: t.instrument, volume: t.volume, pan: t.pan, effects: t.fx }))
-const BASS_FX = { sub: 0.6, bass: 0.3, filterHz: 150, attack: 0, decay: 0, sustainLevel: 1 }   // fast hit, hold flat, deep
 const STAB_FX = { drive: 0.24, distortion: 0.04, highpassHz: 180, filterHz: 3000, mid: 0.16, sustainLevel: 0.85 }
 
 const clips = []
@@ -113,7 +113,7 @@ const hookStarts = []
 for (const sec of FORM) {
   if (sec.name === 'hook') hookStarts.push(bar * 4)
   const dc = clip('drums', bar, sec.bars, true)
-  const bc = clip('bass', bar, sec.bars, false, T.bass.preset, { ...BASS_FX })
+  const bc = clip('bass', bar, sec.bars, false, null, null)   // synth Sub Sine plays via the track instrument (no sample preset)
   const pc = clip('pad', bar, sec.bars, false, T.pad.preset)
   const sc = clip('stab', bar, sec.bars, false, T.stab.preset, { ...STAB_FX })
   for (let b = 0; b < sec.bars; b++) {
