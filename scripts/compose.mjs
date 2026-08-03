@@ -239,36 +239,106 @@ const EXTRA = {
       R('i VI iv v i VI III VII', 7), R('i v iv VII III VI ii v', 9),
       R('i VII VI v iv VI III i'), R('i iv VII III VI ii v i', 9),
       R('i III iv VI v VII i i'), R('i VI v iv VII III VI VII', 9),
+      // ── tripled: new dark / modern / adventurous minor grounds ──
+      R('i VI iv VII i VI III VII', 7), R('i III VI iv i v VI VII', 7), R('i VII v VI iv III ii i'),
+      R('i iv v i VII VI III VII', 7), R('i VI VII III iv v i i', 9), R('i v i VI iv VII III i'),
+      R('i iv VI VII v VI iv i'), R('i III VII iv VI v i i'), R('i VII VI III iv VII v i'),
+      R('i ii VII VI iv v III i', 9), R('i VI v VII iv III VII i'), R('i iv III VI v VII i i'),
+      R('i VII iv v VI III ii i', 9), R('i VI III iv VII v VI VII', 9), R('i v VI VII i iv III VII'),
+      R('i iv i v VI VII III i'), R('i VI VII v i iv III VII', 7), R('i III iv v VI VII i i'),
+      R('i i iv iv VI VI VII VII'), R('i VII i VI i v i iv'), R('i iv VI i v VII III VI', 9),
+      R('i VI ii III iv v VII i', 9), R('i III v VII VI iv ii i', 9), R('i v iv III VI VII i i'),
+      R('i VI iv i III VII v i'), R('i VII III v iv VI ii i', 9), R('i ii iv VI v VII III i', 9),
+      R('i VI VII i iv v III VII'), R('i iv v VI VII i III i'), R('i III VI VII iv v i i'),
+      R('i v VI iv i VII III VI', 9), R('i VI i iv VII III v i'), R('i iv VII v VI III ii i', 9),
     ],
     lift: [
       R('VI VII i i'), R('iv v VI VII'), R('VI iv i v', 9), R('iv VI III VII'),
       R('VI III iv i'), R('iv v i VI'), R('VI VII iv i'), R('iv i VII VI'),
       R('III VII i VI'), R('VI iv v i VI iv ii v', 9), R('iv VII III VI ii v i i', 9),
       R('VI VII i v iv VI III VII'),
+      // ── tripled ──
+      R('VI VII i iii iv v VI VII'), R('iv VI VII i v VI III VII'), R('VI iv VII i III VI ii v', 9),
+      R('iv v VI iv VII III VI VII'), R('VI III VII iv v VI i i'), R('iv VII VI v III VI ii v', 9),
+      R('VI v iv III VII i VI VII'), R('iv VI i VII VI iv v i'), R('III iv v VI VII i VI VII'),
+      R('VI VII iv v i VI III VII'), R('iv i v VI VII III VI VII'), R('VI iv iii v i VI ii v', 9),
+      R('iv III VI VII v i VI VII'), R('VI VII v i iv v VI VII'), R('iv VI v VII i III VI VII'),
+      R('III VI VII i iv v VI VII'), R('VI iv i v VI VII III i'), R('iv v i VI VII i III VII'),
+      R('VI VII III iv v i VI VII'), R('iv VI VII v i VI III i'),
     ],
     bridge: [
       R('iv v VI III'), R('VI ii v i', 9), R('III VI iv v'), R('ii v i VI', 9), R('iv III VI VII'),
+      // ── tripled ──
+      R('iv III VI VII v i iv v'), R('VI ii v i iv v III VI', 9), R('III VII iv VI v i VI VII'),
+      R('v iv III VI VII i ii v', 9), R('ii III iv v VI VII i i'), R('iv VI III VII v i VI VII'),
+      R('III iv v VI ii v i i', 9), R('VI VII v iv III i ii v', 9), R('ii v VI III iv VII i i'),
+      R('iv v III VI VII i VI VII'),
     ],
-    // more darkness / jazz / tension — added for vocabulary growth
     extra: [
       R('i VI ii v', 9), R('i iv VII VI'), R('i VII III VI'), R('VI v iv III'),
       R('i ii III VI v iv VII i', 9), R('iv VI v i VII III VI ii', 9),
       R('i i VII VI v v iv III'), R('VI VII v i iv v VI VII'),
+      // ── tripled: jazz / tension / uncommon color ──
+      R('i ii III iv v VI VII i', 9), R('i VI ii v i iv VII III', 9), R('iv v i III VI ii v i', 9),
+      R('i iii v VII VI iv ii i', 9), R('i VI III ii v iv VII i', 9), R('ii v i VI iv VII III i', 9),
+      R('i iv ii v III VI VII i', 9), R('VI ii III v i iv VII i', 9), R('i v VII iv III VI ii i', 9),
+      R('iv III ii v i VI VII i', 9), R('i VI iv ii v III VII i', 9), R('i ii v VI III iv VII i', 9),
     ],
   },
   major: {
     ground: [
       R('I V vi IV'), R('I iii vi IV'), R('vi V IV I'), R('I vi IV V'),
       R('I iii IV V I vi ii V'), R('I V vi iii IV I ii V'),
+      // ── tripled ──
+      R('I IV vi V'), R('I V IV vi'), R('I vi iii IV'), R('I IV V vi'), R('vi IV V I'),
+      R('I iii IV vi V I ii V'), R('I V vi IV I iii ii V'), R('I ii iii IV V vi I I'),
+      R('I vi V IV iii ii V I'), R('I IV I V vi iii ii V'), R('I V I vi IV V ii I'),
+      R('I iii vi ii IV V I I'), R('I vi IV I iii IV V I'), R('vi ii V I IV V vi I'),
+      R('I V vi iii IV V ii V'), R('I IV vi iii ii V I I'), R('I vi ii iii IV V I I'),
     ],
     lift: [
       R('vi IV I V'), R('IV I V vi'), R('vi iii IV V'), R('IV V vi iii'), R('I vi ii V vi IV I V'),
+      // ── tripled ──
+      R('vi V IV I'), R('IV V I vi'), R('ii V vi IV'), R('vi IV V iii'), R('IV vi I V'),
+      R('vi IV I V vi IV ii V'), R('IV V I vi ii V I I'), R('vi ii V I IV V I I'),
+      R('IV I vi V IV I ii V'), R('vi V I IV vi iii ii V'), R('ii IV V I vi IV I V'),
+      R('IV vi V I ii V I I'), R('vi iii IV V I vi ii V'),
     ],
-    bridge: [R('ii V I vi'), R('IV iii vi V'), R('vi ii V I')],
+    bridge: [
+      R('ii V I vi'), R('IV iii vi V'), R('vi ii V I'),
+      // ── tripled ──
+      R('ii iii IV V vi IV I I'), R('IV V iii vi ii V I I'), R('vi IV ii V I iii IV V'),
+      R('ii V vi iii IV I V I'), R('iii vi IV V I ii V I'), R('IV ii V I vi iii IV V'),
+      R('vi ii iii IV V I I I'),
+    ],
   },
   dorian: {
-    ground: [R('i IV i VII'), R('i ii IV i'), R('i VII IV i'), R('i IV VII ii')],
-    lift: [R('IV i VII i'), R('VII IV i i'), R('ii IV i VII')],
+    ground: [
+      R('i IV i VII'), R('i ii IV i'), R('i VII IV i'), R('i IV VII ii'),
+      // ── tripled ──
+      R('i IV VII IV'), R('i v IV i'), R('i IV ii VII'), R('i VII v IV'), R('i IV i v'),
+      R('i IV VII v i IV ii i'), R('i ii IV VII i v IV i'), R('i VII IV ii i IV VII i'),
+      R('i IV v ii i VII IV i'),
+    ],
+    lift: [
+      R('IV i VII i'), R('VII IV i i'), R('ii IV i VII'),
+      // ── tripled ──
+      R('IV VII i i'), R('v IV i VII'), R('IV ii i VII'), R('VII v IV i'), R('IV i v ii'),
+      R('IV VII i v IV ii i i'), R('ii IV VII i v IV i i'),
+    ],
+  },
+  // NEW modal pools (were fallback-only before) — extra vocabulary for modal songs.
+  phrygian: {
+    ground: [R('i II i VII'), R('i VII II i'), R('i II VII i'), R('i vii II i'), R('i II i v'), R('i II VII v II i vii i')],
+    lift: [R('II i VII i'), R('VII II i i'), R('II VII i v'), R('v II i VII')],
+  },
+  mixolydian: {
+    ground: [R('I VII IV I'), R('I v IV I'), R('I IV VII I'), R('I VII v IV'), R('I IV I VII'), R('I VII IV v I IV VII I')],
+    lift: [R('IV I VII I'), R('VII IV I I'), R('IV VII I v'), R('v IV VII I')],
+  },
+  lydian: {
+    ground: [R('I II I V'), R('I II vi V'), R('I V II I'), R('I II iii V'), R('I vi II V'), R('I II V vi iii II I I')],
+    lift: [R('II I V I'), R('V II I I'), R('II vi I V'), R('vi II V I')],
   },
 }
 
@@ -302,43 +372,79 @@ const FEELS = {
     { kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], oh: [2, 6, 10, 14], clap: [4, 12] },
     { kick: [0, 4, 8, 12], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [6, 14], clap: [4, 12] },
     { kick: [0, 4, 8, 12], snare: [12], hat: [2, 6, 10, 14], oh: [2, 10], clap: [4, 12] },
+    { kick: [0, 4, 8, 12], snare: [], hat: [2, 6, 10, 14], oh: [], clap: [4, 12] },              // stripped
+    { kick: [0, 4, 8, 12], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15], oh: [6, 14], clap: [4, 12] },  // busy hats
+    { kick: [0, 4, 6, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7, 15], clap: [4, 12] },  // extra kick
+    { kick: [0, 4, 8, 12], snare: [12], hat: [0, 4, 8, 12], oh: [2, 6, 10, 14], clap: [4] },     // offbeat oh drive
   ],
   backbeat: [
     { kick: [0, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
     { kick: [0, 8], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
     { kick: [0, 6, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [] },
+    { kick: [0, 8], snare: [4, 12], hat: [0, 4, 8, 12], oh: [], clap: [] },                       // simple
+    { kick: [0, 7, 8], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },      // pushed kick
+    { kick: [0, 10, 14], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7], clap: [] },
+    { kick: [0, 8, 11], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [15], clap: [] },
   ],
   boombap: [
     { kick: [0, 6, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
     { kick: [0, 10, 11], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [15], clap: [] },
     { kick: [0, 3, 8], snare: [4, 12], hat: [0, 4, 6, 8, 12, 14], oh: [7], clap: [] },
+    { kick: [0, 10], snare: [4, 12], hat: [0, 3, 4, 6, 8, 11, 12, 14], oh: [15], clap: [] },      // swung hats
+    { kick: [0, 6, 7, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
+    { kick: [0, 8, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7, 15], clap: [] },
+    { kick: [0, 3, 6, 10], snare: [4, 12], hat: [0, 4, 8, 12], oh: [11], clap: [] },
   ],
   trap: [
     { kick: [0, 7, 10], snare: [8], hat: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14], oh: [], clap: [8] },
     { kick: [0, 6, 10, 11], snare: [12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [12] },
     { kick: [0, 10], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15], oh: [], clap: [8] },
+    { kick: [0, 3, 10], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [8] },        // simpler
+    { kick: [0, 10, 11, 12], snare: [8], hat: [0, 2, 4, 5, 6, 8, 10, 12, 13, 14], oh: [], clap: [8] },  // roll
+    { kick: [0, 6, 10], snare: [12], hat: [0, 4, 8, 12], oh: [], clap: [12] },
+    { kick: [0, 7, 8, 10], snare: [8], hat: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14, 15], oh: [], clap: [8] },
   ],
   'half-time': [
     { kick: [0, 11], snare: [8], hat: [0, 4, 8, 12], oh: [], clap: [8] },
     { kick: [0, 6], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [8] },
     { kick: [0, 10, 11], snare: [8], hat: [0, 4, 8, 12], oh: [14], clap: [8] },
+    { kick: [0], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [8] },               // minimal
+    { kick: [0, 3, 8], snare: [8], hat: [2, 6, 10, 14], oh: [], clap: [8] },
+    { kick: [0, 10], snare: [8], hat: [0, 4, 8, 12], oh: [14], clap: [8] },
+    { kick: [0, 6, 11], snare: [8], hat: [0, 2, 4, 6, 8, 10, 12, 13, 14], oh: [], clap: [8] },
   ],
   breakbeat: [
     { kick: [0, 3, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7, 15], clap: [] },
     { kick: [0, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
     { kick: [0, 6, 10], snare: [4, 10, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [15], clap: [] },
+    { kick: [0, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7], clap: [] },                    // spacious
+    { kick: [0, 6, 10, 11], snare: [4, 10, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [15], clap: [] },
+    { kick: [0, 3, 8, 10], snare: [4, 12, 14], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
+    { kick: [0, 10, 14], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [6, 15], clap: [] },
   ],
   shuffle: [
     { kick: [0, 8], snare: [4, 12], hat: [0, 3, 6, 8, 11, 14], oh: [], clap: [] },
     { kick: [0, 6, 8], snare: [4, 12], hat: [0, 3, 6, 8, 11, 14], oh: [11], clap: [] },
+    { kick: [0, 8], snare: [4, 12], hat: [0, 3, 6, 9, 12, 15], oh: [], clap: [] },                // triplet-y
+    { kick: [0, 3, 8, 11], snare: [4, 12], hat: [0, 3, 6, 9, 12, 15], oh: [], clap: [] },
+    { kick: [0, 8], snare: [4, 12], hat: [3, 6, 11, 14], oh: [9], clap: [] },
+    { kick: [0, 6, 8, 14], snare: [4, 12], hat: [0, 3, 6, 8, 11, 14], oh: [], clap: [] },
   ],
   syncopated: [
     { kick: [0, 3, 6, 10], snare: [4, 12], hat: [2, 6, 10, 14], oh: [7], clap: [] },
     { kick: [0, 3, 6, 10, 11], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
+    { kick: [0, 6, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [7], clap: [] },
+    { kick: [0, 3, 6, 8, 11, 14], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [] },        // dense
+    { kick: [0, 3, 10, 11], snare: [4, 12], hat: [0, 4, 8, 12], oh: [7, 15], clap: [] },
+    { kick: [0, 6, 7, 10], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
   ],
   dembow: [
     { kick: [0, 6, 8, 14], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [4, 12] },
     { kick: [0, 6, 8, 14], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [3, 4, 11, 12] },
+    { kick: [0, 6, 8, 14], snare: [3, 4, 11, 12], hat: [2, 6, 10, 14], oh: [], clap: [] },        // snare-led
+    { kick: [0, 3, 6, 8, 11, 14], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], oh: [], clap: [] },
+    { kick: [0, 6, 8, 14], snare: [4, 12], hat: [0, 4, 8, 12], oh: [7], clap: [3, 11] },
+    { kick: [0, 6, 8, 10, 14], snare: [4, 12], hat: [2, 6, 10, 14], oh: [], clap: [3, 4, 11, 12] },
   ],
   none: [{ kick: [], snare: [], hat: [], oh: [], clap: [] }],
 }
