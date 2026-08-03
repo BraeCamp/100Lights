@@ -224,6 +224,47 @@ const PROG_RECIPES = {
   },
 }
 
+// ── SHARED recipe pool — ~35 extra progressions MERGED into every song's bank on
+// top of its genre recipes, for far more harmonic variety. Dark / emotional /
+// modern, inspired by Artemas, ThxSoMuch, Mr. Kitty (moody minor-key alt-pop /
+// darkwave / hyperpop). A few are adventurous 8-bar journeys — they don't have to
+// sound "complete" alone, they just have to work under the melody + drums. ─────
+const EXTRA = {
+  minor: {
+    ground: [
+      R('i VI III VII', 7), R('i iv VI v', 9), R('i VII VI VII'), R('i v VI iv', 9),
+      R('i VI iv VII'), R('i III VII VI'), R('i iv v VI', 9), R('i VI VII v'),
+      R('i ii v i', 9), R('i iv i VII'), R('i v iv i'), R('i VII iv VI'),
+      R('i VI iv v i VI III VII', 7), R('i v iv VII III VI ii v', 9),
+      R('i VII VI v iv VI III i'), R('i iv VII III VI ii v i', 9),
+      R('i III iv VI v VII i i'), R('i VI v iv VII III VI VII', 9),
+    ],
+    lift: [
+      R('VI VII i i'), R('iv v VI VII'), R('VI iv i v', 9), R('iv VI III VII'),
+      R('VI III iv i'), R('iv v i VI'), R('VI VII iv i'), R('iv i VII VI'),
+      R('III VII i VI'), R('VI iv v i VI iv ii v', 9), R('iv VII III VI ii v i i', 9),
+      R('VI VII i v iv VI III VII'),
+    ],
+    bridge: [
+      R('iv v VI III'), R('VI ii v i', 9), R('III VI iv v'), R('ii v i VI', 9), R('iv III VI VII'),
+    ],
+  },
+  major: {
+    ground: [
+      R('I V vi IV'), R('I iii vi IV'), R('vi V IV I'), R('I vi IV V'),
+      R('I iii IV V I vi ii V'), R('I V vi iii IV I ii V'),
+    ],
+    lift: [
+      R('vi IV I V'), R('IV I V vi'), R('vi iii IV V'), R('IV V vi iii'), R('I vi ii V vi IV I V'),
+    ],
+    bridge: [R('ii V I vi'), R('IV iii vi V'), R('vi ii V I')],
+  },
+  dorian: {
+    ground: [R('i IV i VII'), R('i ii IV i'), R('i VII IV i'), R('i IV VII ii')],
+    lift: [R('IV i VII i'), R('VII IV i i'), R('ii IV i VII')],
+  },
+}
+
 // Lay a recipe across `bars`. An 8-bar recipe fills 8 bars with no internal loop;
 // a 4-bar recipe filling 8 bars gets a TURNAROUND on the repeat (last chord →
 // dominant) so it never sounds like the same 4 chords twice. Later appearances
@@ -703,9 +744,10 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   // recipes (4- or 8-bar); we pick a DISTINCT one for verse/chorus/bridge.
   const gr = (PROG_RECIPES[genreId] || {})[scale]
   const fb = PROGS[scale] || PROGS.minor
-  const groundBank = (gr && gr.ground || fb.ground).map(asRecipe)
-  const liftBank   = (gr && gr.lift   || fb.lift).map(asRecipe)
-  const bridgeBank = ((gr && gr.bridge) || [...fb.ground, ...fb.lift]).map(asRecipe)
+  const ex = EXTRA[scale] || {}   // shared 35+-recipe pool, added to every song's options
+  const groundBank = [...((gr && gr.ground) || fb.ground), ...(ex.ground || [])].map(asRecipe)
+  const liftBank   = [...((gr && gr.lift)   || fb.lift),   ...(ex.lift   || [])].map(asRecipe)
+  const bridgeBank = [...((gr && gr.bridge) || [...fb.ground, ...fb.lift]), ...(ex.bridge || [])].map(asRecipe)
 
   const recA = rand.pick(groundBank)
   let recB = rand.pick(liftBank); if (recKey(recB) === recKey(recA)) recB = rand.pick(liftBank)
