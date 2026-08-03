@@ -717,12 +717,18 @@ export default function AudioEditor(props: AudioEditorProps) {
       __dawDispatch?: typeof dispatch
       __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
+      __parseMid?: (file: File) => Promise<unknown>
+      __exportMid?: () => Promise<Blob>
     }
     w.__dawDispatch = dispatch
     w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
     // Bounce a beat range to lossless WAV(s) for offline mix analysis (see
     // scripts/analyze-mix.py). Real-time capture off the live engine graph.
     w.__dawRenderWav = (opts) => engineRef.current?.renderWav(opts ?? {}) ?? Promise.resolve(null)
+    // Dev-only: exercise the MIDI importer in isolation (returns {project, report}).
+    w.__parseMid = (file) => import('@/lib/midi-import').then(m => m.parseMidiFile(file))
+    // Dev-only: export the current project as a .mid blob (round-trip testing).
+    w.__exportMid = () => import('@/lib/midi-file').then(m => m.writeProjectMidi(projectRef.current).blob)
   }, [])
 
   // ── Community deep-link: /new?communityItem={id} drops the shared thing

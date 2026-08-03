@@ -84,13 +84,39 @@ export default function Transport() {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    // Standard MIDI File (.mid/.midi): import notes + tempo/meter (incl. changes)
+    // as a project. MIDI has no audio and no synth patches by nature of the
+    // format, so the confirm dialog says so upfront.
+    if (/\.midi?$/i.test(file.name)) {
+      try {
+        const { parseMidiFile } = await import('@/lib/midi-import')
+        const { project, report } = await parseMidiFile(file)
+        if (report.tracks === 0) {
+          window.alert('No notes were found in that MIDI file.')
+          return
+        }
+        const changes = (report.tempoChanges || report.meterChanges)
+          ? ` (with ${report.tempoChanges} tempo + ${report.meterChanges} time-signature change${report.tempoChanges + report.meterChanges === 1 ? '' : 's'})`
+          : ''
+        const summary = [
+          `Import “${report.projectName}” from MIDI?`, '',
+          `• ${report.tracks} track${report.tracks === 1 ? '' : 's'}, ${report.notes} note${report.notes === 1 ? '' : 's'}`,
+          `• ${report.tempo} BPM · ${report.timeSignature}${changes}`,
+          ...report.warnings.map(w => `• ${w}`),
+        ].join('\n')
+        if (window.confirm(summary)) openProjectInStudio(project)
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : 'Could not read that MIDI file.')
+      }
+      return
+    }
     try {
       const cf = JSON.parse(await file.text())
       const dp = cf?.dawProject ?? (Array.isArray(cf?.tracks) ? cf : null)
       if (!dp || !Array.isArray(dp.tracks)) throw new Error('not a project')
       openProjectInStudio(migrateProject(dp))
     } catch {
-      window.alert('That doesn’t look like a 100Lights project (.cfproj).')
+      window.alert('That doesn’t look like a 100Lights project (.cfproj) or MIDI file (.mid).')
     }
   }
   const [shotBusy, setShotBusy] = useState(false)
@@ -1045,10 +1071,10 @@ export default function Transport() {
 
       {/* (MASK moved into the "More" popover — item 14.) */}
 
-      <input ref={fileInputRef} type="file" accept=".cfproj,application/json" onChange={handleOpenFile} style={{ display: 'none' }} />
+      <input ref={fileInputRef} type="file" accept=".cfproj,.mid,.midi,application/json" onChange={handleOpenFile} style={{ display: 'none' }} />
       <button
         onClick={() => fileInputRef.current?.click()}
-        title="Open a .cfproj project file"
+        title="Open a project (.cfproj) or import a MIDI file (.mid)"
         style={{ ...base, width: 'auto', padding: '0 9px', gap: 4, fontSize: 11, marginLeft: 'auto', flexShrink: 0 }}
       >
         <Upload size={13} /> Open

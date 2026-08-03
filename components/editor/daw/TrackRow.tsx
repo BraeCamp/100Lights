@@ -589,6 +589,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       }
       return
     }
+    // Audio or video files dropped from the desktop → an audio clip (video keeps
+    // only its audio track). Placed on this lane at the drop position.
+    const mediaFile = [...(e.dataTransfer.files ?? [])].find(f =>
+      /\.(wav|mp3|m4a|aac|ogg|oga|opus|flac|aif|aiff|mp4|mov|m4v|webm|mkv|avi|ogv)$/i.test(f.name) ||
+      f.type.startsWith('audio/') || f.type.startsWith('video/'))
+    if (mediaFile) {
+      void importMediaFile(mediaFile, snapBeat(beatX, snap, project.timeSignatureNum))
+      return
+    }
     const recipeId = e.dataTransfer.getData('application/x-recipe-id')
     if (recipeId) {
       const recipe = getAllChordRecipes().find(r => r.id === recipeId)
@@ -688,36 +697,70 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     }
   }
 
-  async function importFileAtBeat(beat: number) {
-    const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*'
-    input.onchange = async () => {
-      const file = input.files?.[0]; if (!file) return
-      const ext  = file.name.split('.').pop()?.toLowerCase() ?? ''
-      let ab = await file.arrayBuffer()
-      let blobUrl: string
-      if (ext === 'aif' || ext === 'aiff') {
-        try {
-          const { channels, sampleRate } = decodeAiff(ab)
-          const wavBuf = encodeWav(channels, sampleRate)
-          ab = wavBuf
-          blobUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }))
-        } catch {
-          console.error('Could not decode AIFF file:', file.name)
-          return
-        }
-      } else {
-        blobUrl = URL.createObjectURL(file)
+  // Bring an external media file onto this track as an audio clip. Audio files
+  // (wav/mp3/m4a/ogg/flac/aiff) keep their original bytes; VIDEO files
+  // (mp4/mov/webm…) have their audio track decoded, re-encoded to WAV, and the
+  // video discarded. Shared by the "Upload" picker and desktop file drop.
+  async function importMediaFile(file: File, beat: number) {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+    const isVideo = file.type.startsWith('video/') || /^(mp4|mov|m4v|webm|mkv|avi|ogv)$/.test(ext)
+    let ab: ArrayBuffer
+    try { ab = await file.arrayBuffer() } catch { return }
+    let uploadBlob: Blob
+    let blobUrl: string
+
+    if (isVideo) {
+      // Keep only the audio: decode the container's audio track → WAV.
+      let decoded: AudioBuffer
+      try {
+        decoded = await engine.ctx.decodeAudioData(ab.slice(0))
+      } catch {
+        window.alert(`Couldn't extract audio from “${file.name}”. Try an MP4/WebM, or convert it to an audio file first.`)
+        return
       }
-      const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), beat, 8, { audioUrl: blobUrl })
-      dispatch({ type: 'ADD_CLIP', clip })
-      // Imported files have no library entry — upload so the clip survives reloads
-      void uploadRecordingBlob(new Blob([ab], { type: 'audio/wav' }), clip.id).then(key => {
-        if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
-      })
-      const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
-      const peaks = extractPeaks(buf)
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+      const channels: Float32Array[] = []
+      for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
+      const wav = encodeWav(channels, decoded.sampleRate)
+      ab = wav
+      uploadBlob = new Blob([wav], { type: 'audio/wav' })
+      blobUrl = URL.createObjectURL(uploadBlob)
+    } else if (ext === 'aif' || ext === 'aiff') {
+      try {
+        const { channels, sampleRate } = decodeAiff(ab)
+        const wav = encodeWav(channels, sampleRate)
+        ab = wav
+        uploadBlob = new Blob([wav], { type: 'audio/wav' })
+        blobUrl = URL.createObjectURL(uploadBlob)
+      } catch {
+        console.error('Could not decode AIFF file:', file.name)
+        return
+      }
+    } else {
+      // Common audio: keep the original bytes, but preserve the real mimetype so
+      // the durable copy (uploadRecordingBlob) gets the correct file extension.
+      uploadBlob = new Blob([ab], { type: file.type || 'audio/mpeg' })
+      blobUrl = URL.createObjectURL(file)
     }
+
+    const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), beat, 8, { audioUrl: blobUrl })
+    dispatch({ type: 'ADD_CLIP', clip })
+    // Imported files have no library entry — upload so the clip survives reloads.
+    void uploadRecordingBlob(uploadBlob, clip.id).then(key => {
+      if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
+    })
+    try {
+      const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+      setSelectedClipId(clip.id)
+    } catch {
+      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+      window.alert(`Couldn't read the audio in “${file.name}”.`)
+    }
+  }
+
+  function importFileAtBeat(beat: number) {
+    const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*,video/*'
+    input.onchange = () => { const file = input.files?.[0]; if (file) void importMediaFile(file, beat) }
     input.click()
   }
 
@@ -1912,7 +1955,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           <div style={{ position: 'fixed', inset: 0, zIndex: 1999 }} onMouseDown={() => setCreateMenu(null)} />
           <div ref={createMenuRef} style={{ position: 'fixed', zIndex: 2000, left: createMenu.x, top: createMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 190, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
             {([
-              ['⬆', 'Upload audio', () => importFileAtBeat(createMenu.beat)],
+              ['⬆', 'Upload audio / video', () => importFileAtBeat(createMenu.beat)],
               ['●', 'Record from mic', () => recordIntoTrack()],
               ['♫', 'Browse library', () => { setPickerInsertBeat(snapBeat(createMenu.beat, snap, project.timeSignatureNum)); setShowLibraryPicker(true) }],
               ['⌁', 'Synthesize (code)', () => setShowSynth(true)],

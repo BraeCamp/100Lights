@@ -31,7 +31,7 @@ interface Props {
   defaultFormat?: ExportFormat
 }
 
-type ExportFormat  = 'webm' | 'wav' | 'stems'
+type ExportFormat  = 'webm' | 'wav' | 'stems' | 'midi'
 
 const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const keyLabel = (key: unknown, scale: unknown) => `${typeof key === 'number' ? KEY_NAMES[key % 12] ?? 'C' : key} ${scale}`
@@ -217,6 +217,18 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   }
 
   async function startExport() {
+    if (format === 'midi') {
+      // Instant — no render pass. Serialize notes + tempo/meter to a .mid.
+      const { writeProjectMidi } = await import('@/lib/midi-file')
+      const { blob, midiTracks } = writeProjectMidi(project)
+      if (midiTracks === 0) { setStatusMessage('done'); setPhase('error'); return }
+      finalBlobRef.current = blob
+      setDownloadUrl(URL.createObjectURL(blob))
+      setProgress(1)
+      setStatusMessage('done')
+      setPhase('done')
+      return
+    }
     if (format === 'stems') { await startStemExport(); return }
     setPhase('recording')
     setStatusMessage('recording')
@@ -268,7 +280,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     }, 100)
   }
 
-  const ext = format === 'stems' ? 'zip' : format === 'wav' ? 'wav' : 'webm'
+  const ext = format === 'stems' ? 'zip' : format === 'wav' ? 'wav' : format === 'midi' ? 'mid' : 'webm'
 
   // Filename: slug from podcast metadata or project name
   const filename = (() => {
@@ -343,11 +355,12 @@ style={{
                   Format
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  {(['webm', 'wav', 'stems'] as ExportFormat[]).map(f => {
+                  {(['webm', 'wav', 'stems', 'midi'] as ExportFormat[]).map(f => {
                     // WAV + stems are release-grade output → Pro. Free exports a
-                    // high-quality WebM/Opus mixdown (not crippled). The admin
+                    // high-quality WebM/Opus mixdown (not crippled). MIDI is free —
+                    // it's note data for interop, not an audio master. The admin
                     // article-editing flow (saveTarget) forces WAV and bypasses.
-                    const locked = f !== 'webm' && !isPro && !saveTarget && !ent.audioFormats.includes(f)
+                    const locked = f !== 'webm' && f !== 'midi' && !isPro && !saveTarget && !ent.audioFormats.includes(f)
                     return (
                       <button
                         key={f}
@@ -366,7 +379,7 @@ style={{
                         }}
                       >
                         {locked && <Lock size={10} />}
-                        {f === 'webm' ? 'WebM / Opus' : f === 'wav' ? 'WAV (lossless)' : 'Stems (zip of WAVs)'}
+                        {f === 'webm' ? 'WebM / Opus' : f === 'wav' ? 'WAV (lossless)' : f === 'stems' ? 'Stems (zip of WAVs)' : 'MIDI (.mid)'}
                       </button>
                     )
                   })}
@@ -374,6 +387,11 @@ style={{
                 {format === 'wav' && (
                   <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
                     Converts after recording — slightly slower, lossless 16-bit PCM
+                  </p>
+                )}
+                {format === 'midi' && (
+                  <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4 }}>
+                    Notes, tempo &amp; time signature for other DAWs — no audio or sounds. Audio tracks are skipped.
                   </p>
                 )}
                 {(format === 'wav' || format === 'stems') && (
