@@ -452,6 +452,15 @@ export default function ArrangementView() {
   // group-loop use it so "the whole bar" — blank space included — is the unit.
   const [selectionRegion, setSelectionRegion] = useState<{ start: number; end: number } | null>(null)
   const [selectionTracks, setSelectionTracks] = useState<Set<string>>(new Set())
+  // Escape clears the AREA selection (region + tracks) too, alongside the clip
+  // selection cleared by the editor's global handler.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) { setSelectionRegion(null); setSelectionTracks(new Set()); setSelectedTrackIds(new Set()) }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
   // Event handlers (ctx-menu copy, resize-start) fire from children whose
   // closures can be a render behind — they read the region through this ref
   const selectionRegionRef = useRef(selectionRegion)
