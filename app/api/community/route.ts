@@ -147,7 +147,13 @@ export async function POST(req: Request) {
   const user = clerkId ? await currentUser() : null
   // Admin-only: publish under the official 100Lights byline (seed content)
   const official = body.asOfficial === true && await isAdminEmail()
-  const authorName = official ? '100Lights' : (user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId))
+  // Reserve the official byline: a non-admin whose Clerk display name is "100Lights"
+  // would otherwise be treated as official everywhere it keys on author_name (the
+  // sitemap + the always-index rule), impersonating the brand. Reject it here so
+  // author_name='100Lights' stays a reliable official signal.
+  const RESERVED_NAMES = new Set(['100lights', '100 lights'])
+  let authorName = official ? '100Lights' : (user?.fullName ?? user?.username ?? (clerkId ? 'Anonymous' : userId))
+  if (!official && RESERVED_NAMES.has(authorName.trim().toLowerCase())) authorName = 'Anonymous'
 
   // Remix lineage (best-effort): keep the source id only if it's a real,
   // non-removed item — never fail the share over it.

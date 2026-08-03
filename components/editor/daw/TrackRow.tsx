@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
-import { nearestBarBeat } from '@/lib/tempo-map'
+import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
@@ -579,7 +579,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         if (parsed.notes.length === 0) return
         const bar = project.timeSignatureNum || 4
         const contentEnd = Math.max(...parsed.notes.map(n => n.startBeat + n.durationBeats))
-        const clip = makeMidiClip(track.id, parsed.name || midFile.name.replace(/\.midi?$/i, ''), snapBeat(beatX, snap, bar), Math.max(bar, Math.ceil(contentEnd / bar) * bar), { isDrumClip: false })
+        const clip = makeMidiClip(track.id, parsed.name || midFile.name.replace(/\.midi?$/i, ''), snapBeat(beatX, snap, bar, meterSegments(project)), Math.max(bar, Math.ceil(contentEnd / bar) * bar), { isDrumClip: false })
         clip.notes = parsed.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
         dispatch({ type: 'ADD_CLIP', clip })
         setSelectedClipId(clip.id)
@@ -595,14 +595,14 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       /\.(wav|mp3|m4a|aac|ogg|oga|opus|flac|aif|aiff|mp4|mov|m4v|webm|mkv|avi|ogv)$/i.test(f.name) ||
       f.type.startsWith('audio/') || f.type.startsWith('video/'))
     if (mediaFile) {
-      void importMediaFile(mediaFile, snapBeat(beatX, snap, project.timeSignatureNum))
+      void importMediaFile(mediaFile, snapBeat(beatX, snap, project.timeSignatureNum, meterSegments(project)))
       return
     }
     const recipeId = e.dataTransfer.getData('application/x-recipe-id')
     if (recipeId) {
       const recipe = getAllChordRecipes().find(r => r.id === recipeId)
       if (!recipe) return
-      const clip = buildRecipeClip(recipe, track.id, snapBeat(beatX, snap, project.timeSignatureNum))
+      const clip = buildRecipeClip(recipe, track.id, snapBeat(beatX, snap, project.timeSignatureNum, meterSegments(project)))
       dispatch({ type: 'ADD_CLIP', clip })
       setSelectedClipId(clip.id)
       setExpandedPianoRollClipId(clip.id)
@@ -617,7 +617,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       // otherwise the dropped beat would be silent.
       if (track.instrument.type !== 'drum') dispatch({ type: 'SET_INSTRUMENT', trackId: track.id, instrument: structuredClone(DEFAULT_KIT.instrument) })
       const bar = project.timeSignatureNum || 4
-      const clip = makeMidiClip(track.id, pat.name, snapBeat(beatX, snap, bar), Math.max(bar, pat.bars * bar), { isDrumClip: true })
+      const clip = makeMidiClip(track.id, pat.name, snapBeat(beatX, snap, bar, meterSegments(project)), Math.max(bar, pat.bars * bar), { isDrumClip: true })
       clip.notes = patternToNotes(pat)
       dispatch({ type: 'ADD_CLIP', clip })
       setSelectedClipId(clip.id)
@@ -630,7 +630,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       try {
         const gen = JSON.parse(polyData) as { name?: string; params?: unknown; notes?: import('@/lib/daw-types').MidiNote[]; durationBeats?: number; rollFx?: Record<string, number> }
         const bar = project.timeSignatureNum || 4
-        const clip = makeMidiClip(track.id, gen.name || 'Sound', snapBeat(beatX, snap, bar), gen.durationBeats || bar, { isDrumClip: false, ...(gen.rollFx ? { rollFx: gen.rollFx } : {}) })
+        const clip = makeMidiClip(track.id, gen.name || 'Sound', snapBeat(beatX, snap, bar, meterSegments(project)), gen.durationBeats || bar, { isDrumClip: false, ...(gen.rollFx ? { rollFx: gen.rollFx } : {}) })
         clip.notes = (gen.notes ?? []).map(n => ({ ...n, id: crypto.randomUUID() }))
         // Give an empty track the generated sound; leave existing instruments alone.
         if (track.instrument.type === 'none' && gen.params) {
@@ -655,7 +655,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         entry = fulfilled
       }
       const url  = URL.createObjectURL(entry.audioBlob!)
-      const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap, project.timeSignatureNum), 8, { audioUrl: url, libraryId: entry.id })
+      const clip = makeAudioClip(track.id, entry.name, snapBeat(beatX, snap, project.timeSignatureNum, meterSegments(project)), 8, { audioUrl: url, libraryId: entry.id })
       dispatch({ type: 'ADD_CLIP', clip })
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
@@ -671,7 +671,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     if (frozen) return
     const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
-    setCreateMenu({ x: e.clientX, y: e.clientY, beat: snapBeat(beatX, snap, project.timeSignatureNum) })
+    setCreateMenu({ x: e.clientX, y: e.clientY, beat: snapBeat(beatX, snap, project.timeSignatureNum, meterSegments(project)) })
   }
 
   // Open a clip in the editor that matches its type: a pattern (drum) clip opens
@@ -1290,7 +1290,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             // Clips stop propagation for their own menu — this fires on empty lane
             e.preventDefault()
             const rect = e.currentTarget.getBoundingClientRect()
-            const beat = Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, project.timeSignatureNum))
+            const beat = Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, project.timeSignatureNum, meterSegments(project)))
             setLaneCtxMenu({ x: e.clientX, y: e.clientY, beat })
           }}
           onDoubleClick={handleDoubleClick}
@@ -1428,7 +1428,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     if (selectedClipIds.has(clip.id) && selectedClipIds.size > 1) {
                       const origin = multiDragOrigins.current[clip.id] ?? clip.startBeat
                       const delta  = sb - origin
-                      let snappedNew = alt ? Math.max(0, origin + delta) : snapBeat(Math.max(0, origin + delta), snap, project.timeSignatureNum)
+                      let snappedNew = alt ? Math.max(0, origin + delta) : snapBeat(Math.max(0, origin + delta), snap, project.timeSignatureNum, meterSegments(project))
                       if (!alt) snappedNew = snapToClipEdges(snappedNew, selectedClipIds, clipThreshold, project.arrangementClips)
                       const snappedDelta = snappedNew - origin
                       // Vertical: shift every selected clip by the same number of
@@ -1448,7 +1448,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                         dispatch({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, cOrigin + snappedDelta), trackId: target })
                       }
                     } else {
-                      let snappedSb = alt ? sb : snapBeat(sb, snap, project.timeSignatureNum)
+                      let snappedSb = alt ? sb : snapBeat(sb, snap, project.timeSignatureNum, meterSegments(project))
                       if (!alt) snappedSb = snapToClipEdges(snappedSb, new Set([clip.id]), clipThreshold, project.arrangementClips)
                       dispatch({ type: 'MOVE_CLIP', clipId: clip.id, startBeat: Math.max(0, snappedSb), trackId: tid })
                       // Ripple: shift all clips on same track that originally started after this clip
@@ -1550,7 +1550,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       return
                     }
                     const endBeat = clip.startBeat + db
-                    let snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum)
+                    let snappedEnd = alt ? endBeat : snapBeat(endBeat, snap, project.timeSignatureNum, meterSegments(project))
                     if (!alt) snappedEnd = snapToClipEdges(snappedEnd, new Set([clip.id]), 8 / beatW, project.arrangementClips)
                     const newDurBeats = Math.max(0.125, snappedEnd - clip.startBeat)
                     // The drag's mode: held E/L wins, then the clip's own type
@@ -1642,7 +1642,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     : undefined}
                   onCrop={() => setCroppingClipId(prev => prev === clip.id ? null : clip.id)}
                   onCropChange={(ts, te) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { trimStart: ts, trimEnd: te } })}
-                  onCropSnap={(b) => snapBeat(b, snap, project.timeSignatureNum)}
+                  onCropSnap={(b) => snapBeat(b, snap, project.timeSignatureNum, meterSegments(project))}
                   onIsolate={beat => setIsolateTgt(beat)}
                   onSplice={() => {
                     if (frozen) return
@@ -1941,7 +1941,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           </button>
           <button
             onClick={() => {
-              setPickerInsertBeat(snapBeat(laneCtxMenu.beat, snap, project.timeSignatureNum))
+              setPickerInsertBeat(snapBeat(laneCtxMenu.beat, snap, project.timeSignatureNum, meterSegments(project)))
               setShowLibraryPicker(true)
               setLaneCtxMenu(null)
             }}
@@ -1961,7 +1961,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {([
               ['⬆', 'Upload audio / video', () => importFileAtBeat(createMenu.beat)],
               ['●', 'Record from mic', () => recordIntoTrack()],
-              ['♫', 'Browse library', () => { setPickerInsertBeat(snapBeat(createMenu.beat, snap, project.timeSignatureNum)); setShowLibraryPicker(true) }],
+              ['♫', 'Browse library', () => { setPickerInsertBeat(snapBeat(createMenu.beat, snap, project.timeSignatureNum, meterSegments(project))); setShowLibraryPicker(true) }],
               ['⌁', 'Synthesize (code)', () => setShowSynth(true)],
             ] as [string, string, () => void][]).map(([icon, label, action]) => (
               <button key={label}

@@ -252,7 +252,9 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
               }}>PRO</span>
             )}
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{timeAgo(item.createdAt)}</div>
+          {/* suppressHydrationWarning: relative time (Date.now/locale) differs
+              between the SSR render and the client — expected, not a real mismatch. */}
+          <div suppressHydrationWarning style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{timeAgo(item.createdAt)}</div>
         </div>
         <span style={{
           marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
@@ -550,7 +552,9 @@ export function AudioPreview({ item, color }: { item: CommunityItem; color: stri
     audioRef.current?.pause()
     setPlaying(false)
   }
-  const stop = () => stopRef.current()
+  // Stable identity: claim/releasePlayback compare by function reference, so a
+  // fresh closure each render would leave stale entries in the shared registry.
+  const stop = useCallback(() => stopRef.current(), [])
 
   useEffect(() => {
     return () => {

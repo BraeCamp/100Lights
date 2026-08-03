@@ -2,7 +2,7 @@
 
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
-import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, type TempoSegment } from './tempo-map'
+import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
@@ -171,6 +171,9 @@ export class DawEngine extends EventTarget {
   /** Normalized tempo map (single [beat0, tempo] segment until markers are set).
    *  Source of truth for beat↔seconds during arrangement playback — see tempo-map.ts. */
   private _tempoSegs: TempoSegment[] = [{ beat: 0, bpm: 120 }]
+  /** Normalized meter map — drives the metronome downbeat accent under time-sig
+   *  changes (single [beat0, 4/4] segment until meter markers are set). */
+  private _meterSegs: MeterSegment[] = [{ beat: 0, num: 4, den: 4 }]
   loopEnabled = false
   loopStart = 0
   loopEnd = 16
@@ -868,6 +871,7 @@ export class DawEngine extends EventTarget {
     this.loopEnd      = project.loopEnd
     this.swing        = project.swing ?? 0
     this._beatsPerBar = project.timeSignatureNum ?? 4
+    this._meterSegs   = meterSegments(project)
     this._clips       = project.arrangementClips.filter(isAudioClip)
     this._midiClips   = project.arrangementClips.filter(isMidiClip)
     // Notes may have changed — drop the cached occurrences/unison sets so they
@@ -3149,7 +3153,9 @@ export class DawEngine extends EventTarget {
     const ahead       = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
     while (this._nextMetronomeBeat <= currentBeat + ahead) {
       const when       = this._ctxTimeForBeat(Math.max(currentBeat, this._nextMetronomeBeat), currentBeat, now)
-      const isDownbeat = (this._nextMetronomeBeat % this._beatsPerBar) === 0
+      // Downbeat = a bar START in the meter map (honors mid-song time-sig changes);
+      // collapses to `% beatsPerBar` when there are no meter markers.
+      const isDownbeat = Math.abs(nearestBarBeat(this._nextMetronomeBeat, this._meterSegs) - this._nextMetronomeBeat) < 1e-6
       const buf        = isDownbeat ? this._tickBuf : this._tockBuf
       if (buf) {
         const src = this.ctx.createBufferSource()

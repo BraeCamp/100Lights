@@ -5,6 +5,7 @@
 import type { MidiNote, DawProject, MidiClip } from './daw-types'
 import { isMidiClip } from './daw-types'
 import { tempoSegments, meterSegments } from './tempo-map'
+import { parseSmf } from './midi-import'
 
 export interface ParsedMidi {
   /** Notes with startBeat/durationBeats in quarter-note beats. */
@@ -15,120 +16,31 @@ export interface ParsedMidi {
 }
 
 // ── Reading ───────────────────────────────────────────────────────────────────
-
-class Reader {
-  pos = 0
-  private d: DataView
-  constructor(d: DataView) { this.d = d }
-  u8()  { return this.d.getUint8(this.pos++) }
-  u16() { const v = this.d.getUint16(this.pos); this.pos += 2; return v }
-  u32() { const v = this.d.getUint32(this.pos); this.pos += 4; return v }
-  skip(n: number) { this.pos += n }
-  varlen(): number {
-    let v = 0
-    for (let i = 0; i < 4; i++) {
-      const b = this.u8()
-      v = (v << 7) | (b & 0x7f)
-      if ((b & 0x80) === 0) break
-    }
-    return v
-  }
-  str(n: number): string {
-    let s = ''
-    for (let i = 0; i < n; i++) s += String.fromCharCode(this.u8())
-    return s
-  }
-}
+// Delegates to the one robust SMF tokenizer (parseSmf in midi-import.ts) instead
+// of keeping a second, divergent parser. This flattens all tracks into a single
+// note list for the single-clip callers (drag-drop onto a lane, ClipView). Because
+// parseSmf is SMPTE-tolerant, handles formats 0/1/2, pairs overlapping same-pitch
+// notes FIFO, and bounds-guards truncated files, drag-drop now imports the same
+// files the Open-button importer does (it previously rejected SMPTE / format 2).
 
 export function parseMidiFile(buf: ArrayBuffer): ParsedMidi {
-  const r = new Reader(new DataView(buf))
-  if (r.str(4) !== 'MThd') throw new Error('Not a MIDI file')
-  const headerLen = r.u32()
-  const format = r.u16()
-  const nTracks = r.u16()
-  const division = r.u16()
-  r.skip(Math.max(0, headerLen - 6)) // a malformed headerLen < 6 must not rewind
-  if (division & 0x8000) throw new Error('SMPTE-timed MIDI files are not supported')
-  const ppq = division || 480
-  if (format > 1) throw new Error('Only MIDI format 0 and 1 are supported')
-
+  const smf = parseSmf(buf)
+  const div = smf.division || 480
   const notes: Omit<MidiNote, 'id'>[] = []
-  let tempo: number | undefined
   let name: string | undefined
-
-  for (let t = 0; t < nTracks; t++) {
-    if (r.pos + 8 > buf.byteLength) break   // header over-counted tracks
-    if (r.str(4) !== 'MTrk') break          // not a track chunk — stop gracefully
-    const len = r.u32()
-    const end = Math.min(r.pos + len, buf.byteLength) // a lying length must not overrun
-    let tick = 0
-    let running = 0
-    // note-ons awaiting their note-off, keyed by channel<<8|pitch
-    const open = new Map<number, { startTick: number; velocity: number }>()
-
-    const closeNote = (key: number, pitch: number, endTick: number) => {
-      const o = open.get(key)
-      if (!o) return
-      open.delete(key)
+  for (const track of smf.tracks) {
+    if (!name && track.name) name = track.name
+    for (const n of track.notes) {
       notes.push({
-        pitch,
-        startBeat: o.startTick / ppq,
-        durationBeats: Math.max(0.05, (endTick - o.startTick) / ppq),
-        velocity: o.velocity,
+        pitch: n.pitch,
+        startBeat: n.onTick / div,
+        durationBeats: Math.max(0.05, (n.offTick - n.onTick) / div),
+        velocity: n.velocity,
       })
     }
-
-    try {
-    while (r.pos < end) {
-      tick += r.varlen()
-      let status = r.u8()
-      if (status < 0x80) { r.pos--; status = running }
-      running = status < 0xf0 ? status : 0 // system/meta messages cancel running status
-
-      if (status === 0xff) {
-        const type = r.u8()
-        const mlen = r.varlen()
-        if (type === 0x51 && mlen === 3) {
-          const us = (r.u8() << 16) | (r.u8() << 8) | r.u8()
-          if (us > 0) tempo ??= Math.round(60_000_000 / us) // guard against /0 → Infinity
-        } else if (type === 0x03 && !name) {
-          name = r.str(mlen)
-        } else {
-          r.skip(mlen)
-        }
-      } else if (status === 0xf0 || status === 0xf7) {
-        r.skip(r.varlen())
-      } else {
-        const kind = status & 0xf0
-        const ch = status & 0x0f
-        if (kind === 0x90) {
-          const pitch = r.u8(), vel = r.u8()
-          const key = (ch << 8) | pitch
-          if (vel === 0) closeNote(key, pitch, tick)
-          else {
-            closeNote(key, pitch, tick)  // retrigger without off
-            open.set(key, { startTick: tick, velocity: vel })
-          }
-        } else if (kind === 0x80) {
-          const pitch = r.u8(); r.u8()
-          closeNote((ch << 8) | pitch, pitch, tick)
-        } else if (kind === 0xc0 || kind === 0xd0) {
-          r.skip(1)
-        } else {
-          r.skip(2)
-        }
-      }
-    }
-    } catch { /* truncated/malformed event — keep the notes parsed so far */ }
-    // close any dangling notes at track end
-    for (const [key, o] of open) {
-      const pitch = key & 0xff
-      notes.push({ pitch, startBeat: o.startTick / ppq, durationBeats: Math.max(0.05, (tick - o.startTick) / ppq), velocity: o.velocity })
-    }
-    r.pos = end
   }
-
   notes.sort((a, b) => a.startBeat - b.startBeat)
+  const tempo = smf.tempos[0] ? Math.round(smf.tempos[0].bpm) : undefined
   return { notes, tempo, name }
 }
 

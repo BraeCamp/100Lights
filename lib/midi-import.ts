@@ -58,7 +58,7 @@ function readChunk(dv: DataView, pos: number): { id: string; length: number; dat
   return { id, length, dataStart: pos + 8, next: pos + 8 + length }
 }
 
-function parseSmf(buf: ArrayBuffer): Smf {
+export function parseSmf(buf: ArrayBuffer): Smf {
   const dv = new DataView(buf)
   if (buf.byteLength < 14) throw new Error('That file is too small to be a MIDI file.')
   const head = readChunk(dv, 0)
