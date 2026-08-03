@@ -731,7 +731,18 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpD
 }
 
 // ── Compose ───────────────────────────────────────────────────────────────────
-function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
+// ── Artist-inspired STYLES ── each biases genre + tempo + a signature flavor, in
+// the SPIRIT of the artist (not a clone). `sig`: 'space' = huge reverb wash;
+// 'guitar' = electric-guitar lead; 'crush' = distorted / bit-crushed grit.
+const STYLES = {
+  darkwave: { genre: 'synthwave', bpm: 90,  key: 'C# minor', sig: 'space' },   // Mr. Kitty
+  altpop:   { genre: 'synthwave', bpm: 118, key: 'F# minor', sig: 'guitar' },  // Artemas (dark alt-pop)
+  hyperpop: { genre: 'trap',      bpm: 156, key: 'G minor',  sig: 'crush' },    // ThxSoMuch
+  phonk:    { genre: 'trap',      bpm: 130, key: 'A minor',  sig: 'crush' },
+  dreampop: { genre: 'synthwave', bpm: 104, key: 'D minor',  sig: 'space' },
+}
+
+function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const genre = GENRES.find(g => g.id === genreId)
   if (!genre) throw new Error(`unknown genre "${genreId}" — try --list`)
   const rand = makeRand(seed)
@@ -766,7 +777,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
 
   const form = buildForm(FORM_FAMILY[genreId] || 'loop', rand)
   const hook = makeHook(rand)
-  const leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
+  let leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
+  if (opts.sig === 'guitar') leadPreset = 'builtin-15'   // electric guitar lead (Artemas)
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
   // Seed-vary the keys/pad/bass timbre too — mostly the genre default, sometimes
   // an alternate from the wider library, so songs draw on more of the 46 voices.
@@ -843,6 +855,9 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const roleList = [...(genre.drums !== 'none' ? ['drums'] : []), 'bass', ...rand.pick(ENSEMBLES)]
   const TK = roleList.map(r => ({ key: r, ...ROLE[r] }))
   const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.fx, pal, genreId, rand, () => uid('e')) }))
+  // Style signature — stamp the artist flavor onto the racks.
+  if (opts.sig === 'space') for (const t of tracks) if (/Pad|Lead/.test(t.name)) { const rv = t.effects.find(e => e.type === 'reverb'); if (rv) { rv.params.wet = Math.min(0.75, rv.params.wet + 0.22); rv.params.decay = Math.max(rv.params.decay, 3.6) } else t.effects.push({ id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.5, decay: 3.8, preDelay: 0.03 } }) }
+  if (opts.sig === 'crush') for (const t of tracks) if (/Bass|Lead/.test(t.name)) { if (!t.effects.some(e => e.type === 'saturator')) t.effects.unshift({ id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.5, color: 0.4, output: 0 } }); if (!t.effects.some(e => e.type === 'redux')) t.effects.push({ id: uid('e'), type: 'redux', params: { enabled: true, bitDepth: 9, sampleRate: 14000 } }) }
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
   const has = k => byKey[k] != null
@@ -1064,8 +1079,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
 
   const keyLabel = modeName ? `${KEY_NAMES[root]} ${scale}` : (keyStr || `${KEY_NAMES[root]} ${scale}`)
   return {
-    name: `${genre.name} — ${keyLabel}`,
-    genre: genre.id, tempo: genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
+    name: `${opts.styleName ? opts.styleName + ' · ' : ''}${genre.name} — ${keyLabel}`,
+    genre: genre.id, tempo: opts.tempo || genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
     swing: genre.swing, key: root, scale,
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
@@ -1087,11 +1102,20 @@ async function main() {
   const pos = argv.filter(a => !a.startsWith('--'))
   const seedArg = argv.find(a => a.startsWith('--seed='))
   const outArg = argv.find(a => a.startsWith('--out='))
+  const styleArg = argv.find(a => a.startsWith('--style='))
   const seed = seedArg ? parseInt(seedArg.split('=')[1], 10) : 12345
-  const spec = compose(libs, pos[0], pos[1] || '', seed)
+  let genreId = pos[0], keyStr = pos[1] || '', opts = {}
+  if (styleArg) {
+    const st = STYLES[styleArg.split('=')[1]]
+    if (!st) { console.error(`unknown style — try: ${Object.keys(STYLES).join(', ')}`); process.exit(1) }
+    genreId = pos[0] || st.genre
+    keyStr = pos[1] || st.key
+    opts = { tempo: st.bpm, sig: st.sig, styleName: styleArg.split('=')[1] }
+  }
+  const spec = compose(libs, genreId, keyStr, seed, opts)
   const nNotes = spec.clips.reduce((a, c) => a + c.notes.length, 0)
   const end = Math.max(...spec.clips.map(c => c.startBeat + c.durationBeats), 0)
-  const slug = `${spec.genre}-${(pos[1] || spec.scale).replace(/\s+/g, '')}`.toLowerCase()
+  const slug = `${styleArg ? styleArg.split('=')[1] + '-' : ''}${spec.genre}-${(keyStr || spec.scale).replace(/\s+/g, '')}`.toLowerCase()
   const out = outArg ? outArg.split('=')[1] : join(OUT_DIR, `${slug}.json`)
   mkdirSync(dirname(out), { recursive: true })
   writeFileSync(out, JSON.stringify(spec))
