@@ -1556,7 +1556,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             getPlayhead={getPlayheadRef.current}
           />
         )}
-        <Transport />
+        <Transport onCommitName={onProjectNameCommit} />
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>

@@ -33,12 +33,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // user's email must be on the member list. Paid viewers get edit rights.
   // DEV_OPEN test users keep read access for the collab harness.
   const rows = await sql`
-    SELECT user_id, data, autosave_data FROM projects WHERE id = ${id} AND deleted_at IS NULL
+    SELECT user_id, data, autosave_data, slug, owner_username FROM projects WHERE id = ${id} AND deleted_at IS NULL
   `
 
   if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
 
   const data = rows[0].data as CfProjFile
+  // Surfaced so the editor can swap the address bar to the pretty /@user/slug URL.
+  const urlMeta = { _slug: (rows[0].slug ?? null) as string | null, _username: (rows[0].owner_username ?? null) as string | null }
 
   let access: 'owner' | 'edit' | 'view' | null
   if (testUser && !userId) {
@@ -54,7 +56,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const isOwner = access === 'owner'
 
   // Collaborators get the saved project but never the owner's autosave recovery
-  if (!isOwner) return Response.json({ ...data, _isOwner: false, _access: access })
+  if (!isOwner) return Response.json({ ...data, ...urlMeta, _isOwner: false, _access: access })
 
   const autosaveData = rows[0].autosave_data as CfProjFile | null
 
@@ -63,7 +65,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const autosaveAt = autosaveData?.savedAt ? new Date(autosaveData.savedAt).getTime() : 0
   const cloudAutosave = autosaveData && autosaveAt > savedAt ? autosaveData : null
 
-  return Response.json({ ...data, ...(cloudAutosave ? { _cloudAutosave: cloudAutosave } : {}) })
+  return Response.json({ ...data, ...urlMeta, ...(cloudAutosave ? { _cloudAutosave: cloudAutosave } : {}) })
 }
 
 // PATCH /api/projects/:id — toggle starred OR rename

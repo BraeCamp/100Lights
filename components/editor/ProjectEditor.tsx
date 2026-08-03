@@ -20,6 +20,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import dynamic from 'next/dynamic'
 import type { Caption, Output } from '@/lib/types'
+import { projectPath } from '@/lib/project-url'
 import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
 import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
@@ -386,6 +387,13 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       if ((data as CfProjFile & { _access?: string })._access === 'view') setViewOnly(true)
       setSavedData(data)
       setLocalName(data.name)
+      // Swap the address bar to the pretty /@user/slug-code URL when a project is
+      // opened via /projects/[id] or a bare link. The code is stable, so both URLs
+      // always resolve; this just makes the visible link readable + shareable.
+      const meta = data as CfProjFile & { _username?: string | null; _slug?: string | null }
+      if (meta._username && projectId && typeof window !== 'undefined' && window.location.pathname.startsWith('/projects/')) {
+        window.history.replaceState(null, '', projectPath(meta._username, meta._slug ?? undefined, projectId))
+      }
       setCaptions(data.captions ?? [])
       setOutputs(deserializeOutputs(data.outputs))
       setAudioMedia(data.audioMedia ?? [])
@@ -498,6 +506,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
       } catch { /* ignore parse errors */ }
       throw new Error(detail)
     }
+    const saved = await res.json().catch(() => null) as { slug?: string; username?: string } | null
     setLocalName(name)
     if (patch.outputs)      setOutputs(outs)
     if (patch.captions)     setCaptions(caps)
@@ -513,9 +522,13 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
     // First save of a /new session: put the project's real URL in the bar so
     // refreshing or sharing the link lands on the saved project. No remount —
-    // just the address (the editor keeps its in-memory state).
+    // just the address (the editor keeps its in-memory state). Prefer the pretty
+    // /@username/slug-code URL; fall back to /projects/id if no username yet.
     if (!projectId && typeof window !== 'undefined' && window.location.pathname === '/new') {
-      window.history.replaceState(null, '', `/projects/${savedProjectId.current}`)
+      const url = saved?.username
+        ? projectPath(saved.username, saved.slug, savedProjectId.current)
+        : `/projects/${savedProjectId.current}`
+      window.history.replaceState(null, '', url)
     }
     if (!projectId) setLiveProjectId(savedProjectId.current)
   }
@@ -526,12 +539,22 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     setLocalName(trimmed)
     if (!isOwner) return  // collaborators rename locally only
     save({ name: trimmed }).catch(() => {})
-    if (projectId) {
-      fetch(`/api/projects/${projectId}`, {
+    const id = projectId ?? savedProjectId.current
+    if (id) {
+      fetch(`/api/projects/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed }),
-      }).catch(() => {})
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then((data: { slug?: string; username?: string } | null) => {
+          // Rename regenerates the slug — refresh the address bar so the pretty
+          // URL matches the new name (the code keeps old links working regardless).
+          if (data?.username && typeof window !== 'undefined' && /^\/(@|projects\/)/.test(window.location.pathname)) {
+            window.history.replaceState(null, '', projectPath(data.username, data.slug, id))
+          }
+        })
+        .catch(() => {})
     }
   }
 

@@ -51,8 +51,24 @@ function FxPad({ label, mode, engine, color }: { label: string; mode: 'lp' | 'hp
   )
 }
 
-export default function Transport() {
+interface TransportProps {
+  /** Persist a project rename to the API + refresh the slug/URL (from ProjectEditor). */
+  onCommitName?: (name: string) => void
+}
+
+export default function Transport({ onCommitName }: TransportProps = {}) {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed } = useDaw()
+  // Editable project title shown in the toolbar (the DAW previously showed none).
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput]     = useState('')
+  function commitProjectName() {
+    const trimmed = nameInput.trim()
+    if (trimmed && trimmed !== project.name) {
+      dispatch({ type: 'PATCH_PROJECT', patch: { name: trimmed } }) // update the in-editor blob
+      onCommitName?.(trimmed)                                        // persist + regen slug/URL
+    }
+    setEditingName(false)
+  }
   const { isPro } = usePlan()
   const { padTrafficLights } = useElectronChrome()
 
@@ -749,6 +765,31 @@ export default function Transport() {
   return (
     <div style={wrapStyle} className={wrapClass}>
       {recordSetupPanel}
+      {/* Editable project title — click to rename (updates the name + URL slug) */}
+      {editingName ? (
+        <input
+          autoFocus
+          value={nameInput}
+          onChange={e => setNameInput(e.target.value)}
+          onBlur={commitProjectName}
+          onKeyDown={e => {
+            e.stopPropagation()
+            if (e.key === 'Enter') commitProjectName()
+            else if (e.key === 'Escape') { setNameInput(project.name); setEditingName(false) }
+          }}
+          aria-label="Project name"
+          style={{ ...inputStyle, textAlign: 'left', width: 160, fontSize: 13 }}
+        />
+      ) : (
+        <button
+          onClick={() => { setNameInput(project.name); setEditingName(true) }}
+          title="Rename project"
+          style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, cursor: 'text', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '2px 4px', flexShrink: 1, textAlign: 'left' }}
+        >
+          {project.name || 'Untitled'}
+        </button>
+      )}
+      <div style={divider} />
       {/* Transport controls */}
       <button style={base} onClick={handleRewind} title="Rewind to start" data-help-id="rewind">
         <SkipBack size={13} />
