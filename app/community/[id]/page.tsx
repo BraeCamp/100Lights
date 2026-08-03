@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { sql } from '@/lib/db'
-import { ensureTables, rowToItem } from '@/lib/community-server'
+import { ensureTables, rowToItem, jsonLdScript } from '@/lib/community-server'
 import type { CommunityItem } from '@/lib/community'
 import { ItemClient } from './ItemClient'
 
@@ -20,7 +20,9 @@ export const revalidate = 3600
 const fetchItem = cache(async (id: string) => {
   await ensureTables()
   try {
-    const rows = await sql`SELECT * FROM community_items WHERE id = ${id}`
+    // removed_at IS NULL: an admin-removed item must not keep rendering (with
+    // full content + indexable meta) on its public share page.
+    const rows = await sql`SELECT * FROM community_items WHERE id = ${id} AND removed_at IS NULL`
     return rows[0] ?? null
   } catch {
     return null  // malformed uuid etc.
@@ -163,8 +165,11 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
   ])
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <ItemClient id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} remixes={remixes} source={source} author={item.author_name as string} kind={item.kind as string} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }} />
+      {/* key={id}: soft-navigating between two /community/[id] pages reuses this
+          client instance, so its useState(initialItem) would keep showing the
+          previous item. Keying on id forces a fresh mount per item. */}
+      <ItemClient key={id} id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} remixes={remixes} source={source} author={item.author_name as string} kind={item.kind as string} />
     </>
   )
 }

@@ -92,6 +92,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   const [normalize, setNormalize]         = useState(false)
   const [statusMessage, setStatusMessage] = useState<StatusMessage>('recording')
   const ivRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const stemDisposeRef = useRef<(() => void) | null>(null)
   const finalBlobRef = useRef<Blob | null>(null)
   const [shareState, setShareState]       = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [shareName, setShareName]         = useState('')
@@ -151,7 +152,12 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
   useEffect(() => () => {
     if (ivRef.current) clearInterval(ivRef.current)
     if (engine.isRecording) { engine.stop(); void engine.stopRecording() }
+    stemDisposeRef.current?.()  // release tapped stem outputs if we closed mid-stem-export
   }, [engine])
+
+  // Revoke the download blob URL when it's replaced (re-export) or on unmount —
+  // otherwise every export permanently leaks a blob: URL for the tab's lifetime.
+  useEffect(() => () => { if (downloadUrl) URL.revokeObjectURL(downloadUrl) }, [downloadUrl])
 
   // One playback pass; every track's post-fader output is tapped by its own
   // recorder, then each becomes a WAV inside a single zip.
@@ -166,6 +172,10 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     // The pass must reach the end — with looping on, it never would
     engine.setLoopEnabled(false)
     const { taps, dispose } = engine.tapTrackOutputs(stemTracks.map(t => t.id))
+    // Idempotent teardown, tracked in a ref so unmount-mid-export releases the taps.
+    let disposed = false
+    const disposeStems = () => { if (disposed) return; disposed = true; stemDisposeRef.current = null; dispose() }
+    stemDisposeRef.current = disposeStems
     const recs = new Map<string, { rec: MediaRecorder; chunks: Blob[] }>()
     const mime = ['audio/webm;codecs=opus', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m)) ?? ''
     for (const [id, dest] of taps) {
@@ -198,7 +208,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
               const safe = t.name.replace(/[^\w\- ]+/g, '').trim() || 'track'
               files.push({ name: `${safe}.wav`, blob: audioBufferToWav(audioBuffer) })
             }
-            dispose()
+            disposeStems()
             if (files.length === 0) { setPhase('error'); return }
             const { makeZip } = await import('@/lib/zip')
             const zip = await makeZip(files)
@@ -208,7 +218,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
             setStatusMessage('done')
             setPhase('done')
           } catch {
-            dispose()
+            disposeStems()
             setPhase('error')
           }
         })()

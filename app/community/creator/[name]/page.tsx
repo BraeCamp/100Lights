@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { sql } from '@/lib/db'
-import { ensureTables } from '@/lib/community-server'
+import { ensureTables, jsonLdScript } from '@/lib/community-server'
 
 // Public creator profile: everything one person has shared, server-rendered and
 // crawlable. Fills out the community with a real per-creator surface (better than
@@ -24,21 +24,24 @@ type Collection = { id: string; name: string; count: number }
 const fetchCreator = cache(async (name: string): Promise<{ items: Item[]; stats: Stats; collections: Collection[] }> => {
   await ensureTables()
   try {
-    const items = await sql`
-      SELECT id, name, description, kind, votes, downloads FROM community_items
-      WHERE author_name = ${name} AND removed_at IS NULL
-      ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 60
-    ` as Item[]
-    const s = await sql`
-      SELECT COUNT(*)::int AS shares, COALESCE(SUM(votes),0)::int AS votes, COALESCE(SUM(downloads),0)::int AS downloads
-      FROM community_items WHERE author_name = ${name} AND removed_at IS NULL
-    ` as { shares: number; votes: number; downloads: number }[]
-    const collections = await sql`
-      SELECT c.id, c.name, COUNT(ci.item_id)::int AS count
-      FROM community_collections c JOIN community_collection_items ci ON ci.collection_id = c.id
-      WHERE c.author_name = ${name} AND c.removed_at IS NULL
-      GROUP BY c.id ORDER BY c.created_at DESC LIMIT 12
-    ` as Collection[]
+    // Independent queries — run them in parallel (one round-trip, not three).
+    const [items, s, collections] = await Promise.all([
+      sql`
+        SELECT id, name, description, kind, votes, downloads FROM community_items
+        WHERE author_name = ${name} AND removed_at IS NULL
+        ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 60
+      `,
+      sql`
+        SELECT COUNT(*)::int AS shares, COALESCE(SUM(votes),0)::int AS votes, COALESCE(SUM(downloads),0)::int AS downloads
+        FROM community_items WHERE author_name = ${name} AND removed_at IS NULL
+      `,
+      sql`
+        SELECT c.id, c.name, COUNT(ci.item_id)::int AS count
+        FROM community_collections c JOIN community_collection_items ci ON ci.collection_id = c.id
+        WHERE c.author_name = ${name} AND c.removed_at IS NULL
+        GROUP BY c.id ORDER BY c.created_at DESC LIMIT 12
+      `,
+    ]) as [Item[], { shares: number; votes: number; downloads: number }[], Collection[]]
     return { items, stats: s[0] ?? { shares: 0, votes: 0, downloads: 0 }, collections }
   } catch {
     return { items: [], stats: { shares: 0, votes: 0, downloads: 0 }, collections: [] }
@@ -92,7 +95,7 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
 
   return (
     <main style={{ maxWidth: 860, margin: '0 auto', padding: '28px 18px 72px', color: 'var(--text-primary, #f1f0ff)' }}>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }} />
       <nav style={{ fontSize: 12.5, color: 'var(--text-muted, #a3a2b5)', marginBottom: 16 }}>
         <Link href="/community" style={{ color: 'inherit', textDecoration: 'none' }}>Community</Link>
         <span style={{ margin: '0 6px' }}>/</span>

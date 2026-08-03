@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { sql } from '@/lib/db'
-import { ensureTables, isUuid } from '@/lib/community-server'
+import { ensureTables, isUuid, jsonLdScript } from '@/lib/community-server'
 
 // Public collection page: a creator-curated, shareable set of community items —
 // server-rendered and crawlable (another rich SEO surface + a page worth sharing).
@@ -70,7 +70,7 @@ export default async function CollectionPage({ params }: { params: Promise<{ id:
 
   return (
     <main style={{ maxWidth: 860, margin: '0 auto', padding: '28px 18px 72px', color: 'var(--text-primary, #f1f0ff)' }}>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }} />
       <nav style={{ fontSize: 12.5, color: 'var(--text-muted, #a3a2b5)', marginBottom: 16 }}>
         <Link href="/community" style={{ color: 'inherit', textDecoration: 'none' }}>Community</Link>
         <span style={{ margin: '0 6px' }}>/</span>

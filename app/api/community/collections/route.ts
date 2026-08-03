@@ -1,6 +1,6 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
-import { ensureTables, devTestUser } from '@/lib/community-server'
+import { ensureTables, devTestUser, isUuid } from '@/lib/community-server'
 
 export const runtime = 'nodejs'
 
@@ -22,7 +22,10 @@ export async function GET(req: Request) {
       if (!userId) return Response.json({ collections: [] })
       // `item` (optional) → each collection also reports whether it already
       // contains that item, so the save-picker can pre-check the right boxes.
-      const item = url.searchParams.get('item')
+      // Validate as a UUID first: an invalid value would make Postgres throw and
+      // the surrounding catch would blank the user's whole collection list.
+      const itemParam = url.searchParams.get('item')
+      const item = itemParam && isUuid(itemParam) ? itemParam : null
       const rows = await sql`
         SELECT c.id, c.name, c.description, c.author_name, c.created_at,
                COUNT(ci.item_id)::int AS count,

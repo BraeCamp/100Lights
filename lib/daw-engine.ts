@@ -1540,7 +1540,10 @@ export class DawEngine extends EventTarget {
 
         const startAt      = this._ctxTimeForBeat(Math.max(now, noteAbsBeat), now, contextNow)
         const alreadyBeats = Math.max(0, now - noteAbsBeat)
-        const remaining    = this.beatsToSeconds(maxDur - alreadyBeats)
+        // Map-aware note LENGTH: span the note's remaining beats through the tempo
+        // map (not the global tempo) so notes in a tempo-changed section play the
+        // right duration. Single segment → identical to beatsToSeconds(maxDur-already).
+        const remaining    = this._spanSeconds(noteAbsBeat + alreadyBeats, noteAbsBeat + maxDur)
 
         // FX-lane clip effects overlapping this note: thread the note's audio
         // through them (audio clips already do this; MIDI silently bypassed
@@ -1688,7 +1691,7 @@ export class DawEngine extends EventTarget {
               // Sample the whole envelope, then play the portion from where the
               // note already is — entering mid-note continues the shape instead
               // of restarting it.
-              const totalSec = Math.max(0.02, this.beatsToSeconds(maxDur) + sustainSec)
+              const totalSec = Math.max(0.02, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec)
               const N = Math.max(8, Math.ceil(totalSec * 90))
               const full = sampleAutomation(ampGraph!, 1, N)
               const startIdx = Math.min(N - 2, Math.max(0, Math.floor((alreadyBeats / Math.max(1e-6, maxDur)) * N)))
@@ -1711,7 +1714,7 @@ export class DawEngine extends EventTarget {
             const pitchG = clip.pitchGraph
             let vibLfo: AudioScheduledSourceNode | null = null
             if (pitchG && pitchG.length >= 2) {
-              const totalSec = Math.max(0.02, this.beatsToSeconds(maxDur) + sustainSec)
+              const totalSec = Math.max(0.02, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec)
               const M = Math.max(8, Math.ceil(totalSec * 60))
               const full = sampleAutomation(pitchG, 1, M)
               const sIdx = Math.min(M - 2, Math.max(0, Math.floor((alreadyBeats / Math.max(1e-6, maxDur)) * M)))
@@ -1773,7 +1776,7 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          const h = playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, this.beatsToSeconds(maxDur) + sustainSec, noteOffsetSec)
+          const h = playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
           this._choke(track.id, h, startAt)
         }
 

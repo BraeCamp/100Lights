@@ -738,7 +738,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     } else {
       // Common audio: keep the original bytes, but preserve the real mimetype so
       // the durable copy (uploadRecordingBlob) gets the correct file extension.
-      uploadBlob = new Blob([ab], { type: file.type || 'audio/mpeg' })
+      // Some drag sources give an empty file.type — derive it from the extension
+      // rather than blindly guessing mp3 (which mislabels ogg/flac/wav).
+      const EXT_MIME: Record<string, string> = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac', wav: 'audio/wav' }
+      uploadBlob = new Blob([ab], { type: file.type || EXT_MIME[ext] || 'audio/mpeg' })
       blobUrl = URL.createObjectURL(file)
     }
 
@@ -754,6 +757,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       setSelectedClipId(clip.id)
     } catch {
       dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+      URL.revokeObjectURL(blobUrl)  // clip is gone — don't leak its blob URL
       window.alert(`Couldn't read the audio in “${file.name}”.`)
     }
   }

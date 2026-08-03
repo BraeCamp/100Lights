@@ -8,6 +8,13 @@ export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 let tablesReady = false
 /** Route ids come straight from the URL — reject non-UUIDs before they hit
  *  Postgres, which throws (500) instead of returning no rows. */
+/** Serialize an object for a <script type="application/ld+json"> block. JSON.stringify
+ *  does NOT escape '<', so a DB field containing '</script>' would break out of the
+ *  tag (stored XSS). Escaping '<' as < closes that hole while staying valid JSON. */
+export function jsonLdScript(obj: unknown): string {
+  return JSON.stringify(obj).replace(/</g, '\\u003c')
+}
+
 export function isUuid(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 }
@@ -130,6 +137,9 @@ export async function ensureTables() {
   await sql`CREATE INDEX IF NOT EXISTS community_items_created_idx ON community_items (created_at DESC)`
   await sql`CREATE INDEX IF NOT EXISTS community_items_author_idx ON community_items (author_name)`
   await sql`CREATE INDEX IF NOT EXISTS community_items_user_idx ON community_items (user_id)`
+  // community_votes PK is (item_id, user_id) — can't serve a user_id-leading
+  // lookup, so the per-request "my votes" query would seq-scan without this.
+  await sql`CREATE INDEX IF NOT EXISTS community_votes_user_idx ON community_votes (user_id)`
   tablesReady = true
 }
 

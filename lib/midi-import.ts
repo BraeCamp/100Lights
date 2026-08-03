@@ -90,6 +90,9 @@ function parseSmf(buf: ArrayBuffer): Smf {
     const active = new Map<number, RawNote[]>()
     const notes: RawNote[] = []
 
+    // A truncated/malformed final event makes a DataView read throw RangeError;
+    // catch it so we keep the notes parsed so far instead of failing the whole file.
+    try {
     while (p < end) {
       const [delta, afterDelta] = readVarint(dv, p)
       p = afterDelta
@@ -118,6 +121,7 @@ function parseSmf(buf: ArrayBuffer): Smf {
           if (!trackName) trackName = s.trim()
         }
         p = dataStart + len
+        runningStatus = 0 // meta events cancel running status
       } else if (status === 0xf0 || status === 0xf7) {
         // SysEx — skip
         const [len, afterLen] = readVarint(dv, p)
@@ -149,6 +153,7 @@ function parseSmf(buf: ArrayBuffer): Smf {
         }
       }
     }
+    } catch { /* truncated/malformed event — keep the notes parsed so far */ }
     // Close any notes left hanging at track end.
     for (const arr of active.values()) for (const n of arr) { n.offTick = tick; notes.push(n) }
     tracks.push({ name: trackName, notes })

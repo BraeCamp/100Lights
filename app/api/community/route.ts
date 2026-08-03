@@ -72,8 +72,11 @@ export async function GET(req: Request) {
   const pageRows = rows.slice(0, PAGE_SIZE)
 
   const votedIds = new Set<string>()
-  if (userId) {
-    const myVotes = await sql`SELECT item_id FROM community_votes WHERE user_id = ${userId}`
+  const pageIds = pageRows.map(r => r.id as string)
+  if (userId && pageIds.length) {
+    // Scope to the visible page (was: every vote the user ever cast) — only
+    // pageRows consult votedIds, and this now uses the new user_id index.
+    const myVotes = await sql`SELECT item_id FROM community_votes WHERE user_id = ${userId} AND item_id = ANY(${pageIds}::uuid[])`
     for (const r of myVotes) votedIds.add(r.item_id as string)
   }
   const { reactions, mine } = await reactionMaps(pageRows.map(r => r.id as string), userId)

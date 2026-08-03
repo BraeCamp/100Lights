@@ -101,14 +101,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (body.action === 'vote') {
-    // Toggle: one vote per user per item, kept consistent with the count
+    // Toggle, race-safe: the counter changes ONLY when the vote row actually
+    // changed. Two concurrent double-clicks used to both increment (INSERT is
+    // idempotent but the +1 was not gated on it), drifting the count above the
+    // real row total — here we key the bump off the INSERT/DELETE row count.
     const existing = await sql`SELECT 1 FROM community_votes WHERE item_id = ${id} AND user_id = ${userId}`
     if (existing.length > 0) {
-      await sql`DELETE FROM community_votes WHERE item_id = ${id} AND user_id = ${userId}`
-      const rows = await sql`UPDATE community_items SET votes = votes - 1 WHERE id = ${id} RETURNING votes`
+      const del = await sql`DELETE FROM community_votes WHERE item_id = ${id} AND user_id = ${userId} RETURNING 1`
+      if (del.length === 0) {
+        const cur = await sql`SELECT votes FROM community_items WHERE id = ${id}`
+        return Response.json({ votes: cur[0]?.votes ?? 0, votedByMe: false })
+      }
+      const rows = await sql`UPDATE community_items SET votes = GREATEST(0, votes - 1) WHERE id = ${id} RETURNING votes`
       return Response.json({ votes: rows[0]?.votes ?? 0, votedByMe: false })
     }
-    await sql`INSERT INTO community_votes (item_id, user_id) VALUES (${id}, ${userId}) ON CONFLICT DO NOTHING`
+    const ins = await sql`INSERT INTO community_votes (item_id, user_id) VALUES (${id}, ${userId}) ON CONFLICT DO NOTHING RETURNING 1`
+    if (ins.length === 0) {
+      const cur = await sql`SELECT votes FROM community_items WHERE id = ${id}`
+      return Response.json({ votes: cur[0]?.votes ?? 0, votedByMe: true })
+    }
     const rows = await sql`UPDATE community_items SET votes = votes + 1 WHERE id = ${id} RETURNING votes`
     return Response.json({ votes: rows[0]?.votes ?? 0, votedByMe: true })
   }

@@ -1560,10 +1560,10 @@ export default function ArrangementView() {
           <div ref={editorDropdownRef} style={{ position: 'relative', display: 'flex' }}>
             <button onClick={openEditor} title="Open the editor for the selected clip — piano roll for melodic clips, step sequencer for beats" data-help-id="editor" style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-              border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+              borderStyle: 'solid', borderWidth: '1px 0 1px 1px', borderColor: active ? 'var(--accent)' : 'var(--border)',
               background: active ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent',
               color: active ? 'var(--accent-light)' : 'var(--text-muted)',
-              letterSpacing: '0.04em', borderRadius: '3px 0 0 3px', borderRight: 'none',
+              letterSpacing: '0.04em', borderRadius: '3px 0 0 3px',
             }}>{label}</button>
             <button onClick={() => setShowEditorMenu(m => !m)} title="Create a new piano roll or beat" style={{
               ...toolBtn, width: 14, padding: 0, fontSize: 9,
@@ -1596,9 +1596,9 @@ export default function ArrangementView() {
             data-help-id="export"
             style={{
               ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-              border: '1px solid var(--border)', background: 'transparent',
+              borderStyle: 'solid', borderWidth: '1px 0 1px 1px', borderColor: 'var(--border)', background: 'transparent',
               color: 'var(--text-muted)', letterSpacing: '0.04em',
-              borderRadius: '3px 0 0 3px', borderRight: 'none',
+              borderRadius: '3px 0 0 3px',
             }}
           >EXPORT</button>
           <button
@@ -1672,10 +1672,10 @@ export default function ArrangementView() {
               data-help-id="save"
               style={{
                 ...toolBtn, width: 'auto', padding: '2px 8px', fontSize: 9, fontWeight: 700,
-                border: `1px solid ${saveNudge ? 'var(--accent)' : 'var(--border)'}`,
+                borderStyle: 'solid', borderWidth: '1px 0 1px 1px', borderColor: saveNudge ? 'var(--accent)' : 'var(--border)',
                 background: isSaving ? 'rgba(34,197,94,0.15)' : saveNudge ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
                 color: isSaving ? '#4ade80' : saveNudge ? 'var(--accent-light)' : 'var(--text-muted)',
-                letterSpacing: '0.04em', borderRadius: '3px 0 0 3px', borderRight: 'none',
+                letterSpacing: '0.04em', borderRadius: '3px 0 0 3px',
                 animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
               }}
             >{isSaving ? 'SAVING…' : saveDest === 'local' ? 'SAVE ⤓' : 'SAVE'}</button>

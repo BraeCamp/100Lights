@@ -47,7 +47,7 @@ export function parseMidiFile(buf: ArrayBuffer): ParsedMidi {
   const format = r.u16()
   const nTracks = r.u16()
   const division = r.u16()
-  r.skip(headerLen - 6)
+  r.skip(Math.max(0, headerLen - 6)) // a malformed headerLen < 6 must not rewind
   if (division & 0x8000) throw new Error('SMPTE-timed MIDI files are not supported')
   const ppq = division || 480
   if (format > 1) throw new Error('Only MIDI format 0 and 1 are supported')
@@ -57,9 +57,10 @@ export function parseMidiFile(buf: ArrayBuffer): ParsedMidi {
   let name: string | undefined
 
   for (let t = 0; t < nTracks; t++) {
-    if (r.str(4) !== 'MTrk') throw new Error('Malformed MIDI track')
+    if (r.pos + 8 > buf.byteLength) break   // header over-counted tracks
+    if (r.str(4) !== 'MTrk') break          // not a track chunk — stop gracefully
     const len = r.u32()
-    const end = r.pos + len
+    const end = Math.min(r.pos + len, buf.byteLength) // a lying length must not overrun
     let tick = 0
     let running = 0
     // note-ons awaiting their note-off, keyed by channel<<8|pitch
@@ -77,18 +78,19 @@ export function parseMidiFile(buf: ArrayBuffer): ParsedMidi {
       })
     }
 
+    try {
     while (r.pos < end) {
       tick += r.varlen()
       let status = r.u8()
       if (status < 0x80) { r.pos--; status = running }
-      running = status
+      running = status < 0xf0 ? status : 0 // system/meta messages cancel running status
 
       if (status === 0xff) {
         const type = r.u8()
         const mlen = r.varlen()
         if (type === 0x51 && mlen === 3) {
           const us = (r.u8() << 16) | (r.u8() << 8) | r.u8()
-          tempo ??= Math.round(60_000_000 / us)
+          if (us > 0) tempo ??= Math.round(60_000_000 / us) // guard against /0 → Infinity
         } else if (type === 0x03 && !name) {
           name = r.str(mlen)
         } else {
@@ -117,6 +119,7 @@ export function parseMidiFile(buf: ArrayBuffer): ParsedMidi {
         }
       }
     }
+    } catch { /* truncated/malformed event — keep the notes parsed so far */ }
     // close any dangling notes at track end
     for (const [key, o] of open) {
       const pitch = key & 0xff
@@ -252,7 +255,13 @@ export function writeProjectMidi(project: DawProject): { blob: Blob; midiTracks:
 
   const ntrks = chunks.length
   const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (ntrks >> 8) & 0xff, ntrks & 0xff, (PROJECT_PPQ >> 8) & 0xff, PROJECT_PPQ & 0xff]
-  const out: number[] = [...header]
-  for (const c of chunks) out.push(...c)
-  return { blob: new Blob([new Uint8Array(out)], { type: 'audio/midi' }), midiTracks, notes: noteCount, audioTracksOmitted }
+  // Flatten without argument-spreading: `out.push(...chunk)` overflows the JS
+  // max-arguments limit once a track is large (a few thousand notes), which threw
+  // RangeError on exactly the big projects users most want to export.
+  const total = header.length + chunks.reduce((n, c) => n + c.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  out.set(header, off); off += header.length
+  for (const c of chunks) { out.set(c, off); off += c.length }
+  return { blob: new Blob([out], { type: 'audio/midi' }), midiTracks, notes: noteCount, audioTracksOmitted }
 }

@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { sql } from '@/lib/db'
-import { ensureTables, COMMUNITY_KINDS } from '@/lib/community-server'
+import { ensureTables, COMMUNITY_KINDS, jsonLdScript } from '@/lib/community-server'
 
 // Category hub: one rich, server-rendered, crawlable page per community kind
 // (/community/browse/samples, /recipes, /starters…). This is the durable SEO
@@ -97,7 +97,7 @@ export default async function CommunityCategoryPage({ params }: { params: Promis
 
   return (
     <main style={{ maxWidth: 860, margin: '0 auto', padding: '28px 18px 72px', color: 'var(--text-primary, #f1f0ff)' }}>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }} />
       <nav style={{ fontSize: 12.5, color: 'var(--text-muted, #a3a2b5)', marginBottom: 14 }}>
         <Link href="/community" style={{ color: 'inherit', textDecoration: 'none' }}>Community</Link>
         <span style={{ margin: '0 6px' }}>/</span>
