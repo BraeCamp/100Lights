@@ -80,6 +80,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   let items: MetadataRoute.Sitemap = []
   let categoryHubs: MetadataRoute.Sitemap = []
   let creatorPages: MetadataRoute.Sitemap = []
+  let collectionPages: MetadataRoute.Sitemap = []
   try {
     const rows = await sql`
       SELECT id, created_at FROM community_items
@@ -120,7 +121,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.6,
     }))
+    // Collections — curated, non-empty sets are rich, rankable pages.
+    const collections = await sql`
+      SELECT c.id, c.created_at FROM community_collections c
+      JOIN community_collection_items ci ON ci.collection_id = c.id
+      WHERE c.removed_at IS NULL
+      GROUP BY c.id, c.created_at
+      ORDER BY c.created_at DESC LIMIT 200
+    `
+    collectionPages = collections.map(c => ({
+      url: `${base}/community/collection/${c.id as string}`,
+      lastModified: new Date(c.created_at as string),
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
+    }))
   } catch { /* DB unavailable — static pages still ship */ }
 
-  return [...staticPages, ...learn, ...paths, ...tutorials, ...categoryHubs, ...creatorPages, ...items]
+  return [...staticPages, ...learn, ...paths, ...tutorials, ...categoryHubs, ...creatorPages, ...collectionPages, ...items]
 }

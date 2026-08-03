@@ -19,8 +19,9 @@ const KIND_LABEL: Record<string, string> = {
 
 type Item = { id: string; name: string; description: string; kind: string; votes: number; downloads: number }
 type Stats = { shares: number; votes: number; downloads: number }
+type Collection = { id: string; name: string; count: number }
 
-const fetchCreator = cache(async (name: string): Promise<{ items: Item[]; stats: Stats }> => {
+const fetchCreator = cache(async (name: string): Promise<{ items: Item[]; stats: Stats; collections: Collection[] }> => {
   await ensureTables()
   try {
     const items = await sql`
@@ -32,9 +33,15 @@ const fetchCreator = cache(async (name: string): Promise<{ items: Item[]; stats:
       SELECT COUNT(*)::int AS shares, COALESCE(SUM(votes),0)::int AS votes, COALESCE(SUM(downloads),0)::int AS downloads
       FROM community_items WHERE author_name = ${name} AND removed_at IS NULL
     ` as { shares: number; votes: number; downloads: number }[]
-    return { items, stats: s[0] ?? { shares: 0, votes: 0, downloads: 0 } }
+    const collections = await sql`
+      SELECT c.id, c.name, COUNT(ci.item_id)::int AS count
+      FROM community_collections c JOIN community_collection_items ci ON ci.collection_id = c.id
+      WHERE c.author_name = ${name} AND c.removed_at IS NULL
+      GROUP BY c.id ORDER BY c.created_at DESC LIMIT 12
+    ` as Collection[]
+    return { items, stats: s[0] ?? { shares: 0, votes: 0, downloads: 0 }, collections }
   } catch {
-    return { items: [], stats: { shares: 0, votes: 0, downloads: 0 } }
+    return { items: [], stats: { shares: 0, votes: 0, downloads: 0 }, collections: [] }
   }
 })
 
@@ -66,7 +73,7 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
 export default async function CreatorProfilePage({ params }: { params: Promise<{ name: string }> }) {
   const { name: raw } = await params
   const name = decodeURIComponent(raw)
-  const { items, stats } = await fetchCreator(name)
+  const { items, stats, collections } = await fetchCreator(name)
   if (stats.shares === 0) notFound()
 
   const h = hue(name)
@@ -108,6 +115,21 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
           </div>
         </div>
       </header>
+
+      {collections.length > 0 && (
+        <section style={{ marginBottom: 26 }}>
+          <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, #a3a2b5)', margin: '0 0 12px' }}>🔖 Collections</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {collections.map(c => (
+              <Link key={c.id} href={`/community/collection/${c.id}`} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 600, textDecoration: 'none',
+                color: 'var(--text-primary, #f1f0ff)', background: 'var(--bg-surface, #17171b)', border: '1px solid var(--border, #26262b)',
+                borderRadius: 9, padding: '8px 13px',
+              }}>{c.name}<span style={{ fontSize: 11, color: 'var(--text-muted, #a3a2b5)' }}>{c.count}</span></Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
         {items.map(r => (

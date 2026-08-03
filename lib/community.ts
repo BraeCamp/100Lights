@@ -130,6 +130,52 @@ export async function reportComment(itemId: string, commentId: string, reason: s
   })
 }
 
+// ── Collections ────────────────────────────────────────────────────────────
+
+export interface CommunityCollection {
+  id: string
+  name: string
+  description: string
+  author_name: string
+  created_at: string
+  count: number
+  /** Only present when listed with an `item` (the save-picker): does it contain it. */
+  contains?: boolean
+}
+
+/** The caller's collections. Pass `itemId` to also get each one's `contains` flag. */
+export async function listMyCollections(itemId?: string): Promise<CommunityCollection[]> {
+  const res = await fetch(`/api/community/collections?mine=1${itemId ? `&item=${encodeURIComponent(itemId)}` : ''}`)
+  if (!res.ok) return []
+  return (await res.json()).collections ?? []
+}
+
+/** A creator's public (non-empty) collections. */
+export async function listCollectionsByAuthor(author: string): Promise<CommunityCollection[]> {
+  const res = await fetch(`/api/community/collections?author=${encodeURIComponent(author)}`)
+  if (!res.ok) return []
+  return (await res.json()).collections ?? []
+}
+
+export async function createCollection(name: string, description = ''): Promise<CommunityCollection> {
+  const res = await fetch('/api/community/collections', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not create collection')
+  return (await res.json()).collection
+}
+
+export async function addToCollection(collectionId: string, itemId: string): Promise<void> {
+  const res = await fetch(`/api/community/collections/${collectionId}/items`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId }),
+  })
+  if (!res.ok) throw new Error('Could not add to collection')
+}
+
+export async function removeFromCollection(collectionId: string, itemId: string): Promise<void> {
+  await fetch(`/api/community/collections/${collectionId}/items?itemId=${encodeURIComponent(itemId)}`, { method: 'DELETE' })
+}
+
 /** Edit an item's title/body (author or admin). Used for text posts. */
 export async function editItem(id: string, patch: { name?: string; description?: string }): Promise<void> {
   const res = await fetch(`/api/community/${id}`, {

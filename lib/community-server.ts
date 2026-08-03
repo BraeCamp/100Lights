@@ -100,6 +100,31 @@ export async function ensureTables() {
       UNIQUE (comment_id, user_id)
     )
   `
+  // Collections / playlists: a user-curated, named, shareable set of items.
+  await sql`
+    CREATE TABLE IF NOT EXISTS community_collections (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL,
+      author_name TEXT NOT NULL DEFAULT 'Anonymous',
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      removed_at TIMESTAMPTZ
+    )
+  `
+  await sql`
+    CREATE TABLE IF NOT EXISTS community_collection_items (
+      collection_id UUID NOT NULL,
+      item_id UUID NOT NULL,
+      position INT NOT NULL DEFAULT 0,
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (collection_id, item_id)
+    )
+  `
+  await sql`CREATE INDEX IF NOT EXISTS community_collections_user_idx ON community_collections (user_id, created_at DESC)`
+  await sql`CREATE INDEX IF NOT EXISTS community_collections_author_idx ON community_collections (author_name)`
+  await sql`CREATE INDEX IF NOT EXISTS community_collection_items_idx ON community_collection_items (collection_id, position)`
+
   // Indexes for the feed's hot paths — cheap at any size, needed at scale
   await sql`CREATE INDEX IF NOT EXISTS community_items_kind_idx ON community_items (kind, created_at DESC)`
   await sql`CREATE INDEX IF NOT EXISTS community_items_created_idx ON community_items (created_at DESC)`

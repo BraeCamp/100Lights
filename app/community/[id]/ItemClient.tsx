@@ -7,6 +7,7 @@ import { useUser } from '@clerk/nextjs'
 import { getCommunityItem, toggleVote, importItem, type CommunityItem } from '@/lib/community'
 import { initLibrary } from '@/lib/sound-library'
 import { FeedCard } from '../FeedCard'
+import { SaveToCollection } from '../SaveToCollection'
 import type { RelatedItem } from './page'
 
 const KIND_LABEL: Record<string, string> = {
@@ -83,6 +84,7 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], remix
                 🔥 Popular
               </span>
             )}
+            <SaveToCollection itemId={id} signedIn={!isLoaded || !!isSignedIn} onToast={flash} />
             <button onClick={copyEmbed} title="Copy an embed code for this — paste it into a blog or Discord" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 999, padding: '3px 10px', cursor: 'pointer' }}>
               {'</>'} Embed
             </button>
