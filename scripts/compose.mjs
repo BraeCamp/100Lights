@@ -354,34 +354,77 @@ const RF = {
 // app's full palette — autopan (stereo motion), an LFO wobbling a filter,
 // bitcrush grit, transient-shaper punch, phaser/flanger — all seed-gated, so
 // songs get different textures instead of one house sound.
-function trackFx(key, pal, genreId, rand, mkId) {
-  const rv = (wet, decay, pre = 0.02) => ({ id: mkId(), type: 'reverb', params: { enabled: true, wet, decay, preDelay: pre } })
-  const dl = (wet, beats, fb = 0.35) => ({ id: mkId(), type: 'delay', params: { enabled: true, wet, time: 0.375, feedback: fb, syncToTempo: true, syncBeats: beats } })
-  const eq = (lo, mid, hi) => ({ id: mkId(), type: 'eq3', params: { enabled: true, lowGain: lo, midGain: mid, highGain: hi, lowFreq: 200, midFreq: 1000, highFreq: 8000 } })
-  const cp = (thr, ratio, mk) => ({ id: mkId(), type: 'compressor', params: { enabled: true, threshold: thr, ratio, attack: 0.003, release: 0.25, knee: 6, makeupGain: mk } })
-  // Modulation — randomly chorus / flanger / phaser for timbral variety.
-  const mo = (mix, type) => ({ id: mkId(), type: 'chorus', params: { enabled: true, type: type || rand.pick(['chorus', 'chorus', 'flanger', 'phaser']), rate: 0.45, depth: 0.5, feedback: 0.3, mix, stages: 4 } })
-  const sa = (drive) => ({ id: mkId(), type: 'saturator', params: { enabled: true, drive, color: 0.3, output: 0 } })
-  const ap = (depth, rate = 0.5) => ({ id: mkId(), type: 'autopan', params: { enabled: true, rate, depth, waveform: 'sine', phase: 180 } })      // stereo motion
-  const lf = (rate, depth = 0.6) => ({ id: mkId(), type: 'lfo', params: { enabled: true, rate, depth, waveform: 'sine', target: 'filter', filterFreqMin: 500, filterFreqMax: 6500 } })  // filter wobble
-  const rx = (bits, sr) => ({ id: mkId(), type: 'redux', params: { enabled: true, bitDepth: bits, sampleRate: sr } })                             // bitcrush grit
-  const ts = (attack) => ({ id: mkId(), type: 'transientshaper', params: { enabled: true, attack, sustain: 0, gain: 0 } })                        // punch
-  // Open low-pass at the FRONT of the keys chain — neutral at 18k, but its
-  // `frequency` is the target for the automated build/transition sweeps. Keys
-  // (bright chord stabs, present through builds) sweep audibly; a dark pad
-  // wouldn't, and filtering the drums would muddy the kick.
-  const flt = (hz) => ({ id: mkId(), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: hz, q: 1 } })
+// Effect factories (shared).
+function fxKit(rand, mkId) {
+  return {
+    rv: (wet, decay, pre = 0.02) => ({ id: mkId(), type: 'reverb', params: { enabled: true, wet, decay, preDelay: pre } }),
+    dl: (wet, beats, fb = 0.35) => ({ id: mkId(), type: 'delay', params: { enabled: true, wet, time: 0.375, feedback: fb, syncToTempo: true, syncBeats: beats } }),
+    eq: (lo, mid, hi) => ({ id: mkId(), type: 'eq3', params: { enabled: true, lowGain: lo, midGain: mid, highGain: hi, lowFreq: 200, midFreq: 1000, highFreq: 8000 } }),
+    cp: (thr, ratio, mk) => ({ id: mkId(), type: 'compressor', params: { enabled: true, threshold: thr, ratio, attack: 0.003, release: 0.25, knee: 6, makeupGain: mk } }),
+    mo: (mix, type) => ({ id: mkId(), type: 'chorus', params: { enabled: true, type: type || rand.pick(['chorus', 'chorus', 'flanger', 'phaser']), rate: 0.45, depth: 0.5, feedback: 0.3, mix, stages: 4 } }),
+    sa: (drive) => ({ id: mkId(), type: 'saturator', params: { enabled: true, drive, color: 0.3, output: 0 } }),
+    ap: (depth, rate = 0.5) => ({ id: mkId(), type: 'autopan', params: { enabled: true, rate, depth, waveform: 'sine', phase: 180 } }),
+    lf: (rate, depth = 0.6) => ({ id: mkId(), type: 'lfo', params: { enabled: true, rate, depth, waveform: 'sine', target: 'filter', filterFreqMin: 500, filterFreqMax: 6500 } }),
+    rx: (bits, sr) => ({ id: mkId(), type: 'redux', params: { enabled: true, bitDepth: bits, sampleRate: sr } }),
+    ts: (attack) => ({ id: mkId(), type: 'transientshaper', params: { enabled: true, attack, sustain: 0, gain: 0 } }),
+    de: (freq) => ({ id: mkId(), type: 'deesser', params: { enabled: true, frequency: freq, bandwidth: 1, threshold: -20, reduction: 10 } }),
+    dq: (freq, range) => ({ id: mkId(), type: 'dyneq', params: { enabled: true, freq, q: 2, thresholdDb: -30, rangeDb: range, attack: 0.01, release: 0.15 } }),
+    flt: (hz) => ({ id: mkId(), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: hz, q: 1 } }),
+  }
+}
+
+// A LIBRARY of distinct effect chains per fx-role — the seed picks one, so racks
+// vary in their CORE (EQ/comp voicing, ordering, effect choices), not just an
+// optional tail. No forced filter here — the sweep adds its own to its target.
+function trackFx(fxRole, pal, genreId, rand, mkId) {
+  const { rv, dl, eq, cp, mo, sa, ap, lf, rx, ts, de, dq } = fxKit(rand, mkId)
   const heavy = pal.bassStyle === '808'
   const electronic = ['house', 'deep-house', 'techno', 'trance', 'dnb', 'dubstep', 'future-bass', 'synthwave', 'reggaeton'].includes(genreId)
   const lofiish = ['lofi', 'boombap', 'trap', 'rnb'].includes(genreId)
-  switch (key) {
-    case 'drums': return [cp(-18, 4, 1), eq(2, 0, 1.5), ...(rand.chance(0.5) ? [sa(0.18)] : []), ...(rand.chance(0.4) ? [ts(0.4)] : [])]
-    case 'bass':  return [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.35)] : [])]
-    case 'keys':  return [flt(18000), rv(0.2, 1.8), ...(rand.chance(0.5) ? [dl(0.16, 0.5)] : []), ...(lofiish && rand.chance(0.5) ? [rx(11, 13000)] : []), ...(rand.chance(0.3) ? [ap(0.5)] : [])]
-    case 'pad':   return [rv(0.42, 3.2, 0.03), ...(rand.chance(0.55) ? [mo(0.4)] : []), ...(rand.chance(0.4) ? [ap(0.55, 0.3)] : []), ...(electronic && rand.chance(0.35) ? [lf(0.2, 0.5)] : [])]
-    case 'lead':  return [rand.chance(0.6) ? dl(0.22, 0.375, 0.38) : mo(0.35), rv(0.28, 2.2), ...(electronic && rand.chance(0.3) ? [lf(0.5, 0.5)] : [])]
-    default: return []
+  const opt = (p, ...e) => rand.chance(p) ? e : []
+  const CHAINS = {
+    drums: [
+      () => [cp(-18, 4, 1), eq(2, 0, 1.5), ...opt(0.4, ts(0.4))],
+      () => [ts(0.5), cp(-16, 3, 1), eq(1, 0, 2)],
+      () => [cp(-20, 4, 1), sa(0.2), eq(2, -1, 1)],
+      () => [eq(3, -1, 2), cp(-14, 3, 2), ...opt(0.5, ts(0.35))],
+      () => [ts(0.45), eq(2, 0, 1), dq(4000, -4)],
+      () => [cp(-17, 4, 1), eq(1, -1, 2), ...opt(0.5, sa(0.16))],
+    ],
+    bass: [
+      () => [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.35)] : [])],
+      () => [cp(-22, 4, 2), eq(2, -2, 0), ...(heavy ? [sa(0.4)] : [])],
+      () => [sa(0.3), eq(4, 0, -1), cp(-18, 3, 1)],
+      () => [eq(2, 1, -2), cp(-20, 3, 1.5), dq(120, 3)],
+      () => [dq(90, 4), cp(-19, 3, 1), eq(3, -1, -1)],
+    ],
+    keys: [
+      () => [rv(0.2, 1.8), dl(0.16, 0.5)],
+      () => [eq(-1, 1, 2), rv(0.22, 2), ap(0.4)],
+      () => [mo(0.35, 'chorus'), rv(0.2, 1.8)],
+      () => [dl(0.2, 0.375, 0.4), rv(0.18, 1.6), ...(lofiish ? [rx(11, 13000)] : [])],
+      () => [rv(0.25, 2.4), ap(0.5, 0.3), ...opt(0.4, dl(0.15, 0.75))],
+      () => [mo(0.35, 'phaser'), dl(0.18, 0.5), rv(0.2, 1.8)],
+    ],
+    pad: [
+      () => [rv(0.42, 3.2, 0.03), mo(0.4)],
+      () => [rv(0.5, 3.6), ap(0.5, 0.3)],
+      () => [rv(0.35, 2.8), mo(0.4, 'flanger'), ap(0.4, 0.25)],
+      () => [rv(0.45, 3.4), ...(electronic ? [lf(0.2, 0.5)] : [mo(0.35, 'chorus')])],
+      () => [mo(0.4, 'phaser'), rv(0.4, 3), ap(0.4, 0.2)],
+      () => [eq(-2, 0, 1), rv(0.5, 4), ...opt(0.5, ap(0.4, 0.2))],
+    ],
+    lead: [
+      () => [dl(0.22, 0.375, 0.38), rv(0.28, 2.2)],
+      () => [mo(0.35), rv(0.3, 2.4), dl(0.15, 0.75)],
+      () => [rv(0.25, 2), ap(0.4), dl(0.2, 0.375)],
+      () => [mo(0.4, 'phaser'), dl(0.25, 0.375, 0.4), rv(0.28, 2.2)],
+      () => [sa(0.2), dl(0.2, 0.5), rv(0.3, 2.4)],
+      () => [dl(0.3, 0.375, 0.45), rv(0.22, 1.8), ...(electronic ? [lf(0.5, 0.5)] : []), ...opt(0.3, de(7500))],
+    ],
   }
+  const bank = CHAINS[fxRole] || CHAINS.keys
+  return rand.pick(bank)()
 }
 
 // Build a form with seed-driven variety so songs don't all share one makeup.
@@ -677,32 +720,72 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   // how a producer builds it: the intro clip is dull + sparse, the drop clip is
   // bright + full, and the timbre steps with the tension as the song moves.
   let n = 0; const uid = p => `${p}${(n++).toString(36)}`
-  const TK = [
-    { key: 'drums', name: 'Drums', instr: kit.instrument,        preset: null,       rf: null,               pan: 0,     vol: 0.6,  drum: true },
-    { key: 'bass',  name: 'Bass',  instr: { type: 'none', params: {} }, preset: bassPreset, rf: RF.bass,            pan: 0,     vol: 0.58 },
-    { key: 'keys',  name: 'Keys',  instr: { type: 'none', params: {} }, preset: keysPreset, rf: RF.keys(pal.ext),   pan: -0.12, vol: 0.46 },
-    { key: 'pad',   name: 'Pad',   instr: { type: 'none', params: {} }, preset: padPreset,  rf: RF.pad,             pan: 0.14,  vol: 0.34 },
-    { key: 'lead',  name: 'Lead',  instr: { type: 'none', params: {} }, preset: leadPreset, rf: RF.lead,            pan: 0.08,  vol: 0.5 },
+  const NONE = { type: 'none', params: {} }
+
+  // ── Ensemble: which tonal layers this song uses, so the track LINEUP varies —
+  // not always drums/bass/keys/pad/lead. Some drop keys or pad, some add an arp
+  // or a counter-melody. drums + bass are the backbone. ─────────────────────────
+  const ENSEMBLES = [
+    ['keys', 'pad', 'lead'], ['keys', 'pad', 'lead'],   // full (weighted)
+    ['pad', 'lead'],                                     // minimal — no keys
+    ['keys', 'lead'],                                    // band — no pad
+    ['keys', 'pad', 'lead', 'arp'],                      // stacked
+    ['keys', 'pad', 'lead', 'counter'],                 // + harmony line
+    ['arp', 'pad', 'lead'],                              // arp-driven
+    ['pad', 'lead', 'counter'],                          // dual melody, no keys
+    ['keys', 'lead', 'arp'],                             // no pad, arp
   ]
-  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.key, pal, genreId, rand, () => uid('e')) }))
+  const arpPreset = rand.pick(LEAD_ALTS.arp)
+  const counterPreset = rand.pick(LEAD_ALTS.melody)
+  const ROLE = {
+    drums:   { name: 'Drums',   instr: kit.instrument, preset: null,          rf: null,             pan: 0,     vol: 0.6,  drum: true, fx: 'drums' },
+    bass:    { name: 'Bass',    instr: NONE,           preset: bassPreset,    rf: RF.bass,          pan: 0,     vol: 0.58, fx: 'bass' },
+    keys:    { name: 'Keys',    instr: NONE,           preset: keysPreset,    rf: RF.keys(pal.ext), pan: -0.12, vol: 0.46, fx: 'keys' },
+    pad:     { name: 'Pad',     instr: NONE,           preset: padPreset,     rf: RF.pad,           pan: 0.14,  vol: 0.34, fx: 'pad' },
+    lead:    { name: 'Lead',    instr: NONE,           preset: leadPreset,    rf: RF.lead,          pan: 0.08,  vol: 0.5,  fx: 'lead' },
+    arp:     { name: 'Arp',     instr: NONE,           preset: arpPreset,     rf: RF.lead,          pan: -0.2,  vol: 0.4,  fx: 'keys' },
+    counter: { name: 'Counter', instr: NONE,           preset: counterPreset, rf: RF.lead,          pan: -0.08, vol: 0.4,  fx: 'lead' },
+  }
+  const roleList = [...(genre.drums !== 'none' ? ['drums'] : []), 'bass', ...rand.pick(ENSEMBLES)]
+  const TK = roleList.map(r => ({ key: r, ...ROLE[r] }))
+  const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.fx, pal, genreId, rand, () => uid('e')) }))
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
+  const has = k => byKey[k] != null
+  const trackOf = k => tracks[TK.findIndex(t => t.key === k)]
+  const hook2 = has('counter') ? makeHook(rand) : null
   const clips = []
 
   // ── Dynamic track FX ─────────────────────────────────────────────────────────
-  // (1) SIDECHAIN PUMP: on four-on-the-floor genres, duck the sustained layers
-  // against the kick so the whole track breathes with the beat — the signature
-  // house/techno movement. We point their compressors' key input at the drums.
-  if (useSidechain) {
-    const bassComp = tracks[1].effects.find(e => e.type === 'compressor')
+  // (1) SIDECHAIN PUMP: duck the sustained layers against the kick (house pump).
+  if (useSidechain && has('drums')) {
+    const bassComp = trackOf('bass')?.effects.find(e => e.type === 'compressor')
     if (bassComp) bassComp.params.sidechainTrackId = tid.drums
-    // give the pad a ducking compressor too, so pads pump with the kick
-    tracks[3].effects.push({ id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -32, ratio: 6, attack: 0.004, release: 0.18, knee: 4, makeupGain: 0, sidechainTrackId: tid.drums } })
+    const duck = has('pad') ? 'pad' : has('keys') ? 'keys' : null
+    if (duck) trackOf(duck).effects.push({ id: uid('e'), type: 'compressor', params: { enabled: true, threshold: -32, ratio: 6, attack: 0.004, release: 0.18, knee: 4, makeupGain: 0, sidechainTrackId: tid.drums } })
   }
-  // (2) FILTER-SWEEP TRANSITIONS: the keys' front filter is automated to close
-  // then sweep wide open across the 4 bars leading INTO every drop/chorus/hook,
-  // so sections arrive with a rising build instead of switching on instantly.
-  const sweepFilterId = tracks[2].effects.find(e => e.type === 'filter')?.id
+  // (2) SWEEP TRANSITIONS — diversified: a RANDOM tonal track + a random PARAM
+  // (filter cutoff / reverb swell / delay throw), not always the keys filter.
+  const sweepCands = ['keys', 'arp', 'lead', 'pad'].filter(has)
+  const sweepRole = sweepCands.length ? rand.pick(sweepCands) : null
+  const sweepMode = rand.pick(['filter', 'filter', 'reverb', 'delay'])
+  let sweepCfg = null
+  if (useSweeps && sweepRole) {
+    const tr = trackOf(sweepRole)
+    if (sweepMode === 'filter') {
+      let f = tr.effects.find(e => e.type === 'filter')
+      if (!f) { f = { id: uid('e'), type: 'filter', params: { enabled: true, type: 'lowpass', frequency: 18000, q: 1 } }; tr.effects.unshift(f) }
+      sweepCfg = { trackId: tid[sweepRole], effectId: f.id, param: 'frequency', min: 200, max: 18000, shape: 'closeOpen', label: 'Filter sweep' }
+    } else if (sweepMode === 'reverb') {
+      let r = tr.effects.find(e => e.type === 'reverb')
+      if (!r) { r = { id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.25, decay: 2.6, preDelay: 0.02 } }; tr.effects.push(r) }
+      sweepCfg = { trackId: tid[sweepRole], effectId: r.id, param: 'wet', min: 0, max: 0.7, shape: 'swell', label: 'Reverb swell' }
+    } else {
+      let d = tr.effects.find(e => e.type === 'delay')
+      if (!d) { d = { id: uid('e'), type: 'delay', params: { enabled: true, wet: 0.2, time: 0.375, feedback: 0.4, syncToTempo: true, syncBeats: 0.375 } }; tr.effects.push(d) }
+      sweepCfg = { trackId: tid[sweepRole], effectId: d.id, param: 'wet', min: 0, max: 0.6, shape: 'throw', label: 'Delay throw' }
+    }
+  }
   const sweepTargets = []   // absolute start-beats of high-energy sections
   const secList = []        // {start, bars, role, energy} for building FX bars
 
@@ -738,51 +821,64 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     const padCh = seq.map(nu => chordFor(nu, root, scale, 4, e > 0.8 ? ext : 0))
     const roots = seq.map(nu => snapToScale(rootFor(nu, root, scale, 2), root, scale))
 
-    // LAYERED INTRO — elements enter one at a time so the opening actively builds:
-    // pad from the top, bass a quarter in, filtered hats halfway, keys three-
-    // quarters in — then the first section hits with the full kit.
+    const peak = /chorus|hook|drop/.test(sec.role)
+    // LAYERED INTRO — elements enter one at a time (whatever roles this ensemble
+    // has): a sustained layer from the top, bass a quarter in, filtered hats
+    // halfway, a chordy layer three-quarters in — then the section hits full.
     if (layered) {
       const q = Math.max(1, Math.floor(sec.bars / 4))
-      { const c = secClip('pad', secStart, sec.bars, e * 0.85); fillPadLong(c, rand, 0, padCh, 42); push(c) }
-      if (sec.bars - q >= 1) { const c = secClip('bass', secStart + q * 4, sec.bars - q, 0.42); fillBass(c, rand, 0, roots.slice(q), 'pedal', 74, root, scale); push(c) }
-      if (genre.drums !== 'none' && sec.bars - 2 * q >= 1) { const c = secClip('drums', secStart + 2 * q * 4, sec.bars - 2 * q, 0.55); fillDrums(c, rand, 0, sec.bars - 2 * q, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.62, role: 'intro' }); push(c) }
-      if (sec.bars - 3 * q >= 1) { const c = secClip('keys', secStart + 3 * q * 4, sec.bars - 3 * q, 0.5); fillChords(c, rand, 0, chords.slice(3 * q), keyRhythm, 54, null, false); push(c) }
+      const sus = has('pad') ? 'pad' : has('keys') ? 'keys' : has('arp') ? 'arp' : null
+      if (sus) { const c = secClip(sus, secStart, sec.bars, e * 0.85); fillPadLong(c, rand, 0, padCh, 42); push(c) }
+      if (has('bass') && sec.bars - q >= 1) { const c = secClip('bass', secStart + q * 4, sec.bars - q, 0.42); fillBass(c, rand, 0, roots.slice(q), 'pedal', 74, root, scale); push(c) }
+      if (has('drums') && genre.drums !== 'none' && sec.bars - 2 * q >= 1) { const c = secClip('drums', secStart + 2 * q * 4, sec.bars - 2 * q, 0.55); fillDrums(c, rand, 0, sec.bars - 2 * q, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.62, role: 'intro' }); push(c) }
+      const ch = has('keys') ? 'keys' : has('arp') ? 'arp' : null
+      if (ch && ch !== sus && sec.bars - 3 * q >= 1) { const c = secClip(ch, secStart + 3 * q * 4, sec.bars - 3 * q, 0.5); fillChords(c, rand, 0, chords.slice(3 * q), keyRhythm, 54, null, false); push(c) }
       bar += sec.bars
       continue
     }
 
     // Drums
-    if (genre.drums !== 'none') {
+    if (has('drums') && genre.drums !== 'none') {
       if (L.drums) { const c = secClip('drums', secStart, sec.bars, e); fillDrums(c, rand, 0, sec.bars, feel, sec); push(c) }
       else if (L.softDrums) { const c = secClip('drums', secStart, sec.bars, Math.min(e, 0.5)); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, breakdown: true }); push(c) }
     }
-    // Bass — long pedal roots when sparse, genre idiom otherwise
-    if (L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, root, scale); push(c) }
-    // Keys — sit out the sparse intro so it stays open
-    if (L.keys && !sparse) { const c = secClip('keys', secStart, sec.bars, e); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0); push(c) }
-    // Pad — always present; held long when sparse
-    { const c = secClip('pad', secStart, sec.bars, sparse ? e * 0.85 : e)
+    // Bass
+    if (has('bass') && L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, root, scale); push(c) }
+    // Keys — rhythmic chords (sit out the sparse intro)
+    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0); push(c) }
+    // Arp — a rolling 16th layer, its own track when the ensemble has one
+    if (has('arp') && e >= 0.5 && !sparse) { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', root, scale); push(c) }
+    // Pad — held long when sparse
+    if (has('pad')) { const c = secClip('pad', secStart, sec.bars, sparse ? e * 0.85 : e)
       if (sparse) fillPadLong(c, rand, 0, padCh, 42)
       else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true)
       push(c) }
-    // Lead — never in a sparse section
-    if (L.lead && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, root, scale); push(c) }
-    else if (L.arp && !sparse) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', root, scale); push(c) }
+    // Lead — melody at peaks; falls back to an arp during builds only if there's
+    // no dedicated arp track.
+    if (has('lead') && !sparse) {
+      if (peak && e >= 0.85) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, root, scale); push(c) }
+      else if (!has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', root, scale); push(c) }
+    }
+    // Counter — a second melodic line at peaks (its own hook, lower register)
+    if (has('counter') && peak && e >= 0.9 && !sparse) { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 60, 'melody', root, scale); push(c) }
     bar += sec.bars
   }
   const totalBeats = bar * 4
 
-  // Build the pad filter-sweep automation lane from the collected targets. The
-  // filter sits open (1.0) by default, dips at 4 bars out, and ramps back open
-  // right on the downbeat — a rising transition into each drop/chorus.
+  // Build the transition automation lane on the chosen target, using the shape
+  // that fits the param: a filter CLOSES then opens (baseline open); a reverb or
+  // delay SWELLS from dry up into the downbeat then cuts. Different every song.
   const automationLanes = []
-  if (useSweeps && sweepFilterId && sweepTargets.length) {
-    const raw = [{ beat: 0, value: 1 }]
+  if (sweepCfg && sweepTargets.length) {
+    const base = sweepCfg.shape === 'closeOpen' ? 1 : 0    // filter idles open, sends idle dry
+    const raw = [{ beat: 0, value: base }]
     for (const S of sweepTargets) {
-      if (S < 8) continue                         // no room to sweep into the very first section
-      raw.push({ beat: S - 16.5, value: 1 }, { beat: S - 16, value: 0.1 }, { beat: S - 0.1, value: 1 })
+      if (S < 8) continue
+      if (sweepCfg.shape === 'closeOpen') raw.push({ beat: S - 16.5, value: 1 }, { beat: S - 16, value: 0.1 }, { beat: S - 0.1, value: 1 })
+      else if (sweepCfg.shape === 'swell') raw.push({ beat: S - 16, value: 0 }, { beat: S - 0.5, value: 1 }, { beat: S, value: 0 })
+      else /* throw */ raw.push({ beat: S - 8, value: 0 }, { beat: S - 0.2, value: 1 }, { beat: S + 2, value: 0 })
     }
-    raw.push({ beat: totalBeats, value: 1 })
+    raw.push({ beat: totalBeats, value: base })
     raw.sort((a, b) => a.beat - b.beat)
     const pts = []
     for (const p of raw) {
@@ -791,8 +887,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
       else pts.push(p)
     }
     if (pts.length > 2) automationLanes.push({
-      id: uid('a'), trackId: tid.keys, parameter: `fx:${sweepFilterId}:frequency`,
-      label: 'Filter sweep', min: 200, max: 18000, defaultValue: 1, expanded: false,
+      id: uid('a'), trackId: sweepCfg.trackId, parameter: `fx:${sweepCfg.effectId}:${sweepCfg.param}`,
+      label: sweepCfg.label, min: sweepCfg.min, max: sweepCfg.max, defaultValue: base, expanded: false,
       points: pts.map(p => ({ id: uid('p'), beat: +p.beat.toFixed(3), value: p.value })),
     })
   }
@@ -827,7 +923,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     swing: genre.swing, key: root, scale,
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweeps:${useSweeps && automationLanes.length ? 'on' : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'}`,
+    _tracks: roleList.join('+'),
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'}`,
   }
 }
 
@@ -854,6 +951,7 @@ async function main() {
   writeFileSync(out, JSON.stringify(spec))
   console.log(`${spec.name}`)
   console.log(`  ${spec.tempo} bpm · swing ${spec.swing} · form: ${spec._form}`)
+  console.log(`  tracks: ${spec._tracks}`)
   console.log(`  fx: ${spec._features}`)
   console.log(`  ${spec.tracks.length} tracks · ${nNotes} notes · ${(end / spec.tempo * 60).toFixed(0)}s → ${out}`)
 }
