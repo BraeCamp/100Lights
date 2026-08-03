@@ -1153,7 +1153,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           clip: {
             kind: 'midi', id: clipId, trackId, name: 'New Recipe',
             startBeat: 0, durationBeats: 16, isDrumClip: false, notes: [],
-            stretchNotes: true, rootNote: 0, presetId: defaultPresetId() ?? undefined,
+            stretchNotes: false, rootNote: 0, presetId: defaultPresetId() ?? undefined,   // loop-on-drag is the default
           },
         })
         setSelectedClipId(clipId)

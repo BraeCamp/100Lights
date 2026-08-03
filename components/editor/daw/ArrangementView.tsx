@@ -452,6 +452,13 @@ export default function ArrangementView() {
   // group-loop use it so "the whole bar" — blank space included — is the unit.
   const [selectionRegion, setSelectionRegion] = useState<{ start: number; end: number } | null>(null)
   const [selectionTracks, setSelectionTracks] = useState<Set<string>>(new Set())
+  // Hold S while drag-selecting → splice every clip the box crosses at its edges
+  // (Option ignores snapping). A plain S TAP still splices the selected clip at
+  // the playhead — that's handled on keyUP so holding S is purely a drag modifier
+  // and never auto-repeats a split. `sSpliceUsedRef` flags that a hold-S drag
+  // consumed the press, so the keyup doesn't ALSO playhead-splice.
+  const sHeldRef = useRef(false)
+  const sSpliceUsedRef = useRef(false)
   // Escape clears the AREA selection (region + tracks) too, alongside the clip
   // selection cleared by the editor's global handler.
   useEffect(() => {
@@ -865,6 +872,53 @@ export default function ArrangementView() {
     return { start: Math.min(...cs.map(c => c.startBeat)), end: Math.max(...cs.map(c => c.startBeat + c.durationBeats)) }
   }
 
+  // Split a clip (audio or MIDI) at one or more interior beats, in one pass.
+  // Mirrors the clip splice (TrackRow.onSplice) + multi-point transient split.
+  function spliceClipAtBeats(clip: DawClip, cuts: number[]) {
+    const end = clip.startBeat + clip.durationBeats
+    const inner = [...new Set(cuts)].filter(c => c > clip.startBeat + 0.03 && c < end - 0.03).sort((a, b) => a - b)
+    if (inner.length === 0) return false
+    const bounds = [clip.startBeat, ...inner, end]
+    if (isAudioClip(clip) && clip.bufferDuration) {
+      const bufDur = clip.bufferDuration
+      const trimStart = clip.trimStart ?? 0
+      const nativeDur = bufDur - trimStart - (clip.trimEnd ?? 0)
+      const buf = engine.bufferCache.get(clip.id)
+      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+      for (let i = 0; i < bounds.length - 1; i++) {
+        const a = bounds[i], b = bounds[i + 1]
+        const offA = a - clip.startBeat, offB = b - clip.startBeat
+        const secA = clip.warpEnabled ? trimStart + (offA / clip.durationBeats) * nativeDur : trimStart + engine.beatsToSeconds(offA)
+        const secB = clip.warpEnabled ? trimStart + (offB / clip.durationBeats) * nativeDur : trimStart + engine.beatsToSeconds(offB)
+        const id = crypto.randomUUID()
+        if (buf) engine.bufferCache.set(id, buf)
+        dispatch({ type: 'ADD_CLIP', clip: { ...clip, id, startBeat: a, durationBeats: b - a, trimStart: secA, trimEnd: Math.max(0, bufDur - secB) } })
+      }
+      return true
+    }
+    if (isMidiClip(clip)) {
+      let notes = clip.notes
+      if (clip.loopEnabled && clip.loopLengthBeats) {   // materialize the audible repeats before cutting
+        const L = clip.loopLengthBeats
+        notes = []
+        for (let k = 0; k * L < clip.durationBeats; k++) for (const n of clip.notes) {
+          const st = k * L + n.startBeat
+          if (st >= clip.durationBeats) continue
+          notes.push({ ...n, startBeat: st, durationBeats: Math.min(n.durationBeats, clip.durationBeats - st) })
+        }
+      }
+      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
+      for (let i = 0; i < bounds.length - 1; i++) {
+        const oa = bounds[i] - clip.startBeat, ob = bounds[i + 1] - clip.startBeat
+        const segNotes = notes.filter(n => n.startBeat >= oa - 1e-6 && n.startBeat < ob - 1e-6)
+          .map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - oa, durationBeats: Math.min(n.durationBeats, ob - n.startBeat) }))
+        dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: bounds[i], durationBeats: bounds[i + 1] - bounds[i], notes: segNotes, loopEnabled: false, loopLengthBeats: undefined } })
+      }
+      return true
+    }
+    return false
+  }
+
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (e.button !== 0) return
     const preSelected = new Set(selectedClipIds)   // for Cmd/Shift-additive selection
@@ -901,6 +955,29 @@ export default function ArrangementView() {
         setSelectedClipIds(new Set())
         setSelectedClipId(null)
         setSelectedEffectIds(new Set())
+        return
+      }
+
+      // Hold S while dragging → SPLICE every clip the box crosses at its two
+      // edges (nearest snap point; Option/alt splices at the exact raw beat).
+      if (sHeldRef.current && laneEl) {
+        sSpliceUsedRef.current = true
+        const sig = project.timeSignatureNum
+        const rawA = Math.min(toBeat(sx), toBeat(ev.clientX))
+        const rawB = Math.max(toBeat(sx), toBeat(ev.clientX))
+        const edgeA = ev.altKey ? rawA : snapBeat(rawA, snap, sig)
+        const edgeB = ev.altKey ? rawB : snapBeat(rawB, snap, sig)
+        const top = Math.min(sy, ev.clientY), bot = Math.max(sy, ev.clientY)
+        for (const el of Array.from(laneEl.querySelectorAll('[data-track-id]'))) {
+          const trackId = (el as HTMLElement).dataset.trackId!
+          const tr = el.getBoundingClientRect()
+          if (tr.bottom < top || tr.top > bot) continue
+          for (const clip of project.arrangementClips) {
+            if (clip.trackId !== trackId) continue
+            if (clip.startBeat + clip.durationBeats <= edgeA || clip.startBeat >= edgeB) continue
+            spliceClipAtBeats(clip, [edgeA, edgeB])
+          }
+        }
         return
       }
 
@@ -1177,27 +1254,12 @@ export default function ArrangementView() {
         return
       }
 
-      // S = splice selected clip at playhead
+      // S: HOLDING S is a splice modifier for the marquee drag (see the lane
+      // drag). A plain S TAP splices the selected clip at the playhead — but on
+      // keyUP, so holding S never auto-repeats a split. Just track the hold here.
       if (!meta && e.key === 's') {
         e.preventDefault()
-        const clipId = selectedClipId ?? (selectedClipIds.size === 1 ? [...selectedClipIds][0] : null)
-        if (!clipId) return
-        const clip = project.arrangementClips.find(c => c.id === clipId)
-        if (!clip || !isAudioClip(clip) || !clip.bufferDuration) return
-        const playhead = engine.currentBeat
-        if (playhead <= clip.startBeat || playhead >= clip.startBeat + clip.durationBeats) return
-        const beatOffset = playhead - clip.startBeat
-        const bufDur = clip.bufferDuration
-        const nativeDur = bufDur - clip.trimStart - clip.trimEnd
-        const frac = beatOffset / clip.durationBeats
-        const splitSec = clip.warpEnabled
-          ? (clip.trimStart ?? 0) + frac * nativeDur
-          : (clip.trimStart ?? 0) + engine.beatsToSeconds(beatOffset)
-        const leftClip  = { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, trimEnd: Math.max(0, bufDur - splitSec) }
-        const rightClip = { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, trimStart: splitSec }
-        dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
-        dispatch({ type: 'ADD_CLIP', clip: leftClip })
-        dispatch({ type: 'ADD_CLIP', clip: rightClip })
+        if (!e.repeat) { sHeldRef.current = true; sSpliceUsedRef.current = false }
         return
       }
 
@@ -1249,8 +1311,22 @@ export default function ArrangementView() {
         return
       }
     }
+    // S TAP (on keyup, not keydown, so HOLDING S can't auto-repeat): splice the
+    // selected clip at the playhead — unless a hold-S drag already spliced.
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key !== 's') return
+      const wasSplice = sSpliceUsedRef.current
+      sHeldRef.current = false
+      sSpliceUsedRef.current = false
+      if (wasSplice) return
+      const clipId = selectedClipId ?? (selectedClipIds.size === 1 ? [...selectedClipIds][0] : null)
+      if (!clipId) return
+      const clip = project.arrangementClips.find(c => c.id === clipId)
+      if (clip) spliceClipAtBeats(clip, [engine.currentBeat])
+    }
     document.addEventListener('keydown', onKey, true)  // capture: fires before AudioEditor's handlers
-    return () => document.removeEventListener('keydown', onKey, true)
+    document.addEventListener('keyup', onKeyUp, true)
+    return () => { document.removeEventListener('keydown', onKey, true); document.removeEventListener('keyup', onKeyUp, true) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClipId, selectedClipIds, selectedEffectIds, project.arrangementClips, project.clipEffects, project.tracks, project.loopEnabled, project.timeSignatureNum, engine, dispatch, setSelectedClipIds, setSelectedClipId, setSelectedEffectIds, setPosition, setSnap, setRippleEdit])
 

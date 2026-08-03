@@ -455,8 +455,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     }
   }
 
-  const editItems: MenuItem[] = [
-    back('← Back'),
+  // Lifted out of the old "Edit ▸" submenu — these two sit at the top level now.
+  const dragEditItems: MenuItem[] = [
     { label: 'Splice at Playhead', fn: () => onSplice?.() },
     // Dragging type — what the right edge does when you pull it: Loop repeats
     // the content; Expand stretches it (MIDI scales the pattern, audio warps).
@@ -522,7 +522,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     } },
   ]
 
-  const menuItems: MenuItem[] = ctxSub === 'edit' ? editItems : ctxSub === 'more' ? moreItems : [
+  const menuItems: MenuItem[] = ctxSub === 'more' ? moreItems : [
     ...(isAudioClip(clip)
       ? [
           { label: 'Clip Settings', fn: () => onSettings?.() },
@@ -541,7 +541,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
-    { label: 'Edit ▸', fn: () => setCtxSub('edit'), keepOpen: true },
+    ...dragEditItems,
     { label: isAudioClip(clip) ? 'Tools ▸' : 'Sound ▸', fn: () => setCtxSub('more'), keepOpen: true },
     // Library & Community actions live together
     {
