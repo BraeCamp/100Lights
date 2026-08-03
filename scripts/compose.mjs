@@ -545,6 +545,9 @@ function fillDrums(clip, rand, bar0, bars, feel, sec) {
     const lastBar = b === bars - 1
     for (const [lane, pitch, dur, vel] of lanes) {
       let hits = feel[lane] ?? []
+      // HALF-TIME feel — kick on 1, snare pushed back to beat 3, sparser hats. A
+      // dramatic switch-up (the drop suddenly feels twice as slow / heavy).
+      if (sec.halfTime) hits = lane === 'kick' ? [0] : lane === 'snare' ? [8] : lane === 'hat' ? (feel.hat || []).filter((_, i) => i % 2 === 0) : lane === 'clap' ? [8] : []
       // Intensity: thin hats/oh/clap when quiet; drop the clap unless energetic.
       if ((lane === 'hat') && e < 0.7) hits = hits.filter((_, i) => i % 2 === 0)
       if ((lane === 'oh' || lane === 'clap') && e < 0.8) hits = []
@@ -789,6 +792,11 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
   const useSwap      = rand.chance(0.4)                              // swap the keys timbre in the bridge
   const swapPreset   = useSwap ? rand.pick(KEYS_ALTS.filter(p => p !== keysPreset)) : null
   const humanize     = rand.chance(0.6) ? rand.pick([0.006, 0.01, 0.015]) : 0  // melodic timing jitter (beats)
+  // ── Toolbox moves ──
+  const useRiser     = rand.chance(0.55)                             // ascending run into drops
+  const useImpact    = rand.chance(0.55)                             // sub-boom on the drop downbeat
+  const peakIdx      = form.map((s, i) => (/drop|chorus|hook/.test(s.role) ? i : -1)).filter(i => i >= 0)
+  const halfTimeIdx  = (rand.chance(0.3) && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1  // last peak flips half-time
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
   const cutoffFor = (energy, isBass) => {
@@ -924,8 +932,9 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     }
 
     // Drums
+    const halfTime = form.indexOf(sec) === halfTimeIdx
     if (has('drums') && genre.drums !== 'none') {
-      if (L.drums) { const c = secClip('drums', secStart, sec.bars, e); fillDrums(c, rand, 0, sec.bars, feel, sec); push(c) }
+      if (L.drums) { const c = secClip('drums', secStart, sec.bars, e); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, halfTime }); push(c) }
       else if (L.softDrums) { const c = secClip('drums', secStart, sec.bars, Math.min(e, 0.5)); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, breakdown: true }); push(c) }
     }
     // Bass
@@ -951,6 +960,22 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     bar += sec.bars
   }
   const totalBeats = bar * 4
+
+  // ── Risers & impacts ── an accelerating ascending run up into a drop, and a
+  // sub-boom on the downbeat for weight. Seed-gated.
+  if (useRiser || useImpact) {
+    const steps = SCALES[scale], NN = steps.length
+    for (let i = 1; i < secList.length; i++) {
+      const cur = secList[i], prev = secList[i - 1]
+      if (!(/drop|chorus|hook/.test(cur.role) && cur.energy >= 0.9) || cur.energy - prev.energy < 0.15 || cur.start < 4) continue
+      const S = cur.start
+      if (useRiser) {
+        const rRole = ['arp', 'lead', 'keys'].find(has)
+        if (rRole) { const c = secClip(rRole, S - 4, 4, 0.75); for (let k = 0; k < 16; k++) { const d = k + 2; c.notes.push(note(root + 60 + steps[((d % NN) + NN) % NN] + 12 * Math.floor(d / NN), k * STEP, STEP * 0.9, Math.min(122, 48 + k * 5))) } push(c) }
+      }
+      if (useImpact && has('bass')) { const c = secClip('bass', S, 1, cur.energy); c.notes.push(note(root + 24, 0, 1.5 * 0.98, 116)); push(c) }
+    }
+  }
 
   // Build the transition automation lane on the chosen target, using the shape
   // that fits the param: a filter CLOSES then opens (baseline open); a reverb or
@@ -1045,7 +1070,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed) {
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
     _tracks: roleList.join('+'),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}]`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'}`,
   }
 }
 
