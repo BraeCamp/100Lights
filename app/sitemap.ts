@@ -71,11 +71,22 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ]
 
+  // Community SEO surface, curated rather than exhaustive. Instead of advertising
+  // every item (up to 500 thin pages — slow to crawl, most can't rank), index:
+  //  1. one rich CATEGORY HUB per kind that has enough content, and
+  //  2. a value-ranked subset of items (official 100Lights content + items with
+  //     real engagement). The long tail is left to noindex,follow (see the item
+  //     page's generateMetadata) so crawl budget goes to pages that can rank.
   let items: MetadataRoute.Sitemap = []
+  let categoryHubs: MetadataRoute.Sitemap = []
+  let creatorPages: MetadataRoute.Sitemap = []
   try {
     const rows = await sql`
       SELECT id, created_at FROM community_items
-      ORDER BY created_at DESC LIMIT 500
+      WHERE removed_at IS NULL
+        AND (author_name = '100Lights' OR (votes + downloads) >= 3)
+      ORDER BY (votes + downloads * 0.5 + 1) DESC
+      LIMIT 60
     `
     items = rows.map(r => ({
       url: `${base}/community/${r.id}`,
@@ -83,7 +94,33 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly' as const,
       priority: 0.6,
     }))
+    const kinds = await sql`
+      SELECT kind, MAX(created_at) AS last FROM community_items
+      WHERE removed_at IS NULL
+      GROUP BY kind
+      HAVING COUNT(*) >= 3
+    `
+    categoryHubs = kinds.map(k => ({
+      url: `${base}/community/browse/${k.kind as string}`,
+      lastModified: new Date(k.last as string),
+      changeFrequency: 'daily' as const,
+      priority: 0.7,
+    }))
+    // Creator profiles — one rich page per active producer (≥2 shares).
+    const creators = await sql`
+      SELECT author_name, MAX(created_at) AS last FROM community_items
+      WHERE removed_at IS NULL AND author_name <> 'Anonymous'
+      GROUP BY author_name
+      HAVING COUNT(*) >= 2
+      LIMIT 200
+    `
+    creatorPages = creators.map(c => ({
+      url: `${base}/community/creator/${encodeURIComponent(c.author_name as string)}`,
+      lastModified: new Date(c.last as string),
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
+    }))
   } catch { /* DB unavailable — static pages still ship */ }
 
-  return [...staticPages, ...learn, ...paths, ...tutorials, ...items]
+  return [...staticPages, ...learn, ...paths, ...tutorials, ...categoryHubs, ...creatorPages, ...items]
 }

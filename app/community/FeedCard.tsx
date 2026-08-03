@@ -160,7 +160,7 @@ function metaBadges(item: CommunityItem): string[] {
 
 // ── Card ───────────────────────────────────────────────────────────────────────
 
-export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onAuthorClick, onTagClick, onToast }: {
+export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onAuthorClick, onTagClick, onToast, commentsOpen }: {
   item: CommunityItem
   busy: boolean
   signedIn: boolean
@@ -170,6 +170,8 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
   onAuthorClick?: (author: string) => void
   onTagClick?: (tag: string) => void
   onToast: (msg: string) => void
+  /** Start with the comment thread open (the dedicated item page does this). */
+  commentsOpen?: boolean
 }) {
   const meta = KIND_META[item.kind]
   const Icon = meta.icon
@@ -178,7 +180,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
   const tags = ((item.payload ?? {}) as ItemMeta).tags ?? []
   const [reactions, setReactions] = useState(item.reactions)
   const [myReactions, setMyReactions] = useState(item.myReactions)
-  const [showComments, setShowComments] = useState(false)
+  const [showComments, setShowComments] = useState(!!commentsOpen)
   const [commentCount, setCommentCount] = useState(item.commentCount ?? 0)
   const [name, setName] = useState(item.name)
   const [desc, setDesc] = useState(item.description)

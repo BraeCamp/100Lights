@@ -38,6 +38,23 @@ const POSTS = [
   { name: 'Share your presets and kits', body: 'Made a synth patch or a drum kit you love? Share it — other producers can install it in one click and it’ll sync across their devices. The best packs get pinned. Show us your signature sound.' },
 ]
 
+// Official project STARTERS — the built-in templates (public/templates/*.json),
+// published as remixable `kind:'project'` community items so the feed opens with
+// real, playable content people can build on. Original, purpose-made pieces only.
+const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const keyLabel = (key, scale) => `${KEY_NAMES[((key % 12) + 12) % 12] ?? 'C'} ${scale || 'major'}`
+const STARTERS = [
+  { file: 'template-cinematic.json', name: 'Cinematic Starter',
+    description: 'Sustained sub-bass, grand piano and a warm pad — slow, open and moody. A great starting point for cinematic or dark-pop ideas. Open it and make it yours.',
+    tags: ['ambient', 'cinematic', 'minor', 'starter'] },
+  { file: 'template-lofi.json', name: 'Lo-fi Starter',
+    description: 'Rhodes, a soft choir pad and sub — mellow and warm, a chilled backdrop to write over. Remix it into your own beat.',
+    tags: ['lofi', 'chill', 'minor', 'starter'] },
+  { file: 'template-warm.json', name: 'Warm Starter',
+    description: 'Electric piano, synth strings and sub — brighter and uplifting, a major-key starting point. Open it and take it somewhere new.',
+    tags: ['ambient', 'warm', 'major', 'starter'] },
+]
+
 async function main() {
   const url = resolveDbUrl()
   if (!url) { console.error('No DATABASE_URL (set it or add it to .env.local).'); process.exit(1) }
@@ -56,24 +73,57 @@ async function main() {
       await client.query(`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song','sample','preset','recipe','pack','project','theme','kit','pattern','post'))`)
     } catch { /* constraint already fine */ }
 
-    const existing = await client.query('SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = $1', [SEED_USER])
-    if ((existing.rows[0]?.n ?? 0) > 0) {
-      console.log(`Already seeded (${existing.rows[0].n} starter posts). Nothing to do.`)
-      return
+    // Posts — idempotent: skip if any seed posts already exist.
+    const havePosts = await client.query(`SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = $1 AND kind = 'post'`, [SEED_USER])
+    let posts = 0
+    if ((havePosts.rows[0]?.n ?? 0) > 0) {
+      console.log(`Posts already seeded (${havePosts.rows[0].n}). Skipping.`)
+    } else {
+      // Space the created_at out so they don't all share a timestamp in the feed.
+      for (let i = 0; i < POSTS.length; i++) {
+        const p = POSTS[i]
+        await client.query(
+          `INSERT INTO community_items (user_id, author_name, kind, name, description, created_at)
+           VALUES ($1, $2, 'post', $3, $4, NOW() - ($5 || ' minutes')::interval)`,
+          [SEED_USER, AUTHOR, p.name, p.body, String((POSTS.length - i) * 7)],
+        )
+        posts++
+      }
+      console.log(`Seeded ${posts} starter posts as "${AUTHOR}".`)
     }
 
-    // Space the created_at out so they don't all share a timestamp in the feed.
-    let inserted = 0
-    for (let i = 0; i < POSTS.length; i++) {
-      const p = POSTS[i]
-      await client.query(
-        `INSERT INTO community_items (user_id, author_name, kind, name, description, created_at)
-         VALUES ($1, $2, 'post', $3, $4, NOW() - ($5 || ' minutes')::interval)`,
-        [SEED_USER, AUTHOR, p.name, p.body, String((POSTS.length - i) * 7)],
-      )
-      inserted++
+    // Project starters — idempotent: skip if any seed projects already exist.
+    const haveProjects = await client.query(`SELECT COUNT(*)::int AS n FROM community_items WHERE user_id = $1 AND kind = 'project'`, [SEED_USER])
+    let starters = 0
+    if ((haveProjects.rows[0]?.n ?? 0) > 0) {
+      console.log(`Project starters already seeded (${haveProjects.rows[0].n}). Skipping.`)
+    } else {
+      const dir = new URL('../public/templates/', import.meta.url)
+      for (let i = 0; i < STARTERS.length; i++) {
+        const s = STARTERS[i]
+        let dawProject
+        try {
+          dawProject = JSON.parse(readFileSync(new URL(s.file, dir), 'utf8'))
+        } catch { console.warn(`  · skipped ${s.file} (not found)`); continue }
+        const payload = {
+          dawProject,
+          tempo: dawProject.tempo,
+          key: keyLabel(dawProject.key, dawProject.scale),
+          tracks: dawProject.tracks?.length ?? 0,
+          clips: dawProject.arrangementClips?.length ?? 0,
+          tags: s.tags,
+        }
+        await client.query(
+          `INSERT INTO community_items (user_id, author_name, kind, name, description, payload, created_at)
+           VALUES ($1, $2, 'project', $3, $4, $5::jsonb, NOW() - ($6 || ' minutes')::interval)`,
+          [SEED_USER, AUTHOR, s.name, s.description, JSON.stringify(payload), String((STARTERS.length - i) * 11 + 3)],
+        )
+        starters++
+      }
+      console.log(`Seeded ${starters} project starters as "${AUTHOR}".`)
     }
-    console.log(`Seeded ${inserted} starter posts as "${AUTHOR}".`)
+
+    if (posts === 0 && starters === 0) console.log('Nothing new to seed.')
   } finally {
     await client.end()
   }

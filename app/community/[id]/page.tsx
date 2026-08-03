@@ -27,6 +27,48 @@ const fetchItem = cache(async (id: string) => {
   }
 })
 
+export interface RelatedItem { id: string; name: string; description: string; author_name: string; kind: string }
+
+// Related items: prefer the same kind (value-ranked); backfill with recent items
+// of any kind so the section is never empty. Server-rendered → the internal links
+// are in the SSR HTML (good for crawling + keeps thin item pages linked).
+const fetchRelated = cache(async (kind: string, excludeId: string): Promise<RelatedItem[]> => {
+  await ensureTables()
+  try {
+    const same = await sql`
+      SELECT id, name, description, author_name, kind FROM community_items
+      WHERE kind = ${kind} AND id <> ${excludeId} AND removed_at IS NULL
+      ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 6
+    ` as RelatedItem[]
+    if (same.length >= 4) return same
+    const seen = new Set([excludeId, ...same.map(r => r.id)])
+    const more = await sql`
+      SELECT id, name, description, author_name, kind FROM community_items
+      WHERE id <> ${excludeId} AND removed_at IS NULL
+      ORDER BY created_at DESC LIMIT 12
+    ` as RelatedItem[]
+    const filled = [...same]
+    for (const r of more) { if (filled.length >= 6) break; if (!seen.has(r.id)) { filled.push(r); seen.add(r.id) } }
+    return filled
+  } catch {
+    return []
+  }
+})
+
+// Other shares by the same creator — discovery + a lightweight creator surface.
+const fetchByAuthor = cache(async (author: string, excludeId: string): Promise<RelatedItem[]> => {
+  await ensureTables()
+  try {
+    return await sql`
+      SELECT id, name, description, author_name, kind FROM community_items
+      WHERE author_name = ${author} AND id <> ${excludeId} AND removed_at IS NULL
+      ORDER BY (votes + downloads * 0.5 + 1) DESC LIMIT 4
+    ` as RelatedItem[]
+  } catch {
+    return []
+  }
+})
+
 const KIND_LABEL: Record<string, string> = {
   song: 'Song', sample: 'Sample', preset: 'Preset', recipe: 'Recipe', pack: 'Sample pack', project: 'Project starter', theme: 'Theme', kit: 'Drum kit', pattern: 'Beat pattern', post: 'Post',
 }
@@ -43,12 +85,20 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     : `${item.name} — ${kindLabel} by ${item.author_name}`
   const description = (item.description as string)
     || (isPost ? `A post by ${item.author_name} on 100Lights Community.` : `Listen to this ${kindLabel.toLowerCase()} on 100Lights Community — no account needed.`)
+  // Index only high-value pages so crawl budget goes to pages that can rank:
+  // official 100Lights content + items with real engagement. The thin long tail
+  // is noindex,follow — crawlers still pass link-equity up to the category hubs
+  // and the main feed, but don't index thousands of near-empty item pages.
+  const votes = Number(item.votes ?? 0)
+  const downloads = Number(item.downloads ?? 0)
+  const highValue = item.author_name === '100Lights' || (votes + downloads) >= 3
   return {
     title,
     description,
     alternates: { canonical: `https://100lights.com/community/${id}` },
     openGraph: { title, description, type: isPost ? 'article' : 'music.song', siteName: '100Lights Community', url: `https://100lights.com/community/${id}` },
     twitter: { card: 'summary_large_image', title, description },
+    ...(highValue ? {} : { robots: { index: false, follow: true } }),
   }
 }
 
@@ -79,10 +129,14 @@ export default async function CommunityItemPage({ params }: { params: Promise<{ 
         ...(item.description ? { description: item.description } : {}),
       }
   const initialItem = rowToItem(item, null, new Set<string>(), new Map(), new Map()) as unknown as CommunityItem
+  const [related, byAuthor] = await Promise.all([
+    fetchRelated(item.kind as string, id),
+    fetchByAuthor(item.author_name as string, id),
+  ])
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <ItemClient id={id} initialItem={initialItem} />
+      <ItemClient id={id} initialItem={initialItem} related={related} byAuthor={byAuthor} author={item.author_name as string} kind={item.kind as string} />
     </>
   )
 }
