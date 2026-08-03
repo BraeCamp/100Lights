@@ -575,30 +575,55 @@ function fillDrums(clip, rand, bar0, bars, feel, sec) {
   }
 }
 
-// ── Bass: genre-idiom lines (all chord tones / diatonic) ─────────────────────
-function fillBass(clip, rand, bar0, chordRoots, style, base, root, scale) {
-  const oct = (p, o) => p + o * 12
+// ── Bass: a driving, syncopated BACKBONE — not a kick-follower ────────────────
+// A motif is a 16-step rhythm template: {s:step, d:dur(steps), i:interval-from-
+// root, dyad:interval to stack simultaneously|null, ghost:soft passing note}.
+// The motif is the song's low-end IDENTITY (chosen once, persists across the
+// track); each section only THINS or THICKENS it by energy — so the groove stays
+// consistent while dynamics move, the way a real bassline anchors a song. Notes
+// land off the kick (the &s, 16th pushes, ghosts) instead of on every beat, and
+// dyads (root+5th / root+octave) let two notes sound at once for weight. `i:'ap'`
+// = chromatic approach into the next chord's root. Everything snapped to key.
+const BASS_MOTIFS = {
+  // relentless 16th drive with octave weight and ghost pickups (the Artemas bed)
+  drive:  [{ s: 0, d: 2, i: 0, dyad: 12 }, { s: 3, d: 1, i: 0, ghost: 1 }, { s: 4, d: 2, i: 0 }, { s: 7, d: 1, i: 0, ghost: 1 }, { s: 8, d: 2, i: 0 }, { s: 11, d: 1, i: 0, ghost: 1 }, { s: 12, d: 2, i: 0 }, { s: 14, d: 2, i: 7 }],
+  // pure off-beat push — sits in the gaps between kicks, never on the 1's beat
+  push:   [{ s: 2, d: 2, i: 0 }, { s: 6, d: 2, i: 7 }, { s: 9, d: 1, i: 0, ghost: 1 }, { s: 10, d: 2, i: 0 }, { s: 14, d: 2, i: 0, dyad: 12 }],
+  // long root + a syncopated answer — space, breathes, dyad weight up front
+  pulse:  [{ s: 0, d: 6, i: 0, dyad: 7 }, { s: 7, d: 1, i: 12, ghost: 1 }, { s: 8, d: 4, i: 0 }, { s: 13, d: 3, i: 7 }],
+  // octave gallop — busy, bouncy, octave stabs land as dyads
+  gallop: [{ s: 0, d: 1, i: 0, dyad: 12 }, { s: 1, d: 1, i: 12, ghost: 1 }, { s: 2, d: 2, i: 0 }, { s: 6, d: 2, i: 7 }, { s: 8, d: 1, i: 0, dyad: 12 }, { s: 9, d: 1, i: 12, ghost: 1 }, { s: 10, d: 2, i: 0 }, { s: 14, d: 2, i: 0 }],
+  // walking approach into the next chord, root+5th weight on the anchors
+  walk:   [{ s: 0, d: 3, i: 0, dyad: 7 }, { s: 4, d: 2, i: 3 }, { s: 8, d: 3, i: 7, dyad: 5 }, { s: 12, d: 1, i: 10, ghost: 1 }, { s: 14, d: 2, i: 'ap' }],
+}
+const BASS_MOTIF_FOR = { offbeat: 'push', root8: 'drive', octarp: 'gallop', walk: 'walk', rootfifth: 'pulse' }
+function fillBass(clip, rand, bar0, chordRoots, style, base, root, scale, energy = 0.7, motifName = null) {
+  const snap = p => snapToScale(p, root, scale)
+  // Held identities keep their intentional long-note character (space layers).
+  if (style === 'pedal') { chordRoots.forEach((r, b) => clip.notes.push(note(snap(r), (bar0 + b) * 4, 3.96, Math.round(base * (0.6 + 0.35 * energy))))); return }
+  if (style === '808') {
+    chordRoots.forEach((r, b) => { const bt = (bar0 + b) * 4; clip.notes.push(note(snap(r), bt, 3.6, Math.round(base * (0.62 + 0.4 * energy)))); if (energy >= 0.6 && rand.chance(0.5)) clip.notes.push(note(snap(r + 12), bt + 10 * STEP, 1.4, Math.round(base * 0.7))) })
+    return
+  }
+  if (style === 'bossa') { chordRoots.forEach((r, b) => { const bt = (bar0 + b) * 4; const put = (s, d, p, v) => clip.notes.push(note(snap(p), bt + s * STEP, d * STEP, hvel(rand, v, s))); put(0, 2, r, base); put(3, 2, r + 7, base - 4); put(8, 2, r, base); put(11, 2, r + 7, base - 4) }); return }
+  const M = BASS_MOTIFS[motifName || BASS_MOTIF_FOR[style] || 'drive'] || BASS_MOTIFS.drive
+  const bv = Math.round(base * (0.62 + 0.42 * Math.max(0, Math.min(1, energy))))   // velocity tracks the energy arc
   chordRoots.forEach((r, b) => {
     const bt = (bar0 + b) * 4
-    // Every bass note snapped to the key — keeps walking approaches / fifths in-key.
-    const put = (slot, dur, pitch, v = base) => clip.notes.push(note(snapToScale(pitch, root, scale), bt + slot * STEP, dur * STEP, hvel(rand, v, slot)))
-    switch (style) {
-      case 'offbeat': for (const s of [2, 6, 10, 14]) put(s, 1.8, r); break
-      case 'root8': for (const s of [0, 2, 4, 6, 8, 10, 12, 14]) put(s, 1.6, r, base - (s % 4 ? 6 : 0)); break
-      case 'octarp': { const seq = [r, r, oct(r, 1), r]; [0, 4, 8, 12].forEach((s, i) => put(s, 3.6, seq[i % seq.length])); break }
-      case '808': put(0, 14, r); if (rand.chance(0.5)) put(10, 6, oct(r, rand.chance(0.5) ? 0 : -0)); break
-      case 'pedal': put(0, 16, r); break
-      case 'bossa': put(0, 2, r); put(3, 2, r + 7); put(8, 2, r); put(11, 2, r + 7); break
-      case 'rootfifth': put(0, 4, r); put(4, 4, r + 7); put(8, 4, r); put(12, 4, r + 7); break
-      case 'walk': default: {
-        // Walk toward the NEXT chord's root: root, 3rd-ish, 5th, approach.
-        const next = chordRoots[(b + 1) % chordRoots.length]
-        const approach = next - 1 // chromatic-ish approach, snapped below to scale by caller if needed
-        const seq = [r, r + 3, r + 7, approach]
-        ;[0, 4, 8, 12].forEach((s, i) => put(s, 3.6, seq[i]))
-        break
-      }
+    const nextR = chordRoots[(b + 1) % chordRoots.length]
+    // Density follows energy: low sections keep only strong anchors (held), mid
+    // drops the ghost pickups, peaks keep everything (+ an extra approach ghost).
+    let evs = M
+    if (energy < 0.4) evs = M.filter(e => !e.ghost && e.s % 8 === 0)
+    else if (energy < 0.6) evs = M.filter(e => !e.ghost)
+    for (const e of evs) {
+      const iv = e.i === 'ap' ? (nextR - r - 1) : e.i
+      const dur = energy < 0.4 ? Math.max(e.d, 4) : e.d
+      const v = Math.max(26, Math.min(122, hvel(rand, bv, e.s) + (e.ghost ? -20 : 0)))
+      clip.notes.push(note(snap(r + iv), bt + e.s * STEP, dur * STEP * 0.92, v))
+      if (e.dyad != null && energy >= 0.5) clip.notes.push(note(snap(r + iv + e.dyad), bt + e.s * STEP, dur * STEP * 0.88, Math.max(22, v - 12)))
     }
+    if (energy >= 0.85 && rand.chance(0.4)) clip.notes.push(note(snap(nextR - 2), bt + 15 * STEP, STEP * 0.8, Math.max(26, hvel(rand, bv, 15) - 24)))
   })
 }
 
@@ -817,6 +842,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const voicing      = rand.pick(['close', 'close', 'inv1', 'inv2', 'open', 'drop2'])  // how chords sit
   const arpDir       = rand.pick(['up', 'up', 'down', 'updown'])     // arp shape
   const arpRate      = rand.pick([2, 2, 4])                          // 16ths vs 8ths
+  const bassMotif    = rand.chance(0.5) ? null : rand.pick(['drive', 'drive', 'push', 'pulse', 'gallop', 'walk'])  // null → genre-idiom default; the song's low-end identity
   const useSwap      = rand.chance(0.4)                              // swap the keys timbre in the bridge
   const swapPreset   = useSwap ? rand.pick(KEYS_ALTS.filter(p => p !== keysPreset)) : null
   const humanize     = rand.chance(0.6) ? rand.pick([0.006, 0.01, 0.015]) : 0  // melodic timing jitter (beats)
@@ -959,13 +985,35 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     // has): a sustained layer from the top, bass a quarter in, filtered hats
     // halfway, a chordy layer three-quarters in — then the section hits full.
     if (layered) {
-      const q = Math.max(1, Math.floor(sec.bars / 4))
-      const sus = has('pad') ? 'pad' : has('keys') ? 'keys' : has('arp') ? 'arp' : null
-      if (sus) { const c = secClip(sus, secStart, sec.bars, e * 0.85); fillPadLong(c, rand, 0, padCh, 42); push(c) }
-      if (has('bass') && sec.bars - q >= 1) { const c = secClip('bass', secStart + q * 4, sec.bars - q, 0.42); fillBass(c, rand, 0, roots.slice(q), 'pedal', 74, secRoot, scale); push(c) }
-      if (has('drums') && genre.drums !== 'none' && sec.bars - 2 * q >= 1) { const c = secClip('drums', secStart + 2 * q * 4, sec.bars - 2 * q, 0.55); fillDrums(c, rand, 0, sec.bars - 2 * q, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.62, role: 'intro' }); push(c) }
-      const ch = has('keys') ? 'keys' : has('arp') ? 'arp' : null
-      if (ch && ch !== sus && sec.bars - 3 * q >= 1) { const c = secClip(ch, secStart + 3 * q * 4, sec.bars - 3 * q, 0.5); fillChords(c, rand, 0, chords.slice(3 * q), keyRhythm, 54, null, false); push(c) }
+      // ENTRY-ORDER SYSTEM — instead of the same pad→bass→drums→keys stack every
+      // song, shuffle which layer FOUNDS the intro and stagger the rest at
+      // randomized bars (sometimes two enter together). Once a layer is in, it
+      // runs to the end of the intro, so the groove stays consistent as it builds.
+      const renderEntry = (role, sb) => {
+        const remBars = sec.bars - sb
+        if (remBars < 1) return
+        const st = secStart + sb * 4
+        if (role === 'pad') { const c = secClip('pad', st, remBars, e * 0.85); fillPadLong(c, rand, 0, padCh.slice(sb), 42); push(c) }
+        else if (role === 'keys') { const c = secClip('keys', st, remBars, Math.min(e, 0.6)); fillChords(c, rand, 0, chords.slice(sb), keyRhythm, 52, null, false, 0, voicing); push(c) }
+        else if (role === 'arp') { const c = secClip('arp', st, remBars, Math.min(e, 0.6)); fillLead(c, rand, 0, chords.slice(sb), hook, 50, 'arp', secRoot, scale, arpDir, arpRate); push(c) }
+        else if (role === 'bass') { const c = secClip('bass', st, remBars, 0.5); fillBass(c, rand, 0, roots.slice(sb), pal.bassStyle, 68, secRoot, scale, 0.5, bassMotif); push(c) }
+        else if (role === 'drums') { const c = secClip('drums', st, remBars, 0.55); fillDrums(c, rand, 0, remBars, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.6, role: 'intro' }); push(c) }
+      }
+      const tonal = ['pad', 'keys', 'arp'].filter(has)
+      const foundation = tonal.length ? rand.pick(tonal) : (has('bass') ? 'bass' : null)
+      const rest = ['pad', 'keys', 'arp', 'bass'].filter(r => has(r) && r !== foundation)
+      if (has('drums') && genre.drums !== 'none') rest.push('drums')
+      for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]] }   // shuffle
+      const maxBar = Math.max(1, sec.bars - 1)
+      const slots = []; let cursor = 1
+      for (let i = 0; i < rest.length; i++) {
+        let bStart = Math.min(maxBar, cursor)
+        if (i > 0 && rand.chance(0.25)) bStart = slots[i - 1]   // two layers arrive together
+        slots.push(bStart)
+        cursor = Math.min(maxBar, bStart + rand.pick([1, 2, 2]))
+      }
+      if (foundation) renderEntry(foundation, 0)
+      rest.forEach((r, i) => renderEntry(r, slots[i]))
       bar += sec.bars
       continue
     }
@@ -977,10 +1025,10 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
       else if (L.softDrums) { const c = secClip('drums', secStart, sec.bars, Math.min(e, 0.5)); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, breakdown: true }); push(c) }
     }
     // Bass
-    if (has('bass') && L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, secRoot, scale); push(c) }
+    if (has('bass') && L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, secRoot, scale, e, bassMotif); push(c) }
     // Keys — rhythmic chords (voiced per the song's voicing; swaps timbre in the
     // bridge for a mid-song "development" when this song drew useSwap).
-    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e, sec.role === 'bridge' ? swapPreset : null); fillChords(c, rand, 0, chords, keyRhythm, e > 0.8 ? 68 : 58, null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0, voicing); humanizeClip(c, humanize, rand); push(c) }
+    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e, sec.role === 'bridge' ? swapPreset : null); fillChords(c, rand, 0, chords, keyRhythm, Math.round(44 + e * 30), null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0, voicing); humanizeClip(c, humanize, rand); push(c) }
     // Arp — a rolling 16th layer, its own track when the ensemble has one
     if (has('arp') && e >= 0.5 && !sparse) { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', secRoot, scale, arpDir, arpRate); humanizeClip(c, humanize, rand); push(c) }
     // Pad — held long when sparse
@@ -1107,6 +1155,31 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     }
   }
 
+  // ── INVARIANT: no two clips overlap on the same track ────────────────────────
+  // Toolbox/pressure moves can drop a short clip (impact, riser, stutter) onto a
+  // track that already carries a section clip there. Rather than leave two
+  // stacked arrangement items, merge the later clip's notes into the earlier one
+  // (as a dyad/overlay) and keep a single clip per region. Also drop emptied clips.
+  {
+    const byTrack = {}
+    for (const c of clips) (byTrack[c.trackId] ||= []).push(c)
+    const kept = []
+    for (const tId in byTrack) {
+      const cs = byTrack[tId].sort((a, b) => a.startBeat - b.startBeat)
+      let cur = null
+      for (const c of cs) {
+        if (cur && c.startBeat < cur.startBeat + cur.durationBeats - 1e-6) {
+          const off = c.startBeat - cur.startBeat
+          for (const nte of c.notes) cur.notes.push({ ...nte, startBeat: +(nte.startBeat + off).toFixed(4) })
+          cur.durationBeats = +Math.max(cur.durationBeats, c.startBeat + c.durationBeats - cur.startBeat).toFixed(4)
+        } else { cur = c; kept.push(c) }
+      }
+    }
+    clips.length = 0
+    for (const c of kept) if (c.notes.length) clips.push(c)
+    clips.sort((a, b) => a.startBeat - b.startBeat || a.trackId.localeCompare(b.trackId))
+  }
+
   const keyLabel = modeName ? `${KEY_NAMES[root]} ${scale}` : (keyStr || `${KEY_NAMES[root]} ${scale}`)
   return {
     name: `${opts.styleName ? opts.styleName + ' · ' : ''}${genre.name} — ${keyLabel}`,
@@ -1115,7 +1188,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
     _tracks: roleList.join('+'),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} stutter:${useStutter ? 'on' : 'off'} falseDrop:${useFalseDrop ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'} keyChange:${keyChangeIdx >= 0 ? '+' + keyShift : 'off'}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} bass:${bassMotif || BASS_MOTIF_FOR[pal.bassStyle] || 'drive'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} stutter:${useStutter ? 'on' : 'off'} falseDrop:${useFalseDrop ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'} keyChange:${keyChangeIdx >= 0 ? '+' + keyShift : 'off'}`,
   }
 }
 
