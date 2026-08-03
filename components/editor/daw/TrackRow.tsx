@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { nearestBarBeat } from '@/lib/tempo-map'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
@@ -171,9 +172,14 @@ export function VUMeter({ deviceId, active }: { deviceId: string | null | undefi
 
 export type SnapMode = 'off' | '1/16' | '1/8' | 'beat' | 'bar'
 
-export function snapBeat(beat: number, mode: SnapMode, beatsPerBar = 4): number {
+// `beatsPerBar` handles the uniform-meter case (every existing call site). Pass
+// `meterSegs` (from lib/tempo-map) to make 'bar' snapping honor time-signature
+// changes — bar boundaries then follow the meter map instead of a fixed width.
+export function snapBeat(beat: number, mode: SnapMode, beatsPerBar = 4, meterSegs?: import('@/lib/tempo-map').MeterSegment[]): number {
   if (mode === 'off')  return beat
-  if (mode === 'bar')  return Math.round(beat / beatsPerBar) * beatsPerBar
+  if (mode === 'bar')  return meterSegs && meterSegs.length > 1
+    ? nearestBarBeat(beat, meterSegs)
+    : Math.round(beat / beatsPerBar) * beatsPerBar
   if (mode === 'beat') return Math.round(beat)
   if (mode === '1/8')  return Math.round(beat * 2) / 2
   if (mode === '1/16') return Math.round(beat * 4) / 4

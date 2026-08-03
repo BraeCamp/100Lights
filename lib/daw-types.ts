@@ -953,6 +953,10 @@ export interface DawProject {
   cueMarkers: CueMarker[]
   /** Tempo changes: playback switches BPM when the playhead crosses a marker. */
   tempoMarkers?: Array<{ id: string; beat: number; tempo: number }>
+  /** Meter (time-signature) changes: the bar grid + snapping switch at each marker.
+   *  Beat is grid-native (num beats per bar); den is notation/metronome only.
+   *  Marker-free projects use the single global timeSignatureNum/Den. */
+  meterMarkers?: Array<{ id: string; beat: number; num: number; den: number }>
   /** Arranger sections: each runs from its beat to the next section (or the end). */
   sections?: Array<{ id: string; beat: number; name: string; color: string }>
   /** Timeline comments: beat-anchored feedback threads from collaborators. */

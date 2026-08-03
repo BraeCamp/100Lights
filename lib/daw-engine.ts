@@ -2,6 +2,7 @@
 
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
+import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, type TempoSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
@@ -167,6 +168,9 @@ export class DawEngine extends EventTarget {
   isPlaying = false
   isRecording = false
   tempo = 120
+  /** Normalized tempo map (single [beat0, tempo] segment until markers are set).
+   *  Source of truth for beat↔seconds during arrangement playback — see tempo-map.ts. */
+  private _tempoSegs: TempoSegment[] = [{ beat: 0, bpm: 120 }]
   loopEnabled = false
   loopStart = 0
   loopEnd = 16
@@ -757,7 +761,25 @@ export class DawEngine extends EventTarget {
 
   get currentBeat(): number {
     if (!this.isPlaying) return this._startBeat
-    return this._startBeat + (this.ctx.currentTime - this._startCtxTime) * (this.tempo / 60)
+    // Map-aware: elapsed wall-clock seconds are added to the song-seconds at the
+    // anchor beat, then mapped back to a beat. With one tempo segment this reduces
+    // to `_startBeat + elapsed × tempo/60` — identical to the old single-tempo math.
+    const elapsed = this.ctx.currentTime - this._startCtxTime
+    return this._beatAtSongSeconds(this._songSeconds(this._startBeat) + elapsed)
+  }
+
+  /** Wall-clock seconds from beat 0 to `beat`, across tempo-map segments. */
+  private _songSeconds(beat: number): number { return mapBeatToSeconds(beat, this._tempoSegs) }
+  /** Inverse of _songSeconds. */
+  private _beatAtSongSeconds(sec: number): number { return mapSecondsToBeat(sec, this._tempoSegs) }
+  /** Seconds spanned between two absolute beats (signed), across the tempo map. */
+  private _spanSeconds(fromBeat: number, toBeat: number): number {
+    return this._songSeconds(toBeat) - this._songSeconds(fromBeat)
+  }
+  /** ctx-time at which absolute `beat` occurs, given the current transport anchor
+   *  (now = currentBeat at contextNow). Collapses to contextNow + (beat-now)×60/tempo. */
+  private _ctxTimeForBeat(beat: number, now: number, contextNow: number): number {
+    return contextNow + this._spanSeconds(now, beat)
   }
 
   /**
@@ -819,15 +841,20 @@ export class DawEngine extends EventTarget {
 
   updateProject(project: DawProject) {
     if (this.ctx.state === 'closed') return
-    if (project.tempo !== this.tempo) {
-      // Rebase the transport clock BEFORE swapping tempo: currentBeat is
-      // startBeat + elapsed × (tempo/60), so changing the multiplier without
-      // rebasing re-scales the whole elapsed time — the playhead leaps, and a
-      // backward leap makes the scheduler re-fire clips on top of their
-      // still-playing sources (stacking louder with every BPM nudge).
+    const newSegs = tempoSegments(project)
+    const segsChanged = newSegs.length !== this._tempoSegs.length ||
+      newSegs.some((s, i) => s.beat !== this._tempoSegs[i].beat || s.bpm !== this._tempoSegs[i].bpm)
+    if (segsChanged || project.tempo !== this.tempo) {
+      // Rebase the transport clock BEFORE swapping the tempo map: currentBeat maps
+      // elapsed wall-clock seconds through the segments, so replacing them without
+      // rebasing re-scales elapsed time and the playhead leaps (a backward leap
+      // makes the scheduler re-fire clips on top of still-playing sources, stacking
+      // louder). Capturing beatNow under the OLD map and re-anchoring keeps the
+      // playhead continuous across a tempo/marker edit.
       const beatNow = this.currentBeat
       const sessionNow = this._sessionClockRunning ? this._sessionBeat() : null
       this.tempo = project.tempo
+      this._tempoSegs = newSegs
       if (this.isPlaying) {
         this._startBeat = beatNow
         this._startCtxTime = this.ctx.currentTime
@@ -1511,7 +1538,7 @@ export class DawEngine extends EventTarget {
         if (noteEnd < now) continue
         if (noteAbsBeat > now + aheadBeats) continue
 
-        const startAt      = contextNow + this.beatsToSeconds(Math.max(0, noteAbsBeat - now))
+        const startAt      = this._ctxTimeForBeat(Math.max(now, noteAbsBeat), now, contextNow)
         const alreadyBeats = Math.max(0, now - noteAbsBeat)
         const remaining    = this.beatsToSeconds(maxDur - alreadyBeats)
 
@@ -1570,8 +1597,8 @@ export class DawEngine extends EventTarget {
             fxCleanup.nodes.push(entry)
             let last: AudioNode = entry
             for (const eff of overlapping) {
-              const effContextStart  = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
-              const effSeekOffsetSec = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
+              const effContextStart  = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
+              const effSeekOffsetSec = Math.max(0, this._spanSeconds(eff.startBeat, now))
               const r = eff.fx ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
               last = r.output
               fxCleanup.nodes.push(...r.extraNodes)
@@ -1927,10 +1954,12 @@ export class DawEngine extends EventTarget {
     }
 
     // Warp: resolve the actual playback buffer and timing
-    const clipDuration  = this.beatsToSeconds(clip.durationBeats)
-    const alreadyPlayed = now > clip.startBeat ? this.beatsToSeconds(now - clip.startBeat) : 0
-    const beatOffset    = clip.startBeat - now
-    const startAt       = contextNow + this.beatsToSeconds(Math.max(0, beatOffset))
+    // Map-aware: the clip's beat window / elapsed / start convert through the
+    // tempo map at the clip's actual position, so a tempo change mid-song places
+    // and lengths the clip correctly (single-segment → old single-tempo math).
+    const clipDuration  = this._spanSeconds(clip.startBeat, clip.startBeat + clip.durationBeats)
+    const alreadyPlayed = now > clip.startBeat ? this._spanSeconds(clip.startBeat, now) : 0
+    const startAt       = this._ctxTimeForBeat(Math.max(now, clip.startBeat), now, contextNow)
 
     let playBuf           = buf
     let playTrimStart     = clip.trimStart
@@ -1987,7 +2016,7 @@ export class DawEngine extends EventTarget {
         basePlaybackRate = stretchFactor
         source.buffer = buf
         const seekOffset = now > clip.startBeat
-          ? this.beatsToSeconds(now - clip.startBeat) * stretchFactor + clip.trimStart
+          ? this._spanSeconds(clip.startBeat, now) * stretchFactor + clip.trimStart
           : clip.trimStart
         const totalDuration = buf.duration - clip.trimStart - clip.trimEnd
         effectiveDuration = Math.min(totalDuration, clipDuration * stretchFactor) - (seekOffset - clip.trimStart)
@@ -1999,7 +2028,7 @@ export class DawEngine extends EventTarget {
       source.buffer = playBuf
       const trimStartForSeek = boomerangActive ? 0 : clip.trimStart
       const seekOffset    = now > clip.startBeat
-        ? this.beatsToSeconds(now - clip.startBeat) + trimStartForSeek
+        ? this._spanSeconds(clip.startBeat, now) + trimStartForSeek
         : trimStartForSeek
       const totalDuration = playBuf.duration - playTrimStart - playTrimEnd
 
@@ -2072,8 +2101,8 @@ export class DawEngine extends EventTarget {
     }
     for (const eff of insertEffects) {
       // When seeking mid-clip, use now-relative timing so already-active effects start immediately
-      const effContextStart   = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
-      const effSeekOffsetSec  = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
+      const effContextStart   = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
+      const effSeekOffsetSec  = Math.max(0, this._spanSeconds(eff.startBeat, now))
       const r = eff.fx ? this._buildEffectBar(eff, lastNode, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, lastNode, startAt, effContextStart, effSeekOffsetSec)
       lastNode = r.output
       allExtraNodes.push(...r.extraNodes)
@@ -2090,8 +2119,8 @@ export class DawEngine extends EventTarget {
 
     // Pitch effects modify source.detune (added on top of effectiveDetune)
     for (const eff of pitchEffects) {
-      const effContextStart   = contextNow + Math.max(0, this.beatsToSeconds(eff.startBeat - now))
-      const effSeekOffsetSec  = Math.max(0, this.beatsToSeconds(now - eff.startBeat))
+      const effContextStart   = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
+      const effSeekOffsetSec  = Math.max(0, this._spanSeconds(eff.startBeat, now))
       this._applyPitchEffect(eff, source, effContextStart, effectiveDetune, effSeekOffsetSec)
     }
 
@@ -3116,8 +3145,7 @@ export class DawEngine extends EventTarget {
     const currentBeat = this.currentBeat
     const ahead       = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
     while (this._nextMetronomeBeat <= currentBeat + ahead) {
-      const beatOffset = this._nextMetronomeBeat - currentBeat
-      const when       = now + this.beatsToSeconds(Math.max(0, beatOffset))
+      const when       = this._ctxTimeForBeat(Math.max(currentBeat, this._nextMetronomeBeat), currentBeat, now)
       const isDownbeat = (this._nextMetronomeBeat % this._beatsPerBar) === 0
       const buf        = isDownbeat ? this._tickBuf : this._tockBuf
       if (buf) {

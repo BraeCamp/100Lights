@@ -45,7 +45,10 @@ export type DawAction =
   | { type: 'SET_TEMPO'; tempo: number }
   | { type: 'SET_TIME_SIG'; num: number; den: number }
   | { type: 'ADD_TEMPO_MARKER'; marker: { id: string; beat: number; tempo: number } }
+  | { type: 'UPDATE_TEMPO_MARKER'; markerId: string; tempo: number }
   | { type: 'REMOVE_TEMPO_MARKER'; markerId: string }
+  | { type: 'ADD_METER_MARKER'; marker: { id: string; beat: number; num: number; den: number } }
+  | { type: 'REMOVE_METER_MARKER'; markerId: string }
   | { type: 'ADD_SECTION'; section: { id: string; beat: number; name: string; color: string } }
   | { type: 'REMOVE_SECTION'; sectionId: string }
   | { type: 'ADD_COMMENT'; comment: import('./daw-types').TimelineComment }
@@ -370,8 +373,34 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, tempoMarkers: [...filtered, action.marker].sort((a, b) => a.beat - b.beat) }
     }
 
+    case 'UPDATE_TEMPO_MARKER':
+      return { ...project, tempoMarkers: (project.tempoMarkers ?? []).map(m =>
+        m.id === action.markerId ? { ...m, tempo: Math.max(40, Math.min(300, action.tempo)) } : m) }
+
     case 'REMOVE_TEMPO_MARKER':
       return { ...project, tempoMarkers: (project.tempoMarkers ?? []).filter(m => m.id !== action.markerId) }
+
+    case 'ADD_METER_MARKER': {
+      const markers = [...(project.meterMarkers ?? [])]
+      // first marker at beat>0: pin the current global meter at beat 0 so the
+      // song's opening keeps its time signature (mirrors ADD_TEMPO_MARKER).
+      if (markers.length === 0 && action.marker.beat > 0.01) {
+        markers.push({ id: crypto.randomUUID(), beat: 0, num: project.timeSignatureNum, den: project.timeSignatureDen })
+      }
+      const num = Math.max(1, Math.round(action.marker.num) || 4)
+      const den = Math.max(1, Math.round(action.marker.den) || 4)
+      const filtered = markers.filter(m => Math.abs(m.beat - action.marker.beat) > 0.01)
+      const meterMarkers = [...filtered, { ...action.marker, num, den }].sort((a, b) => a.beat - b.beat)
+      // Keep the global time sig equal to the meter at beat 0, so consumers that
+      // still read the scalar (metronome downbeat, launch quant) see the opening meter.
+      const head = meterMarkers.find(m => m.beat < 0.01)
+      return { ...project, meterMarkers,
+        timeSignatureNum: head?.num ?? project.timeSignatureNum,
+        timeSignatureDen: head?.den ?? project.timeSignatureDen }
+    }
+
+    case 'REMOVE_METER_MARKER':
+      return { ...project, meterMarkers: (project.meterMarkers ?? []).filter(m => m.id !== action.markerId) }
 
     case 'ADD_SECTION':
       return { ...project, sections: [...(project.sections ?? []).filter(s => Math.abs(s.beat - action.section.beat) > 0.01), action.section].sort((a, b) => a.beat - b.beat) }

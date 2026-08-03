@@ -464,15 +464,20 @@ export default function Transport() {
   // ── Music-only handlers ─────────────────────────────────────────────────────
 
   function applyTempo(n: number) {
-    dispatch({ type: 'SET_TEMPO', tempo: n })
-    // With tempo markers on the timeline, the marker at the playhead governs —
-    // update it too, or the marker watcher snaps the BPM right back.
     const markers = project.tempoMarkers ?? []
-    if (markers.length > 0) {
-      const beat = engine.currentBeat
-      const active = [...markers].filter(m => m.beat <= beat + 0.001).sort((a, b) => b.beat - a.beat)[0] ?? markers[0]
-      dispatch({ type: 'ADD_TEMPO_MARKER', marker: { ...active, tempo: n } })
+    if (markers.length === 0) {
+      // No tempo map: a plain global tempo change. SET_TEMPO also rescales
+      // non-warped audio clips so they keep their absolute (second) length.
+      dispatch({ type: 'SET_TEMPO', tempo: n })
+      return
     }
+    // Tempo map in play: retempo only the segment the playhead sits in — leave the
+    // other sections (and audio-clip geometry) alone. Keep the global tempo in sync
+    // when editing the opening (beat-0) segment so the transport read-out matches.
+    const beat = engine.currentBeat
+    const active = [...markers].filter(m => m.beat <= beat + 0.001).sort((a, b) => b.beat - a.beat)[0] ?? markers[0]
+    dispatch({ type: 'UPDATE_TEMPO_MARKER', markerId: active.id, tempo: n })
+    if (active.beat < 0.01) dispatch({ type: 'PATCH_PROJECT', patch: { tempo: Math.max(40, Math.min(300, n)) } })
   }
 
   function handleBpmCommit(value: string) {

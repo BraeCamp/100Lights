@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
@@ -19,6 +19,7 @@ let _lastCopied: 'clips' | 'effects' | null = null
 import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 import { useUITierOptional } from '../UITierProvider'
+import { tempoSegments, meterSegments, secondsToBeat, beatToSeconds, barLines, nearestBarBeat } from '@/lib/tempo-map'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
 import VersionHistory from './VersionHistory'
@@ -57,8 +58,12 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
   const [loopCursor, setLoopCursor] = useState('grab')
   const [renamingSection, setRenamingSection] = useState<string | null>(null)
   const { project, dispatch } = useDaw()
-  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [], sections = [], comments = [] } = project
+  const { tempo, timeSignatureNum: sigNum, timeSignatureDen: sigDen, loopStart, loopEnd, loopEnabled, cueMarkers = [], tempoMarkers = [], meterMarkers = [], sections = [], comments = [] } = project
   const pxPerSec = beatW * tempo / 60
+  // Tempo + meter maps drive the seconds lane (non-linear once tempo changes) and
+  // the bar grid (irregular bar widths once meter changes). Marker-free → uniform.
+  const tSegs = useMemo(() => tempoSegments(project), [project.tempo, project.tempoMarkers])
+  const mSegs = useMemo(() => meterSegments(project), [project.timeSignatureNum, project.timeSignatureDen, project.meterMarkers])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -75,16 +80,22 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
     ctx.fillStyle = '#252525'
     ctx.fillRect(0, SEC_H, W, 1)
 
+    // Seconds lane: x is beat-space, so each time-tick sits at the BEAT it maps to
+    // through the tempo map (linear only when tempo is constant). Visible time span
+    // comes from the visible beat span via the map.
+    const visBeat0 = scrollLeft / beatW
+    const visBeat1 = (scrollLeft + W) / beatW
+    const startTime = beatToSeconds(Math.max(0, visBeat0), tSegs)
+    const endTime   = beatToSeconds(Math.max(0, visBeat1), tSegs)
+    const xAtTime   = (t: number) => Math.round(secondsToBeat(t, tSegs) * beatW - scrollLeft)
     const INTERVALS = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60]
     const secInterval  = INTERVALS.find(iv => iv * pxPerSec >= 70) ?? 60
     const halfInterval = secInterval / 2
-    const startTime    = scrollLeft / pxPerSec
-    const endTime      = startTime + W / pxPerSec
 
     const firstHalfIdx = Math.floor(startTime / halfInterval)
     for (let i = firstHalfIdx; i * halfInterval <= endTime + halfInterval; i++) {
       if (i % 2 === 0) continue
-      const x = Math.round(i * halfInterval * pxPerSec - scrollLeft)
+      const x = xAtTime(i * halfInterval)
       if (x < 0 || x > W) continue
       ctx.fillStyle = '#2d2d2d'
       ctx.fillRect(x, SEC_H - 5, 1, 5)
@@ -93,7 +104,7 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
     const firstMajorIdx = Math.floor(startTime / secInterval)
     for (let i = firstMajorIdx; i * secInterval <= endTime + secInterval; i++) {
       const t = i * secInterval
-      const x = Math.round(t * pxPerSec - scrollLeft)
+      const x = xAtTime(t)
       if (x < -30 || x > W + 30) continue
       ctx.fillStyle = '#3d3d3d'
       ctx.fillRect(x, 2, 1, SEC_H - 3)
@@ -104,18 +115,18 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
       ctx.fillText(`${mins}:${String(secs).padStart(2, '0')}`, x + 3, 11)
     }
 
-    const pxPerBar  = beatW * sigNum
-    if (pxPerBar >= 6) {
-      const firstBar   = Math.floor(scrollLeft / pxPerBar)
-      const labelEvery = Math.max(1, Math.ceil(36 / pxPerBar))
-      for (let bar = firstBar; bar * pxPerBar <= scrollLeft + W + pxPerBar; bar++) {
-        const x = Math.round(bar * pxPerBar - scrollLeft)
+    // Bar lane: walk the meter map so bar widths follow time-signature changes.
+    if (beatW >= 6) {
+      const bars = barLines(mSegs, Math.max(0, visBeat0 - 8), visBeat1 + 8)
+      const labelEvery = Math.max(1, Math.ceil(36 / (beatW * (mSegs[0]?.num || sigNum))))
+      for (const { beat: barBeat, bar, num } of bars) {
+        const x = Math.round(barBeat * beatW - scrollLeft)
         if (x >= -1 && x <= W + 1) {
           ctx.fillStyle = '#3a3a3a'
           ctx.fillRect(x, SEC_H + 1, 1, BAR_H - 1)
         }
-        if (pxPerBar >= 24) {
-          for (let b = 1; b < sigNum; b++) {
+        if (beatW >= 24) {
+          for (let b = 1; b < num; b++) {
             const bx = Math.round(x + b * beatW)
             if (bx < 0 || bx > W) continue
             ctx.fillStyle = '#252525'
@@ -154,13 +165,13 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
         onContextMenu={e => {
           e.preventDefault()
           const rect = e.currentTarget.getBoundingClientRect()
-          onEditTimeSig(e, Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, sigNum)))
+          onEditTimeSig(e, Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, sigNum, mSegs)))
         }}
         onDoubleClick={e => {
           const rect  = e.currentTarget.getBoundingClientRect()
           const localY = e.clientY - rect.top
           if (localY >= SEC_H) return
-          const beat = Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, sigNum))
+          const beat = Math.max(0, snapBeat((e.clientX - rect.left + scrollLeft) / beatW, snap, sigNum, mSegs))
           const name = `Cue ${cueMarkers.length + 1}`
           dispatch({ type: 'ADD_CUE_MARKER', marker: { id: `cue-${Date.now()}`, beat, name } })
         }}
@@ -214,6 +225,22 @@ function Ruler({ beatW, scrollLeft, onSeek, onEditTimeSig, onOpenComment, snap }
               style={{ position: 'absolute', bottom: 0, left: 0, background: '#fb923c', color: '#241203', fontSize: 8, padding: '0 3px', borderRadius: '0 2px 0 0', whiteSpace: 'nowrap', fontWeight: 800, cursor: 'context-menu', pointerEvents: 'auto' }}
             >
               ♩{m.tempo}
+            </div>
+          </div>
+        )
+      })}
+      {/* Meter (time-signature) markers */}
+      {(meterMarkers ?? []).map(m => {
+        const mx = m.beat * beatW - scrollLeft
+        if (mx < -8 || mx > 9999) return null
+        return (
+          <div key={m.id} style={{ position: 'absolute', top: 0, left: mx, width: 1, height: RULER_H, background: '#818cf8', zIndex: 2, pointerEvents: 'none' }}>
+            <div
+              title={`${m.num}/${m.den} from here — right-click to remove`}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'REMOVE_METER_MARKER', markerId: m.id }) }}
+              style={{ position: 'absolute', bottom: 0, left: 0, background: '#818cf8', color: '#0f1033', fontSize: 8, padding: '0 3px', borderRadius: '0 2px 0 0', whiteSpace: 'nowrap', fontWeight: 800, cursor: 'context-menu', pointerEvents: 'auto' }}
+            >
+              {m.num}/{m.den}
             </div>
           </div>
         )
@@ -370,6 +397,9 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 export default function ArrangementView() {
   const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
+  // Meter map for bar-snapping: 'bar' snap honors time-signature changes. Falls
+  // back to uniform (project.timeSignatureNum) when there are no meter markers.
+  const mSegs = useMemo(() => meterSegments(project), [project.timeSignatureNum, project.timeSignatureDen, project.meterMarkers])
   // Mobile track heads can be minimized *horizontally* to a thin strip so the
   // clip timeline (one overlay anchored at `hdrW`) gets the reclaimed width.
   const [narrowHeads, setNarrowHeads] = useState(false)
@@ -688,7 +718,7 @@ export default function ArrangementView() {
     e.preventDefault()
     e.stopPropagation()
     const timelineLeft = rootRect.left + hdrW
-    const beatAt = (clientX: number) => Math.max(0, snapBeat((clientX - timelineLeft + scrollLeft) / beatW, snap, project.timeSignatureNum))
+    const beatAt = (clientX: number) => Math.max(0, snapBeat((clientX - timelineLeft + scrollLeft) / beatW, snap, project.timeSignatureNum, mSegs))
     const startBeat = beatAt(e.clientX)
     loopDrawRef.current = { startBeat }
     const mm = (ev: MouseEvent) => {
@@ -718,20 +748,12 @@ export default function ArrangementView() {
     setTsPopover({ x: e.clientX, y: e.clientY, beat })
   }
 
-  // Tempo markers: the current tempo follows the playhead — the last marker
-  // at or before the position wins. Runs on a light interval so seeks and
-  // playback both pick up changes.
-  useEffect(() => {
-    const markers = project.tempoMarkers ?? []
-    if (markers.length === 0) return
-    const iv = setInterval(() => {
-      const beat = engine.currentBeat
-      const active = [...markers].filter(m => m.beat <= beat + 0.001).sort((a, b) => b.beat - a.beat)[0]
-      const want = active?.tempo ?? markers[0].tempo
-      if (Math.abs(want - project.tempo) > 0.01) dispatch({ type: 'SET_TEMPO', tempo: want })
-    }, 150)
-    return () => clearInterval(iv)
-  }, [project.tempoMarkers, project.tempo, engine, dispatch])
+  // Tempo changes are now consumed directly by the engine's tempo map
+  // (lib/tempo-map.ts, fed through DawEngine.updateProject) — beat↔seconds is
+  // piecewise, so playback switches BPM sample-accurately at each marker. The old
+  // 150ms polling watcher that dispatched a global SET_TEMPO on every marker
+  // crossing (which destructively rescaled audio-clip beat-lengths each pass) is
+  // gone. The manual BPM box still sets the global tempo (SET_TEMPO / marker edit).
 
   function handleWheel(e: React.WheelEvent) {
     if (e.ctrlKey || e.metaKey) {
@@ -941,7 +963,7 @@ export default function ArrangementView() {
     // region ("this bar"), not a pixel rectangle
     const toBeat = (clientX: number) => Math.max(0, (clientX - laneRect.left - hdrW + scrollLeft) / beatW)
     const toX    = (beat: number) => laneRect.left + hdrW + beat * beatW - scrollLeft
-    const snapX  = (clientX: number) => toX(snapBeat(toBeat(clientX), snap, project.timeSignatureNum))
+    const snapX  = (clientX: number) => toX(snapBeat(toBeat(clientX), snap, project.timeSignatureNum, mSegs))
     setRubberBand({ x1: snapX(sx), y1: sy, x2: snapX(sx), y2: sy })
 
     function onMove(ev: MouseEvent) {
@@ -988,8 +1010,8 @@ export default function ArrangementView() {
         return
       }
 
-      const regionStart = Math.min(snapBeat(toBeat(sx), snap, project.timeSignatureNum), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum))
-      const regionEnd   = Math.max(snapBeat(toBeat(sx), snap, project.timeSignatureNum), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum))
+      const regionStart = Math.min(snapBeat(toBeat(sx), snap, project.timeSignatureNum, mSegs), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum, mSegs))
+      const regionEnd   = Math.max(snapBeat(toBeat(sx), snap, project.timeSignatureNum, mSegs), snapBeat(toBeat(ev.clientX), snap, project.timeSignatureNum, mSegs))
       const selL = toX(regionStart)
       const selR = toX(regionEnd)
       const selT = Math.min(sy, ev.clientY)
@@ -1783,12 +1805,13 @@ export default function ArrangementView() {
         onTouchEnd={isMobile ? (e => { if (e.touches.length === 0) laneGesture.current = null }) : undefined}
       >
         {/* "Everything" tier: full-height timeline dividers at every tempo change
-             (orange) and section boundary (section colour) — a change of BPM or
-             time signature (marked with a section) splits the timeline. */}
+             (orange), time-signature change (indigo) and section boundary (section
+             colour) — any change of BPM or meter splits the timeline. */}
         {showTimelineDividers && (
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
             {[
               ...(project.tempoMarkers ?? []).map(m => ({ beat: m.beat, color: '#fb923c', key: 'tm' + m.id })),
+              ...(project.meterMarkers ?? []).map(m => ({ beat: m.beat, color: '#818cf8', key: 'mm' + m.id })),
               ...(project.sections ?? []).map(s => ({ beat: s.beat, color: s.color || 'var(--text-muted)', key: 'sec' + s.id })),
             ].map(d => {
               const x = hdrW + d.beat * beatW - scrollLeft
@@ -2003,6 +2026,17 @@ export default function ArrangementView() {
             title="Playback switches to this BPM when the playhead reaches this bar"
             style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.45)', color: '#fb923c', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
             ♩ Tempo change here → {tsDraftBpm} BPM
+          </button>
+          <button
+            onClick={() => {
+              // Meter changes land on a bar boundary so the grid stays clean.
+              const at = nearestBarBeat(tsPopover?.beat ?? 0, mSegs)
+              dispatch({ type: 'ADD_METER_MARKER', marker: { id: crypto.randomUUID(), beat: at, num: tsDraftNum, den: tsDraftDen } })
+              setTsPopover(null)
+            }}
+            title="The bar grid and snapping switch to this time signature from this bar on"
+            style={{ background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.45)', color: '#818cf8', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
+            𝄞 Time-sig change here → {tsDraftNum}/{tsDraftDen}
           </button>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) }}
