@@ -1,0 +1,31 @@
+{
+  "song": "i like the way you kiss me — Artemas (instrumental recreation)",
+  "note": "FACTS about the real song only. I build ONLY from `known:true` items. Anything unknown is a QUESTION for Brae or something to extract by analyzing a reference — NEVER invented. Sources: (m)=measured from a reference, (b)=Brae's ear, (s)=looked-up metadata.",
+  "params": { "key": "G# minor", "tempo": 150, "progression": "G#m E B D#m", "source": "s (songbpm/tunebat/hooktheory)" },
+  "elements": {
+    "known_present": ["bass", "drums"],
+    "known_absent": ["pad (b: not in the song)", "stab / synth chords (b: not in the song)"],
+    "unknown": ["is there any synth/keys/lead element at all, or is it bass + drums + vocal only?"]
+  },
+  "sections": [
+    {
+      "name": "intro",
+      "bars": 4,
+      "known": true,
+      "source": "b",
+      "content": "ONE sustained bass note with a filter opening across the 4 bars. No pad, no stab.",
+      "questions": ["which note is the pedal — the root G#, or something else?", "are drums in during these 4 bars, or does the beat drop in only after?"]
+    },
+    {
+      "name": "after intro",
+      "known": false,
+      "content": "UNKNOWN — the main note/groove starts after bar 4. Need the real structure.",
+      "questions": [
+        "the bassline: a single held note per chord, or a moving line? what rhythm?",
+        "the bass timbre: pure sine sub, or something more characterful?",
+        "the drum groove pattern",
+        "section order + lengths (verse / chorus / breaks) for the whole song"
+      ]
+    }
+  ]
+}
