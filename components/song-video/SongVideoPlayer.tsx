@@ -9,7 +9,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 // "turn my song into a video" feature — used in the admin lab now, the studio next.
 
 type HookLine = { text: string; accent?: boolean }
-type SongData = { tempo: number; keyLabel?: string; tracks: { name: string; color: string }[]; notes: unknown[]; loopBeats?: number }
+type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string }[]; notes: unknown[]; loopBeats?: number }
 
 export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, slug = 'song-video' }: {
   song: SongData; meta?: string; accent?: string; hook?: HookLine[]; slug?: string
@@ -19,6 +19,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
   const [fmt, setFmt] = useState('falling-notes')
   const [playing, setPlaying] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const playingRef = useRef(false)
 
   useEffect(() => {
@@ -39,29 +40,72 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     else { i.play(); setPlaying(true); playingRef.current = true }
   }
 
-  async function exportVideo() {
-    const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return
+  // Record one loop of the current format (canvas + preview audio) to a webm blob.
+  // Shared by Download and Send-to-pipeline so both capture the exact same render.
+  async function recordBlob(): Promise<Blob | null> {
+    const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
     setStatus('Recording…'); i.play(); setPlaying(true); playingRef.current = true
+    const v = canvas.captureStream(30)
+    const a = i.getAudioStream()
+    const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm'
+    const chunks: Blob[] = []
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 })
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+    const done = new Promise<void>(res => { rec.onstop = () => res() })
+    const durMs = (song.loopBeats ?? 32) * (60 / song.tempo) * 1000
+    rec.start()
+    await new Promise(r => setTimeout(r, durMs + 250))
+    rec.stop(); await done
+    return new Blob(chunks, { type: 'video/webm' })
+  }
+
+  async function exportVideo() {
+    if (busy) return
+    setBusy(true)
     try {
-      const v = canvas.captureStream(30)
-      const a = i.getAudioStream()
-      const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm'
-      const chunks: Blob[] = []
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 })
-      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
-      const done = new Promise<void>(res => { rec.onstop = () => res() })
-      const durMs = (song.loopBeats ?? 32) * (60 / song.tempo) * 1000
-      rec.start()
-      await new Promise(r => setTimeout(r, durMs + 250))
-      rec.stop(); await done
-      const blob = new Blob(chunks, { type: 'video/webm' })
+      const blob = await recordBlob(); if (!blob) return
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a'); link.href = url; link.download = `${slug}-${fmt}.webm`; link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1500)
-      setStatus('Downloaded')
+      setStatus('Downloaded ✓')
     } catch { setStatus('Export failed') }
+    setBusy(false)
     setTimeout(() => setStatus(null), 2500)
+  }
+
+  // Render the video and hand it to the marketing pipeline: POST it as a
+  // session-capture artifact (video + musical metadata). The pipeline ingests
+  // the drop, writes the caption from the metadata, and queues it for approval.
+  // The manual remainder is your approve-and-post step inside the pipeline.
+  async function sendToPipeline() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const blob = await recordBlob(); if (!blob) { setBusy(false); return }
+      setStatus('Sending…')
+      const header = {
+        musical: {
+          bpm: Math.round(song.tempo),
+          key: song.keyLabel ?? null,
+          time_signature: '4/4',
+          genre_tags: song.genre ? [song.genre] : [],
+          instrument_list: song.tracks.map(t => t.name),
+        },
+        generation: { model: '100lights-studio', prompt_or_seed: slug, total_takes: 1, rejected_takes: 0 },
+        duration_s: (song.loopBeats ?? 32) * (60 / song.tempo),
+        outcome: 'completed',
+        capture: { fps: 30 },
+      }
+      const fd = new FormData()
+      fd.append('capture', new File([blob], `${slug}-${fmt}.webm`, { type: 'video/webm' }))
+      fd.append('meta', JSON.stringify({ header, events: [], roi: [] }))
+      const res = await fetch('/api/session', { method: 'POST', body: fd })
+      const j = await res.json().catch(() => ({}))
+      setStatus(res.ok ? 'Sent to pipeline ✓' : `Failed: ${j.error || res.status}`)
+    } catch { setStatus('Send failed') }
+    setBusy(false)
+    setTimeout(() => setStatus(null), 4000)
   }
 
   return (
@@ -77,11 +121,15 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
           <button onClick={toggle} aria-label="Play" style={{ position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64, borderRadius: '50%', border: `2px solid ${accent}`, background: 'rgba(5,4,9,.4)', color: accent, fontSize: 22, paddingLeft: 4, cursor: 'pointer' }}>▶</button>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
-        <button onClick={toggle} style={btn}>{playing ? 'Pause' : 'Play'}</button>
-        <button onClick={exportVideo} disabled={!!status} style={{ ...btn, background: accent, color: '#0a0812', border: 'none', opacity: status ? 0.7 : 1 }}>{status ?? 'Download video'}</button>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={toggle} disabled={busy} style={{ ...btn, opacity: busy ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
+        <button onClick={exportVideo} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>Download</button>
+        <button onClick={sendToPipeline} disabled={busy} style={{ ...btn, background: accent, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy ? 0.7 : 1 }}>{busy && status ? status : 'Send to pipeline →'}</button>
       </div>
-      <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0 }}>Download uses the preview synth. The auto-posted render swaps in the real mixed audio.</p>
+      {status && !busy && <p style={{ fontSize: 12, fontWeight: 600, color: status.startsWith('Failed') || status.endsWith('failed') ? '#f87171' : '#4ade80', textAlign: 'center', margin: 0 }}>{status}</p>}
+      <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0, lineHeight: 1.5 }}>
+        <b>Send to pipeline</b> drops this render + its metadata into your marketing pipeline&rsquo;s queue; it writes the caption and waits for your approval before posting. Preview uses the synth; wire the real mix in the pipeline render.
+      </p>
     </div>
   )
 }
