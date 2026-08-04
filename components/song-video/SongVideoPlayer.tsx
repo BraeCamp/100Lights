@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { mountSongVideo } from '@/lib/song-video/engine.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
+import type { DawProject } from '@/lib/daw-types'
 
 // Turn a song (from lib/song-video/from-project) into a vertical, beat-synced
 // video. Beyond picking a format you can now edit the overlay text (+ font/size),
@@ -33,12 +34,18 @@ const ASPECTS = [
   { id: '16 / 9', name: '16:9', hint: 'YouTube landscape' },
 ]
 
-export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, defaultStart = 0 }: {
-  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; defaultStart?: number
+export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, defaultStart = 0, dawProject, userId }: {
+  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; defaultStart?: number; dawProject?: DawProject; userId?: string | null
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const instRef = useRef<ReturnType<typeof mountSongVideo> | null>(null)
   const playingRef = useRef(false)
+
+  // Real project audio (bounced for the current section) — when set, the video
+  // uses the actual mix instead of the preview synth.
+  const [realUrl, setRealUrl] = useState<string | null>(null)
+  const [rendering, setRendering] = useState(false)
 
   const [fmt, setFmt] = useState('falling-notes')
   const [playing, setPlaying] = useState(false)
@@ -81,19 +88,28 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     return { ...song, notes, loopBeats: winBeats }
   }, [song, start, winBeats])
 
-  // Mount / remount only for structural changes (format + which slice plays).
+  // Mount / remount only for structural changes (format, which slice plays, and
+  // whether the real bounced audio is driving playback).
   useEffect(() => {
     if (!canvasRef.current) return
+    const media = realUrl && audioRef.current ? audioRef.current : null
     const inst = mountSongVideo(canvasRef.current, windowed, {
       format: fmt, brand: '100LIGHTS', meta: metaText, accent: accentColor,
       hook: hookArr, loopBeats: windowed.loopBeats ?? 32,
-      font, textScale, bg: theme.bg,
+      font, textScale, bg: theme.bg, media,
     })
     instRef.current = inst
     if (playingRef.current) inst.play()
     return () => inst.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fmt, windowed])
+  }, [fmt, windowed, realUrl])
+
+  // The bounce is for one specific section — if you change the section, drop it
+  // so playback falls back to the synth and prompts a re-bounce.
+  useEffect(() => {
+    setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, winBeats])
 
   // Look edits apply live (no remount, no playback restart).
   useEffect(() => {
@@ -111,7 +127,11 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
     setStatus('Recording…'); i.play(); setPlaying(true); playingRef.current = true
     const v = canvas.captureStream(30)
-    const a = i.getAudioStream()
+    // With real audio, capture the <audio> element's output; otherwise the synth.
+    const mediaEl = audioRef.current as (HTMLAudioElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream }) | null
+    const a = realUrl && mediaEl && (mediaEl.captureStream || mediaEl.mozCaptureStream)
+      ? (mediaEl.captureStream ? mediaEl.captureStream() : mediaEl.mozCaptureStream!())
+      : i.getAudioStream()
     const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
     const prefer = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
     const mime = prefer.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
@@ -175,10 +195,31 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     setTimeout(() => setStatus(null), 4000)
   }
 
+  // Bounce the real project audio for the current section and swap it in for the
+  // synth. Heavy (loads the audio engine + samples, real-time render), so it's
+  // opt-in and lazy-imported; falls back to the synth on any failure.
+  async function useRealAudio() {
+    if (!dawProject || rendering || busy) return
+    setRendering(true)
+    const est = Math.round(winBeats * (60 / song.tempo) + 3)
+    setStatus(`Rendering real mix… ~${est}s`)
+    try {
+      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+      const blob = await renderProjectAudioBlob(dawProject, { startBeat: start, endBeat: start + winBeats, userId })
+      const url = URL.createObjectURL(blob)
+      if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
+      setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+      setStatus('Real mix ✓')
+    } catch { setStatus('Audio render failed — using synth') }
+    setRendering(false)
+    setTimeout(() => setStatus(null), 3000)
+  }
+
   const secs = (winBeats * (60 / song.tempo)).toFixed(1)
 
   return (
     <div style={{ display: 'grid', gap: 14, maxWidth: 440, margin: '0 auto' }}>
+      <audio ref={audioRef} style={{ display: 'none' }} preload="auto" />
       {/* Format */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.entries(FORMATS as Record<string, { name: string }>).map(([id, f]) => (
@@ -250,6 +291,18 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
           </div>
         </Section>
 
+        {/* Audio */}
+        {dawProject && (
+          <Section label="Audio">
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={useRealAudio} disabled={rendering || busy} style={{ ...chip(!!realUrl, accentColor), opacity: rendering ? 0.6 : 1 }}>
+                {rendering ? 'Rendering…' : realUrl ? 'Real mix ✓ — re-bounce' : 'Use real mix'}
+              </button>
+              <span style={lbl}>{realUrl ? 'video uses your actual audio' : 'preview uses the synth — bounce this section for the real mix'}</span>
+            </div>
+          </Section>
+        )}
+
         {/* Channel / aspect */}
         <Section label="Aspect (channel)">
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -262,8 +315,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
       <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0, lineHeight: 1.5 }}>
         {canPublish
-          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Audio is the preview synth for now — the real mix bounce is coming.</>
-          : <>Preview uses the synth. The real mixed audio bounce is coming.</>}
+          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Hit <b>Use real mix</b> under Audio to bounce your actual song audio into the video instead of the synth.</>
+          : <>Preview uses the synth.</>}
       </p>
     </div>
   )

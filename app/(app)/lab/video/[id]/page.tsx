@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import type { CfProjFile } from '@/lib/project-serializer'
 import { songVideoData, defaultMeta, bestWindow } from '@/lib/song-video/from-project.mjs'
@@ -11,6 +12,7 @@ export const dynamic = 'force-dynamic'
 // the user-facing "turn my song into a video" feature in the studio.
 export default async function SongVideoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  const { userId } = await auth()
   let row: { name: string; data: CfProjFile } | undefined
   try {
     const rows = await sql`SELECT name, data FROM projects WHERE id = ${id} AND deleted_at IS NULL`
@@ -38,7 +40,7 @@ export default async function SongVideoPage({ params }: { params: Promise<{ id: 
         </div>
         {data.notes.length === 0
           ? <p style={{ fontSize: 13.5, color: 'var(--text-muted,#a3a2b5)' }}>This project has no MIDI notes to visualize yet — add some in the studio, then come back.</p>
-          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} defaultStart={defaultStart} />}
+          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} defaultStart={defaultStart} dawProject={daw} userId={userId} />}
       </main>
     </div>
   )
