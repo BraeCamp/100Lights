@@ -13,9 +13,9 @@ export const dynamic = 'force-dynamic'
 export default async function SongVideoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const { userId } = await auth()
-  let row: { name: string; data: CfProjFile } | undefined
+  let row: { name: string; data: CfProjFile; saved_at: string } | undefined
   try {
-    const rows = await sql`SELECT name, data FROM projects WHERE id = ${id} AND deleted_at IS NULL`
+    const rows = await sql`SELECT name, data, saved_at FROM projects WHERE id = ${id} AND deleted_at IS NULL`
     row = rows[0] as typeof row
   } catch { /* notFound */ }
   if (!row) notFound()
@@ -40,7 +40,7 @@ export default async function SongVideoPage({ params }: { params: Promise<{ id: 
         </div>
         {data.notes.length === 0
           ? <p style={{ fontSize: 13.5, color: 'var(--text-muted,#a3a2b5)' }}>This project has no MIDI notes to visualize yet — add some in the studio, then come back.</p>
-          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} defaultStart={defaultStart} dawProject={daw} userId={userId} />}
+          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} defaultStart={defaultStart} dawProject={daw} userId={userId} audioKey={`${id}:${row.saved_at}`} />}
       </main>
     </div>
   )

@@ -34,8 +34,8 @@ const ASPECTS = [
   { id: '16 / 9', name: '16:9', hint: 'YouTube landscape' },
 ]
 
-export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, defaultStart = 0, dawProject, userId }: {
-  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; defaultStart?: number; dawProject?: DawProject; userId?: string | null
+export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, defaultStart = 0, dawProject, userId, audioKey }: {
+  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; defaultStart?: number; dawProject?: DawProject; userId?: string | null; audioKey?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -46,11 +46,14 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   // uses the actual mix instead of the preview synth.
   const [realUrl, setRealUrl] = useState<string | null>(null)
   const [rendering, setRendering] = useState(false)
-  // Default to the real mix when we have the project to bounce it from.
-  const [realMode, setRealMode] = useState<boolean>(!!dawProject)
+  const [renderFailed, setRenderFailed] = useState(false)
   const renderToken = useRef(0)      // discards results from a superseded window
   const renderingRef = useRef(false) // single-flight (one bounce at a time)
   const latestWin = useRef({ s: 0, w: 32 })
+  // When we have a project, the video uses ONLY the real bounced mix — never a
+  // synth. `waiting` = real audio for the current section isn't ready yet.
+  const realOnly = !!dawProject
+  const waiting = realOnly && !realUrl
 
   const [fmt, setFmt] = useState('falling-notes')
   const [playing, setPlaying] = useState(false)
@@ -102,6 +105,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       format: fmt, brand: '100LIGHTS', meta: metaText, accent: accentColor,
       hook: hookArr, loopBeats: windowed.loopBeats ?? 32,
       font, textScale, bg: theme.bg, media,
+      // With a project we ONLY ever play the real bounced mix — no synth, ever.
+      // (Without one — no real-mix source — the synth is the only preview.)
+      synth: !dawProject,
     })
     instRef.current = inst
     if (playingRef.current) inst.play()
@@ -111,18 +117,18 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
   useEffect(() => { latestWin.current = { s: start, w: winBeats } }, [start, winBeats])
 
-  // Auto-bounce the real mix on load and whenever the section (or mode) settles.
-  // The current bounce is window-specific, so a change drops it (synth plays
-  // instantly meanwhile) and a fresh render is scheduled — debounced so scrubbing
-  // the start doesn't fire a render per tick.
+  // Auto-bounce the real mix on load and whenever the section settles. The bounce
+  // is window-specific, so a change drops it and schedules a fresh render —
+  // debounced so scrubbing the start doesn't fire a render per tick. The cache
+  // makes an already-rendered section instant.
   useEffect(() => {
     setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
-    if (!dawProject || !realMode) return
+    if (!dawProject) return
     const token = ++renderToken.current
-    const t = setTimeout(() => { void bounce(start, winBeats, token) }, 700)
+    const t = setTimeout(() => { void bounce(start, winBeats, token) }, 500)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, winBeats, realMode, dawProject])
+  }, [start, winBeats, dawProject])
 
   // Look edits apply live (no remount, no playback restart).
   useEffect(() => {
@@ -133,7 +139,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   function toggle() {
     const i = instRef.current; if (!i) return
     if (playing) { i.pause(); setPlaying(false); playingRef.current = false }
-    else { i.play(); setPlaying(true); playingRef.current = true }
+    else { if (waiting) return; i.play(); setPlaying(true); playingRef.current = true } // no play until the real mix is ready
   }
 
   async function recordBlob(): Promise<Blob | null> {
@@ -150,7 +156,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     const mime = prefer.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
     const outType = mime.startsWith('video/mp4') ? 'video/mp4' : 'video/webm'
     const chunks: Blob[] = []
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 })
+    // Tuned for social: the audio is muxed + compressed (AAC/Opus @128k) rather
+    // than the raw WAV, and the video bitrate is trimmed to keep the file small.
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 128_000 })
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     const done = new Promise<void>(res => { rec.onstop = () => res() })
     const durMs = winBeats * (60 / song.tempo) * 1000
@@ -212,28 +220,45 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   // Heavy (loads the audio engine + samples, real-time render), lazy-imported,
   // single-flight, and result-guarded so a superseded window is discarded. Falls
   // back to the synth on any failure.
+  const applyBlob = (blob: Blob, token: number) => {
+    if (token !== renderToken.current) return
+    const url = URL.createObjectURL(blob)
+    if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
+    setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+  }
+
   async function bounce(s: number, w: number, token: number) {
     if (!dawProject || renderingRef.current) return
+    const cacheKey = audioKey ? `${audioKey}:${s}:${w}` : null
+
+    // Cache hit → instant, no engine load / render.
+    if (cacheKey) {
+      try {
+        const { getCachedAudio } = await import('@/lib/song-video/audio-cache')
+        const cached = await getCachedAudio(cacheKey)
+        if (cached && token === renderToken.current) { setRenderFailed(false); applyBlob(cached, token); setStatus('Real mix ✓ (cached)'); setTimeout(() => setStatus(null), 2000); return }
+      } catch { /* fall through to render */ }
+    }
+
     renderingRef.current = true
-    setRendering(true)
+    setRendering(true); setRenderFailed(false)
     const est = Math.round(w * (60 / song.tempo) + 3)
     setStatus(`Rendering real mix… ~${est}s`)
     try {
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
       const blob = await renderProjectAudioBlob(dawProject, { startBeat: s, endBeat: s + w, userId })
+      if (cacheKey) { try { const { putCachedAudio } = await import('@/lib/song-video/audio-cache'); await putCachedAudio(cacheKey, blob, Date.now()) } catch { /* non-fatal */ } }
       if (token === renderToken.current) {
-        const url = URL.createObjectURL(blob)
-        if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
-        setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+        setRenderFailed(false); applyBlob(blob, token)
         setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 2500)
       }
     } catch {
-      if (token === renderToken.current) { setStatus('Real mix failed — using preview synth'); setTimeout(() => setStatus(null), 3500) }
+      if (token === renderToken.current) { setRenderFailed(true); setStatus('Real mix render failed — retry') }
     } finally {
       renderingRef.current = false
       setRendering(false)
       // A newer window was requested while this one rendered — render it now.
-      if (token !== renderToken.current && realMode && dawProject) {
+      if (token !== renderToken.current && dawProject) {
         const { s: ls, w: lw } = latestWin.current
         void bounce(ls, lw, renderToken.current)
       }
@@ -244,6 +269,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
   return (
     <div style={{ display: 'grid', gap: 14, maxWidth: 440, margin: '0 auto' }}>
+      <style>{'@keyframes svspin{to{transform:rotate(360deg)}}'}</style>
       <audio ref={audioRef} style={{ display: 'none' }} preload="auto" />
       {/* Format */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -255,16 +281,31 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       {/* Preview */}
       <div style={{ position: 'relative', aspectRatio: aspect, borderRadius: 16, overflow: 'hidden', background: '#08070c', boxShadow: '0 12px 44px rgba(80,50,180,.28)', maxHeight: '62vh', margin: '0 auto', width: '100%' }}>
         <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
-        {!playing && (
+        {waiting ? (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, background: 'rgba(5,4,9,.6)', color: '#eceafd', textAlign: 'center', padding: 16 }}>
+            {renderFailed ? (
+              <>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f87171' }}>Real mix render failed</span>
+                <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: accentColor, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 34, height: 34, borderRadius: '50%', border: `3px solid ${accentColor}`, borderTopColor: 'transparent', animation: 'svspin 0.8s linear infinite' }} />
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Rendering your real mix…</span>
+                <span style={{ fontSize: 11, color: '#a3a2b5' }}>~{Math.round(winBeats * (60 / song.tempo) + 3)}s · cached after the first time</span>
+              </>
+            )}
+          </div>
+        ) : !playing ? (
           <button onClick={toggle} aria-label="Play" style={{ position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64, borderRadius: '50%', border: `2px solid ${accentColor}`, background: 'rgba(5,4,9,.4)', color: accentColor, fontSize: 22, paddingLeft: 4, cursor: 'pointer' }}>▶</button>
-        )}
+        ) : null}
       </div>
 
       {/* Transport + export */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button onClick={toggle} disabled={busy} style={{ ...btn, opacity: busy ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
-        <button onClick={exportVideo} disabled={busy} style={{ ...btn, ...(canPublish ? {} : { background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy ? 0.6 : 1 }}>Download</button>
-        {canPublish && <button onClick={sendToQueue} disabled={busy} style={{ ...btn, background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
+        <button onClick={toggle} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
+        <button onClick={exportVideo} disabled={busy || waiting} style={{ ...btn, ...(canPublish ? {} : { background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy || waiting ? 0.6 : 1 }}>Download</button>
+        {canPublish && <button onClick={sendToQueue} disabled={busy || waiting} style={{ ...btn, background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy || waiting ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
       </div>
       {status && !busy && <p style={{ fontSize: 12, fontWeight: 600, color: status.startsWith('Failed') || status.endsWith('failed') ? '#f87171' : '#4ade80', textAlign: 'center', margin: 0 }}>{status}</p>}
 
@@ -316,18 +357,14 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
           </div>
         </Section>
 
-        {/* Audio */}
+        {/* Audio — always the real mix; renders on load, cached after. */}
         {dawProject && (
           <Section label="Audio">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={() => setRealMode(true)} style={chip(realMode, accentColor)}>Real mix</button>
-              <button onClick={() => setRealMode(false)} style={chip(!realMode, accentColor)}>Preview synth</button>
-              {realMode && (
-                <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} disabled={rendering || busy} style={{ ...chip(false, accentColor), opacity: rendering ? 0.6 : 1 }}>
-                  {rendering ? 'Rendering…' : 'Re-render'}
-                </button>
-              )}
-              <span style={lbl}>{rendering ? 'rendering your real mix…' : realMode ? (realUrl ? 'using your real mix ✓' : 'real mix on — renders on load') : 'fast preview synth'}</span>
+              <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} disabled={rendering || busy} style={{ ...chip(false, accentColor), opacity: rendering ? 0.6 : 1 }}>
+                {rendering ? 'Rendering…' : 'Re-render this section'}
+              </button>
+              <span style={lbl}>{rendering ? 'rendering your real mix…' : realUrl ? 'your real mix ✓' : renderFailed ? 'render failed — retry' : 'real mix'}</span>
             </div>
           </Section>
         )}
@@ -343,8 +380,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       </div>
 
       <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0, lineHeight: 1.5 }}>
-        {canPublish
-          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Audio defaults to your <b>real mix</b> (bounced on load); the synth is an instant fallback while it renders or if you switch to it.</>
+        {dawProject
+          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Audio is your <b>real mix</b> — rendered on load and cached, so nothing plays or exports until it&rsquo;s ready (no synth).</>
           : <>Audio uses the preview synth.</>}
       </p>
     </div>

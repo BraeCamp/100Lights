@@ -70,7 +70,7 @@ export default function UploadMaker({ userId }: { userId?: string | null }) {
           <button onClick={() => { setLoaded(null); setSaveMsg(null) }} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>← Upload another</button>
         </div>
         {saveMsg && <div style={{ fontSize: 12, fontWeight: 600, color: saveMsg.includes('failed') || saveMsg.includes('can’t') ? '#f87171' : '#4ade80' }}>{saveMsg}</div>}
-        <SongVideoPlayer song={loaded.song} meta={loaded.meta} slug={loaded.slug} canPublish totalBeats={loaded.totalBeats} defaultStart={loaded.defaultStart} dawProject={loaded.daw} userId={userId} />
+        <SongVideoPlayer song={loaded.song} meta={loaded.meta} slug={loaded.slug} canPublish totalBeats={loaded.totalBeats} defaultStart={loaded.defaultStart} dawProject={loaded.daw} userId={userId} audioKey={`${loaded.raw.id || loaded.slug}:${(loaded.raw as { savedAt?: string }).savedAt || ''}`} />
       </div>
     )
   }
