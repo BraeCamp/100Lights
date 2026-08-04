@@ -78,6 +78,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   // Theme
   const [themeId, setThemeId] = useState('midnight')
   const [accentColor, setAccentColor] = useState(accent)
+  // The theme (accentColor + bg) re-colors the VIDEO only. The maker's own UI
+  // keeps a stable accent so changing a video theme doesn't repaint the controls.
+  const ui = accent
   const theme = THEMES.find(t => t.id === themeId) ?? THEMES[0]
   const bgKey = theme.bg.join(',')
 
@@ -274,7 +277,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       {/* Format */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.entries(FORMATS as Record<string, { name: string }>).map(([id, f]) => (
-          <button key={id} onClick={() => setFmt(id)} style={pill(fmt === id, accentColor)}>{f.name}</button>
+          <button key={id} onClick={() => setFmt(id)} style={pill(fmt === id, ui)}>{f.name}</button>
         ))}
       </div>
 
@@ -286,26 +289,26 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
             {renderFailed ? (
               <>
                 <span style={{ fontSize: 13, fontWeight: 700, color: '#f87171' }}>Real mix render failed</span>
-                <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: accentColor, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
+                <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: ui, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
               </>
             ) : (
               <>
-                <div style={{ width: 34, height: 34, borderRadius: '50%', border: `3px solid ${accentColor}`, borderTopColor: 'transparent', animation: 'svspin 0.8s linear infinite' }} />
+                <div style={{ width: 34, height: 34, borderRadius: '50%', border: `3px solid ${ui}`, borderTopColor: 'transparent', animation: 'svspin 0.8s linear infinite' }} />
                 <span style={{ fontSize: 12.5, fontWeight: 600 }}>Rendering your real mix…</span>
                 <span style={{ fontSize: 11, color: '#a3a2b5' }}>~{Math.round(winBeats * (60 / song.tempo) + 3)}s · cached after the first time</span>
               </>
             )}
           </div>
         ) : !playing ? (
-          <button onClick={toggle} aria-label="Play" style={{ position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64, borderRadius: '50%', border: `2px solid ${accentColor}`, background: 'rgba(5,4,9,.4)', color: accentColor, fontSize: 22, paddingLeft: 4, cursor: 'pointer' }}>▶</button>
+          <button onClick={toggle} aria-label="Play" style={{ position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64, borderRadius: '50%', border: `2px solid ${ui}`, background: "rgba(5,4,9,.4)", color: ui, fontSize: 22, paddingLeft: 4, cursor: 'pointer' }}>▶</button>
         ) : null}
       </div>
 
       {/* Transport + export */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={toggle} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
-        <button onClick={exportVideo} disabled={busy || waiting} style={{ ...btn, ...(canPublish ? {} : { background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy || waiting ? 0.6 : 1 }}>Download</button>
-        {canPublish && <button onClick={sendToQueue} disabled={busy || waiting} style={{ ...btn, background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy || waiting ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
+        <button onClick={exportVideo} disabled={busy || waiting} style={{ ...btn, ...(canPublish ? {} : { background: ui, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy || waiting ? 0.6 : 1 }}>Download</button>
+        {canPublish && <button onClick={sendToQueue} disabled={busy || waiting} style={{ ...btn, background: ui, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy || waiting ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
       </div>
       {status && !busy && <p style={{ fontSize: 12, fontWeight: 600, color: status.startsWith('Failed') || status.endsWith('failed') ? '#f87171' : '#4ade80', textAlign: 'center', margin: 0 }}>{status}</p>}
 
@@ -316,13 +319,13 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={lbl}>Length</span>
             {[16, 32, 48, 64].map(b => (
-              <button key={b} onClick={() => { setWinBeats(b); setStartBeat(s => Math.min(s, Math.max(0, songTotal - b))) }} style={chip(winBeats === b, accentColor)} disabled={b > songTotal}>{b} bars</button>
+              <button key={b} onClick={() => { setWinBeats(b); setStartBeat(s => Math.min(s, Math.max(0, songTotal - b))) }} style={chip(winBeats === b, ui)} disabled={b > songTotal}>{b} bars</button>
             ))}
             <span style={{ ...lbl, marginLeft: 'auto' }}>{secs}s</span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span style={lbl}>Start</span>
-            <input type="range" min={0} max={maxStart} step={1} value={start} onChange={e => setStartBeat(Number(e.target.value))} style={{ flex: 1, accentColor: accentColor }} />
+            <input type="range" min={0} max={maxStart} step={1} value={start} onChange={e => setStartBeat(Number(e.target.value))} style={{ flex: 1, accentColor: ui }} />
             <span style={{ ...lbl, minWidth: 58, textAlign: 'right' }}>bar {Math.floor(start / 4) + 1}</span>
           </div>
         </Section>
@@ -339,9 +342,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
           <input value={metaText} onChange={e => setMetaText(e.target.value)} placeholder="Meta line (key · bpm · genre)" style={field} maxLength={48} />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={lbl}>Font</span>
-            {FONTS.map(fo => <button key={fo.id} onClick={() => setFont(fo.id)} style={{ ...chip(font === fo.id, accentColor), fontFamily: fo.id }}>{fo.name}</button>)}
+            {FONTS.map(fo => <button key={fo.id} onClick={() => setFont(fo.id)} style={{ ...chip(font === fo.id, ui), fontFamily: fo.id }}>{fo.name}</button>)}
             <span style={{ ...lbl, marginLeft: 'auto' }}>Size</span>
-            <input type="range" min={0.7} max={1.5} step={0.05} value={textScale} onChange={e => setTextScale(Number(e.target.value))} style={{ width: 90, accentColor: accentColor }} />
+            <input type="range" min={0.7} max={1.5} step={0.05} value={textScale} onChange={e => setTextScale(Number(e.target.value))} style={{ width: 90, accentColor: ui }} />
           </div>
         </Section>
 
@@ -361,7 +364,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         {dawProject && (
           <Section label="Audio">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} disabled={rendering || busy} style={{ ...chip(false, accentColor), opacity: rendering ? 0.6 : 1 }}>
+              <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} disabled={rendering || busy} style={{ ...chip(false, ui), opacity: rendering ? 0.6 : 1 }}>
                 {rendering ? 'Rendering…' : 'Re-render this section'}
               </button>
               <span style={lbl}>{rendering ? 'rendering your real mix…' : realUrl ? 'your real mix ✓' : renderFailed ? 'render failed — retry' : 'real mix'}</span>
@@ -373,7 +376,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         <Section label="Aspect (channel)">
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {ASPECTS.map(a => (
-              <button key={a.id} onClick={() => setAspect(a.id)} style={chip(aspect === a.id, accentColor)} title={a.hint}>{a.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>· {a.hint}</span></button>
+              <button key={a.id} onClick={() => setAspect(a.id)} style={chip(aspect === a.id, ui)} title={a.hint}>{a.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>· {a.hint}</span></button>
             ))}
           </div>
         </Section>
