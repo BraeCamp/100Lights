@@ -183,6 +183,14 @@ export class DawEngine extends EventTarget {
   private _startCtxTime = 0
   private _startBeat    = 0
 
+  // Offline-render virtualization: when `_renderNow` is non-null the scheduler
+  // reads these instead of the wall clock / live ctx time, so one _tick() call
+  // pre-schedules the whole window into an OfflineAudioContext. null in normal
+  // playback (real-time path completely unaffected).
+  private _renderNow: number | null = null
+  private _renderCtxBase = 0
+  private _renderLookahead = 0
+
   private _clips: AudioClip[] = []
   private _midiClips: MidiClip[] = []
   private _tracks: DawTrack[] = []
@@ -203,9 +211,12 @@ export class DawEngine extends EventTarget {
   private _jamHeaderChunk: Blob | null = null
   private _jamMime = ''
 
-  constructor() {
+  constructor(opts?: { ctx?: AudioContext }) {
     super()
-    this.ctx = new AudioContext({ latencyHint: 'interactive' })
+    // An injected context (e.g. an OfflineAudioContext passed in loosely typed)
+    // lets the whole graph build off-line for faster-than-real-time rendering.
+    // Default is the normal real-time context — studio behaviour is unchanged.
+    this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: 'interactive' })
 
     // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
     // sustained loud element (stacked drones, held chords) sat above threshold,
@@ -763,6 +774,7 @@ export class DawEngine extends EventTarget {
   // ── Transport ──────────────────────────────────────────────────────────────
 
   get currentBeat(): number {
+    if (this._renderNow != null) return this._renderNow
     if (!this.isPlaying) return this._startBeat
     // Map-aware: elapsed wall-clock seconds are added to the song-seconds at the
     // anchor beat, then mapped back to a beat. With one tempo segment this reduces
@@ -1392,9 +1404,12 @@ export class DawEngine extends EventTarget {
 
   private _tick() {
     if (!this.isPlaying) return
+    // Offline render: read the virtual clock + a full-window lookahead so this one
+    // pass schedules the entire window at absolute offline times.
+    const offline = this._renderNow != null
 
-    // Loop wraparound
-    if (this.loopEnabled && this.currentBeat >= this.loopEnd) {
+    // Loop wraparound (live only)
+    if (!offline && this.loopEnabled && this.currentBeat >= this.loopEnd) {
       this._killAllSources()
       this._noteKeyVersion++; this._scheduledNoteKeys.clear()
       this._startBeat    = this.loopStart
@@ -1402,14 +1417,15 @@ export class DawEngine extends EventTarget {
       this._nextMetronomeBeat = Math.ceil(this.loopStart)
     }
 
-    const now          = this.currentBeat
-    const contextNow   = this.ctx.currentTime
-    const aheadBeats   = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
+    const now          = offline ? this._renderNow! : this.currentBeat
+    const contextNow   = offline ? this._renderCtxBase : this.ctx.currentTime
+    const aheadBeats   = offline ? this._renderLookahead : this.secondsToBeats(SCHEDULE_LOOKAHEAD)
 
     // Warm sampled buffers well before their notes enter the schedule window, so
     // decodeAudioData finishes in time and the note isn't skipped (and then fired
     // late) on first encounter. Cheap: just cache checks + fire-and-forget loads.
-    this._prefetchUpcoming(now)
+    // (Skipped offline — everything is pre-loaded before the render.)
+    if (!offline) this._prefetchUpcoming(now)
 
     // ── Arrangement audio clips ──────────────────────────────────────────
     // Overlay guard: identical clips stacked at (or within ~10ms of) the same
@@ -3433,6 +3449,52 @@ export class DawEngine extends EventTarget {
       }
       this._mediaRecorder!.stop()
     })
+  }
+
+  /** Await every sample / preset / poly buffer this project needs, so an offline
+   *  render (one synchronous pass) never drops a note whose buffer wasn't ready. */
+  private async _preloadAll(): Promise<void> {
+    const jobs: Promise<unknown>[] = []
+    for (const clip of this._clips) jobs.push(Promise.resolve(this.loadClipBuffer(clip)))
+    for (const clip of this._midiClips) {
+      if (!clip.presetId) continue
+      const seen = new Set<number>()
+      for (const note of clip.notes) { if (seen.has(note.pitch)) continue; seen.add(note.pitch); jobs.push(Promise.resolve(this._loadPresetBuffer(clip.presetId, note.pitch))) }
+    }
+    for (const track of this._tracks) {
+      if (track.instrument?.type !== 'poly') continue
+      const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
+      if (!oscs) continue
+      for (const l of oscs) if (l.source === 'sample' && l.sampleId) jobs.push(Promise.resolve(ensurePolySample(this.ctx, l.sampleId)))
+    }
+    await Promise.all(jobs.map(p => p.catch(() => {})))
+  }
+
+  /**
+   * Faster-than-real-time render. The engine must have been constructed with an
+   * OfflineAudioContext sized to the window, and updateProject()'d. Pre-loads
+   * every buffer, then virtual-clocks a single scheduler pass so every note in
+   * [startBeat,endBeat] is scheduled at its absolute offline time, and renders the
+   * whole graph in one startRendering(). Returns lossless float channels.
+   */
+  async renderOffline(opts: { startBeat: number; endBeat: number }): Promise<{ sampleRate: number; channels: Float32Array[] }> {
+    const start = opts.startBeat, end = opts.endBeat
+    const octx = this.ctx as unknown as OfflineAudioContext
+    await this._preloadAll()
+    this.loopEnabled = false
+    this.isPlaying   = true
+    this._startBeat  = start
+    this._renderCtxBase   = 0
+    this._renderLookahead = (end - start) + 1e-3
+    this._renderNow  = start          // virtual clock ON — scheduler pre-schedules the window
+    try { this._tick() } finally {
+      this._renderNow = null           // virtual clock OFF
+      this.isPlaying  = false
+    }
+    const rendered = await octx.startRendering()
+    const channels: Float32Array[] = []
+    for (let c = 0; c < rendered.numberOfChannels; c++) channels.push(rendered.getChannelData(c).slice())
+    return { sampleRate: rendered.sampleRate, channels }
   }
 
   /**
