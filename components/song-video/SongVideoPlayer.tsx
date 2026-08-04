@@ -11,7 +11,7 @@ import type { DawProject } from '@/lib/daw-types'
 // the song plays — then preview, download, or send it to the content queue.
 
 type Note = { tr: number; p: number; s: number; d: number; v: number }
-type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string }[]; notes: Note[]; loopBeats?: number }
+type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string; kind?: string }[]; notes: Note[]; loopBeats?: number }
 
 const THEMES = [
   { id: 'midnight', name: 'Midnight', accent: '#a78bfa', bg: ['#0a0912', '#050409'] },
