@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
+import UploadMaker from '@/components/song-video/UploadMaker'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +26,16 @@ export default async function ContentVideoPanel() {
 
   return (
     <div>
+      {/* Upload a .cfproj straight into the maker — for songs that live as files
+          (recreations / generated) and aren't saved studio projects. */}
+      <div style={{ marginBottom: 18 }}>
+        <UploadMaker userId={userId} />
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '4px 0 10px' }}>
+        …or pick a saved project
+      </div>
+
       {/* Format legend — what looks the maker can render */}
       <div
         style={{
