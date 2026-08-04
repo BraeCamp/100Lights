@@ -25,6 +25,7 @@ import GrowthPanel from './GrowthPanel'
 import ArticleProjectsPanel from './ArticleProjectsPanel'
 import TasksInboxPanel from './TasksInboxPanel'
 import ContentVideoPanel from './ContentVideoPanel'
+import ContentQueuePanel from './ContentQueuePanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -756,9 +757,22 @@ export default async function AdminPage() {
             <>
               <PanelIntro
                 title="Song → Video"
-                description="Turn any saved project into a branded vertical video. Pick a song, choose a format (falling notes, flow, tunnel, and more), preview it locked to the beat, then export a webm. This is the content engine — the same look our marketing pipeline auto-posts."
+                description="Turn any saved project into a branded vertical video. Pick a song, choose a format (falling notes, stem builder, flow, and more), preview it locked to the beat, then send it to the content queue. This is the content engine."
               />
               <ContentVideoPanel />
+            </>
+          ),
+        },
+        {
+          id: 'queue',
+          label: 'Content Queue',
+          content: (
+            <>
+              <PanelIntro
+                title="Content Queue → Publish"
+                description="The publishing pipeline, in-app and admin-only. Every video you send from the maker lands here as a draft with an auto-written caption. Review it, edit the copy, pick platforms, approve, then publish to YouTube (and Instagram / TikTok via Buffer). Dry-run first; nothing posts without your approval."
+              />
+              <ContentQueuePanel />
             </>
           ),
         },

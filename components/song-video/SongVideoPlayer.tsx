@@ -11,8 +11,8 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 type HookLine = { text: string; accent?: boolean }
 type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string }[]; notes: unknown[]; loopBeats?: number }
 
-export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, slug = 'song-video' }: {
-  song: SongData; meta?: string; accent?: string; hook?: HookLine[]; slug?: string
+export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, slug = 'song-video', projectId, canPublish = false }: {
+  song: SongData; meta?: string; accent?: string; hook?: HookLine[]; slug?: string; projectId?: string; canPublish?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const instRef = useRef<ReturnType<typeof mountSongVideo> | null>(null)
@@ -74,17 +74,20 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     setTimeout(() => setStatus(null), 2500)
   }
 
-  // Render the video and hand it to the marketing pipeline: POST it as a
-  // session-capture artifact (video + musical metadata). The pipeline ingests
-  // the drop, writes the caption from the metadata, and queues it for approval.
-  // The manual remainder is your approve-and-post step inside the pipeline.
-  async function sendToPipeline() {
+  // Render the video and send it to the in-app content queue (admin only): POST
+  // the webm + musical metadata to /api/admin/content, which drafts a caption and
+  // files it as a draft. From there you review, approve, and publish — all in the
+  // admin Content panel. Nothing posts anywhere without your explicit approval.
+  async function sendToQueue() {
     if (busy) return
     setBusy(true)
     try {
       const blob = await recordBlob(); if (!blob) { setBusy(false); return }
       setStatus('Sending…')
-      const header = {
+      const meta = {
+        projectId,
+        slug,
+        format: fmt,
         musical: {
           bpm: Math.round(song.tempo),
           key: song.keyLabel ?? null,
@@ -92,17 +95,13 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
           genre_tags: song.genre ? [song.genre] : [],
           instrument_list: song.tracks.map(t => t.name),
         },
-        generation: { model: '100lights-studio', prompt_or_seed: slug, total_takes: 1, rejected_takes: 0 },
-        duration_s: (song.loopBeats ?? 32) * (60 / song.tempo),
-        outcome: 'completed',
-        capture: { fps: 30 },
       }
       const fd = new FormData()
       fd.append('capture', new File([blob], `${slug}-${fmt}.webm`, { type: 'video/webm' }))
-      fd.append('meta', JSON.stringify({ header, events: [], roi: [] }))
-      const res = await fetch('/api/session', { method: 'POST', body: fd })
+      fd.append('meta', JSON.stringify(meta))
+      const res = await fetch('/api/admin/content', { method: 'POST', body: fd })
       const j = await res.json().catch(() => ({}))
-      setStatus(res.ok ? 'Sent to pipeline ✓' : `Failed: ${j.error || res.status}`)
+      setStatus(res.ok ? 'Sent to queue ✓' : `Failed: ${j.error || res.status}`)
     } catch { setStatus('Send failed') }
     setBusy(false)
     setTimeout(() => setStatus(null), 4000)
@@ -123,12 +122,14 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={toggle} disabled={busy} style={{ ...btn, opacity: busy ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
-        <button onClick={exportVideo} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>Download</button>
-        <button onClick={sendToPipeline} disabled={busy} style={{ ...btn, background: accent, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy ? 0.7 : 1 }}>{busy && status ? status : 'Send to pipeline →'}</button>
+        <button onClick={exportVideo} disabled={busy} style={{ ...btn, ...(canPublish ? {} : { background: accent, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy ? 0.6 : 1 }}>Download</button>
+        {canPublish && <button onClick={sendToQueue} disabled={busy} style={{ ...btn, background: accent, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
       </div>
       {status && !busy && <p style={{ fontSize: 12, fontWeight: 600, color: status.startsWith('Failed') || status.endsWith('failed') ? '#f87171' : '#4ade80', textAlign: 'center', margin: 0 }}>{status}</p>}
       <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0, lineHeight: 1.5 }}>
-        <b>Send to pipeline</b> drops this render + its metadata into your marketing pipeline&rsquo;s queue; it writes the caption and waits for your approval before posting. Preview uses the synth; wire the real mix in the pipeline render.
+        {canPublish
+          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue. You review, approve, and publish there — nothing posts without your approval.</>
+          : <>Download uses the preview synth. The auto-posted render swaps in the real mixed audio.</>}
       </p>
     </div>
   )

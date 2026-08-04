@@ -33,7 +33,7 @@ export default async function SongVideoPage({ params }: { params: Promise<{ id: 
       </div>
       {data.notes.length === 0
         ? <p style={{ fontSize: 13.5, color: 'var(--text-muted,#a3a2b5)' }}>This project has no MIDI notes to visualize yet — add some in the studio, then come back.</p>
-        : <SongVideoPlayer song={data} meta={meta} slug={slug} />}
+        : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish />}
     </main>
   )
 }
