@@ -747,7 +747,7 @@ export default async function AdminPage() {
     },
     {
       id: 'video',
-      label: 'Video',
+      label: 'Content',
       color: '#3b82f6',
       subtabs: [
         {
