@@ -3,10 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-// webm → mp4 (H.264/AAC, faststart) via the system ffmpeg. Needed only for the
-// Buffer route (Instagram/TikTok want mp4); YouTube accepts the webm as-is.
-// Runs locally where the admin uses this — ffmpeg is a hard dependency for the
-// Buffer platforms only, so callers should catch and surface a clear message.
+// webm → mp4 (H.264/AAC, faststart) via the system ffmpeg. Only reached when a
+// video was recorded as webm AND a Buffer platform (Instagram/TikTok) is selected
+// — the common path records mp4 in the browser, so this never runs. Production
+// (Vercel) has no system ffmpeg, hence the actionable error: re-record (modern
+// browsers output mp4) rather than trying to convert server-side.
 
 export async function webmToMp4(input: Uint8Array): Promise<Uint8Array> {
   const dir = await mkdtemp(join(tmpdir(), 'content-'))
@@ -24,7 +25,7 @@ export async function webmToMp4(input: Uint8Array): Promise<Uint8Array> {
       ])
       let err = ''
       ff.stderr.on('data', d => { err += d.toString() })
-      ff.on('error', e => reject(new Error(`ffmpeg not available: ${e.message}`)))
+      ff.on('error', () => reject(new Error('This video is webm and Instagram/TikTok need mp4. Re-record it (modern browsers output mp4 automatically), then send to the queue again.')))
       ff.on('close', code => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`))))
     })
     return await readFile(outPath)

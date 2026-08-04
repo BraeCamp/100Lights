@@ -48,7 +48,11 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     const v = canvas.captureStream(30)
     const a = i.getAudioStream()
     const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
-    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm'
+    // Prefer mp4 so the export/upload needs no server-side transcode (works in
+    // production). Fall back to webm on browsers that can't record mp4.
+    const prefer = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
+    const mime = prefer.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
+    const outType = mime.startsWith('video/mp4') ? 'video/mp4' : 'video/webm'
     const chunks: Blob[] = []
     const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 })
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
@@ -57,8 +61,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     rec.start()
     await new Promise(r => setTimeout(r, durMs + 250))
     rec.stop(); await done
-    return new Blob(chunks, { type: 'video/webm' })
+    return new Blob(chunks, { type: outType })
   }
+  const extFor = (b: Blob) => (b.type.includes('mp4') ? 'mp4' : 'webm')
 
   async function exportVideo() {
     if (busy) return
@@ -66,7 +71,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     try {
       const blob = await recordBlob(); if (!blob) return
       const url = URL.createObjectURL(blob)
-      const link = document.createElement('a'); link.href = url; link.download = `${slug}-${fmt}.webm`; link.click()
+      const link = document.createElement('a'); link.href = url; link.download = `${slug}-${fmt}.${extFor(blob)}`; link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1500)
       setStatus('Downloaded ✓')
     } catch { setStatus('Export failed') }
@@ -83,23 +88,32 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     setBusy(true)
     try {
       const blob = await recordBlob(); if (!blob) { setBusy(false); return }
-      setStatus('Sending…')
-      const meta = {
-        projectId,
-        slug,
-        format: fmt,
-        musical: {
-          bpm: Math.round(song.tempo),
-          key: song.keyLabel ?? null,
-          time_signature: '4/4',
-          genre_tags: song.genre ? [song.genre] : [],
-          instrument_list: song.tracks.map(t => t.name),
-        },
-      }
-      const fd = new FormData()
-      fd.append('capture', new File([blob], `${slug}-${fmt}.webm`, { type: 'video/webm' }))
-      fd.append('meta', JSON.stringify(meta))
-      const res = await fetch('/api/admin/content', { method: 'POST', body: fd })
+      // 1) presign, 2) PUT the video straight to R2 (never through the function),
+      // 3) file the draft with just the key + metadata.
+      setStatus('Uploading…')
+      const pres = await fetch('/api/admin/content/upload-url', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contentType: blob.type, slug }),
+      })
+      const pj = await pres.json().catch(() => ({}))
+      if (!pres.ok) { setStatus(`Failed: ${pj.error || pres.status}`); setBusy(false); return }
+      const put = await fetch(pj.uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': pj.contentType } })
+      if (!put.ok) { setStatus(`Upload failed: ${put.status}`); setBusy(false); return }
+
+      setStatus('Filing…')
+      const res = await fetch('/api/admin/content', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoKey: pj.key, projectId, slug, format: fmt,
+          musical: {
+            bpm: Math.round(song.tempo),
+            key: song.keyLabel ?? null,
+            time_signature: '4/4',
+            genre_tags: song.genre ? [song.genre] : [],
+            instrument_list: song.tracks.map(t => t.name),
+          },
+        }),
+      })
       const j = await res.json().catch(() => ({}))
       setStatus(res.ok ? 'Sent to queue ✓' : `Failed: ${j.error || res.status}`)
     } catch { setStatus('Send failed') }
