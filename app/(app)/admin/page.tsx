@@ -24,6 +24,7 @@ import DigestPanel from './DigestPanel'
 import GrowthPanel from './GrowthPanel'
 import ArticleProjectsPanel from './ArticleProjectsPanel'
 import TasksInboxPanel from './TasksInboxPanel'
+import ContentVideoPanel from './ContentVideoPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -748,7 +749,19 @@ export default async function AdminPage() {
       label: 'Video',
       color: '#3b82f6',
       subtabs: [
-        { id: 'overview', label: 'Overview', content: <ComingSoon module="video" /> },
+        {
+          id: 'content',
+          label: 'Song Videos',
+          content: (
+            <>
+              <PanelIntro
+                title="Song → Video"
+                description="Turn any saved project into a branded vertical video. Pick a song, choose a format (falling notes, flow, tunnel, and more), preview it locked to the beat, then export a webm. This is the content engine — the same look our marketing pipeline auto-posts."
+              />
+              <ContentVideoPanel />
+            </>
+          ),
+        },
       ],
     },
     {
