@@ -8,6 +8,7 @@ import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import ReferralCapture from "@/components/ReferralCapture"
 import AgeGate from "@/components/AgeGate"
 import AnnouncementBanner from "@/components/AnnouncementBanner"
+import { HideOnEmbed } from "@/components/HideOnEmbed"
 import "./globals.css"
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
@@ -75,17 +76,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
         <body className="h-full">
           <a href="#main" className="skip-link">Skip to main content</a>
-          <ServiceWorkerRegistrar />
-          {/* Analytics is a leaf, not a wrapper: it reads searchParams, which
-              opts its subtree out of static HTML. Keeping `children` outside
-              this boundary is what lets pages prerender their real markup. */}
-          <Suspense>
-            <PostHogProvider />
-          </Suspense>
-          <ReferralCapture />
-          <AgeGate />
+          {/* Site chrome + analytics — hidden on /embed so third-party iframes
+              stay bare (no banner/age-gate/referral/PostHog/service-worker JS). */}
+          <HideOnEmbed>
+            <ServiceWorkerRegistrar />
+            {/* Analytics is a leaf, not a wrapper: it reads searchParams, which
+                opts its subtree out of static HTML. Keeping `children` outside
+                this boundary is what lets pages prerender their real markup. */}
+            <Suspense>
+              <PostHogProvider />
+            </Suspense>
+            <ReferralCapture />
+            <AgeGate />
+          </HideOnEmbed>
           {children}
-          <AnnouncementBanner />
+          <HideOnEmbed>
+            <AnnouncementBanner />
+          </HideOnEmbed>
         </body>
       </html>
     </ClerkProvider>
