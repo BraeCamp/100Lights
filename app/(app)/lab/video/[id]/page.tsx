@@ -20,20 +20,26 @@ export default async function SongVideoPage({ params }: { params: Promise<{ id: 
   const daw = row.data?.dawProject
   if (!daw) notFound()
 
-  const data = songVideoData(daw, { startBeat: bestWindow(daw, 32), beats: 32 })
-  const meta = defaultMeta(data)
+  // Pass the WHOLE song so the maker can scrub which section plays; open it on
+  // the densest 32-bar window by default.
+  const data = songVideoData(daw, { startBeat: 0, beats: 100000 })
+  const totalBeats = Math.max(32, Math.ceil(Math.max(32, ...data.notes.map(n => n.s + n.d))))
+  const defaultStart = bestWindow(daw, 32)
+  const meta = defaultMeta({ ...data, loopBeats: 32 })
   const slug = (row.name || 'song-video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'song-video'
 
   return (
-    <main style={{ maxWidth: 520, margin: '0 auto', padding: '28px 20px 90px', color: 'var(--text-primary, #f1f0ff)' }}>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#a78bfa' }}>Song video · Lab</div>
-        <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em', margin: '6px 0 2px' }}>{row.name}</h1>
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted,#a3a2b5)' }}>{meta}</div>
-      </div>
-      {data.notes.length === 0
-        ? <p style={{ fontSize: 13.5, color: 'var(--text-muted,#a3a2b5)' }}>This project has no MIDI notes to visualize yet — add some in the studio, then come back.</p>
-        : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish />}
-    </main>
+    <div style={{ height: '100%', overflowY: 'auto' }}>
+      <main style={{ maxWidth: 520, margin: '0 auto', padding: '28px 20px 90px', color: 'var(--text-primary, #f1f0ff)' }}>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#a78bfa' }}>Song video · Lab</div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em', margin: '6px 0 2px' }}>{row.name}</h1>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted,#a3a2b5)' }}>{meta}</div>
+        </div>
+        {data.notes.length === 0
+          ? <p style={{ fontSize: 13.5, color: 'var(--text-muted,#a3a2b5)' }}>This project has no MIDI notes to visualize yet — add some in the studio, then come back.</p>
+          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} defaultStart={defaultStart} />}
+      </main>
+    </div>
   )
 }

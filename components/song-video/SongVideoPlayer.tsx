@@ -1,38 +1,105 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { mountSongVideo } from '@/lib/song-video/engine.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
 
 // Turn a song (from lib/song-video/from-project) into a vertical, beat-synced
-// video: pick a format, preview, and download it. The reusable heart of the
-// "turn my song into a video" feature — used in the admin lab now, the studio next.
+// video. Beyond picking a format you can now edit the overlay text (+ font/size),
+// the colour theme, the aspect ratio for different channels, and which slice of
+// the song plays — then preview, download, or send it to the content queue.
 
-type HookLine = { text: string; accent?: boolean }
-type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string }[]; notes: unknown[]; loopBeats?: number }
+type Note = { tr: number; p: number; s: number; d: number; v: number }
+type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string }[]; notes: Note[]; loopBeats?: number }
 
-export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, slug = 'song-video', projectId, canPublish = false }: {
-  song: SongData; meta?: string; accent?: string; hook?: HookLine[]; slug?: string; projectId?: string; canPublish?: boolean
+const THEMES = [
+  { id: 'midnight', name: 'Midnight', accent: '#a78bfa', bg: ['#0a0912', '#050409'] },
+  { id: 'sunset', name: 'Sunset', accent: '#fb7185', bg: ['#1a0f14', '#0a0507'] },
+  { id: 'mint', name: 'Mint', accent: '#34d399', bg: ['#08140f', '#040a08'] },
+  { id: 'gold', name: 'Gold', accent: '#fbbf24', bg: ['#171106', '#0a0703'] },
+  { id: 'ice', name: 'Ice', accent: '#38bdf8', bg: ['#08111a', '#04080d'] },
+  { id: 'mono', name: 'Mono', accent: '#e5e7eb', bg: ['#0d0d0f', '#050506'] },
+]
+const FONTS = [
+  { id: 'system-ui', name: 'Sans' },
+  { id: "Georgia, 'Times New Roman', serif", name: 'Serif' },
+  { id: "'Courier New', ui-monospace, monospace", name: 'Mono' },
+  { id: "'Arial Narrow', 'Helvetica Neue', sans-serif", name: 'Condensed' },
+  { id: "'Trebuchet MS', system-ui, sans-serif", name: 'Rounded' },
+]
+const ASPECTS = [
+  { id: '9 / 16', name: '9:16', hint: 'Shorts · Reels · TikTok' },
+  { id: '1 / 1', name: '1:1', hint: 'IG feed' },
+  { id: '16 / 9', name: '16:9', hint: 'YouTube landscape' },
+]
+
+export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, defaultStart = 0 }: {
+  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; defaultStart?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const instRef = useRef<ReturnType<typeof mountSongVideo> | null>(null)
+  const playingRef = useRef(false)
+
   const [fmt, setFmt] = useState('falling-notes')
   const [playing, setPlaying] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const playingRef = useRef(false)
 
+  // Song section
+  const songTotal = totalBeats ?? Math.max(32, Math.ceil(Math.max(0, ...song.notes.map(n => n.s + n.d))))
+  const [winBeats, setWinBeats] = useState(32)
+  const [startBeat, setStartBeat] = useState(Math.min(defaultStart, Math.max(0, songTotal - 32)))
+  const maxStart = Math.max(0, songTotal - winBeats)
+  const start = Math.min(startBeat, maxStart)
+
+  // Text
+  const [line1, setLine1] = useState('')
+  const [line2, setLine2] = useState('')
+  const [line2Accent, setLine2Accent] = useState(true)
+  const [metaText, setMetaText] = useState(meta ?? '')
+  const [font, setFont] = useState('system-ui')
+  const [textScale, setTextScale] = useState(1)
+
+  // Theme
+  const [themeId, setThemeId] = useState('midnight')
+  const [accentColor, setAccentColor] = useState(accent)
+  const theme = THEMES.find(t => t.id === themeId) ?? THEMES[0]
+  const bgKey = theme.bg.join(',')
+
+  // Channel
+  const [aspect, setAspect] = useState('9 / 16')
+
+  const hookArr = useMemo(() => [
+    { text: line1.trim(), accent: false },
+    { text: line2.trim(), accent: line2Accent },
+  ], [line1, line2, line2Accent])
+
+  // The playing slice: notes in [start, start+winBeats), shifted to start at 0.
+  const windowed = useMemo<SongData>(() => {
+    const s1 = start + winBeats
+    const notes = song.notes.filter(n => n.s >= start && n.s < s1).map(n => ({ ...n, s: n.s - start }))
+    return { ...song, notes, loopBeats: winBeats }
+  }, [song, start, winBeats])
+
+  // Mount / remount only for structural changes (format + which slice plays).
   useEffect(() => {
     if (!canvasRef.current) return
-    const inst = mountSongVideo(canvasRef.current, song, {
-      format: fmt, brand: '100LIGHTS', meta, accent,
-      hook: hook ?? [{ text: 'an AI wrote this' }, { text: 'in one pass.', accent: true }],
-      loopBeats: song.loopBeats ?? 32,
+    const inst = mountSongVideo(canvasRef.current, windowed, {
+      format: fmt, brand: '100LIGHTS', meta: metaText, accent: accentColor,
+      hook: hookArr, loopBeats: windowed.loopBeats ?? 32,
+      font, textScale, bg: theme.bg,
     })
     instRef.current = inst
     if (playingRef.current) inst.play()
     return () => inst.destroy()
-  }, [fmt]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fmt, windowed])
+
+  // Look edits apply live (no remount, no playback restart).
+  useEffect(() => {
+    instRef.current?.update({ hook: hookArr, meta: metaText, accent: accentColor, font, textScale, bg: theme.bg })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hookArr, metaText, accentColor, font, textScale, bgKey])
 
   function toggle() {
     const i = instRef.current; if (!i) return
@@ -40,16 +107,12 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     else { i.play(); setPlaying(true); playingRef.current = true }
   }
 
-  // Record one loop of the current format (canvas + preview audio) to a webm blob.
-  // Shared by Download and Send-to-pipeline so both capture the exact same render.
   async function recordBlob(): Promise<Blob | null> {
     const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
     setStatus('Recording…'); i.play(); setPlaying(true); playingRef.current = true
     const v = canvas.captureStream(30)
     const a = i.getAudioStream()
     const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
-    // Prefer mp4 so the export/upload needs no server-side transcode (works in
-    // production). Fall back to webm on browsers that can't record mp4.
     const prefer = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
     const mime = prefer.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
     const outType = mime.startsWith('video/mp4') ? 'video/mp4' : 'video/webm'
@@ -57,7 +120,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 })
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     const done = new Promise<void>(res => { rec.onstop = () => res() })
-    const durMs = (song.loopBeats ?? 32) * (60 / song.tempo) * 1000
+    const durMs = winBeats * (60 / song.tempo) * 1000
     rec.start()
     await new Promise(r => setTimeout(r, durMs + 250))
     rec.stop(); await done
@@ -79,17 +142,11 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     setTimeout(() => setStatus(null), 2500)
   }
 
-  // Render the video and send it to the in-app content queue (admin only): POST
-  // the webm + musical metadata to /api/admin/content, which drafts a caption and
-  // files it as a draft. From there you review, approve, and publish — all in the
-  // admin Content panel. Nothing posts anywhere without your explicit approval.
   async function sendToQueue() {
     if (busy) return
     setBusy(true)
     try {
       const blob = await recordBlob(); if (!blob) { setBusy(false); return }
-      // 1) presign, 2) PUT the video straight to R2 (never through the function),
-      // 3) file the draft with just the key + metadata.
       setStatus('Uploading…')
       const pres = await fetch('/api/admin/content/upload-url', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -106,11 +163,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
         body: JSON.stringify({
           videoKey: pj.key, projectId, slug, format: fmt,
           musical: {
-            bpm: Math.round(song.tempo),
-            key: song.keyLabel ?? null,
-            time_signature: '4/4',
-            genre_tags: song.genre ? [song.genre] : [],
-            instrument_list: song.tracks.map(t => t.name),
+            bpm: Math.round(song.tempo), key: song.keyLabel ?? null, time_signature: '4/4',
+            genre_tags: song.genre ? [song.genre] : [], instrument_list: song.tracks.map(t => t.name),
           },
         }),
       })
@@ -121,33 +175,111 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', hook, 
     setTimeout(() => setStatus(null), 4000)
   }
 
+  const secs = (winBeats * (60 / song.tempo)).toFixed(1)
+
   return (
-    <div style={{ display: 'grid', gap: 14, maxWidth: 400, margin: '0 auto' }}>
+    <div style={{ display: 'grid', gap: 14, maxWidth: 440, margin: '0 auto' }}>
+      {/* Format */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.entries(FORMATS as Record<string, { name: string }>).map(([id, f]) => (
-          <button key={id} onClick={() => setFmt(id)} style={pill(fmt === id, accent)}>{f.name}</button>
+          <button key={id} onClick={() => setFmt(id)} style={pill(fmt === id, accentColor)}>{f.name}</button>
         ))}
       </div>
-      <div style={{ position: 'relative', aspectRatio: '9 / 16', borderRadius: 16, overflow: 'hidden', background: '#08070c', boxShadow: '0 12px 44px rgba(80,50,180,.28)' }}>
+
+      {/* Preview */}
+      <div style={{ position: 'relative', aspectRatio: aspect, borderRadius: 16, overflow: 'hidden', background: '#08070c', boxShadow: '0 12px 44px rgba(80,50,180,.28)', maxHeight: '62vh', margin: '0 auto', width: '100%' }}>
         <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
         {!playing && (
-          <button onClick={toggle} aria-label="Play" style={{ position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64, borderRadius: '50%', border: `2px solid ${accent}`, background: 'rgba(5,4,9,.4)', color: accent, fontSize: 22, paddingLeft: 4, cursor: 'pointer' }}>▶</button>
+          <button onClick={toggle} aria-label="Play" style={{ position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64, borderRadius: '50%', border: `2px solid ${accentColor}`, background: 'rgba(5,4,9,.4)', color: accentColor, fontSize: 22, paddingLeft: 4, cursor: 'pointer' }}>▶</button>
         )}
       </div>
+
+      {/* Transport + export */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={toggle} disabled={busy} style={{ ...btn, opacity: busy ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
-        <button onClick={exportVideo} disabled={busy} style={{ ...btn, ...(canPublish ? {} : { background: accent, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy ? 0.6 : 1 }}>Download</button>
-        {canPublish && <button onClick={sendToQueue} disabled={busy} style={{ ...btn, background: accent, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
+        <button onClick={exportVideo} disabled={busy} style={{ ...btn, ...(canPublish ? {} : { background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy ? 0.6 : 1 }}>Download</button>
+        {canPublish && <button onClick={sendToQueue} disabled={busy} style={{ ...btn, background: accentColor, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
       </div>
       {status && !busy && <p style={{ fontSize: 12, fontWeight: 600, color: status.startsWith('Failed') || status.endsWith('failed') ? '#f87171' : '#4ade80', textAlign: 'center', margin: 0 }}>{status}</p>}
+
+      {/* ── Editing panel ─────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gap: 14, background: 'var(--bg-surface,#141220)', border: '1px solid var(--border,#26262b)', borderRadius: 12, padding: 14 }}>
+        {/* Section */}
+        <Section label="Section of song">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={lbl}>Length</span>
+            {[16, 32, 48, 64].map(b => (
+              <button key={b} onClick={() => { setWinBeats(b); setStartBeat(s => Math.min(s, Math.max(0, songTotal - b))) }} style={chip(winBeats === b, accentColor)} disabled={b > songTotal}>{b} bars</button>
+            ))}
+            <span style={{ ...lbl, marginLeft: 'auto' }}>{secs}s</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={lbl}>Start</span>
+            <input type="range" min={0} max={maxStart} step={1} value={start} onChange={e => setStartBeat(Number(e.target.value))} style={{ flex: 1, accentColor: accentColor }} />
+            <span style={{ ...lbl, minWidth: 58, textAlign: 'right' }}>bar {Math.floor(start / 4) + 1}</span>
+          </div>
+        </Section>
+
+        {/* Text */}
+        <Section label="Text">
+          <input value={line1} onChange={e => setLine1(e.target.value)} placeholder="Top line (optional)" style={field} maxLength={40} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input value={line2} onChange={e => setLine2(e.target.value)} placeholder="Second line (optional)" style={{ ...field, flex: 1 }} maxLength={40} />
+            <label style={{ ...lbl, display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={line2Accent} onChange={e => setLine2Accent(e.target.checked)} /> accent
+            </label>
+          </div>
+          <input value={metaText} onChange={e => setMetaText(e.target.value)} placeholder="Meta line (key · bpm · genre)" style={field} maxLength={48} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={lbl}>Font</span>
+            {FONTS.map(fo => <button key={fo.id} onClick={() => setFont(fo.id)} style={{ ...chip(font === fo.id, accentColor), fontFamily: fo.id }}>{fo.name}</button>)}
+            <span style={{ ...lbl, marginLeft: 'auto' }}>Size</span>
+            <input type="range" min={0.7} max={1.5} step={0.05} value={textScale} onChange={e => setTextScale(Number(e.target.value))} style={{ width: 90, accentColor: accentColor }} />
+          </div>
+        </Section>
+
+        {/* Theme */}
+        <Section label="Theme">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {THEMES.map(t => (
+              <button key={t.id} onClick={() => { setThemeId(t.id); setAccentColor(t.accent) }} title={t.name}
+                style={{ width: 26, height: 26, borderRadius: 8, cursor: 'pointer', border: themeId === t.id ? `2px solid ${t.accent}` : '2px solid transparent', background: `linear-gradient(135deg, ${t.accent} 0 50%, ${t.bg[0]} 50% 100%)` }} />
+            ))}
+            <span style={{ ...lbl, marginLeft: 8 }}>Accent</span>
+            <input type="color" value={accentColor} onChange={e => setAccentColor(e.target.value)} style={{ width: 30, height: 26, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+          </div>
+        </Section>
+
+        {/* Channel / aspect */}
+        <Section label="Aspect (channel)">
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {ASPECTS.map(a => (
+              <button key={a.id} onClick={() => setAspect(a.id)} style={chip(aspect === a.id, accentColor)} title={a.hint}>{a.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>· {a.hint}</span></button>
+            ))}
+          </div>
+        </Section>
+      </div>
+
       <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0, lineHeight: 1.5 }}>
         {canPublish
-          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue. You review, approve, and publish there — nothing posts without your approval.</>
-          : <>Download uses the preview synth. The auto-posted render swaps in the real mixed audio.</>}
+          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Audio is the preview synth for now — the real mix bounce is coming.</>
+          : <>Preview uses the synth. The real mixed audio bounce is coming.</>}
       </p>
     </div>
   )
 }
 
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-muted,#8b88a8)' }}>{label}</div>
+      {children}
+    </div>
+  )
+}
+
 const pill = (on: boolean, accent: string): React.CSSProperties => ({ fontSize: 12, fontWeight: 700, color: on ? '#0a0812' : '#8b88a8', background: on ? accent : '#141220', border: `1px solid ${on ? accent : '#2a2740'}`, borderRadius: 999, padding: '6px 13px', cursor: 'pointer' })
+const chip = (on: boolean, accent: string): React.CSSProperties => ({ fontSize: 11.5, fontWeight: 700, color: on ? '#0a0812' : 'var(--text-secondary,#cfceda)', background: on ? accent : 'transparent', border: `1px solid ${on ? accent : 'var(--border,#2a2740)'}`, borderRadius: 7, padding: '4px 9px', cursor: 'pointer' })
 const btn: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: 'var(--text-secondary,#cfceda)', background: 'var(--bg-surface,#17171b)', border: '1px solid var(--border,#26262b)', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }
+const field: React.CSSProperties = { width: '100%', boxSizing: 'border-box', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border,#26262b)', background: 'var(--bg-base,#0d0d0f)', color: 'var(--text-primary,#f1f0ff)', outline: 'none' }
+const lbl: React.CSSProperties = { fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted,#8b88a8)' }
