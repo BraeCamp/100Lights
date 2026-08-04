@@ -6,7 +6,7 @@
 
 const DB_NAME = 'song-video-audio'
 const STORE = 'bounces'
-const MAX_ENTRIES = 24 // ~cap on disk; oldest evicted past this
+const MAX_ENTRIES = 10 // ~cap on disk; oldest evicted past this
 
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise(resolve => {

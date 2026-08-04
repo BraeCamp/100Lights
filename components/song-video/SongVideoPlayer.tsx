@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { mountSongVideo } from '@/lib/song-video/engine.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
 import type { DawProject } from '@/lib/daw-types'
+import { encodeWav16 } from '@/lib/song-video/wav16'
 
 // Turn a song (from lib/song-video/from-project) into a vertical, beat-synced
 // video. Beyond picking a format you can now edit the overlay text (+ font/size),
@@ -34,8 +35,8 @@ const ASPECTS = [
   { id: '16 / 9', name: '16:9', hint: 'YouTube landscape' },
 ]
 
-export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, defaultStart = 0, dawProject, userId, audioKey }: {
-  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; defaultStart?: number; dawProject?: DawProject; userId?: string | null; audioKey?: string
+export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, dawProject, userId, audioKey }: {
+  song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; dawProject?: DawProject; userId?: string | null; audioKey?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -47,11 +48,15 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   const [realUrl, setRealUrl] = useState<string | null>(null)
   const [rendering, setRendering] = useState(false)
   const [renderFailed, setRenderFailed] = useState(false)
-  const renderToken = useRef(0)      // discards results from a superseded window
-  const renderingRef = useRef(false) // single-flight (one bounce at a time)
+  const renderToken = useRef(0)      // discards results from a superseded render
+  const renderingRef = useRef(false) // single-flight (one full render at a time)
   const latestWin = useRef({ s: 0, w: 32 })
-  // When we have a project, the video uses ONLY the real bounced mix — never a
-  // synth. `waiting` = real audio for the current section isn't ready yet.
+  // The WHOLE song is bounced ONCE (from the start) into this decoded buffer; any
+  // section is then SLICED from it instantly — changing bars never re-renders.
+  const fullBufferRef = useRef<AudioBuffer | null>(null)
+  const fullKeyRef = useRef<string | null>(null)
+  // When we have a project, the video uses ONLY the real mix — never a synth.
+  // `waiting` = the full-song render for this project isn't ready yet.
   const realOnly = !!dawProject
   const waiting = realOnly && !realUrl
 
@@ -60,10 +65,10 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Song section
+  // Song section — default to the WHOLE song from the start.
   const songTotal = totalBeats ?? Math.max(32, Math.ceil(Math.max(0, ...song.notes.map(n => n.s + n.d))))
-  const [winBeats, setWinBeats] = useState(32)
-  const [startBeat, setStartBeat] = useState(Math.min(defaultStart, Math.max(0, songTotal - 32)))
+  const [winBeats, setWinBeats] = useState(songTotal)
+  const [startBeat, setStartBeat] = useState(0)
   const maxStart = Math.max(0, songTotal - winBeats)
   const start = Math.min(startBeat, maxStart)
 
@@ -120,18 +125,21 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
   useEffect(() => { latestWin.current = { s: start, w: winBeats } }, [start, winBeats])
 
-  // Auto-bounce the real mix on load and whenever the section settles. The bounce
-  // is window-specific, so a change drops it and schedules a fresh render —
-  // debounced so scrubbing the start doesn't fire a render per tick. The cache
-  // makes an already-rendered section instant.
+  // The full song renders once (from the start); the current section is then
+  // sliced from it instantly — so changing bars NEVER re-renders. A new project
+  // version (audioKey) invalidates the buffer and triggers one fresh full render.
   useEffect(() => {
-    setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
     if (!dawProject) return
     const token = ++renderToken.current
-    const t = setTimeout(() => { void bounce(start, winBeats, token) }, 500)
+    if (fullBufferRef.current && fullKeyRef.current === (audioKey ?? null)) {
+      sliceAndApply(start, winBeats, token) // instant — no re-render
+      return
+    }
+    setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+    const t = setTimeout(() => { void ensureFull(token, false) }, 250)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, winBeats, dawProject])
+  }, [start, winBeats, dawProject, audioKey])
 
   // Look edits apply live (no remount, no playback restart).
   useEffect(() => {
@@ -219,59 +227,59 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     setTimeout(() => setStatus(null), 4000)
   }
 
-  // Bounce the real project audio for a section and swap it in for the synth.
-  // Heavy (loads the audio engine + samples, real-time render), lazy-imported,
-  // single-flight, and result-guarded so a superseded window is discarded. Falls
-  // back to the synth on any failure.
-  const applyBlob = (blob: Blob, token: number) => {
-    if (token !== renderToken.current) return
-    const url = URL.createObjectURL(blob)
+  // Slice [s, s+w] out of the already-rendered full-song buffer and play it. Pure
+  // array work — instant, so scrubbing bars never re-renders.
+  const sliceAndApply = (s: number, w: number, token: number) => {
+    const buf = fullBufferRef.current
+    if (!buf || token !== renderToken.current) return
+    const SPB = 60 / song.tempo, sr = buf.sampleRate
+    const startSamp = Math.max(0, Math.floor(s * SPB * sr))
+    const lenSamp = Math.max(1, Math.min(Math.floor(w * SPB * sr), buf.length - startSamp))
+    const chans: Float32Array[] = []
+    for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c).subarray(startSamp, startSamp + lenSamp))
+    const wav = encodeWav16(chans, sr)
+    const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
     if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
     setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
   }
 
-  async function bounce(s: number, w: number, token: number) {
+  // Ensure the WHOLE song is rendered once (from the start) into fullBufferRef,
+  // from cache if we've done it before, then slice the current section. This is
+  // the only expensive step and it happens a single time per project version.
+  async function ensureFull(token: number, force: boolean) {
     if (!dawProject || renderingRef.current) return
-    const cacheKey = audioKey ? `${audioKey}:${s}:${w}` : null
-
-    // Cache hit → instant, no engine load / render.
-    if (cacheKey) {
-      try {
-        const { getCachedAudio } = await import('@/lib/song-video/audio-cache')
-        const cached = await getCachedAudio(cacheKey)
-        if (cached && token === renderToken.current) { setRenderFailed(false); applyBlob(cached, token); setStatus('Real mix ✓ (cached)'); setTimeout(() => setStatus(null), 2000); return }
-      } catch { /* fall through to render */ }
-    }
-
     renderingRef.current = true
     setRendering(true); setRenderFailed(false)
-    const est = Math.round(w * (60 / song.tempo) + 3)
-    setStatus(`Rendering real mix… ~${est}s`)
+    const fullSec = Math.round(songTotal * (60 / song.tempo))
+    setStatus(`Rendering full song… ~${fullSec}s (one time)`)
     try {
-      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-      const blob = await renderProjectAudioBlob(dawProject, { startBeat: s, endBeat: s + w, userId })
-      if (cacheKey) { try { const { putCachedAudio } = await import('@/lib/song-video/audio-cache'); await putCachedAudio(cacheKey, blob, Date.now()) } catch { /* non-fatal */ } }
-      if (token === renderToken.current) {
-        setRenderFailed(false); applyBlob(blob, token)
-        setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 2500)
+      const fullKey = audioKey ? `${audioKey}:full` : null
+      let fullBlob: Blob | null = null
+      if (fullKey && !force) { try { const { getCachedAudio } = await import('@/lib/song-video/audio-cache'); fullBlob = await getCachedAudio(fullKey) } catch { /* render */ } }
+      if (!fullBlob) {
+        const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+        fullBlob = await renderProjectAudioBlob(dawProject, { startBeat: 0, endBeat: songTotal, userId })
+        if (fullKey) { try { const { putCachedAudio } = await import('@/lib/song-video/audio-cache'); await putCachedAudio(fullKey, fullBlob, Date.now()) } catch { /* non-fatal */ } }
       }
+      const ACtor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const ac = new ACtor()
+      const decoded = await ac.decodeAudioData(await fullBlob.arrayBuffer())
+      ac.close()
+      fullBufferRef.current = decoded
+      fullKeyRef.current = audioKey ?? null
+      if (token === renderToken.current) { setRenderFailed(false); sliceAndApply(latestWin.current.s, latestWin.current.w, token); setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 2500) }
     } catch {
-      if (token === renderToken.current) { setRenderFailed(true); setStatus('Real mix render failed — retry') }
+      if (token === renderToken.current) { setRenderFailed(true); setStatus('Render failed — retry') }
     } finally {
       renderingRef.current = false
       setRendering(false)
-      // A newer window was requested while this one rendered — render it now.
-      if (token !== renderToken.current && dawProject) {
-        const { s: ls, w: lw } = latestWin.current
-        void bounce(ls, lw, renderToken.current)
-      }
     }
   }
 
   const secs = (winBeats * (60 / song.tempo)).toFixed(1)
 
   return (
-    <div style={{ display: 'grid', gap: 14, maxWidth: 440, margin: '0 auto' }}>
+    <div style={{ display: 'grid', gap: 14, maxWidth: 'min(96vw, 560px)', margin: '0 auto' }}>
       <style>{'@keyframes svspin{to{transform:rotate(360deg)}}'}</style>
       <audio ref={audioRef} style={{ display: 'none' }} preload="auto" />
       {/* Format */}
@@ -282,20 +290,20 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       </div>
 
       {/* Preview */}
-      <div style={{ position: 'relative', aspectRatio: aspect, borderRadius: 16, overflow: 'hidden', background: '#08070c', boxShadow: '0 12px 44px rgba(80,50,180,.28)', maxHeight: '62vh', margin: '0 auto', width: '100%' }}>
+      <div style={{ position: 'relative', aspectRatio: aspect, borderRadius: 16, overflow: 'hidden', background: '#08070c', boxShadow: '0 12px 44px rgba(80,50,180,.28)', maxHeight: '84vh', margin: '0 auto', width: '100%' }}>
         <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
         {waiting ? (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, background: 'rgba(5,4,9,.6)', color: '#eceafd', textAlign: 'center', padding: 16 }}>
             {renderFailed ? (
               <>
                 <span style={{ fontSize: 13, fontWeight: 700, color: '#f87171' }}>Real mix render failed</span>
-                <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: ui, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
+                <button onClick={() => { const token = ++renderToken.current; void ensureFull(token, false) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: ui, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
               </>
             ) : (
               <>
                 <div style={{ width: 34, height: 34, borderRadius: '50%', border: `3px solid ${ui}`, borderTopColor: 'transparent', animation: 'svspin 0.8s linear infinite' }} />
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Rendering your real mix…</span>
-                <span style={{ fontSize: 11, color: '#a3a2b5' }}>~{Math.round(winBeats * (60 / song.tempo) + 3)}s · cached after the first time</span>
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Rendering the full song…</span>
+                <span style={{ fontSize: 11, color: '#a3a2b5' }}>~{Math.round(songTotal * (60 / song.tempo))}s · one time — then every section is instant</span>
               </>
             )}
           </div>
@@ -319,8 +327,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={lbl}>Length</span>
             {[16, 32, 48, 64].map(b => (
-              <button key={b} onClick={() => { setWinBeats(b); setStartBeat(s => Math.min(s, Math.max(0, songTotal - b))) }} style={chip(winBeats === b, ui)} disabled={b > songTotal}>{b} bars</button>
+              <button key={b} onClick={() => { setWinBeats(b); setStartBeat(s => Math.min(s, Math.max(0, songTotal - b))) }} style={chip(winBeats === b, ui)} disabled={b >= songTotal}>{b} bars</button>
             ))}
+            <button onClick={() => { setWinBeats(songTotal); setStartBeat(0) }} style={chip(winBeats >= songTotal, ui)}>Full song</button>
             <span style={{ ...lbl, marginLeft: 'auto' }}>{secs}s</span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -364,8 +373,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         {dawProject && (
           <Section label="Audio">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} disabled={rendering || busy} style={{ ...chip(false, ui), opacity: rendering ? 0.6 : 1 }}>
-                {rendering ? 'Rendering…' : 'Re-render this section'}
+              <button onClick={() => { fullBufferRef.current = null; const token = ++renderToken.current; void ensureFull(token, true) }} disabled={rendering || busy} style={{ ...chip(false, ui), opacity: rendering ? 0.6 : 1 }}>
+                {rendering ? 'Rendering…' : 'Re-render song'}
               </button>
               <span style={lbl}>{rendering ? 'rendering your real mix…' : realUrl ? 'your real mix ✓' : renderFailed ? 'render failed — retry' : 'real mix'}</span>
             </div>

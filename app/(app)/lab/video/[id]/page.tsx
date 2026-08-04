@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import type { CfProjFile } from '@/lib/project-serializer'
-import { songVideoData, defaultMeta, bestWindow } from '@/lib/song-video/from-project.mjs'
+import { songVideoData, defaultMeta } from '@/lib/song-video/from-project.mjs'
 import SongVideoPlayer from '@/components/song-video/SongVideoPlayer'
 
 export const dynamic = 'force-dynamic'
@@ -22,11 +22,9 @@ export default async function SongVideoPage({ params }: { params: Promise<{ id: 
   const daw = row.data?.dawProject
   if (!daw) notFound()
 
-  // Pass the WHOLE song so the maker can scrub which section plays; open it on
-  // the densest 32-bar window by default.
+  // Pass the WHOLE song — the maker renders it from the start and slices sections.
   const data = songVideoData(daw, { startBeat: 0, beats: 100000 })
   const totalBeats = Math.max(32, Math.ceil(Math.max(32, ...data.notes.map(n => n.s + n.d))))
-  const defaultStart = bestWindow(daw, 32)
   const meta = defaultMeta({ ...data, loopBeats: 32 })
   const slug = (row.name || 'song-video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'song-video'
 
@@ -40,7 +38,7 @@ export default async function SongVideoPage({ params }: { params: Promise<{ id: 
         </div>
         {data.notes.length === 0
           ? <p style={{ fontSize: 13.5, color: 'var(--text-muted,#a3a2b5)' }}>This project has no MIDI notes to visualize yet — add some in the studio, then come back.</p>
-          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} defaultStart={defaultStart} dawProject={daw} userId={userId} audioKey={`${id}:${row.saved_at}`} />}
+          : <SongVideoPlayer song={data} meta={meta} slug={slug} projectId={id} canPublish totalBeats={totalBeats} dawProject={daw} userId={userId} audioKey={`${id}:${row.saved_at}`} />}
       </main>
     </div>
   )

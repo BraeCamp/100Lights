@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { songVideoData, defaultMeta, bestWindow } from '@/lib/song-video/from-project.mjs'
+import { songVideoData, defaultMeta } from '@/lib/song-video/from-project.mjs'
 import SongVideoPlayer from './SongVideoPlayer'
 import type { DawProject } from '@/lib/daw-types'
 
@@ -17,7 +17,6 @@ type Loaded = {
   meta: string
   slug: string
   totalBeats: number
-  defaultStart: number
 }
 
 export default function UploadMaker({ userId }: { userId?: string | null }) {
@@ -37,7 +36,7 @@ export default function UploadMaker({ userId }: { userId?: string | null }) {
       if (!song.notes.length) throw new Error('This project has no MIDI notes to visualize.')
       const totalBeats = Math.max(32, Math.ceil(Math.max(32, ...song.notes.map(n => n.s + n.d))))
       const slug = (parsed.name || file.name.replace(/\.cfproj$/i, '') || 'song-video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'song-video'
-      setLoaded({ song, daw, raw: parsed, meta: defaultMeta({ ...song, loopBeats: 32 }), slug, totalBeats, defaultStart: bestWindow(daw, 32) })
+      setLoaded({ song, daw, raw: parsed, meta: defaultMeta({ ...song, loopBeats: 32 }), slug, totalBeats })
     } catch (e) {
       setError((e as Error).message || 'Could not read that file.')
       setLoaded(null)
@@ -70,7 +69,7 @@ export default function UploadMaker({ userId }: { userId?: string | null }) {
           <button onClick={() => { setLoaded(null); setSaveMsg(null) }} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>← Upload another</button>
         </div>
         {saveMsg && <div style={{ fontSize: 12, fontWeight: 600, color: saveMsg.includes('failed') || saveMsg.includes('can’t') ? '#f87171' : '#4ade80' }}>{saveMsg}</div>}
-        <SongVideoPlayer song={loaded.song} meta={loaded.meta} slug={loaded.slug} canPublish totalBeats={loaded.totalBeats} defaultStart={loaded.defaultStart} dawProject={loaded.daw} userId={userId} audioKey={`${loaded.raw.id || loaded.slug}:${(loaded.raw as { savedAt?: string }).savedAt || ''}`} />
+        <SongVideoPlayer song={loaded.song} meta={loaded.meta} slug={loaded.slug} canPublish totalBeats={loaded.totalBeats} dawProject={loaded.daw} userId={userId} audioKey={`${loaded.raw.id || loaded.slug}:${(loaded.raw as { savedAt?: string }).savedAt || ''}`} />
       </div>
     )
   }
