@@ -39,6 +39,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { analyzeSpec } from './analyze-arrangement.mjs'
+import { createSession } from '../lib/session-capture/index.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(ROOT, 'public', '_songgen')
@@ -1326,14 +1327,57 @@ async function main() {
   // composer critiquing its own output and picking the most dynamic take.
   const bestArg = argv.find(a => a.startsWith('--best='))
   const K = bestArg ? Math.max(1, Math.min(24, parseInt(bestArg.split('=')[1], 10) || 1)) : 1
+
+  // Session capture (opt-in via --capture[=root]): emit a self-contained artifact
+  // directory for this generation run. Each candidate is a "take"; the self-select
+  // rejections carry a real natural-language reason + what the next take changed.
+  const captureArg = argv.find(a => a.startsWith('--capture'))
+  const cap = createSession({
+    enabled: !!captureArg,
+    root: captureArg && captureArg.includes('=') ? captureArg.split('=')[1] : undefined,
+    sessionId: `compose-${genreId}-${seed}`,
+  })
+
   let spec, pick = null
-  for (let i = 0; i < K; i++) {
-    const s = compose(libs, genreId, keyStr, seed + i * 7919, opts)
-    const r = analyzeSpec(s)
-    const rank = r.score - r.flags.length * 10
-    if (!pick || rank > pick.rank) pick = { spec: s, r, rank, seedUsed: seed + i * 7919 }
+  const cands = []
+  try {
+    for (let i = 0; i < K; i++) {
+      const seedUsed = seed + i * 7919
+      if (i > 0) cap.event('retry', {
+        reason: `best take so far scores ${pick.r.score}/100 with ${pick.r.flags.length} arrangement flag(s) — searching for a more dynamic take`,
+        changed: `re-rolled with seed ${cands[i - 1].seedUsed} → ${seedUsed}: new form / progressions / hook motif / timbres (seed-driven variety)`,
+        attempt: i,
+      })
+      cap.event('take_started', { index: i, seed: seedUsed })
+      const s = compose(libs, genreId, keyStr, seedUsed, opts)
+      const r = analyzeSpec(s)
+      const rank = r.score - r.flags.length * 10
+      const c = { i, seedUsed, spec: s, r, rank }
+      cands.push(c)
+      cap.event('arrangement_change', { index: i, seed: seedUsed, score: r.score, bars: r.bars, densityCV: r.cv, sparkline: r.spark.density })
+      if (!pick || rank > pick.rank) pick = { spec: s, r, rank, seedUsed, i }
+    }
+    spec = pick.spec
+
+    // Emit the accept/reject decisions, each with a concrete reason.
+    for (const c of cands) {
+      if (c.i === pick.i) continue
+      const gap = pick.r.score - c.r.score
+      const nextC = cands.find(x => x.i === c.i + 1)
+      cap.event('take_rejected', {
+        index: c.i, seed: c.seedUsed, score: c.r.score, flags: c.r.flags,
+        reason: (c.r.flags.length ? `${c.r.flags.length} arrangement flag(s): ${c.r.flags.slice(0, 2).join(' · ')}. ` : 'clean, but ')
+          + `dynamic score ${c.r.score}/100 vs kept ${pick.r.score}/100${gap > 0 ? ` (−${gap})` : ''}`,
+        changed: nextC
+          ? `next take re-rolled seed ${c.seedUsed} → ${nextC.seedUsed} (new form/progression/motif)`
+          : `kept take ${pick.i} (seed ${pick.seedUsed}) — highest dynamic score`,
+      })
+    }
+    cap.event('take_completed', { index: pick.i, seed: pick.seedUsed, score: pick.r.score, flags: pick.r.flags, sparkline: pick.r.spark.density })
+  } catch (err) {
+    cap.fail(err)
+    throw err
   }
-  spec = pick.spec
   if (K > 1) console.log(`  self-select: best of ${K} — seed ${pick.seedUsed} · score ${pick.r.score}/100 · ${pick.r.flags.length} flag(s) · density ${pick.r.spark.density}`)
   const nNotes = spec.clips.reduce((a, c) => a + c.notes.length, 0)
   const end = Math.max(...spec.clips.map(c => c.startBeat + c.durationBeats), 0)
@@ -1341,10 +1385,28 @@ async function main() {
   const out = outArg ? outArg.split('=')[1] : join(OUT_DIR, `${slug}.json`)
   mkdirSync(dirname(out), { recursive: true })
   writeFileSync(out, JSON.stringify(spec))
+  const durationSec = +(end / spec.tempo * 60).toFixed(2)
+
+  // Finalize the capture session (no-op unless --capture was passed). The
+  // composer is headless — no video, no bounce — so capture/audio stay null;
+  // the event log + reasons + musical/generation metadata are the payload.
+  cap.event('render', { out: out.replace(ROOT + '/', ''), notes: nNotes, durationSec })
+  cap.setMusical({
+    bpm: spec.tempo,
+    key: keyStr || spec.scale || null,
+    time_signature: '4/4',
+    genre_tags: [spec.genre, ...(styleArg ? [styleArg.split('=')[1]] : [])],
+    instrument_list: spec.tracks.map(t => t.name),
+  })
+  cap.setGeneration({ model: 'compose.mjs', prompt_or_seed: seed, total_takes: K, rejected_takes: K - 1 })
+  cap.writeArtifact('spec.json', JSON.stringify(spec))
+  const sessDir = cap.end('completed')
+
   console.log(`${spec.name}`)
   console.log(`  ${spec.tempo} bpm · swing ${spec.swing} · form: ${spec._form}`)
   console.log(`  tracks: ${spec._tracks}`)
   console.log(`  fx: ${spec._features}`)
   console.log(`  ${spec.tracks.length} tracks · ${nNotes} notes · ${(end / spec.tempo * 60).toFixed(0)}s → ${out}`)
+  if (sessDir) console.log(`  session → ${sessDir}`)
 }
 main().catch(e => { console.error(e.message || e); process.exit(1) })

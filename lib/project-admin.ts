@@ -1,53 +1,57 @@
-import { sql } from './db'
 import { isAudioClip, type DawProject } from './daw-types'
 
 // ── Project-admin overlay ────────────────────────────────────────────────────
 // The music-admin layer for a project (the "/lab" Project Hub). Tier-1 documents
 // — split sheet, credits, metadata sheet, sample-usage/clearance, proof-of-creation
 // — are AUTO-GENERATED from the project's own data (that's the wedge: 100Lights
-// owns the creation, so the paperwork writes itself). This module holds:
-//   • the pure generators (project data → documents), and
-//   • a JSONB overlay table for user EDITS on top of the auto-generated defaults
-//     (adjusted split %, genre/mood, ISRC, release status) + future Tier 2/3.
+// owns the creation, so the paperwork writes itself). This module is PURE (no db
+// import) so both the server hub and the client UI can share the generators; the
+// JSONB persistence lives in ./project-admin-store (server-only).
+//   Tier 1 = the auto-generated docs. Tier 2 (Release) + Tier 3 (Money) layer on
+//   top: readiness checklist, ISRC/UPC + e-sign, distribution package; income
+//   ledger, split payouts, invoicing, tax summary.
 
-let ready = false
-export async function ensureProjectAdminSchema(): Promise<void> {
-  if (ready) return
-  await sql`
-    CREATE TABLE IF NOT EXISTS project_admin (
-      project_id TEXT PRIMARY KEY,
-      data       JSONB NOT NULL DEFAULT '{}'::jsonb,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`
-  ready = true
-}
-
-/** User edits layered over the auto-generated Tier-1 docs (+ Tier 2/3 scaffold). */
+/** User edits layered over the auto-generated Tier-1 docs (+ Tier 2/3 data). */
 export interface ProjectAdmin {
   /** Split-sheet overrides: name → percent. Missing → equal auto-split. */
   splitOverrides?: Record<string, number>
   metadata?: { genre?: string; mood?: string; isrc?: string; upc?: string; releaseDate?: string; notes?: string }
-  release?: { status?: 'draft' | 'ready' | 'scheduled' | 'released'; distributor?: string; coverUrl?: string }
+  /** Tier 2 — Release. status/date/distributor/cover + per-contributor split sign-off. */
+  release?: {
+    status?: 'draft' | 'ready' | 'scheduled' | 'released'
+    date?: string
+    distributor?: string
+    coverUrl?: string
+    /** Split-sheet sign-off: contributor name → ISO time they approved. */
+    signatures?: Record<string, string>
+    /** Registrant prefix for minting ISRCs, e.g. "US-ABC" + running counter. */
+    isrcPrefix?: string
+  }
+  /** Tier 3 — Money. Income ledger + freelance invoices for this project. */
+  income?: IncomeEntry[]
+  invoices?: Invoice[]
   clearances?: Record<string, 'owned' | 'cleared' | 'needs-clearance'> // clipId → status override
   updatedAt?: string
 }
 
-export async function getProjectAdmin(projectId: string): Promise<ProjectAdmin> {
-  await ensureProjectAdminSchema()
-  try {
-    const rows = await sql`SELECT data FROM project_admin WHERE project_id = ${projectId}`
-    return (rows[0]?.data as ProjectAdmin) ?? {}
-  } catch {
-    return {}
-  }
+export interface IncomeEntry {
+  id: string
+  source: string       // e.g. "Spotify", "Sync — Netflix", "Bandcamp"
+  amount: number       // gross, in whole currency units
+  date: string         // ISO date
+  note?: string
+  /** true once this income has been distributed to collaborators per the splits. */
+  paidOut?: boolean
 }
 
-export async function saveProjectAdmin(projectId: string, data: ProjectAdmin): Promise<void> {
-  await ensureProjectAdminSchema()
-  const payload = JSON.stringify({ ...data, updatedAt: new Date().toISOString() })
-  await sql`
-    INSERT INTO project_admin (project_id, data) VALUES (${projectId}, ${payload}::jsonb)
-    ON CONFLICT (project_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`
+export interface Invoice {
+  id: string
+  client: string
+  items: Array<{ desc: string; amount: number }>
+  date: string
+  dueDate?: string
+  status: 'draft' | 'sent' | 'paid'
+  notes?: string
 }
 
 // ── Pure generators ──────────────────────────────────────────────────────────
@@ -185,4 +189,89 @@ export function provenanceTimeline(
   if (daw.history?.length) events.push({ at: null, label: `${daw.history.length} recorded build steps`, kind: 'build' })
   if (savedAt) events.push({ at: iso(savedAt), label: 'Last saved', kind: 'saved' })
   return events.sort((a, b) => (a.at ?? '9999').localeCompare(b.at ?? '9999'))
+}
+
+// ── Tier 2 · Release ─────────────────────────────────────────────────────────
+
+/** An ISRC is CC-XXX-YY-NNNNN (country, registrant, year, designation). Accept it
+ *  with or without the separating dashes. */
+export function isValidIsrc(s?: string): boolean {
+  return !!s && /^[A-Za-z]{2}-?[A-Za-z0-9]{3}-?\d{2}-?\d{5}$/.test(s.trim())
+}
+
+/** A UPC/EAN is 12–13 digits. */
+export function isValidUpc(s?: string): boolean {
+  return !!s && /^\d{12,13}$/.test(s.trim())
+}
+
+/** Mint a well-formed ISRC from a registrant prefix ("US-ABC" or "USABC") + a
+ *  running designation number, stamping the two-digit year of the release. */
+export function mintIsrc(prefix: string, designation: number, year: number): string {
+  const p = prefix.replace(/[^A-Za-z0-9]/g, '').toUpperCase().padEnd(5, 'X').slice(0, 5)
+  const cc = p.slice(0, 2)
+  const reg = p.slice(2, 5)
+  const yy = String(year % 100).padStart(2, '0')
+  const nnnnn = String(Math.max(0, Math.min(99999, Math.floor(designation)))).padStart(5, '0')
+  return `${cc}-${reg}-${yy}-${nnnnn}`
+}
+
+export interface ChecklistItem { key: string; label: string; done: boolean; hint?: string }
+
+/** The release-readiness checklist — everything a distributor needs, computed live
+ *  from the auto-generated docs + the overlay so it ticks green as the user fills in. */
+export function releaseReadiness(
+  meta: SongMetadata,
+  splits: SplitRow[],
+  overlay: Pick<ProjectAdmin, 'metadata' | 'release'>,
+  contributorCount: number,
+): ChecklistItem[] {
+  const splitTotal = splits.reduce((n, r) => n + (Number(r.pct) || 0), 0)
+  const signed = Object.keys(overlay.release?.signatures ?? {}).length
+  return [
+    { key: 'title', label: 'Title set', done: !!meta.title && meta.title !== 'Untitled' },
+    { key: 'genre', label: 'Genre set', done: !!overlay.metadata?.genre, hint: 'Distributors require a primary genre' },
+    { key: 'splits', label: 'Splits total 100%', done: Math.abs(splitTotal - 100) < 0.05, hint: `${Math.round(splitTotal * 10) / 10}%` },
+    { key: 'signed', label: 'Split sheet approved by all writers', done: contributorCount <= 1 || signed >= splits.length, hint: `${signed}/${splits.length} signed` },
+    { key: 'isrc', label: 'ISRC assigned', done: isValidIsrc(overlay.metadata?.isrc) },
+    { key: 'cover', label: 'Cover art', done: !!overlay.release?.coverUrl, hint: 'Square, 3000×3000 recommended' },
+    { key: 'date', label: 'Release date', done: !!overlay.metadata?.releaseDate },
+    { key: 'distributor', label: 'Distributor chosen', done: !!overlay.release?.distributor },
+  ]
+}
+
+// ── Tier 3 · Money ───────────────────────────────────────────────────────────
+
+export interface PayoutRow { name: string; pct: number; owed: number; paid: number; outstanding: number }
+export interface PayoutBreakdown { gross: number; distributed: number; undistributed: number; rows: PayoutRow[] }
+
+/** Given the income ledger and the split sheet, compute what each writer is owed,
+ *  what's already been paid out (income marked paidOut), and what's outstanding. */
+export function payoutBreakdown(splits: SplitRow[], income: IncomeEntry[]): PayoutBreakdown {
+  const gross = income.reduce((n, e) => n + (Number(e.amount) || 0), 0)
+  const paid = income.filter(e => e.paidOut).reduce((n, e) => n + (Number(e.amount) || 0), 0)
+  const round = (n: number) => Math.round(n * 100) / 100
+  const rows: PayoutRow[] = splits.map(s => {
+    const frac = (Number(s.pct) || 0) / 100
+    const owed = round(gross * frac)
+    const already = round(paid * frac)
+    return { name: s.name, pct: s.pct, owed, paid: already, outstanding: round(owed - already) }
+  })
+  return { gross: round(gross), distributed: round(paid), undistributed: round(gross - paid), rows }
+}
+
+export function invoiceTotal(inv: Invoice): number {
+  return Math.round(inv.items.reduce((n, i) => n + (Number(i.amount) || 0), 0) * 100) / 100
+}
+
+/** Year-by-year income summary for tax prep (gross received per calendar year). */
+export function taxSummary(income: IncomeEntry[]): Array<{ year: string; gross: number; count: number }> {
+  const byYear = new Map<string, { gross: number; count: number }>()
+  for (const e of income) {
+    const year = (e.date || '').slice(0, 4) || '—'
+    const cur = byYear.get(year) ?? { gross: 0, count: 0 }
+    cur.gross = Math.round((cur.gross + (Number(e.amount) || 0)) * 100) / 100
+    cur.count += 1
+    byYear.set(year, cur)
+  }
+  return [...byYear.entries()].map(([year, v]) => ({ year, ...v })).sort((a, b) => b.year.localeCompare(a.year))
 }

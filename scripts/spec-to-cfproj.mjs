@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { buildHistoryFor } from '../lib/build-history.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SPEC_DIR = join(ROOT, 'public', '_songgen')
@@ -81,6 +82,9 @@ for (const f of files) {
   const path = f.includes('/') ? f : join(SPEC_DIR, f)
   const spec = JSON.parse(readFileSync(path, 'utf8'))
   const cfproj = toCfproj(spec)
+  // Attach a synthesized build-history so the song replays as a timelapse (in the
+  // studio's history recorder and the headless timelapse driver).
+  cfproj.dawProject.history = buildHistoryFor(cfproj.dawProject)
   const out = join(OUT_DIR, `${slugFor(spec, path)}.cfproj`)
   writeFileSync(out, JSON.stringify(cfproj, null, 1))
   const nNotes = cfproj.dawProject.arrangementClips.reduce((a, c) => a + c.notes.length, 0)

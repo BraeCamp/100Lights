@@ -100,6 +100,19 @@ export class ScreenRecorder {
 
   get recording() { return this.recorder?.state === 'recording' }
 
+  /** Wall-clock epoch (ms) the recording started — the absolute anchor for
+   *  mapping session events to video frames. 0 before start(). */
+  get startedAtMs() { return this.startedAt }
+
+  /** Actual captured video dimensions + frame rate, read from the share's video
+   *  track. Null before start(). Used by the session-capture layer to size ROIs. */
+  get dimensions(): { width: number; height: number; fps: number } | null {
+    const t = this.displayStream?.getVideoTracks()[0]
+    if (!t) return null
+    const s = t.getSettings()
+    return { width: s.width ?? 0, height: s.height ?? 0, fps: Math.round(s.frameRate ?? 30) }
+  }
+
   async start(sources: RecorderSources = {}): Promise<void> {
     if (this.recording) return
 

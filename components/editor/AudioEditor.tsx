@@ -719,6 +719,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
       __parseMid?: (file: File) => Promise<unknown>
       __exportMid?: () => Promise<Blob>
+      __sessionCapture?: (opts?: { sessionId?: string; enabled?: boolean }) => Promise<unknown>
     }
     w.__dawDispatch = dispatch
     w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
@@ -729,6 +730,22 @@ export default function AudioEditor(props: AudioEditorProps) {
     w.__parseMid = (file) => import('@/lib/midi-import').then(m => m.parseMidiFile(file))
     // Dev-only: export the current project as a .mid blob (round-trip testing).
     w.__exportMid = () => import('@/lib/midi-file').then(m => m.writeProjectMidi(projectRef.current).blob)
+    // Phase-B session capture: a recorder pre-primed with this project's musical
+    // metadata. Caller drives it: `const s = await window.__sessionCapture();
+    // await s.startCapture(); s.event('take_started',{}); ... await s.end()`.
+    // A generation flow wraps its run in one of these to emit a session dir.
+    w.__sessionCapture = (opts) => import('@/lib/session-capture/browser').then(({ BrowserSessionRecorder }) => {
+      const s = new BrowserSessionRecorder(opts)
+      const p = projectRef.current
+      s.setMusical({
+        bpm: p.tempo,
+        key: `${p.scale ?? ''}`.trim() || null,
+        time_signature: `${p.timeSignatureNum}/${p.timeSignatureDen}`,
+        genre_tags: [],
+        instrument_list: p.tracks.filter(t => t.kind !== 'group').map(t => t.name),
+      })
+      return s
+    })
   }, [])
 
   // ── Community deep-link: /new?communityItem={id} drops the shared thing

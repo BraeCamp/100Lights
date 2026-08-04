@@ -56,3 +56,6 @@ songs/
 
 # Generated song build-specs (scripts/compose.mjs, gen_rhythm_songs.py)
 public/_songgen/
+
+# Session-capture artifact directories (lib/session-capture)
+sessions/

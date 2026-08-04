@@ -6,6 +6,7 @@ import { X, Download, Loader2, Globe2, Lock } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
+import SongDetails from '@/components/editor/SongDetails'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
 import { usePlan } from '@/hooks/usePlan'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -357,6 +358,16 @@ style={{
               <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.5 }}>
                 Plays your project from beat 1 to the end while capturing the master output.
               </p>
+
+              {/* Song details + sample credits — auto-generated; credits travel with the export. */}
+              {!isPodcast && (
+                <details style={{ marginBottom: 14 }}>
+                  <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Song details &amp; credits</summary>
+                  <div style={{ marginTop: 10, padding: '12px 14px', background: 'var(--bg-base, #0f0f11)', border: '1px solid var(--border, #26262b)', borderRadius: 8 }}>
+                    <SongDetails project={project} />
+                  </div>
+                </details>
+              )}
 
               {/* Format selector — hidden in Simple mode (one-click WebM) */}
               {!simpleExport && (
