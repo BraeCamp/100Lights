@@ -373,9 +373,27 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, tempoMarkers: [...filtered, action.marker].sort((a, b) => a.beat - b.beat) }
     }
 
-    case 'UPDATE_TEMPO_MARKER':
-      return { ...project, tempoMarkers: (project.tempoMarkers ?? []).map(m =>
-        m.id === action.markerId ? { ...m, tempo: Math.max(40, Math.min(300, action.tempo)) } : m) }
+    case 'UPDATE_TEMPO_MARKER': {
+      const markers = project.tempoMarkers ?? []
+      const marker = markers.find(m => m.id === action.markerId)
+      if (!marker) return project
+      const tempo = Math.max(40, Math.min(300, action.tempo))
+      const tempoMarkers = markers.map(m => m.id === action.markerId ? { ...m, tempo } : m)
+      // Preserve non-warped audio clips' absolute (second) length within THIS
+      // marker's segment [marker.beat, next marker) — the same rescale SET_TEMPO
+      // does globally for a marker-free project. Without it, retempoing a segment
+      // (e.g. editing the opening BPM when tempo markers exist) stretches its audio
+      // clips' beat-window past the sample: loop-enabled clips add an extra repeat,
+      // non-looping ones trail silence. Warped clips + MIDI are untouched.
+      const ratio = tempo / marker.tempo
+      if (Math.abs(ratio - 1) < 1e-9) return { ...project, tempoMarkers }
+      const nextBeat = markers.reduce((n, m) => (m.beat > marker.beat + 1e-6 && m.beat < n ? m.beat : n), Infinity)
+      const arrangementClips = project.arrangementClips.map(c =>
+        c.kind === 'audio' && !c.warpEnabled && c.startBeat >= marker.beat - 1e-6 && c.startBeat < nextBeat - 1e-6
+          ? { ...c, durationBeats: Math.max(0.125, c.durationBeats * ratio) }
+          : c)
+      return { ...project, tempoMarkers, arrangementClips }
+    }
 
     case 'REMOVE_TEMPO_MARKER':
       return { ...project, tempoMarkers: (project.tempoMarkers ?? []).filter(m => m.id !== action.markerId) }
