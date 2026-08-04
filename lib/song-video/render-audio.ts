@@ -48,8 +48,10 @@ export async function renderProjectAudioBlob(
     engine.updateProject(project) // syncs tracks/clips and fires async buffer pre-warm
     // Give those buffer loads time to resolve — the bounce plays in real time,
     // and a note whose sample hasn't decoded yet is dropped (silent first pass).
-    await new Promise(r => setTimeout(r, 2200))
-    const res = await engine.renderWav({ startBeat: opts.startBeat, endBeat: opts.endBeat, tailSec: 0.8 })
+    await new Promise(r => setTimeout(r, 2500))
+    // tailSec:0 → the clip is EXACTLY the window length, so it loops seamlessly in
+    // sync with the video's beat clock (a reverb tail would make it drift).
+    const res = await engine.renderWav({ startBeat: opts.startBeat, endBeat: opts.endBeat, tailSec: 0 })
     const bytes = Uint8Array.from(atob(res.master), c => c.charCodeAt(0))
     const decoded = decodeWav(bytes.buffer)
     return new Blob([encodeWav16(decoded.channels, decoded.sampleRate)], { type: 'audio/wav' })
