@@ -32,16 +32,16 @@ export default async function LabIndex() {
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
           {rows.map(r => (
-            <li key={r.id}>
-              <Link href={`/lab/${r.id}`} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-                textDecoration: 'none', color: 'inherit',
-                background: 'var(--bg-surface, #17171b)', border: '1px solid var(--border, #26262b)',
-                borderRadius: 10, padding: '13px 16px',
-              }}>
-                <span style={{ fontSize: 15, fontWeight: 700 }}>{r.name || 'Untitled'}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--text-muted, #a3a2b5)' }}>Open hub →</span>
-              </Link>
+            <li key={r.id} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              background: 'var(--bg-surface, #17171b)', border: '1px solid var(--border, #26262b)',
+              borderRadius: 10, padding: '13px 16px',
+            }}>
+              <Link href={`/lab/${r.id}`} style={{ textDecoration: 'none', color: 'inherit', fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name || 'Untitled'}</Link>
+              <span style={{ display: 'flex', gap: 12, flexShrink: 0, fontSize: 11.5 }}>
+                <Link href={`/lab/video/${r.id}`} style={{ textDecoration: 'none', color: '#a78bfa', fontWeight: 600 }}>🎬 Video</Link>
+                <Link href={`/lab/${r.id}`} style={{ textDecoration: 'none', color: 'var(--text-muted, #a3a2b5)' }}>Hub →</Link>
+              </span>
             </li>
           ))}
         </ul>

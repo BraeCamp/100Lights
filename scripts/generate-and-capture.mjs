@@ -13,12 +13,13 @@
 
 import { chromium } from 'playwright'
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, existsSync, rmSync, mkdirSync, mkdtempSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync, existsSync, rmSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { ingestSession } from '../lib/session-capture/index.mjs'
 import { buildHistoryFor, foldRevealSnapshots } from '../lib/build-history.mjs'
+import { songVideoData, defaultMeta } from '../lib/song-video/from-project.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const argv = process.argv.slice(2)
@@ -34,7 +35,10 @@ const OUT_ROOT = flag('root', join(ROOT, 'sessions'))
 // Two content types: a playthrough (playhead scrolls the finished song) or a
 // build TIMELAPSE (tracks appear one by one, then clips fill the arrangement).
 const TIMELAPSE = argv.includes('--timelapse')
-const MODE = TIMELAPSE ? 'timelapse' : 'playthrough'
+// --format=<id> renders the song-video format engine (synced to the real audio,
+// natively 9:16) instead of screen-recording the studio. This is the good look.
+const FORMAT = flag('format', null)
+const MODE = FORMAT ? `format-${FORMAT}` : TIMELAPSE ? 'timelapse' : 'playthrough'
 if (!GENRE && !STYLE) { console.error('usage: generate-and-capture.mjs <genre> [key] [--style=X] [--seed=N] [--seconds=20] [--url=…]'); process.exit(1) }
 
 const TMP = mkdtempSync(join(tmpdir(), 'gencap-'))
@@ -98,6 +102,41 @@ async function openStudio(context, initial = dawProject) {
   return page
 }
 
+// Render the song-video format engine, synced to the real audio, at native 9:16.
+// Inlines lib/song-video (one source of truth) into a self-contained page loaded
+// via file://; the <audio> drives the engine clock so audio + visual lock.
+async function recordFormatVideo(browser, wavBuf, songData, meta) {
+  const rdir = join(TMP, 'render'); mkdirSync(rdir, { recursive: true })
+  writeFileSync(join(rdir, 'mix.wav'), wavBuf)
+  const strip = s => s
+    .replace(/^import .*from '\.\/formats\.mjs'.*$/m, '')
+    .replace(/^export function/m, 'function').replace(/^export const FORMATS/m, 'const FORMATS')
+    .replace(/^export const FORMAT_IDS.*$/m, '').replace(/[^\x00-\x7F]/g, '')
+  const formats = strip(readFileSync(join(ROOT, 'lib/song-video/formats.mjs'), 'utf8'))
+  const engine = strip(readFileSync(join(ROOT, 'lib/song-video/engine.mjs'), 'utf8'))
+  const aj = o => JSON.stringify(o).replace(/[^\x00-\x7F]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+  const html = `<style>*{margin:0}html,body{height:100%;background:#050409;overflow:hidden}canvas{width:100vw;height:100vh;display:block}</style>
+<canvas id=c></canvas><audio id=a src="mix.wav" preload=auto></audio>
+<script type="module">
+${formats}
+${engine}
+const SONG=${aj(songData)};
+const audio=document.getElementById('a');
+const inst=mountSongVideo(document.getElementById('c'),SONG,{format:${aj(FORMAT)},brand:'100LIGHTS',meta:${aj(meta)},hook:[{text:'an AI wrote this'},{text:'in one pass.',accent:true}],accent:'#a78bfa',loopBeats:SONG.loopBeats,synth:false,media:audio});
+window.__ready=false;
+audio.addEventListener('canplaythrough',()=>{inst.play();window.__ready=true;},{once:true}); audio.load();
+</script>`
+  writeFileSync(join(rdir, 'render.html'), html)
+  const W9 = 810, H9 = 1440
+  const ctx = await browser.newContext({ viewport: { width: W9, height: H9 }, recordVideo: { dir: join(TMP, 'video'), size: { width: W9, height: H9 } } })
+  const page = await ctx.newPage()
+  await page.goto('file://' + join(rdir, 'render.html'), { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 }).catch(() => {})
+  await page.waitForTimeout((wav.durationSec || SECONDS) * 1000 + 500)
+  const v = page.video(); await ctx.close()
+  return { videoPath: v ? await v.path() : null, w: W9, h: H9 }
+}
+
 // 3a — audio bounce (own context, no video) — realtime, so render just the slice.
 log(`▸ bouncing audio (${sliceBeats.toFixed(1)} beats ≈ ${SECONDS}s, realtime)…`)
 const ctxA = await browser.newContext({ viewport: { width: VW, height: VH } })
@@ -109,36 +148,36 @@ const wav = await pageA.evaluate(async (endB) => {
 await ctxA.close()
 if (!wav) { console.error('audio bounce failed'); await browser.close(); process.exit(1) }
 
-// 3b — video: record either a playthrough or a build timelapse.
+// 3b — video: a song-video FORMAT render (9:16, synced to audio) OR the studio.
 log(`▸ recording ${MODE}…`)
-const videoDir = join(TMP, 'video')
-const ctxV = await browser.newContext({ viewport: { width: VW, height: VH }, recordVideo: { dir: videoDir, size: { width: VW, height: VH } } })
-const pageV = await openStudio(ctxV, TIMELAPSE ? snaps[0] : dawProject)
-// ROI: sample the main arrangement region (falls back to full frame for gaps).
+let videoPath, capW = VW, capH = VH
 const roi = []
-const arrRect = await pageV.evaluate(() => {
-  const el = document.querySelector('[data-help-id="add-track"]')?.closest('section, main, .daw-arrangement') || document.body
-  const r = el.getBoundingClientRect()
-  return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-})
-roi.push({ t: 0, x: arrRect.x, y: arrRect.y, w: arrRect.w, h: arrRect.h, panel: 'arrangement' })
-if (TIMELAPSE) {
-  // Reveal the song step by step (tracks, then clips) — LOAD_PROJECT each snapshot.
-  const stepMs = Math.max(110, Math.floor((SECONDS * 1000) / snaps.length))
-  for (let i = 1; i < snaps.length; i++) {
-    await pageV.evaluate(p => (window).__dawDispatch({ type: 'LOAD_PROJECT', project: p }), snaps[i])
-    await pageV.waitForTimeout(stepMs)
-  }
-  await pageV.waitForTimeout(900) // hold the finished arrangement
+if (FORMAT) {
+  const songData = songVideoData(dawProject, { startBeat: 0, beats: sliceBeats, genre: spec.genre })
+  const r = await recordFormatVideo(browser, Buffer.from(wav.master, 'base64'), songData, defaultMeta(songData))
+  videoPath = r.videoPath; capW = r.w; capH = r.h
+  roi.push({ t: 0, x: 0, y: 0, w: capW, h: capH, panel: 'video' }) // already 9:16 — full frame
+  await browser.close()
 } else {
-  await pageV.evaluate(() => (window).__daw?.play(0))
-  await pageV.waitForTimeout(SECONDS * 1000)
-  await pageV.evaluate(() => (window).__daw?.stop())
+  const ctxV = await browser.newContext({ viewport: { width: VW, height: VH }, recordVideo: { dir: join(TMP, 'video'), size: { width: VW, height: VH } } })
+  const pageV = await openStudio(ctxV, TIMELAPSE ? snaps[0] : dawProject)
+  const arrRect = await pageV.evaluate(() => {
+    const el = document.querySelector('[data-help-id="add-track"]')?.closest('section, main, .daw-arrangement') || document.body
+    const r = el.getBoundingClientRect()
+    return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+  })
+  roi.push({ t: 0, x: arrRect.x, y: arrRect.y, w: arrRect.w, h: arrRect.h, panel: 'arrangement' })
+  if (TIMELAPSE) {
+    const stepMs = Math.max(110, Math.floor((SECONDS * 1000) / snaps.length))
+    for (let i = 1; i < snaps.length; i++) { await pageV.evaluate(p => (window).__dawDispatch({ type: 'LOAD_PROJECT', project: p }), snaps[i]); await pageV.waitForTimeout(stepMs) }
+    await pageV.waitForTimeout(900)
+  } else {
+    await pageV.evaluate(() => (window).__daw?.play(0)); await pageV.waitForTimeout(SECONDS * 1000); await pageV.evaluate(() => (window).__daw?.stop())
+  }
+  const video = pageV.video(); await ctxV.close()
+  videoPath = video ? await video.path() : null
+  await browser.close()
 }
-const video = pageV.video()
-await ctxV.close() // finalizes the .webm
-const videoPath = video ? await video.path() : null
-await browser.close()
 if (!videoPath || !existsSync(videoPath)) { console.error('video capture failed'); process.exit(1) }
 
 // ── 4 · Assemble the session (video + audio + reasons spread across the clip) ──
@@ -157,14 +196,14 @@ const spread = composerEvents.map((e, i) => ({
 
 const header = {
   started_at: new Date().toISOString(),
-  capture: { path: 'capture.webm', fps: 25, width: VW, height: VH, started_at: new Date().toISOString() },
+  capture: { path: 'capture.webm', fps: 25, width: capW, height: capH, started_at: new Date().toISOString() },
   audio: { path: 'final_mix.wav', sample_rate: wav.sampleRate, duration_s: wav.durationSec, stems: [] },
   musical: csessHeader.musical ?? {
     bpm, key: KEY || spec.scale || null, time_signature: '4/4',
     genre_tags: [spec.genre], instrument_list: spec.tracks.map(t => t.name),
   },
   generation: csessHeader.generation ?? { model: 'generate-and-capture', prompt_or_seed: Number(SEED), total_takes: 3, rejected_takes: 2 },
-  roi_fallback: { x: 0, y: 0, w: VW, h: VH, panel: 'full' },
+  roi_fallback: { x: 0, y: 0, w: capW, h: capH, panel: 'full' },
   outcome: 'completed',
   duration_s: dur,
 }

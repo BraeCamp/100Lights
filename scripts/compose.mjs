@@ -547,9 +547,9 @@ function trackFx(fxRole, pal, genreId, rand, mkId) {
       () => [cp(-17, 4, 1), eq(1, -1, 2), ...opt(0.5, sa(0.16))],
     ],
     bass: [
-      () => [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.35)] : [])],
-      () => [cp(-22, 4, 2), eq(2, -2, 0), ...(heavy ? [sa(0.4)] : [])],
-      () => [sa(0.3), eq(4, 0, -1), cp(-18, 3, 1)],
+      () => [eq(3, -1, 0), cp(-20, 3, 1), ...(heavy ? [sa(0.24)] : [])],
+      () => [cp(-22, 4, 2), eq(2, -2, 0), ...(heavy ? [sa(0.28)] : [])],
+      () => [sa(0.22), eq(4, 0, -1), cp(-18, 3, 1)],
       () => [eq(2, 1, -2), cp(-20, 3, 1.5), dq(120, 3)],
       () => [dq(90, 4), cp(-19, 3, 1), eq(3, -1, -1)],
     ],
@@ -557,7 +557,7 @@ function trackFx(fxRole, pal, genreId, rand, mkId) {
       () => [rv(0.2, 1.8), dl(0.16, 0.5)],
       () => [eq(-1, 1, 2), rv(0.22, 2), ap(0.4)],
       () => [mo(0.35, 'chorus'), rv(0.2, 1.8)],
-      () => [dl(0.2, 0.375, 0.4), rv(0.18, 1.6), ...(lofiish ? [rx(11, 13000)] : [])],
+      () => [dl(0.2, 0.375, 0.4), rv(0.18, 1.6), ...(lofiish ? [rx(12, 15500)] : [])],
       () => [rv(0.25, 2.4), ap(0.5, 0.3), ...opt(0.4, dl(0.15, 0.75))],
       () => [mo(0.35, 'phaser'), dl(0.18, 0.5), rv(0.2, 1.8)],
     ],
@@ -1006,12 +1006,17 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     arp:     { name: 'Arp',     instr: NONE,           preset: arpPreset,     rf: RF.lead,          pan: -0.2,  vol: 0.4,  fx: 'keys' },
     counter: { name: 'Counter', instr: NONE,           preset: counterPreset, rf: RF.lead,          pan: -0.08, vol: 0.4,  fx: 'lead' },
   }
-  const roleList = [...(genre.drums !== 'none' ? ['drums'] : []), 'bass', ...rand.pick(ENSEMBLES)]
+  let ens = rand.pick(ENSEMBLES)
+  // Cap voices sharing the lead register (lead/arp/counter) at TWO. The 3-voice
+  // stacks were the main source of clashing, over-dense melodies in one octave.
+  const leadReg = ens.filter(r => r === 'lead' || r === 'arp' || r === 'counter')
+  if (leadReg.length > 2) { const drop = new Set(leadReg.slice(2)); ens = ens.filter(r => !drop.has(r)) }
+  const roleList = [...(genre.drums !== 'none' ? ['drums'] : []), 'bass', ...ens]
   const TK = roleList.map(r => ({ key: r, ...ROLE[r] }))
   const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.fx, pal, genreId, rand, () => uid('e')) }))
   // Style signature — stamp the artist flavor onto the racks.
   if (opts.sig === 'space') for (const t of tracks) if (/Pad|Lead/.test(t.name)) { const rv = t.effects.find(e => e.type === 'reverb'); if (rv) { rv.params.wet = Math.min(0.75, rv.params.wet + 0.22); rv.params.decay = Math.max(rv.params.decay, 3.6) } else t.effects.push({ id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.5, decay: 3.8, preDelay: 0.03 } }) }
-  if (opts.sig === 'crush') for (const t of tracks) if (/Bass|Lead/.test(t.name)) { if (!t.effects.some(e => e.type === 'saturator')) t.effects.unshift({ id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.5, color: 0.4, output: 0 } }); if (!t.effects.some(e => e.type === 'redux')) t.effects.push({ id: uid('e'), type: 'redux', params: { enabled: true, bitDepth: 9, sampleRate: 14000 } }) }
+  if (opts.sig === 'crush') for (const t of tracks) if (/Bass|Lead/.test(t.name)) { if (!t.effects.some(e => e.type === 'saturator')) t.effects.unshift({ id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.32, color: 0.35, output: 0 } }); if (!t.effects.some(e => e.type === 'redux')) t.effects.push({ id: uid('e'), type: 'redux', params: { enabled: true, bitDepth: 11, sampleRate: 16000 } }) }
   if (opts.sig === 'pump') for (const t of tracks) if (/Keys|Pad/.test(t.name)) { if (!t.effects.some(e => e.type === 'chorus')) t.effects.push({ id: uid('e'), type: 'chorus', params: { enabled: true, type: 'phaser', rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.35, stages: 4 } }) }
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
@@ -1150,7 +1155,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
       else if (!has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', secRoot, scale, arpDir, arpRate); push(c) }
     }
     // Counter — a second melodic line at peaks (its own hook, lower register)
-    if (has('counter') && peak && e >= 0.9 && !sparse) { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 60, 'melody', secRoot, scale); humanizeClip(c, humanize, rand); push(c) }
+    if (has('counter') && peak && e >= 0.9 && !sparse) { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 48, 'melody', secRoot, scale); humanizeClip(c, humanize, rand); push(c) }
     bar += sec.bars
   }
   const totalBeats = bar * 4
