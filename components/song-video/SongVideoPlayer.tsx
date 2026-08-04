@@ -11,7 +11,7 @@ import type { DawProject } from '@/lib/daw-types'
 // the song plays — then preview, download, or send it to the content queue.
 
 type Note = { tr: number; p: number; s: number; d: number; v: number }
-type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string; kind?: string }[]; notes: Note[]; loopBeats?: number }
+type SongData = { tempo: number; keyLabel?: string; genre?: string; tracks: { name: string; color: string; kind?: string; vol?: number; muted?: boolean }[]; notes: Note[]; loopBeats?: number }
 
 const THEMES = [
   { id: 'midnight', name: 'Midnight', accent: '#a78bfa', bg: ['#0a0912', '#050409'] },
@@ -46,6 +46,11 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   // uses the actual mix instead of the preview synth.
   const [realUrl, setRealUrl] = useState<string | null>(null)
   const [rendering, setRendering] = useState(false)
+  // Default to the real mix when we have the project to bounce it from.
+  const [realMode, setRealMode] = useState<boolean>(!!dawProject)
+  const renderToken = useRef(0)      // discards results from a superseded window
+  const renderingRef = useRef(false) // single-flight (one bounce at a time)
+  const latestWin = useRef({ s: 0, w: 32 })
 
   const [fmt, setFmt] = useState('falling-notes')
   const [playing, setPlaying] = useState(false)
@@ -104,12 +109,20 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fmt, windowed, realUrl])
 
-  // The bounce is for one specific section — if you change the section, drop it
-  // so playback falls back to the synth and prompts a re-bounce.
+  useEffect(() => { latestWin.current = { s: start, w: winBeats } }, [start, winBeats])
+
+  // Auto-bounce the real mix on load and whenever the section (or mode) settles.
+  // The current bounce is window-specific, so a change drops it (synth plays
+  // instantly meanwhile) and a fresh render is scheduled — debounced so scrubbing
+  // the start doesn't fire a render per tick.
   useEffect(() => {
     setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+    if (!dawProject || !realMode) return
+    const token = ++renderToken.current
+    const t = setTimeout(() => { void bounce(start, winBeats, token) }, 700)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, winBeats])
+  }, [start, winBeats, realMode, dawProject])
 
   // Look edits apply live (no remount, no playback restart).
   useEffect(() => {
@@ -195,24 +208,36 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     setTimeout(() => setStatus(null), 4000)
   }
 
-  // Bounce the real project audio for the current section and swap it in for the
-  // synth. Heavy (loads the audio engine + samples, real-time render), so it's
-  // opt-in and lazy-imported; falls back to the synth on any failure.
-  async function useRealAudio() {
-    if (!dawProject || rendering || busy) return
+  // Bounce the real project audio for a section and swap it in for the synth.
+  // Heavy (loads the audio engine + samples, real-time render), lazy-imported,
+  // single-flight, and result-guarded so a superseded window is discarded. Falls
+  // back to the synth on any failure.
+  async function bounce(s: number, w: number, token: number) {
+    if (!dawProject || renderingRef.current) return
+    renderingRef.current = true
     setRendering(true)
-    const est = Math.round(winBeats * (60 / song.tempo) + 3)
+    const est = Math.round(w * (60 / song.tempo) + 3)
     setStatus(`Rendering real mix… ~${est}s`)
     try {
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-      const blob = await renderProjectAudioBlob(dawProject, { startBeat: start, endBeat: start + winBeats, userId })
-      const url = URL.createObjectURL(blob)
-      if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
-      setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
-      setStatus('Real mix ✓')
-    } catch { setStatus('Audio render failed — using synth') }
-    setRendering(false)
-    setTimeout(() => setStatus(null), 3000)
+      const blob = await renderProjectAudioBlob(dawProject, { startBeat: s, endBeat: s + w, userId })
+      if (token === renderToken.current) {
+        const url = URL.createObjectURL(blob)
+        if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
+        setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+        setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 2500)
+      }
+    } catch {
+      if (token === renderToken.current) { setStatus('Real mix failed — using preview synth'); setTimeout(() => setStatus(null), 3500) }
+    } finally {
+      renderingRef.current = false
+      setRendering(false)
+      // A newer window was requested while this one rendered — render it now.
+      if (token !== renderToken.current && realMode && dawProject) {
+        const { s: ls, w: lw } = latestWin.current
+        void bounce(ls, lw, renderToken.current)
+      }
+    }
   }
 
   const secs = (winBeats * (60 / song.tempo)).toFixed(1)
@@ -295,10 +320,14 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         {dawProject && (
           <Section label="Audio">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={useRealAudio} disabled={rendering || busy} style={{ ...chip(!!realUrl, accentColor), opacity: rendering ? 0.6 : 1 }}>
-                {rendering ? 'Rendering…' : realUrl ? 'Real mix ✓ — re-bounce' : 'Use real mix'}
-              </button>
-              <span style={lbl}>{realUrl ? 'video uses your actual audio' : 'preview uses the synth — bounce this section for the real mix'}</span>
+              <button onClick={() => setRealMode(true)} style={chip(realMode, accentColor)}>Real mix</button>
+              <button onClick={() => setRealMode(false)} style={chip(!realMode, accentColor)}>Preview synth</button>
+              {realMode && (
+                <button onClick={() => { const token = ++renderToken.current; void bounce(start, winBeats, token) }} disabled={rendering || busy} style={{ ...chip(false, accentColor), opacity: rendering ? 0.6 : 1 }}>
+                  {rendering ? 'Rendering…' : 'Re-render'}
+                </button>
+              )}
+              <span style={lbl}>{rendering ? 'rendering your real mix…' : realMode ? (realUrl ? 'using your real mix ✓' : 'real mix on — renders on load') : 'fast preview synth'}</span>
             </div>
           </Section>
         )}
@@ -315,8 +344,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
       <p style={{ fontSize: 11.5, color: 'var(--text-muted,#8b88a8)', textAlign: 'center', margin: 0, lineHeight: 1.5 }}>
         {canPublish
-          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Hit <b>Use real mix</b> under Audio to bounce your actual song audio into the video instead of the synth.</>
-          : <>Preview uses the synth.</>}
+          ? <><b>Send to queue</b> files this render + a drafted caption in the admin Content queue for review + publish. Audio defaults to your <b>real mix</b> (bounced on load); the synth is an instant fallback while it renders or if you switch to it.</>
+          : <>Audio uses the preview synth.</>}
       </p>
     </div>
   )
