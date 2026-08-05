@@ -1,6 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import type { IconType } from 'react-icons'
+import { LuPlay, LuPause, LuSquare, LuCircle, LuRepeat, LuRewind, LuGauge, LuFilter, LuSlidersHorizontal, LuAudioWaveform, LuDices, LuShare2 } from 'react-icons/lu'
+import { FiPlay, FiPause, FiSquare, FiCircle, FiRepeat, FiRewind, FiActivity, FiFilter, FiSliders, FiShuffle, FiShare2 } from 'react-icons/fi'
+import { PiPlay, PiPause, PiStop, PiRecord, PiRepeat, PiRewind, PiMetronome, PiGauge, PiFunnel, PiSlidersHorizontal, PiWaveform, PiDiceFive, PiShareNetwork } from 'react-icons/pi'
+import { TbPlayerPlay, TbPlayerPause, TbPlayerStop, TbPlayerRecord, TbRepeat, TbPlayerTrackPrev, TbMetronome, TbGauge, TbFilter, TbAdjustmentsHorizontal, TbWaveSine, TbDice5, TbShare } from 'react-icons/tb'
 
 // ── /test — private sound-settings prototype sandbox ─────────────────────────
 // Phase 1 of the sound-settings rebuild: HEAR the difference between dry and
@@ -46,8 +51,25 @@ export default function TestPage() {
     )
   }
 
-  return <SoundLab />
+  return <Sandbox />
 }
+
+// ── Scrollable multi-section sandbox ─────────────────────────────────────────
+// Each experiment gets its own section; the sticky nav jumps between them.
+function Sandbox() {
+  return (
+    <div>
+      <nav style={{ position: 'sticky', top: 0, zIndex: 10, display: 'flex', gap: 8, padding: '10px 16px', background: 'rgba(10,10,15,0.85)', backdropFilter: 'blur(8px)', borderBottom: '1px solid var(--border, #2a2a3a)' }}>
+        <strong style={{ fontSize: 13, marginRight: 8 }}>Sound Lab</strong>
+        <a href="#sound" style={navLink}>Wet / Dry</a>
+        <a href="#symbols" style={navLink}>Symbols</a>
+      </nav>
+      <section id="sound" style={{ scrollMarginTop: 56 }}><SoundLab /></section>
+      <section id="symbols" style={{ scrollMarginTop: 56 }}><SymbolPacks /></section>
+    </div>
+  )
+}
+const navLink: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: 'var(--accent-light, #c4b5fd)', textDecoration: 'none', padding: '4px 8px', borderRadius: 6, background: 'var(--bg-card, #1a1a24)' }
 
 // ── Wet/dry sound lab ────────────────────────────────────────────────────────
 
@@ -179,6 +201,65 @@ function SoundLab() {
     </div>
   )
 }
+
+// ── Symbol packs previewer ───────────────────────────────────────────────────
+type SymRow = { label: string; note?: boolean; icons: (IconType | null)[] }
+const SYM_PACKS = ['Lucide', 'Feather', 'Phosphor', 'Tabler']
+const SYM_ROWS: SymRow[] = [
+  { label: 'Play',         icons: [LuPlay, FiPlay, PiPlay, TbPlayerPlay] },
+  { label: 'Pause',        icons: [LuPause, FiPause, PiPause, TbPlayerPause] },
+  { label: 'Stop',         icons: [LuSquare, FiSquare, PiStop, TbPlayerStop] },
+  { label: 'Record',       icons: [LuCircle, FiCircle, PiRecord, TbPlayerRecord] },
+  { label: 'Loop',         icons: [LuRepeat, FiRepeat, PiRepeat, TbRepeat] },
+  { label: 'Rewind',       icons: [LuRewind, FiRewind, PiRewind, TbPlayerTrackPrev] },
+  { label: 'Metronome',    note: true, icons: [null, null, PiMetronome, TbMetronome] },
+  { label: 'Tuner (gauge)', note: true, icons: [LuGauge, FiActivity, PiGauge, TbGauge] },
+  { label: 'Filter',       icons: [LuFilter, FiFilter, PiFunnel, TbFilter] },
+  { label: 'FX / sliders', icons: [LuSlidersHorizontal, FiSliders, PiSlidersHorizontal, TbAdjustmentsHorizontal] },
+  { label: 'EQ / wave',    icons: [LuAudioWaveform, FiActivity, PiWaveform, TbWaveSine] },
+  { label: 'Randomize',    icons: [LuDices, FiShuffle, PiDiceFive, TbDice5] },
+  { label: 'Share',        icons: [LuShare2, FiShare2, PiShareNetwork, TbShare] },
+]
+
+function SymbolPacks() {
+  const [size, setSize] = useState(24)
+  return (
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px 100px' }}>
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent, #a78bfa)' }}>Sound Lab · Symbols</div>
+      <h1 style={{ fontSize: 24, fontWeight: 800, margin: '6px 0 4px' }}>2D monochrome icon packs</h1>
+      <p style={{ fontSize: 13, color: 'var(--text-muted, #a3a2b5)', lineHeight: 1.5, margin: '0 0 16px' }}>
+        The editor&apos;s symbols across four flat/monochrome packs (Lucide is what we use today). Tell me which pack reads best. Note the two <b style={{ color: '#f59e0b' }}>highlighted</b> rows: Phosphor and Tabler have a real, distinct <b>metronome</b> and a separate <b>gauge/needle</b> for the tuner — which fixes those two looking alike.
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+        <span style={lbl}>Size</span>
+        <input type="range" min={16} max={40} value={size} onChange={e => setSize(Number(e.target.value))} style={{ accentColor: 'var(--accent, #a78bfa)' }} />
+        <span style={{ fontSize: 11, color: 'var(--text-muted, #8b88a8)' }}>{size}px</span>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 460 }}>
+          <thead>
+            <tr>
+              <th style={{ ...symTh, textAlign: 'left' }}>Concept</th>
+              {SYM_PACKS.map(p => <th key={p} style={symTh}>{p}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {SYM_ROWS.map(row => (
+              <tr key={row.label} style={{ background: row.note ? 'rgba(245,158,11,0.09)' : undefined }}>
+                <td style={{ ...symTd, textAlign: 'left', fontWeight: 600 }}>{row.label}</td>
+                {row.icons.map((Icon, i) => (
+                  <td key={i} style={symTd}>{Icon ? <Icon size={size} /> : <span style={{ color: 'var(--text-muted, #8b88a8)', opacity: 0.4 }}>—</span>}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+const symTh: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted, #8b88a8)', padding: '8px 6px', textAlign: 'center', borderBottom: '1px solid var(--border, #2a2a3a)' }
+const symTd: React.CSSProperties = { padding: '12px 6px', textAlign: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-primary, #f1f0ff)' }
 
 const pill: React.CSSProperties = { padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border, #2a2a3a)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
 const lbl: React.CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted, #8b88a8)' }
