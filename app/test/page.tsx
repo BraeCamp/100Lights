@@ -73,26 +73,29 @@ const navLink: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: 'va
 
 // ── Wet/dry sound lab ────────────────────────────────────────────────────────
 
-type Mode = 'clean' | 'dry' | 'wet'
-type DryFx = 'lowpass' | 'distortion'
-type WetFx = 'reverb' | 'delay'
+type Fx = 'reverb' | 'delay' | 'lowpass' | 'distortion'
+const FX_LIST: { id: Fx; name: string; hint: string; defWet: number }[] = [
+  { id: 'reverb',     name: 'Reverb',     hint: 'adds a room + tail', defWet: 0.5 },
+  { id: 'delay',      name: 'Delay',      hint: 'adds echoes',        defWet: 0.5 },
+  { id: 'lowpass',    name: 'Low-pass',   hint: 'darkens the tone',   defWet: 1 },
+  { id: 'distortion', name: 'Distortion', hint: 'dirties the tone',   defWet: 1 },
+]
 
 function SoundLab() {
   const [playing, setPlaying] = useState(false)
-  const [mode, setMode] = useState<Mode>('clean')
-  const [dryFx, setDryFx] = useState<DryFx>('lowpass')
-  const [wetFx, setWetFx] = useState<WetFx>('reverb')
-  const [amount, setAmount] = useState(0.5)
+  const [fx, setFx] = useState<Fx>('reverb')
+  const [wet, setWet] = useState(0.5)
+  const [bypass, setBypass] = useState(false)   // A/B: true = hear the dry signal
 
   const ctxRef = useRef<AudioContext | null>(null)
   const srcRef = useRef<GainNode | null>(null)
   const gRef = useRef<{ clean: GainNode; lp: GainNode; dist: GainNode; rev: GainNode; del: GainNode } | null>(null)
   const stopSrcRef = useRef<(() => void) | null>(null)
 
-  // ONE fixed graph — every path is always connected; we only raise/lower gains.
-  // The source fans out to: clean, two dry effects (low-pass, distortion), and two
-  // wet effects (reverb, delay). Nothing is ever rebuilt, so the clean signal can
-  // never vanish (the "heard wet, no dry" bug).
+  // ONE fixed graph — the source fans out to a clean path plus one path per effect
+  // (low-pass, distortion, reverb, delay), all always connected. We only change
+  // gains, so the dry signal can never vanish. clean = 1 − wet; the SELECTED
+  // effect's path = wet; the others sit at 0.
   function ensureGraph() {
     if (ctxRef.current) return ctxRef.current
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
@@ -125,17 +128,16 @@ function SoundLab() {
   function applyGains(ctx: AudioContext | null = ctxRef.current) {
     const g = gRef.current; if (!g || !ctx) return
     const t = ctx.currentTime
+    const w = bypass ? 0 : wet
     const set = (n: GainNode, v: number) => n.gain.setTargetAtTime(v, t, 0.015)
-    // Clean is present in EVERY mode except pure dry-effect (where the filtered /
-    // distorted version replaces it). A wet effect keeps the clean sound + adds space.
-    set(g.clean, mode === 'dry' ? 0 : 1)
-    set(g.lp,   mode === 'dry' && dryFx === 'lowpass' ? 1 : 0)
-    set(g.dist, mode === 'dry' && dryFx === 'distortion' ? 1 : 0)
-    set(g.rev,  mode === 'wet' && wetFx === 'reverb' ? amount : 0)
-    set(g.del,  mode === 'wet' && wetFx === 'delay' ? amount : 0)
+    set(g.clean, 1 - w)                              // dry — always present
+    set(g.lp,   fx === 'lowpass'    ? w : 0)
+    set(g.dist, fx === 'distortion' ? w : 0)
+    set(g.rev,  fx === 'reverb'     ? w : 0)
+    set(g.del,  fx === 'delay'      ? w : 0)
   }
 
-  useEffect(() => { applyGains() }, [mode, dryFx, wetFx, amount]) // eslint-disable-line
+  useEffect(() => { applyGains() }, [fx, wet, bypass]) // eslint-disable-line
   useEffect(() => () => { stopSrcRef.current?.(); ctxRef.current?.close?.().catch(() => {}) }, [])
 
   function toggle() {
@@ -143,58 +145,47 @@ function SoundLab() {
     if (playing) { stopSrcRef.current?.(); stopSrcRef.current = null; setPlaying(false) }
     else { stopSrcRef.current = runRiff(ctx, srcRef.current!); setPlaying(true) }
   }
+  function pickFx(id: Fx) { setFx(id); setWet(FX_LIST.find(f => f.id === id)!.defWet); setBypass(false) }
 
-  const modeBtn = (m: Mode, label: string, sub: string) => (
-    <button onClick={() => setMode(m)} style={{ ...pill, flex: 1, padding: '12px 8px', display: 'grid', gap: 3, background: mode === m ? 'var(--accent, #a78bfa)' : 'var(--bg-card, #1a1a24)', color: mode === m ? 'var(--accent-contrast, #0a0812)' : 'inherit', border: `1px solid ${mode === m ? 'var(--accent, #a78bfa)' : 'var(--border, #2a2a3a)'}` }}>
-      <span style={{ fontWeight: 800, fontSize: 13 }}>{label}</span>
-      <span style={{ fontSize: 10, opacity: 0.85 }}>{sub}</span>
-    </button>
-  )
-  const subBtn = (active: boolean, label: string, onClick: () => void) => (
-    <button onClick={onClick} style={{ ...pill, flex: 1, background: active ? 'var(--accent-subtle, rgba(167,139,250,0.16))' : 'var(--bg-card, #1a1a24)', border: `1px solid ${active ? 'var(--accent, #a78bfa)' : 'var(--border, #2a2a3a)'}`, color: active ? 'var(--accent-light, #c4b5fd)' : 'var(--text-secondary, #b5b3c6)' }}>{label}</button>
-  )
+  const chosen = FX_LIST.find(f => f.id === fx)!
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '40px 20px 80px' }}>
       <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent, #a78bfa)' }}>Sound Lab · Wet / Dry</div>
-      <h1 style={{ fontSize: 24, fontWeight: 800, margin: '6px 0 4px' }}>Dry effect vs wet effect</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 800, margin: '6px 0 4px' }}>Each effect, dry vs wet</h1>
       <p style={{ fontSize: 13, color: 'var(--text-muted, #a3a2b5)', lineHeight: 1.5, margin: '0 0 22px' }}>
-        Play the loop and flip between the three. <b>Clean</b> = the raw sound. A <b>dry effect</b> (filter/distortion) changes the sound itself and adds nothing. A <b>wet effect</b> (reverb/delay) keeps the sound and adds space on top.
+        Pick an effect, then flip <b>Dry / Wet</b> to hear it off vs on, and drag <b>Wetness</b> to blend. Every effect works the same way — dry is the clean sound, wet is the effect applied.
       </p>
 
       <button onClick={toggle} style={{ ...pill, background: playing ? 'var(--accent, #a78bfa)' : 'var(--bg-card, #1a1a24)', color: playing ? 'var(--accent-contrast, #0a0812)' : 'inherit', width: 120, fontSize: 14, fontWeight: 700 }}>
         {playing ? '■ Stop' : '▶ Play'}
       </button>
 
-      <div style={{ display: 'flex', gap: 8, margin: '20px 0 0' }}>
-        {modeBtn('clean', 'Clean', 'no effect')}
-        {modeBtn('dry', 'Dry effect', 'tone changes')}
-        {modeBtn('wet', 'Wet effect', 'space added')}
+      <div style={{ display: 'grid', gap: 8, margin: '22px 0 0' }}>
+        <label style={lbl}>Effect</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {FX_LIST.map(f => (
+            <button key={f.id} onClick={() => pickFx(f.id)} style={{ ...pill, flex: '1 1 auto', background: fx === f.id ? 'var(--accent-subtle, rgba(167,139,250,0.16))' : 'var(--bg-card, #1a1a24)', border: `1px solid ${fx === f.id ? 'var(--accent, #a78bfa)' : 'var(--border, #2a2a3a)'}`, color: fx === f.id ? 'var(--accent-light, #c4b5fd)' : 'var(--text-secondary, #b5b3c6)' }}>
+              {f.name}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted, #8b88a8)' }}><b style={{ color: 'var(--accent-light,#c4b5fd)' }}>{chosen.name}</b> — {chosen.hint}.</div>
       </div>
 
-      {mode === 'dry' && (
-        <div style={{ display: 'grid', gap: 8, margin: '14px 0', padding: 14, borderRadius: 12, background: 'var(--bg-surface,#14141c)', border: '1px solid var(--border,#2a2a3a)' }}>
-          <label style={lbl}>Dry effect — transforms the signal, adds no tail</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {subBtn(dryFx === 'lowpass', 'Low-pass (darker)', () => setDryFx('lowpass'))}
-            {subBtn(dryFx === 'distortion', 'Distortion (dirtier)', () => setDryFx('distortion'))}
-          </div>
+      <div style={{ display: 'grid', gap: 10, margin: '18px 0', padding: 16, borderRadius: 12, background: 'var(--bg-surface, #14141c)', border: '1px solid var(--border, #2a2a3a)' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setBypass(true)} style={{ ...pill, flex: 1, fontWeight: 700, background: bypass ? '#334155' : 'var(--bg-card, #1a1a24)', color: bypass ? '#fff' : 'inherit', border: `1px solid ${bypass ? '#475569' : 'var(--border, #2a2a3a)'}` }}>Dry (off)</button>
+          <button onClick={() => setBypass(false)} style={{ ...pill, flex: 1, fontWeight: 700, background: !bypass ? 'var(--accent, #a78bfa)' : 'var(--bg-card, #1a1a24)', color: !bypass ? 'var(--accent-contrast, #0a0812)' : 'inherit', border: `1px solid ${!bypass ? 'var(--accent, #a78bfa)' : 'var(--border, #2a2a3a)'}` }}>Wet (on)</button>
         </div>
-      )}
-      {mode === 'wet' && (
-        <div style={{ display: 'grid', gap: 10, margin: '14px 0', padding: 14, borderRadius: 12, background: 'var(--bg-surface,#14141c)', border: '1px solid var(--border,#2a2a3a)' }}>
-          <label style={lbl}>Wet effect — the clean sound stays, space is added</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {subBtn(wetFx === 'reverb', 'Reverb (room)', () => setWetFx('reverb'))}
-            {subBtn(wetFx === 'delay', 'Delay (echo)', () => setWetFx('delay'))}
-          </div>
-          <label style={lbl}>Amount — {Math.round(amount * 100)}%</label>
-          <input type="range" min={0} max={1} step={0.01} value={amount} onChange={e => setAmount(Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--accent, #a78bfa)' }} />
-        </div>
-      )}
+        <label style={{ ...lbl, opacity: bypass ? 0.4 : 1 }}>Wetness — {Math.round(wet * 100)}%  <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(dry ← → wet)</span></label>
+        <input type="range" min={0} max={1} step={0.01} value={wet} disabled={bypass}
+          onChange={e => { setWet(Number(e.target.value)); setBypass(false) }}
+          style={{ width: '100%', accentColor: 'var(--accent, #a78bfa)', opacity: bypass ? 0.4 : 1 }} />
+      </div>
 
-      <p style={{ fontSize: 11.5, color: 'var(--text-muted, #8b88a8)', lineHeight: 1.6, marginTop: 20 }}>
-        Clean → Dry effect: the sound itself changes, nothing added. Clean → Wet effect: the sound is unchanged but sits in a space. That&apos;s the whole dry-vs-wet distinction — and why a wet effect has an <b>amount</b> (how much space) while a dry effect just changes the tone.
+      <p style={{ fontSize: 11.5, color: 'var(--text-muted, #8b88a8)', lineHeight: 1.6 }}>
+        Same control for every effect: <b>Dry</b> is the clean sound, <b>Wet</b> is the effect applied, Wetness blends between. This is the model we&apos;ll carry into the rebuild — one dry/wet per effect.
       </p>
     </div>
   )
