@@ -708,6 +708,23 @@ export default function VideoEditor({
   const [bounceStatus, setBounceStatus] = useState<'idle' | 'working' | 'error'>('idle')
   // Set during load when the saved audio is newer than the linked mix bounce
   const pendingMixRefreshRef = useRef<string | null>(null)
+  // Non-video module data carried through video saves. The projects API
+  // replaces `data` wholesale, so a video-module save that omitted these
+  // fields would WIPE the audio module's arrangement from the account. Always
+  // the data AS LOADED — never the live collab replica, so a diverged replica
+  // can't corrupt saved audio.
+  const carryoverRef = useRef<Pick<CfProjFile, 'dawProject' | 'audioMedia' | 'audioMode' | 'podcastMeta' | 'moduleSavedAt'>>({})
+  function withCarryover(project: CfProjFile): CfProjFile {
+    const c = carryoverRef.current
+    return {
+      ...project,
+      dawProject:  project.dawProject  ?? c.dawProject,
+      audioMedia:  project.audioMedia  ?? c.audioMedia,
+      audioMode:   project.audioMode   ?? c.audioMode,
+      podcastMeta: project.podcastMeta ?? c.podcastMeta,
+      moduleSavedAt: { ...c.moduleSavedAt, ...project.moduleSavedAt },
+    }
+  }
   // DAW tracks that carry clips — the link picker's options
   const [dawTracks, setDawTracks] = useState<Array<{ id: string; name: string }>>([])
   function deriveDawTracks(daw: import('@/lib/daw-types').DawProject): Array<{ id: string; name: string }> {
@@ -1119,6 +1136,13 @@ export default function VideoEditor({
       dawProjectRef.current = cfproj.dawProject ?? null
       setHasDawProject(!!cfproj.dawProject)
       setDawTracks(cfproj.dawProject ? deriveDawTracks(cfproj.dawProject) : [])
+      carryoverRef.current = {
+        dawProject: cfproj.dawProject,
+        audioMedia: cfproj.audioMedia,
+        audioMode: cfproj.audioMode,
+        podcastMeta: cfproj.podcastMeta,
+        moduleSavedAt: cfproj.moduleSavedAt,
+      }
       // Linked DAW mix older than the audio module's last save → auto-refresh.
       {
         const audioAt = cfproj.moduleSavedAt?.audio
@@ -1189,7 +1213,7 @@ export default function VideoEditor({
     const snapshot = buildSnapshot()   // captures current state right now
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
-      writeAutosave(savedProjectId, serialize(snapshot))
+      writeAutosave(savedProjectId, withCarryover(serialize(snapshot)))
       setIsDirty(false) // data is safely recoverable now — don't nag on unload
     }, 5000)
 
@@ -1764,6 +1788,20 @@ export default function VideoEditor({
   const sameSel = (a?: string[], b?: string[]) => [...(a ?? [])].sort().join(',') === [...(b ?? [])].sort().join(',')
   const dawMixBusyRef = useRef(false)
 
+  // Re-uploads of a linked mix wait for the edits to settle (8 s after the
+  // last refresh) so a burst of live changes doesn't push transient renders
+  // to R2. The blob URL is live immediately either way.
+  const linkedUploadTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  function scheduleLinkedUpload(mediaId: string, file: File) {
+    const timers = linkedUploadTimersRef.current
+    const prior = timers.get(mediaId)
+    if (prior) clearTimeout(prior)
+    timers.set(mediaId, setTimeout(() => {
+      timers.delete(mediaId)
+      void uploadMediaToR2(file, mediaId)
+    }, 8000))
+  }
+
   async function refreshDawMix(trackIds?: string[], stamp?: string) {
     const daw = dawProjectRef.current
     if (!daw || dawMixBusyRef.current) return
@@ -1776,9 +1814,16 @@ export default function VideoEditor({
   }
 
   /** Re-render EVERY linked selection (live edits, stale-on-load). */
+  const mixRerunPendingRef = useRef(false)
   async function refreshAllDawMixes(stamp?: string) {
     const daw = dawProjectRef.current
-    if (!daw || dawMixBusyRef.current) return
+    if (!daw) return
+    if (dawMixBusyRef.current) {
+      // An edit landed mid-render — run again when this pass finishes so the
+      // final audio state is never silently skipped.
+      mixRerunPendingRef.current = true
+      return
+    }
     const selections: Array<string[] | undefined> = []
     for (const i of timelineItemsRef.current) {
       if (i.dawMixLinked && !selections.some(s => sameSel(s, i.dawMixTracks))) selections.push(i.dawMixTracks)
@@ -1790,6 +1835,10 @@ export default function VideoEditor({
       for (const sel of selections) await renderDawSelection(daw, sel, stampVal)
     } finally {
       dawMixBusyRef.current = false
+      if (mixRerunPendingRef.current) {
+        mixRerunPendingRef.current = false
+        void refreshAllDawMixesRef.current()
+      }
     }
   }
 
@@ -1821,14 +1870,16 @@ export default function VideoEditor({
 
       const linked = timelineItemsRef.current.find(i => i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))
       if (linked) {
-        // Replace in place: same media item, same clip — new audio.
+        // Replace in place: same media item, same clip — new audio. `file`
+        // must follow too: the audio-only ffmpeg export path reads it.
         const media = mediaItemsRef.current.find(m => m.url === linked.url)
         const prevUrl = linked.url
         if (media) {
           setMediaItems(prev => prev.map(m => m.id === media.id
-            ? { ...m, url, duration: dur, peaks: undefined, uploadStatus: 'uploading' as const }
+            ? { ...m, url, file, duration: dur, peaks: undefined, uploadStatus: 'uploading' as const }
             : m))
-          uploadMediaToR2(file, media.id)
+          // Live edits arrive in bursts — upload only the settled render.
+          scheduleLinkedUpload(media.id, file)
         }
         setTimelineItems(prev => prev.map(i => {
           if (!(i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))) return i
@@ -1884,7 +1935,12 @@ export default function VideoEditor({
   function handleLiveDawProject(project: import('@/lib/daw-types').DawProject, live: boolean) {
     dawProjectRef.current = project
     setHasDawProject(true)
-    setDawTracks(deriveDawTracks(project))
+    // Guard: the track list rarely changes — don't re-render per action.
+    const derived = deriveDawTracks(project)
+    setDawTracks(prev =>
+      prev.length === derived.length && prev.every((t, i) => t.id === derived[i].id && t.name === derived[i].name)
+        ? prev
+        : derived)
     if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
     liveMixTimerRef.current = setTimeout(() => {
       // Only auto-render when a mix is linked (or adopting fresher joined
@@ -1900,6 +1956,13 @@ export default function VideoEditor({
     pendingMixRefreshRef.current = null
     void refreshAllDawMixesRef.current(stamp)
   }, [hasDawProject]) // eslint-disable-line
+
+  // Sync timers die with the editor.
+  useEffect(() => () => {
+    if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
+    for (const t of linkedUploadTimersRef.current.values()) clearTimeout(t)
+    linkedUploadTimersRef.current.clear()
+  }, [])
 
   // Blade split: split a clip at a given timeline time
   function handleSplitItem(id: string, atTime: number) {
@@ -2369,6 +2432,13 @@ export default function VideoEditor({
   function handleRestore() {
     if (!recovery) return
     const loaded = deserialize(recovery.cfproj)
+    carryoverRef.current = {
+      dawProject: recovery.cfproj.dawProject ?? carryoverRef.current.dawProject,
+      audioMedia: recovery.cfproj.audioMedia ?? carryoverRef.current.audioMedia,
+      audioMode: recovery.cfproj.audioMode ?? carryoverRef.current.audioMode,
+      podcastMeta: recovery.cfproj.podcastMeta ?? carryoverRef.current.podcastMeta,
+      moduleSavedAt: recovery.cfproj.moduleSavedAt ?? carryoverRef.current.moduleSavedAt,
+    }
     const loadedTracks = loaded.tracks.filter(t => t.type !== 'caption')
     setLocalProjectName(loaded.name)
     setTracks(loadedTracks)
@@ -2438,7 +2508,7 @@ export default function VideoEditor({
     try {
       const snapshot = buildSnapshot()
       snapshot.name = nameToUse  // use confirmed name even if state hasn't updated yet
-      const project: CfProjFile = serialize(snapshot)
+      const project: CfProjFile = withCarryover(serialize(snapshot))
       project.modules = opts?.modulesOverride ?? activeModules
       project.moduleSavedAt = { ...project.moduleSavedAt, video: new Date().toISOString() }
       const res = await fetch('/api/projects', {
@@ -2481,7 +2551,7 @@ export default function VideoEditor({
     try {
       const snapshot = buildSnapshot()
       snapshot.name = nameToUse
-      const project = serialize(snapshot)
+      const project = withCarryover(serialize(snapshot))
       project.modules = activeModules
       await fetch(`/api/projects/${projectId}/autosave`, {
         method: 'PUT',
@@ -2496,7 +2566,7 @@ export default function VideoEditor({
   async function downloadProjectFile() {
     setShowSaveMenu(false)
     try {
-      const project: CfProjFile = serialize(buildSnapshot())
+      const project: CfProjFile = withCarryover(serialize(buildSnapshot()))
       await saveProjectToFile(project, undefined)
     } catch {
       // User cancelled the picker — not an error
@@ -2511,7 +2581,7 @@ export default function VideoEditor({
     setSaveStatus('saving')
     try {
       const snap = buildSnapshot()
-      const project: CfProjFile = serialize({ ...snap, id: crypto.randomUUID(), name: newName.trim() })
+      const project: CfProjFile = withCarryover(serialize({ ...snap, id: crypto.randomUUID(), name: newName.trim() }))
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

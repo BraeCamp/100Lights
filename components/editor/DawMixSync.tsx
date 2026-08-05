@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { RoomProvider, useBroadcastEvent, useEventListener, useOthers, useSelf } from '@/lib/liveblocks.config'
 import { reducer, type DawAction } from '@/lib/daw-state'
+import { projectFingerprint } from '@/components/editor/daw/CollabPresence'
 import type { DawProject } from '@/lib/daw-types'
 
 /**
@@ -21,6 +22,7 @@ import type { DawProject } from '@/lib/daw-types'
 // Mirrors CollabPresence's protocol constants.
 const SYNC_WINDOW_MS = 8000
 const SYNC_MAX_BYTES = 900_000
+const FP_QUIET_MS = 5_000
 
 interface Props {
   projectId: string
@@ -37,6 +39,8 @@ function SyncBridge({ getProject, onProject }: Omit<Props, 'projectId'>) {
   const selfIdRef = useRef<number | null>(null)
   const otherIdsRef = useRef<number[]>([])
   const awaitingSyncUntil = useRef(0)
+  const lastActivityRef = useRef(0)
+  const fpMismatchesRef = useRef(new Map<number, number>())
   useEffect(() => { selfIdRef.current = selfId ?? null }, [selfId])
   useEffect(() => { otherIdsRef.current = otherIds }, [otherIds])
 
@@ -56,11 +60,45 @@ function SyncBridge({ getProject, onProject }: Omit<Props, 'projectId'>) {
     const e = event as { type?: string; action?: DawAction; requesterId?: number; to?: number; project?: DawProject }
 
     if (e.type === 'ACTION' && e.action) {
+      lastActivityRef.current = Date.now()
+      // Dev-only fault injection (mirrors CollabBridge) so divergence recovery
+      // is testable: the next remote action is silently dropped.
+      if (process.env.NODE_ENV !== 'production' && (window as unknown as { __dawMixDropNextAction?: boolean }).__dawMixDropNextAction) {
+        ;(window as unknown as { __dawMixDropNextAction?: boolean }).__dawMixDropNextAction = false
+        return
+      }
       const current = getProject()
       if (!current) return
       try {
         onProject(reducer(current, e.action), true)
       } catch { /* unknown/hostile action — replica keeps its last good state */ }
+      return
+    }
+
+    // Divergence self-heal: DAW peers broadcast structural fingerprints every
+    // ~20 s. If ours disagrees twice in a row with the same peer, our replica
+    // missed something — resync from the room rather than rendering wrong
+    // audio until remount. As a passive consumer we ALWAYS defer to the DAW
+    // peers, regardless of connection seniority.
+    if (e.type === 'STATE_FP' && typeof (e as { from?: number }).from === 'number') {
+      const from = (e as { from: number }).from
+      const me = selfIdRef.current
+      if (me === null || from === me) return
+      if (Date.now() - lastActivityRef.current < FP_QUIET_MS) return
+      const current = getProject()
+      if (!current) return
+      if (projectFingerprint(current) === (e as { fp?: string }).fp) {
+        fpMismatchesRef.current.delete(from)
+        return
+      }
+      const misses = (fpMismatchesRef.current.get(from) ?? 0) + 1
+      fpMismatchesRef.current.set(from, misses)
+      if (misses >= 2) {
+        fpMismatchesRef.current.delete(from)
+        awaitingSyncUntil.current = Date.now() + SYNC_WINDOW_MS
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        broadcast({ type: 'SYNC_REQUEST', requesterId: me } as any)
+      }
       return
     }
 
@@ -96,7 +134,7 @@ export default function DawMixSync({ projectId, getProject, onProject }: Props) 
   return (
     <RoomProvider
       id={`project-${projectId}`}
-      initialPresence={{ name: '', color: 'var(--accent)', imageUrl: null, selectedTrackId: null, selectedClipId: null, editingClipId: null, view: 'video' }}
+      initialPresence={{ name: 'Video editor', color: '#8b5cf6', imageUrl: null, selectedTrackId: null, selectedClipId: null, editingClipId: null, view: 'video' }}
     >
       <SyncBridge getProject={getProject} onProject={onProject} />
     </RoomProvider>
