@@ -166,9 +166,9 @@ export const MODULE_DEFS: ModuleDef[] = [
 
 export const ALL_MODULE_KEYS: ModuleKey[] = MODULE_DEFS.map(m => m.key)
 
-/** Audio-only launch: modules outside this list are hidden everywhere, even
- *  if the platform_config row enables them. Widen when video/image relaunch. */
-export const LAUNCH_MODULES: ModuleKey[] = ['audio']
+/** Launched modules: modules outside this list are hidden everywhere, even
+ *  if the platform_config row enables them. Widen when a module relaunches. */
+export const LAUNCH_MODULES: ModuleKey[] = ['audio', 'video']
 
 // ── Audio module track (shared between AudioEditor and ProjectEditor) ─────────
 

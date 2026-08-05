@@ -11,7 +11,7 @@ export interface PlatformFlags {
 }
 
 const DEFAULTS: PlatformFlags = {
-  enabledModules:    ['audio'],
+  enabledModules:    ['audio', 'video'],
   enabledAudioModes: ['music', 'podcast'],
   communityScale:    'small',
 }
