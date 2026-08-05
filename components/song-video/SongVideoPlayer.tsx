@@ -392,23 +392,28 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     const markFirst = () => { if (!firstReadyRef.current) { firstReadyRef.current = true; setFirstReady(true) } }
     setStatus('Rendering real mix…')
     try {
-      // Instant re-open: session-decoded full mix for this version → one section.
-      if (isFull && !force && fullBufferRef.current && fullKeyRef.current === (audioKey ?? null)) {
-        g.player.pushSection(0, fullBufferRef.current, 0); markFirst()
+      // Once the WHOLE song is decoded, ANY window — any loop/export length — is
+      // just a slice of it, so changing the length never re-renders. Push that
+      // slice as one seamless section.
+      const pushWindow = (full: AudioBuffer) => {
+        const a = winStartBeat * spb, b = a + winLen * spb
+        const seg = (winStartBeat === 0 && b >= full.duration - 0.001) ? full : sliceBuffer(g.ctx, full, a, b)
+        g.player.pushSection(0, seg, 0); markFirst()
         setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 1500)
-        return
       }
-      // Persisted full mix (IndexedDB) → one seamless section.
-      if (fullKey && !force) {
+      // Full song already decoded this session → slice instantly (no re-render).
+      if (!force && fullBufferRef.current && fullKeyRef.current === (audioKey ?? null)) {
+        pushWindow(fullBufferRef.current); return
+      }
+      // Full song persisted (IndexedDB) → decode once this session, then slice.
+      if (audioKey && !force) {
         try {
           const { getCachedAudio } = await import('@/lib/song-video/audio-cache')
-          const blob = await getCachedAudio(fullKey)
+          const blob = await getCachedAudio(`${audioKey}:full`)
           if (blob && token === renderToken.current) {
             const buf = await g.ctx.decodeAudioData(await blob.arrayBuffer())
             fullBufferRef.current = buf; fullKeyRef.current = audioKey ?? null
-            g.player.pushSection(0, buf, 0); markFirst()
-            setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 1500)
-            return
+            pushWindow(buf); return
           }
         } catch { /* fall through to render */ }
       }
