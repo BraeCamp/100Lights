@@ -22,16 +22,22 @@ export default async function ProjectBySlugPage({
   if (!username.startsWith('@')) notFound()
   const owner = decodeURIComponent(username).replace(/^@/, '')
   const code = codeFromSlug(slug)
-  if (!owner || !code) notFound()
+  if (!code) notFound()
 
+  // The trailing code (a prefix of the globally-unique project id) is what
+  // actually resolves the project; the username + slug are cosmetic. Resolve by
+  // code and merely PREFER the owner match — otherwise a project whose stored
+  // owner_username doesn't exactly match what built the URL (a since-changed
+  // username, an email-prefix/userId fallback, a missing backfill) 404s on
+  // reload even though the link is valid. Access is still enforced downstream by
+  // /api/projects/[id], so resolving by code alone is safe.
   let rows: { id: string }[]
   try {
     rows = await sql`
       SELECT id FROM projects
-      WHERE owner_username = ${owner}
-        AND id LIKE ${code + '%'}
+      WHERE id LIKE ${code + '%'}
         AND deleted_at IS NULL
-      ORDER BY saved_at DESC
+      ORDER BY CASE WHEN owner_username = ${owner} THEN 0 ELSE 1 END, saved_at DESC
       LIMIT 1
     ` as { id: string }[]
   } catch {
