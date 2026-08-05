@@ -34,6 +34,16 @@ const ASPECTS = [
   { id: '1 / 1', name: '1:1', hint: 'IG feed' },
   { id: '16 / 9', name: '16:9', hint: 'YouTube landscape' },
 ]
+const QUALITIES = [{ v: 720, name: '720p' }, { v: 1080, name: '1080p' }, { v: 1440, name: '1440p' }]
+const TEXT_ANIMS = [{ id: 'none', name: 'None' }, { id: 'fade', name: 'Fade' }, { id: 'rise', name: 'Rise' }, { id: 'pop', name: 'Pop' }]
+const TEXT_POS = [{ id: 'top', name: 'Top' }, { id: 'center', name: 'Center' }, { id: 'bottom', name: 'Bottom' }]
+
+// Render dimensions for a quality (short-side px) at a given aspect.
+function resDims(quality: number, aspect: string): [number, number] {
+  const [aw, ah] = aspect.split('/').map(s => Number(s.trim()))
+  return aw <= ah ? [quality, Math.round(quality * ah / aw)] : [Math.round(quality * aw / ah), quality]
+}
+const bitrateFor = (q: number) => (q <= 720 ? 3_500_000 : q <= 1080 ? 6_000_000 : 11_000_000)
 
 export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug = 'song-video', projectId, canPublish = false, totalBeats, dawProject, userId, audioKey }: {
   song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; dawProject?: DawProject; userId?: string | null; audioKey?: string
@@ -96,18 +106,24 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   const [metaText, setMetaText] = useState(meta ?? '')
   const [font, setFont] = useState('system-ui')
   const [textScale, setTextScale] = useState(1)
+  const [textColor, setTextColor] = useState('#eceafd')
+  const [hookPos, setHookPos] = useState('bottom')
+  const [hookAnim, setHookAnim] = useState('none')
+  const [textOutline, setTextOutline] = useState(false)
 
-  // Theme
+  // Theme — accent + a two-stop background gradient. Re-colors the VIDEO only;
+  // the maker's own UI keeps a stable accent (ui) so themes don't repaint it.
   const [themeId, setThemeId] = useState('midnight')
   const [accentColor, setAccentColor] = useState(accent)
-  // The theme (accentColor + bg) re-colors the VIDEO only. The maker's own UI
-  // keeps a stable accent so changing a video theme doesn't repaint the controls.
+  const [bgColors, setBgColors] = useState<[string, string]>(THEMES[0].bg as [string, string])
   const ui = accent
-  const theme = THEMES.find(t => t.id === themeId) ?? THEMES[0]
-  const bgKey = theme.bg.join(',')
+  const bgKey = bgColors.join(',')
 
-  // Channel
+  // Channel + quality
   const [aspect, setAspect] = useState('9 / 16')
+  const [quality, setQuality] = useState(1080) // short-side px (render resolution)
+  const [fps, setFps] = useState(30)
+  const [rw, rh] = resDims(quality, aspect)
 
   const hookArr = useMemo(() => [
     { text: line1.trim(), accent: false },
@@ -129,7 +145,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     const inst = mountSongVideo(canvasRef.current, windowed, {
       format: fmt, brand: '100LIGHTS', meta: metaText, accent: accentColor,
       hook: hookArr, loopBeats: windowed.loopBeats ?? 32,
-      font, textScale, bg: theme.bg, media,
+      font, textScale, bg: bgColors, media,
+      textColor, hookPos, hookAnim, textOutline, width: rw, height: rh,
       // With a project we ONLY ever play the real bounced mix — no synth, ever.
       // (Without one — no real-mix source — the synth is the only preview.)
       synth: !dawProject,
@@ -139,7 +156,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     if (playingRef.current) inst.play()
     return () => inst.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fmt, windowed, realUrl])
+  }, [fmt, windowed, realUrl, rw, rh])
 
   useEffect(() => { latestWin.current = { s: start, w: winBeats } }, [start, winBeats])
 
@@ -161,9 +178,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
   // Look edits apply live (no remount, no playback restart).
   useEffect(() => {
-    instRef.current?.update({ hook: hookArr, meta: metaText, accent: accentColor, font, textScale, bg: theme.bg })
+    instRef.current?.update({ hook: hookArr, meta: metaText, accent: accentColor, font, textScale, bg: bgColors, textColor, hookPos, hookAnim, textOutline })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hookArr, metaText, accentColor, font, textScale, bgKey])
+  }, [hookArr, metaText, accentColor, font, textScale, bgKey, textColor, hookPos, hookAnim, textOutline])
 
   function toggle() {
     const i = instRef.current; if (!i) return
@@ -174,7 +191,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   async function recordBlob(): Promise<Blob | null> {
     const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
     setStatus('Recording…'); audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true
-    const v = canvas.captureStream(30)
+    const v = canvas.captureStream(fps)
     // With real audio, capture the analyser graph's output; otherwise the synth.
     const a = realUrl && audioGraphRef.current ? audioGraphRef.current.capture.stream : i.getAudioStream()
     const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
@@ -184,7 +201,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     const chunks: Blob[] = []
     // Tuned for social: the audio is muxed + compressed (AAC/Opus @128k) rather
     // than the raw WAV, and the video bitrate is trimmed to keep the file small.
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 128_000 })
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateFor(quality), audioBitsPerSecond: 128_000 })
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     const done = new Promise<void>(res => { rec.onstop = () => res() })
     const durMs = winBeats * (60 / song.tempo) * 1000
@@ -386,17 +403,33 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
             <span style={{ ...lbl, marginLeft: 'auto' }}>Size</span>
             <input type="range" min={0.7} max={1.5} step={0.05} value={textScale} onChange={e => setTextScale(Number(e.target.value))} style={{ width: 90, accentColor: ui }} />
           </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={lbl}>Color</span>
+            <input type="color" value={textColor} onChange={e => setTextColor(e.target.value)} style={swatchInput} />
+            <span style={lbl}>Place</span>
+            {TEXT_POS.map(p => <button key={p.id} onClick={() => setHookPos(p.id)} style={chip(hookPos === p.id, ui)}>{p.name}</button>)}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={lbl}>Animate</span>
+            {TEXT_ANIMS.map(a => <button key={a.id} onClick={() => setHookAnim(a.id)} style={chip(hookAnim === a.id, ui)}>{a.name}</button>)}
+            <label style={{ ...lbl, display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer', marginLeft: 'auto' }}>
+              <input type="checkbox" checked={textOutline} onChange={e => setTextOutline(e.target.checked)} /> outline
+            </label>
+          </div>
         </Section>
 
         {/* Theme */}
         <Section label="Theme">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {THEMES.map(t => (
-              <button key={t.id} onClick={() => { setThemeId(t.id); setAccentColor(t.accent) }} title={t.name}
+              <button key={t.id} onClick={() => { setThemeId(t.id); setAccentColor(t.accent); setBgColors(t.bg as [string, string]) }} title={t.name}
                 style={{ width: 26, height: 26, borderRadius: 8, cursor: 'pointer', border: themeId === t.id ? `2px solid ${t.accent}` : '2px solid transparent', background: `linear-gradient(135deg, ${t.accent} 0 50%, ${t.bg[0]} 50% 100%)` }} />
             ))}
             <span style={{ ...lbl, marginLeft: 8 }}>Accent</span>
-            <input type="color" value={accentColor} onChange={e => setAccentColor(e.target.value)} style={{ width: 30, height: 26, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+            <input type="color" value={accentColor} onChange={e => setAccentColor(e.target.value)} style={swatchInput} />
+            <span style={lbl}>BG</span>
+            <input type="color" value={bgColors[0]} onChange={e => setBgColors([e.target.value, bgColors[1]])} title="Background top" style={swatchInput} />
+            <input type="color" value={bgColors[1]} onChange={e => setBgColors([bgColors[0], e.target.value])} title="Background bottom" style={swatchInput} />
           </div>
         </Section>
 
@@ -418,6 +451,17 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
             {ASPECTS.map(a => (
               <button key={a.id} onClick={() => setAspect(a.id)} style={chip(aspect === a.id, ui)} title={a.hint}>{a.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>· {a.hint}</span></button>
             ))}
+          </div>
+        </Section>
+
+        {/* Quality / export */}
+        <Section label="Quality">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={lbl}>Res</span>
+            {QUALITIES.map(q => <button key={q.v} onClick={() => setQuality(q.v)} style={chip(quality === q.v, ui)}>{q.name}</button>)}
+            <span style={{ ...lbl, marginLeft: 8 }}>FPS</span>
+            {[30, 60].map(x => <button key={x} onClick={() => setFps(x)} style={chip(fps === x, ui)}>{x}</button>)}
+            <span style={{ ...lbl, marginLeft: 'auto' }}>{rw}×{rh} · {(bitrateFor(quality) / 1e6).toFixed(1)}M</span>
           </div>
         </Section>
       </div>
@@ -445,3 +489,4 @@ const chip = (on: boolean, accent: string): React.CSSProperties => ({ fontSize: 
 const btn: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: 'var(--text-secondary,#cfceda)', background: 'var(--bg-surface,#17171b)', border: '1px solid var(--border,#26262b)', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }
 const field: React.CSSProperties = { width: '100%', boxSizing: 'border-box', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border,#26262b)', background: 'var(--bg-base,#0d0d0f)', color: 'var(--text-primary,#f1f0ff)', outline: 'none' }
 const lbl: React.CSSProperties = { fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted,#8b88a8)' }
+const swatchInput: React.CSSProperties = { width: 28, height: 24, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }
