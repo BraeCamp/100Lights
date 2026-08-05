@@ -14,6 +14,8 @@ export interface Caption {
   end: number
   text: string
   speaker?: string
+  /** Per-word timings (from Deepgram) — powers karaoke-style caption highlighting. */
+  words?: Array<{ w: string; s: number; e: number }>
 }
 
 export interface Clip {

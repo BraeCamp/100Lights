@@ -11,7 +11,7 @@ import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bun
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -66,6 +66,7 @@ export interface SerializedClip {
   titleAnimation?: 'none' | 'fade' | 'slide-up'
   // Audio & color
   eq?: { low: number; mid: number; high: number }
+  grade?: { brightness: number; contrast: number; saturation: number }
   lutId?: string
   // Draw Focus
   focusX?: number
@@ -123,6 +124,8 @@ export interface CfProjFile {
   aspect?: ProjectAspect
   /** Musical grid (BPM + downbeat offset) for beat snapping / cut-on-beat. */
   beatGrid?: BeatGrid | null
+  /** Burned-in caption look. Absent = default style (pre-style files). */
+  captionStyle?: CaptionStyle
   zoomLevel: number
   // Content
   captions: Caption[]
@@ -153,6 +156,7 @@ export interface EditorSnapshot {
   adjustments: VideoAdjustments
   aspect?: ProjectAspect
   beatGrid?: BeatGrid | null
+  captionStyle?: CaptionStyle
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
@@ -204,6 +208,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titlePosition:    item.titlePosition,
       titleAnimation:   item.titleAnimation,
       eq:               item.eq,
+      grade:            item.grade,
       lutId:            item.lutId,
       focusX:           item.focusX,
       focusY:           item.focusY,
@@ -213,6 +218,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
     adjustments: snap.adjustments,
     aspect: snap.aspect,
     beatGrid: snap.beatGrid ?? null,
+    captionStyle: snap.captionStyle,
     zoomLevel: snap.zoomLevel,
     captions: snap.captions,
     chapters: snap.chapters ?? [],
@@ -246,6 +252,7 @@ export interface DeserializedProject {
   adjustments: VideoAdjustments
   aspect: ProjectAspect
   beatGrid: BeatGrid | null
+  captionStyle?: CaptionStyle
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
@@ -289,6 +296,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titlePosition:    clip.titlePosition,
     titleAnimation:   clip.titleAnimation,
     eq:               clip.eq,
+    grade:            clip.grade,
     lutId:            clip.lutId,
     focusX:           clip.focusX,
     focusY:           clip.focusY,
@@ -316,6 +324,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     adjustments:   file.adjustments,
     aspect:        file.aspect ?? '16:9',
     beatGrid:      file.beatGrid ?? null,
+    captionStyle:  file.captionStyle,
     zoomLevel:     file.zoomLevel,
     captions:      file.captions,
     outputs,

@@ -19,21 +19,26 @@
  * the preview uses, so the two stay in parity.
  */
 
-import type { TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
+import type { CaptionStyle, TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
+import { DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
+import type { LutData } from '@/lib/lut-parser'
+import { getLutGL } from './lut-gl'
 
 export interface CompositorState {
-  items:       TimelineItem[]
-  tracks:      Track[]
-  adjustments: VideoAdjustments   // global grade (matches the editor's single adjustments state)
-  captions:    Caption[]
-  width:       number
-  height:      number
+  items:        TimelineItem[]
+  tracks:       Track[]
+  adjustments:  VideoAdjustments   // global grade (matches the editor's single adjustments state)
+  captions:     Caption[]
+  captionStyle?: CaptionStyle
+  luts?:        Map<string, LutData>   // parsed .cube LUTs keyed by MediaItem id (clip.lutId)
+  width:        number
+  height:       number
 }
 
-/** Resolves the playing <video> element for a clip URL (owned by the capture layer). */
+/** Resolves the playing <video> element for a clip (owned by the capture layer). */
 export interface MediaResolver {
-  get(url: string): HTMLVideoElement | undefined
+  get(clip: TimelineItem): HTMLVideoElement | undefined
 }
 
 // ── Ported verbatim from VideoPlayer.buildFilter (do not "improve" — parity) ──
@@ -67,11 +72,34 @@ export function pickViewerClip(items: TimelineItem[], tracks: Track[], t: number
       i.trackId === track.id &&
       i.enabled !== false &&
       t >= i.startTime &&
-      t < i.startTime + (i.outPoint - i.inPoint),
+      i.startTime + (i.outPoint - i.inPoint) > t,
     )
     if (hit) return hit
   }
   return null
+}
+
+/**
+ * All clips visible at `t`, BOTTOM → TOP. Track order is stacking order:
+ * tracks[0] is the top layer (matching pickViewerClip, which returns the
+ * tracks[0] hit first). One clip per track — the layer stack.
+ */
+export function pickVisibleClips(items: TimelineItem[], tracks: Track[], t: number): TimelineItem[] {
+  const isMedia = (tr: Track) => tr.type === 'media' || tr.type === 'video' || tr.type === 'audio'
+  const hasSolo = tracks.some(tr => isMedia(tr) && tr.solo)
+  const mediaTracks = tracks.filter(tr => isMedia(tr) && !tr.muted && (!hasSolo || tr.solo))
+  const stack: TimelineItem[] = []
+  for (let i = mediaTracks.length - 1; i >= 0; i--) {   // bottom first
+    const track = mediaTracks[i]
+    const hit = items.find(it =>
+      it.trackId === track.id &&
+      it.enabled !== false &&
+      t >= it.startTime &&
+      it.startTime + (it.outPoint - it.inPoint) > t,
+    )
+    if (hit) stack.push(hit)
+  }
+  return stack
 }
 
 interface ClipTransform {
@@ -127,9 +155,10 @@ export interface ActiveTransition {
 
 /**
  * The transition state for `clip` at timeline time `t`, or null when outside
- * the transition window. `prev` is the clip the viewer showed just before this
- * one started; it's null (blend from black) when there was none, it can't be
- * drawn (title/audio), or it shares the active clip's <video> element.
+ * the transition window. `prev` is the clip that occupied the SAME TRACK just
+ * before this one started (with layer stacking, a transition is a within-track
+ * event — other tracks stay visible as their own layers); it's null (blend
+ * from black) when there was none or it can't be drawn (title/audio/no url).
  */
 export function transitionAt(
   items: TimelineItem[],
@@ -143,13 +172,18 @@ export function transitionAt(
   const dur = Math.max(0.05, Math.min(clip.transitionDuration ?? 0.5, clipDur))
   const local = t - clip.startTime
   if (local < 0 || local >= dur) return null
-  let prev = pickViewerClip(items, tracks, clip.startTime - 0.001)
+  const tPrev = clip.startTime - 0.001
+  let prev = items.find(i =>
+    i.trackId === clip.trackId &&
+    i.id !== clip.id &&
+    i.enabled !== false &&
+    tPrev >= i.startTime &&
+    i.startTime + (i.outPoint - i.inPoint) > tPrev,
+  ) ?? null
   if (prev && (
-    prev.id === clip.id ||
     prev.contentType === 'title' ||
     prev.contentType === 'audio' ||
-    !prev.url ||
-    prev.url === clip.url          // same source element can't show two frames at once
+    !prev.url
   )) prev = null
   return { type, p: Math.max(0, Math.min(1, local / dur)), prev }
 }
@@ -173,16 +207,18 @@ export function drawFrame(
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, W, H)
 
-  const clip = pickViewerClip(state.items, state.tracks, t)
-  if (!clip) return
+  // Layer stack: every visible clip across tracks, bottom → top. A title clip
+  // on an upper track renders as text OVER the video layers below it.
+  const stack = pickVisibleClips(state.items, state.tracks, t)
+  if (!stack.length) return
 
-  if (clip.contentType === 'title') {
-    drawTitle(ctx, clip, t, W, H)
-    return
-  }
+  for (const clip of stack) {
+    if (clip.contentType === 'title') {
+      drawTitle(ctx, clip, t, W, H)
+      continue
+    }
+    if (clip.contentType === 'audio' || !clip.url) continue   // audio layers draw nothing
 
-  // Video (audio-only clips render as black here; captions still draw below).
-  if (clip.contentType !== 'audio' && clip.url) {
     const trans = transitionAt(state.items, state.tracks, clip, t)
     if (!trans) {
       drawVideoClip(ctx, state, media, clip, t)
@@ -236,9 +272,9 @@ export function drawFrame(
     ctx.restore()
   }
 
-  // Captions (video-mode overlay). Matches VideoPlayer's bottom caption box.
+  // Captions (video-mode overlay). Matches VideoPlayer's caption box.
   const cap = state.captions.find(c => t >= c.start && t <= c.end)
-  if (cap) drawCaption(ctx, cap.text, cap.speaker, W, H)
+  if (cap) drawCaption(ctx, cap, state.captionStyle ?? DEFAULT_CAPTION_STYLE, t, W, H)
 }
 
 // ── Single video clip draw (transform + grade + blend) ────────────────────────
@@ -251,12 +287,21 @@ function drawVideoClip(
   opts?: { alphaMul?: number; offsetX?: number },
 ): void {
   if (!clip.url) return
-  const v = media.get(clip.url)
+  const v = media.get(clip)
   if (!v || v.videoWidth === 0) return
   const { width: W, height: H, adjustments } = state
 
   const tf = computeClipTransform(clip, t)
   const rect = fitRect(v.videoWidth, v.videoHeight, W, H, clip.fitMode ?? 'contain')
+
+  // LUT: route the frame through the GPU applier first; the graded canvas
+  // stands in for the raw element. Skipped silently without WebGL2.
+  let source: CanvasImageSource = v
+  const lut = clip.lutId ? state.luts?.get(clip.lutId) : undefined
+  if (lut) {
+    const graded = getLutGL()?.apply(v, lut, v.videoWidth, v.videoHeight)
+    if (graded) source = graded
+  }
 
   ctx.save()
   if (opts?.offsetX) ctx.translate(opts.offsetX, 0)
@@ -271,6 +316,8 @@ function drawVideoClip(
 
   // Colour grade + motion blur, exactly as the preview builds them.
   let filter = buildFilter(adjustments)
+  const clipGrade = buildClipGradeFilter(clip)
+  if (clipGrade) filter = filter === 'none' ? clipGrade : `${filter} ${clipGrade}`
   if (clip.motionBlurEnabled) {
     const speed = clip.speed ?? 1
     const px = Math.min(6, Math.max(0, Math.abs(speed - 1) * 2.5))
@@ -279,8 +326,19 @@ function drawVideoClip(
   ctx.filter = filter
   ctx.globalAlpha = (tf.opacity / 100) * tf.fadeOpacity * (opts?.alphaMul ?? 1)
   if (clip.blendMode) ctx.globalCompositeOperation = clip.blendMode as GlobalCompositeOperation
-  ctx.drawImage(v, rect.x, rect.y, rect.w, rect.h)
+  ctx.drawImage(source, rect.x, rect.y, rect.w, rect.h)
   ctx.restore()
+}
+
+/** Per-clip grade — CSS filter chain composed AFTER the global grade (parity with the preview). */
+export function buildClipGradeFilter(clip: TimelineItem): string {
+  const g = clip.grade
+  if (!g) return ''
+  const parts: string[] = []
+  if (g.brightness !== 100) parts.push(`brightness(${g.brightness / 100})`)
+  if (g.contrast !== 100)   parts.push(`contrast(${g.contrast / 100})`)
+  if (g.saturation !== 100) parts.push(`saturate(${g.saturation / 100})`)
+  return parts.join(' ')
 }
 
 // ── Title clip ────────────────────────────────────────────────────────────────
@@ -333,28 +391,70 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
 }
 
 // ── Caption box ───────────────────────────────────────────────────────────────
-function drawCaption(ctx: CanvasRenderingContext2D, text: string, speaker: string | undefined, W: number, H: number) {
-  const fontSize = Math.round(H * 0.028)
+// Styled + optional karaoke: when the style asks for karaoke and the caption
+// carries word timings, each word is drawn separately with the active word in
+// the highlight colour (past words full colour, future words dimmed).
+function drawCaption(
+  ctx: CanvasRenderingContext2D,
+  cap: Caption,
+  style: CaptionStyle,
+  t: number,
+  W: number,
+  H: number,
+) {
+  const fontSize = Math.round(H * 0.028 * (style.size || 1))
   ctx.save()
   ctx.filter = 'none'
+  ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'source-over'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.font = `500 ${fontSize}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`
-  const label = speaker ? `${speaker}  ${text}` : text
+
+  const karaoke = style.karaoke && !!cap.words?.length
+  const label = karaoke ? cap.words!.map(w => w.w).join(' ')
+             : cap.speaker ? `${cap.speaker}  ${cap.text}` : cap.text
   const m = ctx.measureText(label)
   const padX = 16, padY = 8
-  const boxW = Math.min(W * 0.8, m.width + padX * 2)
+  const boxW = Math.min(W * 0.9, m.width + padX * 2)
   const boxH = fontSize + padY * 2
   const cx = W / 2
-  const y = H - H * 0.08 - boxH / 2
-  ctx.fillStyle = 'rgba(0,0,0,0.75)'
-  roundRect(ctx, cx - boxW / 2, y - boxH / 2, boxW, boxH, 4)
-  ctx.fill()
-  ctx.fillStyle = '#fff'
+  const y = style.position === 'top'    ? H * 0.08 + boxH / 2
+          : style.position === 'center' ? H / 2
+          : H - H * 0.08 - boxH / 2
+
+  if (style.bg !== 'none') {
+    ctx.fillStyle = style.bg
+    roundRect(ctx, cx - boxW / 2, y - boxH / 2, boxW, boxH, 4)
+    ctx.fill()
+  }
   ctx.shadowColor = 'rgba(0,0,0,0.8)'
-  ctx.shadowBlur = 2
+  ctx.shadowBlur = style.bg === 'none' ? 4 : 2
   ctx.shadowOffsetY = 1
-  ctx.fillText(label, cx, y)
+
+  if (!karaoke) {
+    ctx.fillStyle = style.color
+    ctx.fillText(label, cx, y)
+    ctx.restore()
+    return
+  }
+
+  // Karaoke: lay the words out centred, then paint each with its own colour.
+  const words = cap.words!
+  const spaceW = ctx.measureText(' ').width
+  const widths = words.map(w => ctx.measureText(w.w).width)
+  const totalW = widths.reduce((s, w) => s + w, 0) + spaceW * (words.length - 1)
+  let x = cx - totalW / 2
+  ctx.textAlign = 'left'
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]
+    const active = t >= w.s && t <= w.e
+    const past = t > w.e
+    ctx.globalAlpha = active || past ? 1 : 0.55
+    ctx.fillStyle = active ? style.highlightColor : style.color
+    ctx.fillText(w.w, x, y)
+    x += widths[i] + spaceW
+  }
   ctx.restore()
 }
 

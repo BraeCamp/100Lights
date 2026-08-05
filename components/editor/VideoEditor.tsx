@@ -36,8 +36,9 @@ import {
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
-import { pickViewerClip } from '@/lib/video-export/compositor'
-import type { ActiveClipTransition } from '@/components/editor/VideoPlayer'
+import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
+import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
+import type { ActiveClipTransition, UnderLayer } from '@/components/editor/VideoPlayer'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -695,6 +696,8 @@ export default function VideoEditor({
   const [projectAspect, setProjectAspect] = useState<ProjectAspect>(DEFAULT_ASPECT)
   // Musical beat grid — ruler ticks, snap-to-beat, cut-on-beat tools
   const [beatGrid, setBeatGrid] = useState<BeatGrid | null>(null)
+  // Burned-in caption look (size/color/position/karaoke)
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE)
   const [detectBpmStatus, setDetectBpmStatus] = useState<'idle' | 'working' | 'error'>('idle')
   // Full DAW arrangement carried by this project (audio module) — lets the
   // video editor bounce the real mix without opening the DAW.
@@ -881,52 +884,48 @@ export default function VideoEditor({
     }
   }, [viewerClip?.id, viewerClip?.eq]) // eslint-disable-line
 
-  // LUT — apply color lookup table to video frames via OffscreenCanvas
-  const lutCanvasRef  = useRef<OffscreenCanvas | null>(null)
-  const lutRvfcRef    = useRef<number | null>(null)
-  const lutRafRef     = useRef<number | null>(null)
+  // LUT of the active clip — VideoPlayer renders it via a WebGL overlay canvas
+  // (the old OffscreenCanvas loop burned CPU into an invisible buffer).
+  const activeLut = viewerClip?.lutId ? (lutMap.get(viewerClip.lutId) ?? null) : null
 
+  // ── Same-origin sources for pixel-reading features ─────────────────────────
+  // Scopes, frame blend, optical flow and the LUT overlay all read frames back,
+  // which a cross-origin (R2-signed) source taints. When one of those features
+  // is active, lazily download the active clip's source and swap in a blob URL
+  // — same trick the export capture uses.
+  const localizedUrlsRef = useRef<Map<string, string | 'pending'>>(new Map())
+  const pixelFeatureActive = showColorScopes || frameBlendEnabled || opticalFlowEnabled || !!activeLut
   useEffect(() => {
-    const clip = viewerClip
-    const lut  = clip?.lutId ? lutMap.get(clip.lutId) : null
-    const v    = videoRef.current
-
-    // Cancel any previous LUT rVFC loop
-    const cancelLut = () => {
-      if (lutRvfcRef.current !== null && v) {
-        (v as any).cancelVideoFrameCallback?.(lutRvfcRef.current)
-        lutRvfcRef.current = null
+    const url = viewerClip?.url
+    if (!pixelFeatureActive || !url) return
+    if (url.startsWith('blob:') || url.startsWith('data:')) return
+    const cache = localizedUrlsRef.current
+    if (cache.has(url)) return
+    cache.set(url, 'pending')
+    let cancelled = false
+    ;(async () => {
+      try {
+        const blob = await (await fetch(url)).blob()
+        if (cancelled) return
+        const local = URL.createObjectURL(blob)
+        cache.set(url, local)
+        setMediaItems(prev => prev.map(m => m.url === url ? { ...m, url: local } : m))
+        setTimelineItemsRaw(prev => {
+          const next = prev.map(i => i.url === url ? { ...i, url: local } : i)
+          timelineItemsRef.current = next
+          return next
+        })
+      } catch {
+        cache.delete(url)   // will retry next toggle
       }
-      if (lutRafRef.current !== null) { cancelAnimationFrame(lutRafRef.current); lutRafRef.current = null }
-      lutCanvasRef.current = null
-    }
+    })()
+    return () => { cancelled = true }
+  }, [pixelFeatureActive, viewerClip?.url]) // eslint-disable-line
 
-    if (!lut || !v || !clip || clip.contentType !== 'video') { cancelLut(); return }
-
-    function processFrame() {
-      if (!v || !lut) return
-      const vw = v.videoWidth, vh = v.videoHeight
-      if (vw === 0 || vh === 0) { schedule(); return }
-      if (!lutCanvasRef.current || lutCanvasRef.current.width !== vw || lutCanvasRef.current.height !== vh) {
-        lutCanvasRef.current = new OffscreenCanvas(vw, vh)
-      }
-      const ctx = lutCanvasRef.current.getContext('2d') as OffscreenCanvasRenderingContext2D | null
-      if (!ctx) { schedule(); return }
-      ctx.drawImage(v, 0, 0, vw, vh)
-      lutFnsRef.current?.applyLutToCanvas(ctx as unknown as CanvasRenderingContext2D, lut, vw, vh)
-      schedule()
-    }
-
-    function schedule() {
-      if ((v as any).requestVideoFrameCallback) {
-        lutRvfcRef.current = (v as any).requestVideoFrameCallback(processFrame)
-      } else {
-        lutRafRef.current = requestAnimationFrame(processFrame)
-      }
-    }
-    schedule()
-    return cancelLut
-  }, [viewerClip?.id, viewerClip?.lutId, lutMap]) // eslint-disable-line
+  /** Edit a caption's text in place (Inspector transcript tab). */
+  function handleCaptionEdit(index: number, text: string) {
+    setLocalCaptions(prev => prev.map((c, i) => i === index ? { ...c, text, words: undefined } : c))
+  }
 
   // Clip transform: opacity, flip, crop, zoom, and fade envelope from current playhead
   const clipTransform = useMemo(() => {
@@ -966,16 +965,25 @@ export default function VideoEditor({
       viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode,
       viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns, currentTime]) // eslint-disable-line
 
-  // Transition-in of the active clip: what the viewer showed just before this
-  // clip began becomes the frozen frame the transition blends from. Mirrors
-  // lib/video-export/compositor.transitionAt so preview and export agree.
+  // Transition-in of the active clip: the clip that occupied the SAME TRACK
+  // just before this one becomes the frozen frame the transition blends from.
+  // Mirrors lib/video-export/compositor.transitionAt (per-track, now that
+  // lower tracks stack as layers). Preview-only extra: a same-source prev
+  // falls back to from-black — the shared element pool can't show two frames
+  // of one file (the export renders that case properly via per-clip elements).
   const viewerTransition = useMemo((): ActiveClipTransition | undefined => {
     const clip = viewerClip
     if (!clip?.transitionIn) return undefined
     const clipDur = clip.outPoint - clip.inPoint
-    let prev = pickViewerClip(timelineItems, tracks, clip.startTime - 0.001)
+    const tPrev = clip.startTime - 0.001
+    let prev = timelineItems.find(i =>
+      i.trackId === clip.trackId &&
+      i.id !== clip.id &&
+      i.enabled !== false &&
+      tPrev >= i.startTime &&
+      i.startTime + (i.outPoint - i.inPoint) > tPrev,
+    ) ?? null
     if (prev && (
-      prev.id === clip.id ||
       prev.contentType === 'title' ||
       prev.contentType === 'audio' ||
       !prev.url ||
@@ -988,7 +996,44 @@ export default function VideoEditor({
       prevTime: prev?.outPoint ?? 0,
       prevFitMode: prev?.fitMode,
     }
-  }, [viewerClip?.id, viewerClip?.transitionIn, viewerClip?.transitionDuration, timelineItems, tracks]) // eslint-disable-line
+  }, [viewerClip?.id, viewerClip?.transitionIn, viewerClip?.transitionDuration, timelineItems]) // eslint-disable-line
+
+  // Layers under the active clip — every lower track's clip at the playhead,
+  // bottom → top, transformed for this instant. Titles pass through as text.
+  const underLayers = useMemo((): UnderLayer[] => {
+    const stack = pickVisibleClips(timelineItems, tracks, currentTime)
+    if (stack.length <= 1) return []
+    const layers: UnderLayer[] = []
+    for (const clip of stack.slice(0, -1)) {   // all but the top (= viewerClip)
+      if (clip.contentType === 'title') {
+        const d = clip.outPoint - clip.inPoint
+        layers.push({
+          kind: 'title', id: clip.id,
+          text: clip.titleText ?? '',
+          fontSize: clip.titleFontSize ?? 48,
+          color: clip.titleColor ?? '#ffffff',
+          bg: clip.titleBg ?? 'transparent',
+          position: clip.titlePosition ?? 'center',
+          animation: clip.titleAnimation ?? 'none',
+          localProgress: d > 0 ? Math.max(0, Math.min(1, (currentTime - clip.startTime) / d)) : 0,
+        })
+        continue
+      }
+      if (clip.contentType === 'audio' || !clip.url) continue
+      const tf = computeClipTransform(clip, currentTime)
+      const gradeFilter = buildClipGradeFilter(clip)
+      const globalFilter = buildFilterCss(adjustments)
+      layers.push({
+        kind: 'video', id: clip.id, src: clip.url,
+        startTime: clip.startTime, inPoint: clip.inPoint, outPoint: clip.outPoint,
+        speed: clip.speed, speedPoints: clip.speedPoints,
+        transform: { ...tf, fitMode: clip.fitMode },
+        blendMode: clip.blendMode,
+        filter: [globalFilter === 'none' ? '' : globalFilter, gradeFilter].filter(Boolean).join(' '),
+      })
+    }
+    return layers
+  }, [timelineItems, tracks, currentTime, adjustments])
 
   // Converts timeline time ↔ source clip time:  clipTime = timelineTime − offset
   const clipTimeOffset = viewerClip ? viewerClip.startTime - viewerClip.inPoint : 0
@@ -1059,6 +1104,7 @@ export default function VideoEditor({
       setMediaItems(resolvedMedia)
       setProjectAspect(loaded.aspect)
       setBeatGrid(loaded.beatGrid)
+      setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
       dawProjectRef.current = cfproj.dawProject ?? null
       setHasDawProject(!!cfproj.dawProject)
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
@@ -1136,7 +1182,7 @@ export default function VideoEditor({
         cloudAutoSaveFnRef.current()
       }, 30_000)
     }
-  }, [timelineItems, tracks, adjustments, projectAspect, beatGrid, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
+  }, [timelineItems, tracks, adjustments, projectAspect, beatGrid, captionStyle, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
   useEffect(() => {
@@ -2157,6 +2203,7 @@ export default function VideoEditor({
       adjustments,
       aspect: projectAspect,
       beatGrid,
+      captionStyle,
       zoomLevel,
       captions: localCaptions,
       outputs: localOutputs,
@@ -2189,6 +2236,7 @@ export default function VideoEditor({
     setChapters(loaded.chapters ?? [])
     setProjectAspect(loaded.aspect)
     setBeatGrid(loaded.beatGrid)
+    setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
     if (recovery.source === 'cloud' && projectId) {
@@ -2929,6 +2977,10 @@ export default function VideoEditor({
                       showSafeAreas={showSafeAreas}
                       projectAspect={projectAspect}
                       transition={viewerTransition}
+                      underLayers={underLayers}
+                      captionStyle={captionStyle}
+                      clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
+                      lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -3005,6 +3057,10 @@ export default function VideoEditor({
                       showSafeAreas={showSafeAreas}
                       projectAspect={projectAspect}
                       transition={viewerTransition}
+                      underLayers={underLayers}
+                      captionStyle={captionStyle}
+                      clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
+                      lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -3086,6 +3142,9 @@ export default function VideoEditor({
                 lutItems={mediaItems.filter(m => m.contentType === 'lut').map(m => ({ id: m.id, name: m.name }))}
                 audioDuckingEnabled={audioDuckingEnabled}
                 onAudioDuckingToggle={() => setAudioDuckingEnabled(v => !v)}
+                captionStyle={captionStyle}
+                onCaptionStyleChange={setCaptionStyle}
+                onCaptionEdit={handleCaptionEdit}
               />
             </div>
           </div>
@@ -3160,6 +3219,8 @@ export default function VideoEditor({
             adjustments={adjustments}
             aspect={projectAspect}
             captions={localCaptions}
+            captionStyle={captionStyle}
+            luts={lutMap}
             projectName={localProjectName}
             inPoint={inPoint}
             outPoint={outPoint}
@@ -3244,6 +3305,8 @@ export default function VideoEditor({
           adjustments={adjustments}
           aspect={projectAspect}
           captions={localCaptions}
+          captionStyle={captionStyle}
+          luts={lutMap}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowExport(false)}
@@ -3259,6 +3322,8 @@ export default function VideoEditor({
           adjustments={adjustments}
           aspect={projectAspect}
           captions={localCaptions}
+          captionStyle={captionStyle}
+          luts={lutMap}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowRenderQueue(false)}

@@ -45,6 +45,30 @@ export function nearestBeat(grid: BeatGrid, t: number): number {
   return Math.max(0, grid.offset + Math.round((t - grid.offset) / spb) * spb)
 }
 
+// ── Caption style ─────────────────────────────────────────────
+// Project-wide look for burned-in captions. `size` scales the base size the
+// renderer derives from frame height, so the same style reads correctly at
+// every aspect/resolution. Karaoke highlights the active word (needs word
+// timings on the caption — older transcripts without them render statically).
+
+export interface CaptionStyle {
+  size: number                          // 0.5–2, multiplier on the base size
+  color: string                         // text color
+  bg: string                            // box color, or 'none' for outline-only text
+  position: 'bottom' | 'center' | 'top'
+  karaoke: boolean
+  highlightColor: string                // active-word color when karaoke is on
+}
+
+export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
+  size: 1,
+  color: '#ffffff',
+  bg: 'rgba(0,0,0,0.75)',
+  position: 'bottom',
+  karaoke: false,
+  highlightColor: '#a78bfa',
+}
+
 export interface ClipFlag {
   id: string
   color: string
@@ -100,6 +124,9 @@ export interface TimelineItem {
   titleAnimation?: 'none' | 'fade' | 'slide-up'       // default 'none'
   // Per-clip audio EQ (gain in dB: -12 to +12, 0 = flat)
   eq?: { low: number; mid: number; high: number }
+  // Per-clip color grade — composes ON TOP of the project-wide adjustments,
+  // so one shot can be matched against its neighbours (100 = neutral).
+  grade?: { brightness: number; contrast: number; saturation: number }
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
   // Draw Focus overlay fields (only for clips on drawfocus tracks)

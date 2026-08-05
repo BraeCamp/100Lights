@@ -5,8 +5,9 @@ import { X, Film, Download, Trash2, Plus, CheckCircle2, AlertCircle, Loader2 } f
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
 import { exportTimelineFidelity } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect } from '@/lib/editor-types'
+import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
+import type { LutData } from '@/lib/lut-parser'
 
 export interface RenderJob {
   id: string
@@ -30,6 +31,8 @@ interface Props {
   adjustments?: VideoAdjustments
   aspect?: ProjectAspect
   captions?: Caption[]
+  captionStyle?: CaptionStyle
+  luts?: Map<string, LutData>
   projectName: string
   inPoint: number | null
   outPoint: number | null
@@ -80,7 +83,7 @@ function buildClips(
     })
 }
 
-export default function RenderQueue({ timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions = [], projectName, inPoint, outPoint, onClose, inline }: Props) {
+export default function RenderQueue({ timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions = [], captionStyle, luts, projectName, inPoint, outPoint, onClose, inline }: Props) {
   const [jobs, setJobs] = useState<RenderJob[]>([])
   const [draftQuality, setDraftQuality] = useState<ExportOptions['quality']>('medium')
   const [draftRes, setDraftRes] = useState<ExportOptions['resolution']>('original')
@@ -141,6 +144,8 @@ export default function RenderQueue({ timelineItems, mediaItems, tracks = [], ad
           tracks,
           adjustments,
           captions,
+          captionStyle,
+          luts,
           quality: job.quality,
           resolution: job.resolution,
           aspect,

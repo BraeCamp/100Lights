@@ -12,7 +12,7 @@
  * lib/video-export/audio-mix and played through a MediaStreamAudioDestination.
  */
 
-import { drawFrame, pickViewerClip, type CompositorState, type MediaResolver } from './compositor'
+import { drawFrame, pickVisibleClips, type CompositorState, type MediaResolver } from './compositor'
 import { instantSpeed, sourceOffsetAt } from './speed'
 
 export interface CaptureOptions {
@@ -64,27 +64,31 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError')
 
   const revokers: string[] = []
-  const elByUrl = new Map<string, HTMLVideoElement>()   // keyed by ORIGINAL clip url
+  // One element PER CLIP (not per source) so two clips can show two different
+  // frames of the same file simultaneously — overlapping tracks, transitions.
+  // The downloaded blob is still shared per source URL.
+  const elByClip = new Map<string, HTMLVideoElement>()
 
-  // ── 1. Build hidden <video> elements for each unique video source ──────────
-  const videoUrls = Array.from(new Set(
-    state.items
-      .filter(i => (i.contentType === 'video' || i.contentType == null) && i.url)
-      .map(i => i.url!),
-  ))
+  // ── 1. Build hidden <video> elements for each video clip ──────────────────
+  const videoClips = state.items.filter(i => (i.contentType === 'video' || i.contentType == null) && i.url)
 
   onProgress?.(0.02, 'Preparing media…')
-  for (const url of videoUrls) {
+  const localBySrc = new Map<string, string>()
+  for (const clip of videoClips) {
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError')
-    const local = await toLocalURL(url, revokers)
+    let local = localBySrc.get(clip.url!)
+    if (!local) {
+      local = await toLocalURL(clip.url!, revokers)
+      localBySrc.set(clip.url!, local)
+    }
     const v = document.createElement('video')
     v.src = local
     v.muted = true            // audio comes from the pre-mixed buffer, not the elements
     v.playsInline = true
     v.preload = 'auto'
-    elByUrl.set(url, v)
+    elByClip.set(clip.id, v)
   }
-  await Promise.all([...elByUrl.values()].map(waitReady))
+  await Promise.all([...elByClip.values()].map(waitReady))
 
   // ── 2. Canvas + compositor ─────────────────────────────────────────────────
   const canvas = document.createElement('canvas')
@@ -92,7 +96,7 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
   canvas.height = state.height
   const ctx = canvas.getContext('2d', { alpha: false })
   if (!ctx) { revokers.forEach(URL.revokeObjectURL); throw new Error('Could not create canvas context') }
-  const media: MediaResolver = { get: (url) => elByUrl.get(url) }
+  const media: MediaResolver = { get: (clip) => elByClip.get(clip.id) }
 
   // Paint the first frame so recording never opens on a black flash.
   drawFrame(ctx, state, media, startOffset)
@@ -124,45 +128,46 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
 
   // ── 5. Real-time playback + draw loop ───────────────────────────────────────
   let raf = 0
-  let lastClipId: string | null = null
-  let activeEl: HTMLVideoElement | null = null
-  let activeClip: (typeof state.items)[number] | null = null
+  const playing = new Set<string>()                   // clip ids currently rolling
   const rampCache = new Map<string, Float64Array>()   // cumulative speed integrals per clip
 
+  // Keep every VISIBLE layer's element rolling at its clip's position; pause
+  // the rest without reseeking (their frozen last frame is what transition-in
+  // effects blend from). Each element follows its clip's speed curve with
+  // drift correction, and loops when the clip extends past the source end —
+  // matching the preview's looping behaviour.
   function syncPlayback(t: number) {
-    const clip = pickViewerClip(state.items, state.tracks, t)
-    const id = clip?.id ?? null
+    const stack = pickVisibleClips(state.items, state.tracks, t)
+    const want = new Set<string>()
+    for (const clip of stack) {
+      if (!(clip.contentType === 'video' || clip.contentType == null) || !clip.url) continue
+      const el = elByClip.get(clip.id)
+      if (!el) continue
+      want.add(clip.id)
 
-    if (id !== lastClipId) {
-      lastClipId = id
-      // Pause the outgoing element WITHOUT reseeking it — its frozen last frame
-      // is what transition-in effects on the next clip blend from.
-      if (activeEl) { activeEl.pause(); activeEl = null }
-      activeClip = null
-      if (clip && (clip.contentType === 'video' || clip.contentType == null) && clip.url) {
-        const el = elByUrl.get(clip.url)
-        if (el) {
-          const local = Math.max(0, t - clip.startTime)
-          try { el.currentTime = Math.max(0, clip.inPoint + sourceOffsetAt(clip, local, rampCache, clip.id)) } catch { /* seek race */ }
-          el.playbackRate = clampRate(instantSpeed(clip, local))
-          el.play().catch(() => {})
-          activeEl = el
-          activeClip = clip
-        }
+      const local = Math.max(0, t - clip.startTime)
+      const rate = clampRate(instantSpeed(clip, local))
+      if (Math.abs(el.playbackRate - rate) > 0.01) el.playbackRate = rate
+
+      let expected = Math.max(0, clip.inPoint + sourceOffsetAt(clip, local, rampCache, clip.id))
+      const srcDur = el.duration
+      if (isFinite(srcDur) && srcDur > 0 && expected > srcDur - 0.01) {
+        const cycle = srcDur - clip.inPoint
+        expected = cycle > 0.05 ? clip.inPoint + ((expected - clip.inPoint) % cycle) : srcDur - 0.01
       }
-      return
-    }
 
-    // Same clip: keep the element tracking the clip's speed curve. The timeline
-    // clock runs at wall-clock rate, so the element's position must follow the
-    // integral of speed — update the rate each frame and correct drift.
-    if (activeEl && activeClip) {
-      const local = Math.max(0, t - activeClip.startTime)
-      const rate = clampRate(instantSpeed(activeClip, local))
-      if (Math.abs(activeEl.playbackRate - rate) > 0.01) activeEl.playbackRate = rate
-      const expected = activeClip.inPoint + sourceOffsetAt(activeClip, local, rampCache, activeClip.id)
-      if (Math.abs(activeEl.currentTime - expected) > 0.3) {
-        try { activeEl.currentTime = expected } catch { /* seek race */ }
+      if (!playing.has(clip.id)) {
+        try { el.currentTime = expected } catch { /* seek race */ }
+        playing.add(clip.id)
+      } else if (Math.abs(el.currentTime - expected) > 0.3) {
+        try { el.currentTime = expected } catch { /* seek race */ }
+      }
+      if (el.paused) el.play().catch(() => {})   // also restarts after a loop's 'ended'
+    }
+    for (const id of [...playing]) {
+      if (!want.has(id)) {
+        elByClip.get(id)?.pause()
+        playing.delete(id)
       }
     }
   }
@@ -176,7 +181,7 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
   return await new Promise<Blob>((resolve, reject) => {
     const cleanup = () => {
       cancelAnimationFrame(raf)
-      for (const v of elByUrl.values()) { try { v.pause() } catch { /* noop */ } }
+      for (const v of elByClip.values()) { try { v.pause() } catch { /* noop */ } }
       revokers.forEach(URL.revokeObjectURL)
       audioCtx.close?.().catch(() => {})
     }

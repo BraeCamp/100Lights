@@ -5,8 +5,9 @@ import { X, Download, Film, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
 import { exportTimelineFidelity, resDims } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect } from '@/lib/editor-types'
+import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
+import type { LutData } from '@/lib/lut-parser'
 
 interface Props {
   projectName: string
@@ -16,6 +17,8 @@ interface Props {
   adjustments?: VideoAdjustments
   aspect?: ProjectAspect
   captions?: Caption[]
+  captionStyle?: CaptionStyle
+  luts?: Map<string, LutData>
   inPoint?: number | null
   outPoint?: number | null
   onClose: () => void
@@ -45,7 +48,7 @@ const RESOLUTIONS = [
   { id: '480p',     label: '480p' },
 ] as const
 
-export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions, inPoint, outPoint, onClose }: Props) {
+export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions, captionStyle, luts, inPoint, outPoint, onClose }: Props) {
   const [quality, setQuality]         = useState<ExportOptions['quality']>('medium')
   const [resolution, setResolution]   = useState<ExportOptions['resolution']>('original')
   const [progress, setProgress]       = useState<ExportProgress | null>(null)
@@ -117,6 +120,8 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
           tracks,
           adjustments,
           captions: captions ?? [],
+          captionStyle,
+          luts,
           quality,
           resolution,
           aspect,

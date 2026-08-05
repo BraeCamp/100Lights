@@ -72,7 +72,10 @@ export async function POST(request: Request) {
   }
 
   const data = await deepgramResponse.json() as {
-    results?: { utterances?: Array<{ start: number; end: number; transcript: string; speaker?: number }> }
+    results?: { utterances?: Array<{
+      start: number; end: number; transcript: string; speaker?: number
+      words?: Array<{ word: string; punctuated_word?: string; start: number; end: number }>
+    }> }
     metadata?: { duration?: number }
   }
 
@@ -82,6 +85,8 @@ export async function POST(request: Request) {
     end:     u.end,
     text:    u.transcript.trim(),
     speaker: u.speaker !== undefined ? `Speaker ${u.speaker + 1}` : undefined,
+    // Word timings power karaoke-style caption highlighting in the video editor.
+    words:   u.words?.map(w => ({ w: (w.punctuated_word ?? w.word).trim(), s: w.start, e: w.end })),
   }))
 
   return Response.json({ captions, duration: data.metadata?.duration })

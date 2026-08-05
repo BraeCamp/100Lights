@@ -8,9 +8,10 @@
  * exports and as a fast "no effects" fallback.
  */
 
-import type { ProjectAspect, TimelineItem, Track, VideoAdjustments } from '@/lib/editor-types'
+import type { CaptionStyle, ProjectAspect, TimelineItem, Track, VideoAdjustments } from '@/lib/editor-types'
 import { aspectRatioOf } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
+import type { LutData } from '@/lib/lut-parser'
 import { renderTimelineAudio, toMixClip } from './audio-mix'
 import { captureTimeline } from './capture'
 import type { CompositorState } from './compositor'
@@ -52,6 +53,8 @@ export interface FidelityExportInput {
   tracks:        Track[]
   adjustments:   VideoAdjustments
   captions:      Caption[]
+  captionStyle?: CaptionStyle
+  luts?:         Map<string, LutData>
   quality:       FidelityQuality
   resolution:    FidelityResolution
   aspect?:       ProjectAspect
@@ -61,7 +64,7 @@ export interface FidelityExportInput {
 }
 
 export async function exportTimelineFidelity(input: FidelityExportInput): Promise<Blob> {
-  const { timelineItems, tracks, adjustments, captions, quality, resolution, aspect, range, onProgress, signal } = input
+  const { timelineItems, tracks, adjustments, captions, captionStyle, luts, quality, resolution, aspect, range, onProgress, signal } = input
 
   const items = timelineItems.filter(i => i.enabled !== false)
   const timelineEnd = items.reduce((m, i) => Math.max(m, i.startTime + (i.outPoint - i.inPoint)), 0)
@@ -71,7 +74,7 @@ export async function exportTimelineFidelity(input: FidelityExportInput): Promis
   if (windowDur <= 0) throw new Error('Nothing to export in the selected range.')
 
   const { w, h } = resDims(resolution, aspect)
-  const state: CompositorState = { items, tracks, adjustments, captions, width: w, height: h }
+  const state: CompositorState = { items, tracks, adjustments, captions, captionStyle, luts, width: w, height: h }
 
   // 1. Offline audio mix (faster than real time) — 2%…30%.
   onProgress(0.02, 'Mixing audio…')
