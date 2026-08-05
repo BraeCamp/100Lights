@@ -22,19 +22,25 @@ const ColorScopes   = dynamic(() => import('@/components/editor/ColorScopes'),  
 const RenderQueue   = dynamic(() => import('@/components/editor/RenderQueue'),   { ssr: false })
 const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),   { ssr: false })
 const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
+const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),    { ssr: false })
 import {
   serialize, saveProjectToFile, openProjectFromFile, deserialize,
   type CfProjFile, type EditorSnapshot,
 } from '@/lib/project-serializer'
 import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
-  DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS,
-  RULER_HEIGHT, TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
-  MODULE_DEFS, ALL_MODULE_KEYS,
-  type ModuleKey,
+  DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, DEFAULT_ASPECT, PROJECT_ASPECTS,
+  RULER_HEIGHT, TRACK_HEIGHT, AUDIO_TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
+  MODULE_DEFS, ALL_MODULE_KEYS, beatDur, nearestBeat,
+  type ModuleKey, type ProjectAspect, type BeatGrid,
 } from '@/lib/editor-types'
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
+import { r2CorsEligible } from '@/lib/media-cors'
+import { interpSpeedRamp } from '@/lib/video-export/speed'
+import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
+import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
+import type { ActiveClipTransition, UnderLayer } from '@/components/editor/VideoPlayer'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -104,7 +110,7 @@ function generateVideoThumbnail(url: string): Promise<string | undefined> {
 const MIN_LEFT = 140; const MAX_LEFT = 420
 const MIN_RIGHT = 160; const MAX_RIGHT = 400
 const MIN_TL = 120;  const MAX_TL = 480
-const FRAME_DURATION = 1 / 24  // 24fps
+const FRAME_DURATION = 1 / 30  // 30fps — matches the export pipeline (EXPORT_FPS)
 
 type EditorPage = 'edit' | 'color' | 'audio' | 'deliver'
 export type EditorTool = 'select' | 'blade'
@@ -688,7 +694,43 @@ export default function VideoEditor({
 
   // Viewer overlays
   const [showSafeAreas, setShowSafeAreas] = useState(false)
-  const [aspectGuide, setAspectGuide] = useState<'none' | '9:16' | '1:1' | '4:5' | '2.35:1'>('none')
+  // Project frame shape — sizes the preview stage AND the export canvas
+  const [projectAspect, setProjectAspect] = useState<ProjectAspect>(DEFAULT_ASPECT)
+  // Musical beat grid — ruler ticks, snap-to-beat, cut-on-beat tools
+  const [beatGrid, setBeatGrid] = useState<BeatGrid | null>(null)
+  // Burned-in caption look (size/color/position/karaoke)
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE)
+  const [detectBpmStatus, setDetectBpmStatus] = useState<'idle' | 'working' | 'error'>('idle')
+  // Full DAW arrangement carried by this project (audio module) — lets the
+  // video editor bounce the real mix without opening the DAW.
+  const dawProjectRef = useRef<import('@/lib/daw-types').DawProject | null>(null)
+  const [hasDawProject, setHasDawProject] = useState(false)
+  const [bounceStatus, setBounceStatus] = useState<'idle' | 'working' | 'error'>('idle')
+  // Set during load when the saved audio is newer than the linked mix bounce
+  const pendingMixRefreshRef = useRef<string | null>(null)
+  // Non-video module data carried through video saves. The projects API
+  // replaces `data` wholesale, so a video-module save that omitted these
+  // fields would WIPE the audio module's arrangement from the account. Always
+  // the data AS LOADED — never the live collab replica, so a diverged replica
+  // can't corrupt saved audio.
+  const carryoverRef = useRef<Pick<CfProjFile, 'dawProject' | 'audioMedia' | 'audioMode' | 'podcastMeta' | 'moduleSavedAt'>>({})
+  function withCarryover(project: CfProjFile): CfProjFile {
+    const c = carryoverRef.current
+    return {
+      ...project,
+      dawProject:  project.dawProject  ?? c.dawProject,
+      audioMedia:  project.audioMedia  ?? c.audioMedia,
+      audioMode:   project.audioMode   ?? c.audioMode,
+      podcastMeta: project.podcastMeta ?? c.podcastMeta,
+      moduleSavedAt: { ...c.moduleSavedAt, ...project.moduleSavedAt },
+    }
+  }
+  // DAW tracks that carry clips — the link picker's options
+  const [dawTracks, setDawTracks] = useState<Array<{ id: string; name: string }>>([])
+  function deriveDawTracks(daw: import('@/lib/daw-types').DawProject): Array<{ id: string; name: string }> {
+    const withClips = new Set((daw.arrangementClips ?? []).map(c => c.trackId))
+    return daw.tracks.filter(t => withClips.has(t.id)).map(t => ({ id: t.id, name: t.name || 'Track' }))
+  }
   const [viewerZoom, setViewerZoom] = useState(1)
   const [showStoryboard, setShowStoryboard] = useState(false)
   const [showVUMeter, setShowVUMeter] = useState(false)
@@ -800,23 +842,6 @@ export default function VideoEditor({
   const hasAudio      = activeModules.includes('audio')
   const hasStoryboard = (activeModules as string[]).includes('storyboard')
 
-  // Interpolate speed from a clip's velocity curve keyframes
-  function interpSpeedRamp(points: Array<{ t: number; speed: number }>, t: number): number {
-    if (!points.length) return 1
-    const sorted = [...points].sort((a, b) => a.t - b.t)
-    if (t <= sorted[0].t) return sorted[0].speed
-    if (t >= sorted[sorted.length - 1].t) return sorted[sorted.length - 1].speed
-    for (let i = 0; i < sorted.length - 1; i++) {
-      if (t >= sorted[i].t && t <= sorted[i + 1].t) {
-        const frac = (t - sorted[i].t) / (sorted[i + 1].t - sorted[i].t)
-        // Smooth-step (cubic) interpolation for the velocity ease
-        const smooth = frac * frac * (3 - 2 * frac)
-        return sorted[i].speed + (sorted[i + 1].speed - sorted[i].speed) * smooth
-      }
-    }
-    return 1
-  }
-
   // Viewer is a pure timeline monitor — shows the enabled clip at the playhead.
   // Respects mute/solo: muted tracks are skipped; when any track is soloed, only
   // solo tracks play.
@@ -886,52 +911,51 @@ export default function VideoEditor({
     }
   }, [viewerClip?.id, viewerClip?.eq]) // eslint-disable-line
 
-  // LUT — apply color lookup table to video frames via OffscreenCanvas
-  const lutCanvasRef  = useRef<OffscreenCanvas | null>(null)
-  const lutRvfcRef    = useRef<number | null>(null)
-  const lutRafRef     = useRef<number | null>(null)
+  // LUT of the active clip — VideoPlayer renders it via a WebGL overlay canvas
+  // (the old OffscreenCanvas loop burned CPU into an invisible buffer).
+  const activeLut = viewerClip?.lutId ? (lutMap.get(viewerClip.lutId) ?? null) : null
 
+  // ── Same-origin sources for pixel-reading features ─────────────────────────
+  // Scopes, frame blend, optical flow and the LUT overlay all read frames back,
+  // which a cross-origin (R2-signed) source taints. When one of those features
+  // is active, lazily download the active clip's source and swap in a blob URL
+  // — same trick the export capture uses.
+  const localizedUrlsRef = useRef<Map<string, string | 'pending'>>(new Map())
+  const pixelFeatureActive = showColorScopes || frameBlendEnabled || opticalFlowEnabled || !!activeLut
   useEffect(() => {
-    const clip = viewerClip
-    const lut  = clip?.lutId ? lutMap.get(clip.lutId) : null
-    const v    = videoRef.current
-
-    // Cancel any previous LUT rVFC loop
-    const cancelLut = () => {
-      if (lutRvfcRef.current !== null && v) {
-        (v as any).cancelVideoFrameCallback?.(lutRvfcRef.current)
-        lutRvfcRef.current = null
+    // On bucket-allowlisted origins the elements load with crossOrigin and
+    // frames are readable directly — no download needed.
+    if (r2CorsEligible()) return
+    const url = viewerClip?.url
+    if (!pixelFeatureActive || !url) return
+    if (url.startsWith('blob:') || url.startsWith('data:')) return
+    const cache = localizedUrlsRef.current
+    if (cache.has(url)) return
+    cache.set(url, 'pending')
+    let cancelled = false
+    ;(async () => {
+      try {
+        const blob = await (await fetch(url)).blob()
+        if (cancelled) return
+        const local = URL.createObjectURL(blob)
+        cache.set(url, local)
+        setMediaItems(prev => prev.map(m => m.url === url ? { ...m, url: local } : m))
+        setTimelineItemsRaw(prev => {
+          const next = prev.map(i => i.url === url ? { ...i, url: local } : i)
+          timelineItemsRef.current = next
+          return next
+        })
+      } catch {
+        cache.delete(url)   // will retry next toggle
       }
-      if (lutRafRef.current !== null) { cancelAnimationFrame(lutRafRef.current); lutRafRef.current = null }
-      lutCanvasRef.current = null
-    }
+    })()
+    return () => { cancelled = true }
+  }, [pixelFeatureActive, viewerClip?.url]) // eslint-disable-line
 
-    if (!lut || !v || !clip || clip.contentType !== 'video') { cancelLut(); return }
-
-    function processFrame() {
-      if (!v || !lut) return
-      const vw = v.videoWidth, vh = v.videoHeight
-      if (vw === 0 || vh === 0) { schedule(); return }
-      if (!lutCanvasRef.current || lutCanvasRef.current.width !== vw || lutCanvasRef.current.height !== vh) {
-        lutCanvasRef.current = new OffscreenCanvas(vw, vh)
-      }
-      const ctx = lutCanvasRef.current.getContext('2d') as OffscreenCanvasRenderingContext2D | null
-      if (!ctx) { schedule(); return }
-      ctx.drawImage(v, 0, 0, vw, vh)
-      lutFnsRef.current?.applyLutToCanvas(ctx as unknown as CanvasRenderingContext2D, lut, vw, vh)
-      schedule()
-    }
-
-    function schedule() {
-      if ((v as any).requestVideoFrameCallback) {
-        lutRvfcRef.current = (v as any).requestVideoFrameCallback(processFrame)
-      } else {
-        lutRafRef.current = requestAnimationFrame(processFrame)
-      }
-    }
-    schedule()
-    return cancelLut
-  }, [viewerClip?.id, viewerClip?.lutId, lutMap]) // eslint-disable-line
+  /** Edit a caption's text in place (Inspector transcript tab). */
+  function handleCaptionEdit(index: number, text: string) {
+    setLocalCaptions(prev => prev.map((c, i) => i === index ? { ...c, text, words: undefined } : c))
+  }
 
   // Clip transform: opacity, flip, crop, zoom, and fade envelope from current playhead
   const clipTransform = useMemo(() => {
@@ -965,10 +989,79 @@ export default function VideoEditor({
       flipV: clip.flipV ?? false,
       cropZoom, cropX, cropY,
       fadeOpacity,
+      fitMode: clip.fitMode,
     }
   }, [viewerClip?.id, viewerClip?.opacity, viewerClip?.flipH, viewerClip?.flipV, // eslint-disable-line
-      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY,
+      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode,
       viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns, currentTime]) // eslint-disable-line
+
+  // Transition-in of the active clip: the clip that occupied the SAME TRACK
+  // just before this one becomes the frozen frame the transition blends from.
+  // Mirrors lib/video-export/compositor.transitionAt (per-track, now that
+  // lower tracks stack as layers). The preview renders the frozen frame in a
+  // dedicated element, so same-source cuts cross-blend like the export.
+  const viewerTransition = useMemo((): ActiveClipTransition | undefined => {
+    const clip = viewerClip
+    if (!clip?.transitionIn) return undefined
+    const clipDur = clip.outPoint - clip.inPoint
+    const tPrev = clip.startTime - 0.001
+    let prev = timelineItems.find(i =>
+      i.trackId === clip.trackId &&
+      i.id !== clip.id &&
+      i.enabled !== false &&
+      tPrev >= i.startTime &&
+      i.startTime + (i.outPoint - i.inPoint) > tPrev,
+    ) ?? null
+    if (prev && (
+      prev.contentType === 'title' ||
+      prev.contentType === 'audio' ||
+      !prev.url
+    )) prev = null
+    return {
+      type: clip.transitionIn,
+      duration: Math.max(0.05, Math.min(clip.transitionDuration ?? 0.5, clipDur)),
+      prevSrc: prev?.url ?? null,
+      prevTime: prev?.outPoint ?? 0,
+      prevFitMode: prev?.fitMode,
+    }
+  }, [viewerClip?.id, viewerClip?.transitionIn, viewerClip?.transitionDuration, timelineItems]) // eslint-disable-line
+
+  // Layers under the active clip — every lower track's clip at the playhead,
+  // bottom → top, transformed for this instant. Titles pass through as text.
+  const underLayers = useMemo((): UnderLayer[] => {
+    const stack = pickVisibleClips(timelineItems, tracks, currentTime)
+    if (stack.length <= 1) return []
+    const layers: UnderLayer[] = []
+    for (const clip of stack.slice(0, -1)) {   // all but the top (= viewerClip)
+      if (clip.contentType === 'title') {
+        const d = clip.outPoint - clip.inPoint
+        layers.push({
+          kind: 'title', id: clip.id,
+          text: clip.titleText ?? '',
+          fontSize: clip.titleFontSize ?? 48,
+          color: clip.titleColor ?? '#ffffff',
+          bg: clip.titleBg ?? 'transparent',
+          position: clip.titlePosition ?? 'center',
+          animation: clip.titleAnimation ?? 'none',
+          localProgress: d > 0 ? Math.max(0, Math.min(1, (currentTime - clip.startTime) / d)) : 0,
+        })
+        continue
+      }
+      if (clip.contentType === 'audio' || !clip.url) continue
+      const tf = computeClipTransform(clip, currentTime)
+      const gradeFilter = buildClipGradeFilter(clip)
+      const globalFilter = buildFilterCss(adjustments)
+      layers.push({
+        kind: 'video', id: clip.id, src: clip.url,
+        startTime: clip.startTime, inPoint: clip.inPoint, outPoint: clip.outPoint,
+        speed: clip.speed, speedPoints: clip.speedPoints,
+        transform: { ...tf, fitMode: clip.fitMode },
+        blendMode: clip.blendMode,
+        filter: [globalFilter === 'none' ? '' : globalFilter, gradeFilter].filter(Boolean).join(' '),
+      })
+    }
+    return layers
+  }, [timelineItems, tracks, currentTime, adjustments])
 
   // Converts timeline time ↔ source clip time:  clipTime = timelineTime − offset
   const clipTimeOffset = viewerClip ? viewerClip.startTime - viewerClip.inPoint : 0
@@ -1037,6 +1130,24 @@ export default function VideoEditor({
       setLocalOutputs(loaded.outputs)
       setChapters(loaded.chapters ?? [])
       setMediaItems(resolvedMedia)
+      setProjectAspect(loaded.aspect)
+      setBeatGrid(loaded.beatGrid)
+      setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
+      dawProjectRef.current = cfproj.dawProject ?? null
+      setHasDawProject(!!cfproj.dawProject)
+      setDawTracks(cfproj.dawProject ? deriveDawTracks(cfproj.dawProject) : [])
+      carryoverRef.current = {
+        dawProject: cfproj.dawProject,
+        audioMedia: cfproj.audioMedia,
+        audioMode: cfproj.audioMode,
+        podcastMeta: cfproj.podcastMeta,
+        moduleSavedAt: cfproj.moduleSavedAt,
+      }
+      // Linked audio ALWAYS re-syncs from the project's audio on open — the
+      // link is live by definition until the user locks a clip.
+      if (cfproj.dawProject && patchedItems.some(i => i.dawMixLinked && !i.dawMixLocked)) {
+        pendingMixRefreshRef.current = cfproj.moduleSavedAt?.audio ?? new Date().toISOString()
+      }
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
 
@@ -1099,7 +1210,7 @@ export default function VideoEditor({
     const snapshot = buildSnapshot()   // captures current state right now
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
-      writeAutosave(savedProjectId, serialize(snapshot))
+      writeAutosave(savedProjectId, withCarryover(serialize(snapshot)))
       setIsDirty(false) // data is safely recoverable now — don't nag on unload
     }, 5000)
 
@@ -1112,7 +1223,7 @@ export default function VideoEditor({
         cloudAutoSaveFnRef.current()
       }, 30_000)
     }
-  }, [timelineItems, tracks, adjustments, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
+  }, [timelineItems, tracks, adjustments, projectAspect, beatGrid, captionStyle, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
   useEffect(() => {
@@ -1585,6 +1696,292 @@ export default function VideoEditor({
     setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, transitionIn: type, transitionDuration: dur } : i))
   }
 
+  // ── Beat grid ───────────────────────────────────────────────
+
+  /** Detect BPM from the selected clip's audio (falls back to the first audio-bearing clip). */
+  async function handleDetectBpm() {
+    const source =
+      (selectedItem?.url && selectedItem.contentType !== 'title' ? selectedItem : null) ??
+      timelineItems.find(i => i.url && (i.contentType === 'audio' || i.contentType === 'video' || !i.contentType)) ??
+      null
+    const url = source?.url ?? mediaItems.find(m => m.url && m.contentType !== 'lut')?.url
+    if (!url) { setDetectBpmStatus('error'); setTimeout(() => setDetectBpmStatus('idle'), 2500); return }
+    setDetectBpmStatus('working')
+    try {
+      const [{ estimateTempo }, ab] = await Promise.all([
+        import('@/lib/beat-analyzer'),
+        fetch(url).then(r => r.arrayBuffer()),
+      ])
+      const ctx = new AudioContext()
+      const buffer = await ctx.decodeAudioData(ab)
+      ctx.close?.().catch(() => {})
+      const { bpm, firstOnset } = estimateTempo(buffer)
+      if (!bpm) throw new Error('no tempo')
+      // Downbeat: align the grid to the first strong onset, mapped to the
+      // timeline through the clip it came from (source ⇒ timeline seconds).
+      const offset = source ? Math.max(0, source.startTime + (firstOnset - source.inPoint)) : firstOnset
+      setBeatGrid(g => ({ beatsPerBar: 4, ...(g ?? {}), bpm, offset }))
+      setDetectBpmStatus('idle')
+    } catch {
+      setDetectBpmStatus('error')
+      setTimeout(() => setDetectBpmStatus('idle'), 2500)
+    }
+  }
+
+  /** Split a clip at every beat (or bar) boundary the grid puts inside it. */
+  function handleSplitAtBeats(id: string, unit: 'beat' | 'bar') {
+    const grid = beatGrid
+    if (!grid) return
+    setTimelineItems(prev => {
+      const clip = prev.find(i => i.id === id)
+      if (!clip) return prev
+      const step = beatDur(grid) * (unit === 'bar' ? (grid.beatsPerBar ?? 4) : 1)
+      const clipStart = clip.startTime
+      const clipEnd = clip.startTime + (clip.outPoint - clip.inPoint)
+      const cuts: number[] = []
+      let k = Math.ceil((clipStart + 0.05 - grid.offset) / step)
+      for (; grid.offset + k * step < clipEnd - 0.05; k++) {
+        const t = grid.offset + k * step
+        if (t > clipStart + 0.05) cuts.push(t)
+      }
+      if (!cuts.length) return prev
+      const segments: TimelineItem[] = []
+      let segStart = clipStart
+      let segIn = clip.inPoint
+      for (const cut of [...cuts, clipEnd]) {
+        const segOut = segIn + (cut - segStart)
+        segments.push({
+          ...clip,
+          id: segments.length === 0 ? clip.id : crypto.randomUUID(),
+          startTime: segStart,
+          inPoint: segIn,
+          outPoint: segOut,
+          // A transition-in belongs to the original head only.
+          transitionIn: segments.length === 0 ? clip.transitionIn : undefined,
+          transitionDuration: segments.length === 0 ? clip.transitionDuration : undefined,
+        })
+        segStart = cut
+        segIn = segOut
+      }
+      return prev.flatMap(i => i.id === id ? segments : [i])
+    })
+  }
+
+  /** Lock/unlock a linked DAW clip. Unlocking re-syncs it immediately. */
+  function handleToggleDawLock(id: string) {
+    const clip = timelineItemsRef.current.find(i => i.id === id)
+    if (!clip?.dawMixLinked) return
+    const nowLocked = !clip.dawMixLocked
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, dawMixLocked: nowLocked } : i))
+    if (!nowLocked) {
+      // Back on the live link — catch up with the current audio right away.
+      setTimeout(() => { void refreshDawMix(clip.dawMixTracks) }, 50)
+    }
+  }
+
+  /** Move a clip's start to the nearest beat. */
+  function handleQuantizeToBeat(id: string) {
+    const grid = beatGrid
+    if (!grid) return
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, startTime: nearestBeat(grid, i.startTime) } : i))
+  }
+
+  /**
+   * Bounce the DAW arrangement — or a single DAW track (a stem) — to a wav as
+   * a LINKED clip. The first bounce of a selection creates its own audio track
+   * and clip; later runs (manual, stale-on-load, live edits over the collab
+   * room) re-render each linked selection and swap the media in place. Stems
+   * always render the FULL arrangement window, so every linked clip stays
+   * time-aligned with every other and with the full mix.
+   */
+  const sameSel = (a?: string[], b?: string[]) => [...(a ?? [])].sort().join(',') === [...(b ?? [])].sort().join(',')
+  const dawMixBusyRef = useRef(false)
+
+  // Re-uploads of a linked mix wait for the edits to settle (8 s after the
+  // last refresh) so a burst of live changes doesn't push transient renders
+  // to R2. The blob URL is live immediately either way.
+  const linkedUploadTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  function scheduleLinkedUpload(mediaId: string, file: File) {
+    const timers = linkedUploadTimersRef.current
+    const prior = timers.get(mediaId)
+    if (prior) clearTimeout(prior)
+    timers.set(mediaId, setTimeout(() => {
+      timers.delete(mediaId)
+      void uploadMediaToR2(file, mediaId)
+    }, 8000))
+  }
+
+  async function refreshDawMix(trackIds?: string[], stamp?: string) {
+    const daw = dawProjectRef.current
+    if (!daw || dawMixBusyRef.current) return
+    dawMixBusyRef.current = true
+    try {
+      await renderDawSelection(daw, trackIds, stamp ?? new Date().toISOString())
+    } finally {
+      dawMixBusyRef.current = false
+    }
+  }
+
+  /** Re-render EVERY linked selection (live edits, stale-on-load). */
+  const mixRerunPendingRef = useRef(false)
+  async function refreshAllDawMixes(stamp?: string) {
+    const daw = dawProjectRef.current
+    if (!daw) return
+    if (dawMixBusyRef.current) {
+      // An edit landed mid-render — run again when this pass finishes so the
+      // final audio state is never silently skipped.
+      mixRerunPendingRef.current = true
+      return
+    }
+    const selections: Array<string[] | undefined> = []
+    for (const i of timelineItemsRef.current) {
+      // Locked clips keep their render — only selections with an unlocked clip refresh.
+      if (i.dawMixLinked && !i.dawMixLocked && !selections.some(s => sameSel(s, i.dawMixTracks))) selections.push(i.dawMixTracks)
+    }
+    if (!selections.length) return
+    dawMixBusyRef.current = true
+    const stampVal = stamp ?? new Date().toISOString()
+    try {
+      for (const sel of selections) await renderDawSelection(daw, sel, stampVal)
+    } finally {
+      dawMixBusyRef.current = false
+      if (mixRerunPendingRef.current) {
+        mixRerunPendingRef.current = false
+        void refreshAllDawMixesRef.current()
+      }
+    }
+  }
+
+  async function renderDawSelection(daw: import('@/lib/daw-types').DawProject, trackIds: string[] | undefined, stampVal: string) {
+    // The window always spans the FULL arrangement so stems stay aligned.
+    const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
+    if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
+    setBounceStatus('working')
+    try {
+      const isStem = !!trackIds?.length
+      const source = isStem ? {
+        ...daw,
+        // Clip filter isolates the stem; muting the rest is belt-and-braces.
+        arrangementClips: (daw.arrangementClips ?? []).filter(c => trackIds!.includes(c.trackId)),
+        tracks: daw.tracks.map(t => trackIds!.includes(t.id) ? t : { ...t, mute: true }),
+      } : daw
+      const stemNames = isStem
+        ? daw.tracks.filter(t => trackIds!.includes(t.id)).map(t => t.name || 'Track')
+        : []
+      const label = isStem
+        ? `DAW: ${stemNames.slice(0, 2).join(' + ')}${stemNames.length > 2 ? ` +${stemNames.length - 2}` : ''}`
+        : 'DAW Mix'
+
+      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+      const blob = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
+      const file = new File([blob], `${localProjectName || 'Project'} ${isStem ? stemNames.join('+') : 'mix'}.wav`, { type: 'audio/wav' })
+      const url = URL.createObjectURL(file)
+      const dur = await readDuration(url, 'audio')
+
+      const siblings = timelineItemsRef.current.filter(i => i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))
+      const linked = siblings.find(i => !i.dawMixLocked)
+      const hasLockedSibling = siblings.some(i => i.dawMixLocked && i.url === linked?.url)
+      if (linked) {
+        // Replace in place: same media item, same clip — new audio. `file`
+        // must follow too: the audio-only ffmpeg export path reads it. When a
+        // LOCKED copy shares this media, fork instead: the unlocked clips get
+        // a fresh media item and the locked one keeps its frozen render.
+        const media = mediaItemsRef.current.find(m => m.url === linked.url)
+        const prevUrl = linked.url
+        if (media && !hasLockedSibling) {
+          setMediaItems(prev => prev.map(m => m.id === media.id
+            ? { ...m, url, file, duration: dur, peaks: undefined, uploadStatus: 'uploading' as const }
+            : m))
+          // Live edits arrive in bursts — upload only the settled render.
+          scheduleLinkedUpload(media.id, file)
+        } else {
+          const mediaId = crypto.randomUUID()
+          setMediaItems(prev => [...prev, { id: mediaId, name: file.name, contentType: 'audio', url, file, duration: dur, uploadStatus: 'uploading' }])
+          scheduleLinkedUpload(mediaId, file)
+        }
+        setTimelineItems(prev => prev.map(i => {
+          if (!(i.dawMixLinked && !i.dawMixLocked && sameSel(i.dawMixTracks, trackIds))) return i
+          // Untrimmed clips follow the new mix length; trimmed ones just clamp.
+          const wasFull = i.inPoint === 0 && (!media?.duration || Math.abs((i.outPoint - i.inPoint) - media.duration) < 0.05)
+          return {
+            ...i, url,
+            dawMixStamp: stampVal,
+            inPoint: Math.min(i.inPoint, Math.max(0, dur - 0.1)),
+            outPoint: wasFull ? dur : Math.min(i.outPoint, dur),
+          }
+        }))
+        if (prevUrl?.startsWith('blob:') && !hasLockedSibling) URL.revokeObjectURL(prevUrl)
+      } else {
+        // First bounce of this selection: its own audio track + linked clip.
+        const mediaId = crypto.randomUUID()
+        setMediaItems(prev => [...prev, { id: mediaId, name: file.name, contentType: 'audio', url, file, duration: dur, uploadStatus: 'uploading' }])
+        uploadMediaToR2(file, mediaId)
+        const trackLabel = isStem ? (stemNames[0] ?? 'DAW').slice(0, 8) : 'DAW'
+        const trackId = crypto.randomUUID()
+        setTracks(prev => [...prev, { id: trackId, label: trackLabel, type: 'audio', height: AUDIO_TRACK_HEIGHT }])
+        setTimelineItems(prev => [...prev, {
+          id: crypto.randomUUID(),
+          label,
+          startTime: 0, inPoint: 0, outPoint: dur,
+          captions: [], color: '#3b82f6',
+          trackId, url, contentType: 'audio',
+          dawMixLinked: true, dawMixStamp: stampVal,
+          dawMixTracks: trackIds?.length ? [...trackIds] : undefined,
+        }])
+      }
+      computeAudioPeaks(url).then(peaks => {
+        if (peaks.length) setMediaItems(prev => prev.map(m => m.url === url ? { ...m, peaks } : m))
+      })
+      // The mix defines the musical grid — adopt the DAW tempo unless the user
+      // already tuned a grid of their own.
+      if (daw.tempo) setBeatGrid(g => g ?? { bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
+      setBounceStatus('idle')
+    } catch {
+      setBounceStatus('error')
+      setTimeout(() => setBounceStatus('idle'), 2500)
+    }
+  }
+
+  const refreshAllDawMixesRef = useRef(refreshAllDawMixes)
+  refreshAllDawMixesRef.current = refreshAllDawMixes
+  function handleBounceDawMix(trackIds?: string[]) { void refreshDawMix(trackIds) }
+
+  // Live audio→video: edits arriving over the project's collab room update the
+  // DawProject replica immediately; the actual re-bounce debounces behind the
+  // last edit so a burst of changes renders once.
+  const liveMixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function handleLiveDawProject(project: import('@/lib/daw-types').DawProject, live: boolean) {
+    dawProjectRef.current = project
+    setHasDawProject(true)
+    // Guard: the track list rarely changes — don't re-render per action.
+    const derived = deriveDawTracks(project)
+    setDawTracks(prev =>
+      prev.length === derived.length && prev.every((t, i) => t.id === derived[i].id && t.name === derived[i].name)
+        ? prev
+        : derived)
+    if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
+    liveMixTimerRef.current = setTimeout(() => {
+      // Only auto-render when an UNLOCKED mix is linked — a project that never
+      // bounced stays manual, and locked links keep their frozen render.
+      if (timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked)) void refreshAllDawMixesRef.current()
+    }, live ? 2500 : 1200)
+  }
+
+  // Stale mix detected during load → refresh once state has settled.
+  useEffect(() => {
+    if (!pendingMixRefreshRef.current || !hasDawProject) return
+    const stamp = pendingMixRefreshRef.current
+    pendingMixRefreshRef.current = null
+    void refreshAllDawMixesRef.current(stamp)
+  }, [hasDawProject]) // eslint-disable-line
+
+  // Sync timers die with the editor.
+  useEffect(() => () => {
+    if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
+    for (const t of linkedUploadTimersRef.current.values()) clearTimeout(t)
+    linkedUploadTimersRef.current.clear()
+  }, [])
+
   // Blade split: split a clip at a given timeline time
   function handleSplitItem(id: string, atTime: number) {
     setTimelineItems(prev => {
@@ -2031,6 +2428,9 @@ export default function VideoEditor({
       tracks,
       timelineItems,
       adjustments,
+      aspect: projectAspect,
+      beatGrid,
+      captionStyle,
       zoomLevel,
       captions: localCaptions,
       outputs: localOutputs,
@@ -2050,6 +2450,13 @@ export default function VideoEditor({
   function handleRestore() {
     if (!recovery) return
     const loaded = deserialize(recovery.cfproj)
+    carryoverRef.current = {
+      dawProject: recovery.cfproj.dawProject ?? carryoverRef.current.dawProject,
+      audioMedia: recovery.cfproj.audioMedia ?? carryoverRef.current.audioMedia,
+      audioMode: recovery.cfproj.audioMode ?? carryoverRef.current.audioMode,
+      podcastMeta: recovery.cfproj.podcastMeta ?? carryoverRef.current.podcastMeta,
+      moduleSavedAt: recovery.cfproj.moduleSavedAt ?? carryoverRef.current.moduleSavedAt,
+    }
     const loadedTracks = loaded.tracks.filter(t => t.type !== 'caption')
     setLocalProjectName(loaded.name)
     setTracks(loadedTracks)
@@ -2061,6 +2468,9 @@ export default function VideoEditor({
     captionsRef.current = loaded.captions
     setLocalOutputs(loaded.outputs)
     setChapters(loaded.chapters ?? [])
+    setProjectAspect(loaded.aspect)
+    setBeatGrid(loaded.beatGrid)
+    setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
     if (recovery.source === 'cloud' && projectId) {
@@ -2116,7 +2526,7 @@ export default function VideoEditor({
     try {
       const snapshot = buildSnapshot()
       snapshot.name = nameToUse  // use confirmed name even if state hasn't updated yet
-      const project: CfProjFile = serialize(snapshot)
+      const project: CfProjFile = withCarryover(serialize(snapshot))
       project.modules = opts?.modulesOverride ?? activeModules
       project.moduleSavedAt = { ...project.moduleSavedAt, video: new Date().toISOString() }
       const res = await fetch('/api/projects', {
@@ -2159,7 +2569,7 @@ export default function VideoEditor({
     try {
       const snapshot = buildSnapshot()
       snapshot.name = nameToUse
-      const project = serialize(snapshot)
+      const project = withCarryover(serialize(snapshot))
       project.modules = activeModules
       await fetch(`/api/projects/${projectId}/autosave`, {
         method: 'PUT',
@@ -2174,7 +2584,7 @@ export default function VideoEditor({
   async function downloadProjectFile() {
     setShowSaveMenu(false)
     try {
-      const project: CfProjFile = serialize(buildSnapshot())
+      const project: CfProjFile = withCarryover(serialize(buildSnapshot()))
       await saveProjectToFile(project, undefined)
     } catch {
       // User cancelled the picker — not an error
@@ -2189,7 +2599,7 @@ export default function VideoEditor({
     setSaveStatus('saving')
     try {
       const snap = buildSnapshot()
-      const project: CfProjFile = serialize({ ...snap, id: crypto.randomUUID(), name: newName.trim() })
+      const project: CfProjFile = withCarryover(serialize({ ...snap, id: crypto.randomUUID(), name: newName.trim() }))
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2598,6 +3008,9 @@ export default function VideoEditor({
                 items={mediaItems} selectedId={selectedMediaId}
                 onSelect={setSelectedMediaId}
                 onImport={handleFileImport}
+                onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
+                dawTracks={dawTracks}
+                bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
                 onRemove={(id) => setMediaItems(prev => prev.filter(m => m.id !== id))}
                 onContextMenu={openCtx}
@@ -2673,22 +3086,18 @@ export default function VideoEditor({
                   >Safe</button>
                 )}
 
-                {/* Aspect guide */}
+                {/* Project aspect ratio — sizes the preview frame AND the export */}
                 {viewportTab === 'video' && !isAudioOnly && (
-                  <select value={aspectGuide}
-                    onChange={e => setAspectGuide(e.target.value as typeof aspectGuide)}
+                  <select value={projectAspect}
+                    onChange={e => setProjectAspect(e.target.value as ProjectAspect)}
                     className="text-xs rounded px-1 py-0.5"
-                    title="Aspect ratio guide"
+                    title="Project aspect ratio — the preview frame and exported video use this shape (9:16 for TikTok/Reels/Shorts)"
                     style={{
                       background: 'var(--bg-card)', border: '1px solid var(--border)',
-                      color: aspectGuide !== 'none' ? 'var(--accent-light)' : 'var(--text-muted)',
+                      color: projectAspect !== '16:9' ? 'var(--accent-light)' : 'var(--text-muted)',
                     }}
                   >
-                    <option value="none">No guide</option>
-                    <option value="9:16">9:16</option>
-                    <option value="1:1">1:1</option>
-                    <option value="4:5">4:5</option>
-                    <option value="2.35:1">2.35:1</option>
+                    {PROJECT_ASPECTS.map(a => <option key={a} value={a}>{a}</option>)}
                   </select>
                 )}
 
@@ -2801,7 +3210,12 @@ export default function VideoEditor({
                       viewerZoom={viewerZoom}
                       onViewerZoomChange={setViewerZoom}
                       showSafeAreas={showSafeAreas}
-                      aspectGuide={aspectGuide}
+                      projectAspect={projectAspect}
+                      transition={viewerTransition}
+                      underLayers={underLayers}
+                      captionStyle={captionStyle}
+                      clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
+                      lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -2876,7 +3290,12 @@ export default function VideoEditor({
                       viewerZoom={viewerZoom}
                       onViewerZoomChange={setViewerZoom}
                       showSafeAreas={showSafeAreas}
-                      aspectGuide={aspectGuide}
+                      projectAspect={projectAspect}
+                      transition={viewerTransition}
+                      underLayers={underLayers}
+                      captionStyle={captionStyle}
+                      clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
+                      lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -2958,6 +3377,9 @@ export default function VideoEditor({
                 lutItems={mediaItems.filter(m => m.contentType === 'lut').map(m => ({ id: m.id, name: m.name }))}
                 audioDuckingEnabled={audioDuckingEnabled}
                 onAudioDuckingToggle={() => setAudioDuckingEnabled(v => !v)}
+                captionStyle={captionStyle}
+                onCaptionStyleChange={setCaptionStyle}
+                onCaptionEdit={handleCaptionEdit}
               />
             </div>
           </div>
@@ -2997,6 +3419,13 @@ export default function VideoEditor({
             selectedIds={selectedIds}
             onMultiSelect={setSelectedIds}
             mediaItems={mediaItems}
+            beatGrid={beatGrid}
+            onBeatGridChange={setBeatGrid}
+            onDetectBpm={handleDetectBpm}
+            detectBpmStatus={detectBpmStatus}
+            onSplitAtBeats={handleSplitAtBeats}
+            onQuantizeToBeat={handleQuantizeToBeat}
+            onToggleDawLock={handleToggleDawLock}
           />
         </>
       )}
@@ -3022,6 +3451,12 @@ export default function VideoEditor({
             inline
             timelineItems={timelineItems}
             mediaItems={mediaItems}
+            tracks={tracks}
+            adjustments={adjustments}
+            aspect={projectAspect}
+            captions={localCaptions}
+            captionStyle={captionStyle}
+            luts={lutMap}
             projectName={localProjectName}
             inPoint={inPoint}
             outPoint={outPoint}
@@ -3062,6 +3497,16 @@ export default function VideoEditor({
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
+
+      {/* Live audio→video link: listen to the project's DAW collab room and
+          re-bounce the linked mix track when the arrangement changes. */}
+      {hasDawProject && projectId && (
+        <DawMixSync
+          projectId={savedProjectId}
+          getProject={() => dawProjectRef.current}
+          onProject={handleLiveDawProject}
+        />
+      )}
 
       {/* Project loading overlay */}
       {isLoadingProject && (
@@ -3104,7 +3549,10 @@ export default function VideoEditor({
           mediaItems={mediaItems}
           tracks={tracks}
           adjustments={adjustments}
+          aspect={projectAspect}
           captions={localCaptions}
+          captionStyle={captionStyle}
+          luts={lutMap}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowExport(false)}
@@ -3116,6 +3564,12 @@ export default function VideoEditor({
           projectName={localProjectName}
           timelineItems={timelineItems}
           mediaItems={mediaItems}
+          tracks={tracks}
+          adjustments={adjustments}
+          aspect={projectAspect}
+          captions={localCaptions}
+          captionStyle={captionStyle}
+          luts={lutMap}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowRenderQueue(false)}

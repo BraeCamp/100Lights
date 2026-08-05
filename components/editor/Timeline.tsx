@@ -1,10 +1,10 @@
 'use client'
 
 import { useRef, useState, useEffect, useLayoutEffect } from 'react'
-import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2, ChevronDown } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2, ChevronDown, Music2, X } from 'lucide-react'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, Track, TransitionType, MediaItem } from '@/lib/editor-types'
-import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT } from '@/lib/editor-types'
+import type { TimelineItem, Track, TransitionType, MediaItem, BeatGrid } from '@/lib/editor-types'
+import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT, beatDur, nearestBeat } from '@/lib/editor-types'
 import type { EditorTool } from './VideoEditor'
 import type { ContextMenuItem } from './ContextMenu'
 
@@ -52,6 +52,15 @@ interface Props {
   mediaItems?: MediaItem[]
   playbackRate?: number
   syncAnchorRef?: React.MutableRefObject<{ time: number; wall: number }>
+  // Beat grid
+  beatGrid?: BeatGrid | null
+  onBeatGridChange?: (grid: BeatGrid | null) => void
+  onDetectBpm?: () => void
+  detectBpmStatus?: 'idle' | 'working' | 'error'
+  onSplitAtBeats?: (id: string, unit: 'beat' | 'bar') => void
+  onQuantizeToBeat?: (id: string) => void
+  /** Lock/unlock a linked DAW-mix clip (stops/resumes following audio changes). */
+  onToggleDawLock?: (id: string) => void
 }
 
 const LABEL_WIDTH = 64
@@ -78,13 +87,20 @@ const TRANSITION_LABELS: Record<TransitionType, string> = {
   dissolve: 'DIS', dip_black: 'DIP', wipe_right: 'WPE', push: 'PSH',
 }
 
-function snapFn(t: number, candidates: number[], pps: number, enabled: boolean): number {
+function snapFn(t: number, candidates: number[], pps: number, enabled: boolean, grid?: BeatGrid | null): number {
   if (!enabled) return t
   const range = SNAP_PX / pps
   let best = t, bestDist = range
   for (const c of candidates) {
     const d = Math.abs(t - c)
     if (d < bestDist) { bestDist = d; best = c }
+  }
+  // Beat grid: the nearest beat competes with clip edges / markers (O(1), no
+  // candidate list — computed analytically from the grid).
+  if (grid) {
+    const b = nearestBeat(grid, t)
+    const d = Math.abs(t - b)
+    if (d < bestDist) { bestDist = d; best = b }
   }
   return best
 }
@@ -132,6 +148,13 @@ export default function Timeline({
   playbackRate = 1,
   syncAnchorRef: syncAnchorRefProp,
   onCreateFocusClip,
+  beatGrid = null,
+  onBeatGridChange,
+  onDetectBpm,
+  detectBpmStatus = 'idle',
+  onSplitAtBeats,
+  onQuantizeToBeat,
+  onToggleDawLock,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
@@ -140,6 +163,26 @@ export default function Timeline({
   // null = not scrubbing; number = current scrub speed multiplier (1 = normal)
   const [scrubSpeed, setScrubSpeed] = useState<number | null>(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
+
+  // Tap tempo — median of the last few tap intervals sets the grid BPM.
+  const tapsRef = useRef<number[]>([])
+  const [tapCount, setTapCount] = useState(0)
+  function handleTapTempo() {
+    const now = performance.now()
+    const taps = tapsRef.current
+    if (taps.length && now - taps[taps.length - 1] > 2500) taps.length = 0
+    taps.push(now)
+    if (taps.length > 8) taps.shift()
+    setTapCount(taps.length)
+    if (taps.length >= 4 && onBeatGridChange) {
+      const iv = taps.slice(1).map((t, i) => t - taps[i]).sort((a, b) => a - b)
+      const med = iv[Math.floor(iv.length / 2)]
+      if (med > 0) {
+        const bpm = Math.round((60000 / med) * 10) / 10
+        onBeatGridChange({ beatsPerBar: 4, offset: 0, ...(beatGrid ?? {}), bpm })
+      }
+    }
+  }
 
   // Playhead DOM refs — updated via RAF, bypassing React re-renders for 60fps motion.
   const phLineRef = useRef<HTMLDivElement>(null)   // vertical line over tracks
@@ -310,9 +353,9 @@ export default function Timeline({
 
       if (type === 'move') {
         let rawStart = origStart + dt
-        rawStart = snapFn(Math.max(0, rawStart), snapCandidates, capturedPps, snapEnabled)
+        rawStart = snapFn(Math.max(0, rawStart), snapCandidates, capturedPps, snapEnabled, beatGrid)
         const rawEnd = rawStart + itemDuration
-        const snappedEnd = snapFn(rawEnd, snapCandidates, capturedPps, snapEnabled)
+        const snappedEnd = snapFn(rawEnd, snapCandidates, capturedPps, snapEnabled, beatGrid)
         if (snappedEnd !== rawEnd) rawStart = snappedEnd - itemDuration
         const newStart = Math.max(0, rawStart)
 
@@ -332,15 +375,24 @@ export default function Timeline({
         onMoveItem(item.id, newStart, newTrackId, false)   // preview only — no history
 
       } else if (type === 'trim-in') {
-        const rawIn  = origIn + dt
-        const newIn  = snapFn(Math.max(0, Math.min(rawIn, origOut - 0.1)), snapCandidates, capturedPps, snapEnabled)
+        // Snap the clip's timeline EDGE (candidates + beats live in timeline
+        // space), then map back to the source in-point.
+        const rawIn = origIn + dt
+        const edgeTime = origStart + (rawIn - origIn)
+        const snappedEdge = snapFn(edgeTime, snapCandidates, capturedPps, snapEnabled, beatGrid)
+        const newIn = Math.max(0, Math.min(origIn + (snappedEdge - origStart), origOut - 0.1))
         const newStart = origStart + (newIn - origIn)
         lastTrim = { edge: 'in', newIn, newOut: origOut, newStart: Math.max(0, newStart) }
         onTrimItem(item.id, 'in', newIn, origOut, Math.max(0, newStart), false)   // preview only
 
       } else {
         const rawOut = origOut + dt
-        const newOut = snapFn(Math.max(origIn + 0.1, rawOut), [...snapCandidates, ...loopSnapPts], capturedPps, snapEnabled)
+        const edgeTime = origStart + (rawOut - origIn)
+        const snappedEdge = snapFn(edgeTime, snapCandidates, capturedPps, snapEnabled, beatGrid)
+        let newOut = origIn + (snappedEdge - origStart)
+        // Loop boundaries live in source space — a second pass against those.
+        newOut = snapFn(newOut, loopSnapPts, capturedPps, snapEnabled)
+        newOut = Math.max(origIn + 0.1, newOut)
         lastTrim = { edge: 'out', newIn: origIn, newOut, newStart: origStart }
         onTrimItem(item.id, 'out', origIn, newOut, origStart, false)   // preview only
         // Ripple: shift all clips that start at or after origEnd on the same track
@@ -401,6 +453,30 @@ export default function Timeline({
   const ticks: number[] = []
   for (let t = 0; t <= duration + tickInt; t += tickInt) ticks.push(t)
 
+  // Beat/bar ticks — only when the grid is set and zoom gives them room.
+  const beatTicks: Array<{ t: number; bar: boolean; n?: number }> = []
+  let showBarNumbers = false
+  if (beatGrid) {
+    const spb = beatDur(beatGrid)
+    const bpb = Math.max(1, beatGrid.beatsPerBar ?? 4)
+    const beatPx = spb * pps
+    const showBeats = beatPx >= 7
+    const showBars  = beatPx * bpb >= 22
+    showBarNumbers  = beatPx * bpb >= 44
+    if (showBeats || showBars) {
+      const first = Math.ceil((0 - beatGrid.offset) / spb)
+      const last  = Math.floor((duration + tickInt - beatGrid.offset) / spb)
+      for (let k = first; k <= last && beatTicks.length < 6000; k++) {
+        const isBar = ((k % bpb) + bpb) % bpb === 0
+        if (!isBar && !showBeats) continue
+        const t = beatGrid.offset + k * spb
+        if (t < 0) continue
+        beatTicks.push({ t, bar: isBar, n: isBar ? Math.round(k / bpb) + 1 : undefined })
+      }
+    }
+  }
+  const barLines = beatTicks.filter(b => b.bar)
+
   function getClipMenu(item: TimelineItem): ContextMenuItem[] {
     const isDisabled = item.enabled === false
     return [
@@ -411,6 +487,20 @@ export default function Timeline({
       { id: 'dup',       label: 'Duplicate',          shortcut: '⌘D', onClick: () => onDuplicateItem(item.id) },
       { id: 's1',        separator: true, label: '' },
       { id: 'split',     label: 'Split at Playhead',  shortcut: '⌘B', onClick: () => onSplitItem(item.id, currentTime) },
+      ...(beatGrid && onSplitAtBeats ? [
+        { id: 'splitBars',  label: 'Split at Bars',   onClick: () => onSplitAtBeats(item.id, 'bar' as const) },
+        { id: 'splitBeats', label: 'Split at Beats',  onClick: () => onSplitAtBeats(item.id, 'beat' as const) },
+      ] : []),
+      ...(beatGrid && onQuantizeToBeat ? [
+        { id: 'quant', label: 'Snap Start to Beat', onClick: () => onQuantizeToBeat(item.id) },
+      ] : []),
+      ...(item.dawMixLinked && onToggleDawLock ? [
+        {
+          id: 'dawlock',
+          label: item.dawMixLocked ? 'Unlock Audio Link (re-sync)' : 'Lock Audio Link',
+          onClick: () => onToggleDawLock(item.id),
+        },
+      ] : []),
       { id: 's2',        separator: true, label: '' },
       { id: 'color',     label: 'Color',              colors: CLIP_COLORS_MENU, onColor: (c) => onChangeColor(item.id, c) },
       { id: 'enable',    label: isDisabled ? 'Enable Clip' : 'Disable Clip', onClick: () => onToggleEnabled(item.id) },
@@ -490,6 +580,63 @@ export default function Timeline({
 
         <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
 
+        {/* Beat grid — BPM, tap, detect, downbeat */}
+        {onBeatGridChange && (beatGrid ? (
+          <div className="flex items-center gap-1">
+            <Music2 size={11} color="var(--accent-light)" />
+            <input
+              type="number" min={20} max={300} step={0.1}
+              value={beatGrid.bpm}
+              onChange={e => {
+                const v = Number(e.target.value)
+                if (Number.isFinite(v)) onBeatGridChange({ ...beatGrid, bpm: Math.max(20, Math.min(300, v)) })
+              }}
+              className="text-xs font-mono rounded px-1"
+              style={{ width: 52, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', height: 20 }}
+              title="Beat grid BPM"
+            />
+            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>BPM</span>
+            <button
+              onClick={handleTapTempo}
+              className="px-1.5 py-0.5 rounded text-xs"
+              style={{ color: 'var(--text-muted)', background: tapCount > 0 && tapCount < 4 ? 'var(--accent-subtle)' : 'transparent', border: '1px solid var(--border)' }}
+              title="Tap tempo — tap along with the music (4+ taps)"
+            >{tapCount > 0 && tapCount < 4 ? `Tap ${tapCount}` : 'Tap'}</button>
+            {onDetectBpm && (
+              <button
+                onClick={onDetectBpm}
+                disabled={detectBpmStatus === 'working'}
+                className="px-1.5 py-0.5 rounded text-xs"
+                style={{ color: detectBpmStatus === 'error' ? '#f87171' : 'var(--text-muted)', border: '1px solid var(--border)' }}
+                title="Detect BPM from the selected clip's audio (or the first audio clip)"
+              >{detectBpmStatus === 'working' ? 'Detecting…' : detectBpmStatus === 'error' ? 'No beat' : 'Detect'}</button>
+            )}
+            <button
+              onClick={() => onBeatGridChange({ ...beatGrid, offset: currentTime })}
+              className="px-1.5 py-0.5 rounded text-xs"
+              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+              title="Move bar 1 / beat 1 to the playhead"
+            >Set 1</button>
+            <button
+              onClick={() => onBeatGridChange(null)}
+              className="p-0.5 rounded"
+              style={{ color: 'var(--text-muted)' }}
+              title="Remove beat grid"
+            ><X size={11} /></button>
+          </div>
+        ) : (
+          <button
+            onClick={() => onBeatGridChange({ bpm: 120, offset: 0, beatsPerBar: 4 })}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+            style={{ color: 'var(--text-muted)' }}
+            title="Add a beat grid — snap cuts and clips to the music"
+          >
+            <Music2 size={11} /> Beat grid
+          </button>
+        ))}
+
+        <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
+
         {/* Add track */}
         <div style={{ position: 'relative' }}>
           <button
@@ -564,6 +711,20 @@ export default function Timeline({
                 <div key={t} style={{ position: 'absolute', bottom: 0, left: timeToX(t) }}>
                   <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 9, lineHeight: 1, marginBottom: 2 }}>{formatRuler(t)}</span>
                   <div style={{ width: 1, height: 5, background: 'var(--border-light)' }} />
+                </div>
+              ))}
+
+              {/* Beat / bar ticks */}
+              {beatTicks.map(({ t, bar, n }) => (
+                <div key={`b${t.toFixed(4)}`} style={{ position: 'absolute', bottom: 0, left: timeToX(t), pointerEvents: 'none' }}>
+                  {bar && showBarNumbers && n !== undefined && n >= 1 && (
+                    <span style={{ position: 'absolute', bottom: 12, left: 2, fontSize: 8, lineHeight: 1, color: 'rgb(var(--accent-rgb) / 0.65)', fontWeight: 700 }}>{n}</span>
+                  )}
+                  <div style={{
+                    width: 1,
+                    height: bar ? 11 : 6,
+                    background: bar ? 'rgb(var(--accent-rgb) / 0.75)' : 'rgb(var(--accent-rgb) / 0.35)',
+                  }} />
                 </div>
               ))}
 
@@ -662,6 +823,13 @@ export default function Timeline({
 
             {/* Clip canvas */}
             <div style={{ marginLeft: LABEL_WIDTH, position: 'relative', width: totalWidth }}>
+              {/* Bar gridlines — faint verticals under the clips */}
+              {barLines.map(({ t }) => (
+                <div key={`bar${t.toFixed(4)}`} style={{
+                  position: 'absolute', top: 0, bottom: 0, left: timeToX(t), width: 1,
+                  background: 'rgb(var(--accent-rgb) / 0.10)', pointerEvents: 'none', zIndex: 0,
+                }} />
+              ))}
               {items.length === 0 && (
                 <div style={{
                   position: 'absolute', inset: 0, zIndex: 2,
@@ -880,6 +1048,14 @@ export default function Timeline({
                           >
                             {isAudio ? (
                               <>
+                                {item.dawMixLinked && (
+                                  <span
+                                    title={item.dawMixLocked ? 'Audio link locked — right-click to unlock' : 'Live audio link — right-click to lock'}
+                                    style={{ position: 'absolute', left: 3, top: 1, fontSize: 8, lineHeight: 1, zIndex: 3, pointerEvents: 'none', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}
+                                  >
+                                    {item.dawMixLocked ? '🔒' : '🔗'}
+                                  </span>
+                                )}
                                 {mediaItem?.peaks ? (
                                   <WaveformBar peaks={mediaItem.peaks} color={item.color} clipWidth={width} />
                                 ) : (
@@ -924,7 +1100,12 @@ export default function Timeline({
                                   <div style={{ width: 1.5, height: 12, background: 'rgba(255,255,255,0.6)', borderRadius: 1 }} />
                                 </div>
                                 {/* Label */}
-                                <div style={{ position: 'absolute', left: 8, right: 8, top: 0, bottom: 0, display: 'flex', alignItems: 'center', pointerEvents: 'none', overflow: 'hidden' }}>
+                                <div style={{ position: 'absolute', left: 8, right: 8, top: 0, bottom: 0, display: 'flex', alignItems: 'center', gap: 3, pointerEvents: 'none', overflow: 'hidden' }}>
+                                  {item.dawMixLinked && (
+                                    <span title={item.dawMixLocked ? 'Audio link locked' : 'Live audio link'} style={{ fontSize: 8, lineHeight: 1 }}>
+                                      {item.dawMixLocked ? '🔒' : '🔗'}
+                                    </span>
+                                  )}
                                   <span style={{ color: '#fff', fontSize: 10, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>
                                     {item.label}
                                   </span>

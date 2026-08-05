@@ -11,7 +11,7 @@ import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bun
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -49,7 +49,35 @@ export interface SerializedClip {
   cropZoom?: number
   cropX?: number
   cropY?: number
+  fitMode?: 'contain' | 'cover'
   flags?: import('@/lib/editor-types').ClipFlag[]
+  enabled?: boolean
+  // Motion & compositing
+  speedPoints?: Array<{ t: number; speed: number }>
+  motionBlurEnabled?: boolean
+  blendMode?: string
+  kenBurns?: TimelineItem['kenBurns']
+  // Title clip
+  titleText?: string
+  titleFontSize?: number
+  titleColor?: string
+  titleBg?: string
+  titlePosition?: 'upper' | 'center' | 'lower-third'
+  titleAnimation?: 'none' | 'fade' | 'slide-up'
+  // Audio & color
+  eq?: { low: number; mid: number; high: number }
+  grade?: { brightness: number; contrast: number; saturation: number }
+  lutId?: string
+  // DAW-mix link
+  dawMixLinked?: boolean
+  dawMixStamp?: string
+  dawMixTracks?: string[]
+  dawMixLocked?: boolean
+  // Draw Focus
+  focusX?: number
+  focusY?: number
+  focusRadius?: number
+  focusKeyframes?: Array<{ time: number; x: number; y: number }>
 }
 
 export interface SerializedOutput {
@@ -97,6 +125,12 @@ export interface CfProjFile {
   tracks: Track[]
   clips: SerializedClip[]
   adjustments: VideoAdjustments
+  /** Project frame shape (preview stage + export dims). Absent = 16:9 (pre-aspect files). */
+  aspect?: ProjectAspect
+  /** Musical grid (BPM + downbeat offset) for beat snapping / cut-on-beat. */
+  beatGrid?: BeatGrid | null
+  /** Burned-in caption look. Absent = default style (pre-style files). */
+  captionStyle?: CaptionStyle
   zoomLevel: number
   // Content
   captions: Caption[]
@@ -125,6 +159,9 @@ export interface EditorSnapshot {
   tracks: Track[]
   timelineItems: TimelineItem[]
   adjustments: VideoAdjustments
+  aspect?: ProjectAspect
+  beatGrid?: BeatGrid | null
+  captionStyle?: CaptionStyle
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
@@ -162,9 +199,35 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       cropZoom:         item.cropZoom,
       cropX:            item.cropX,
       cropY:            item.cropY,
+      fitMode:          item.fitMode,
       flags:            item.flags,
+      enabled:          item.enabled,
+      speedPoints:      item.speedPoints,
+      motionBlurEnabled: item.motionBlurEnabled,
+      blendMode:        item.blendMode,
+      kenBurns:         item.kenBurns,
+      titleText:        item.titleText,
+      titleFontSize:    item.titleFontSize,
+      titleColor:       item.titleColor,
+      titleBg:          item.titleBg,
+      titlePosition:    item.titlePosition,
+      titleAnimation:   item.titleAnimation,
+      eq:               item.eq,
+      grade:            item.grade,
+      lutId:            item.lutId,
+      dawMixLinked:     item.dawMixLinked,
+      dawMixStamp:      item.dawMixStamp,
+      dawMixTracks:     item.dawMixTracks,
+      dawMixLocked:     item.dawMixLocked,
+      focusX:           item.focusX,
+      focusY:           item.focusY,
+      focusRadius:      item.focusRadius,
+      focusKeyframes:   item.focusKeyframes,
     })),
     adjustments: snap.adjustments,
+    aspect: snap.aspect,
+    beatGrid: snap.beatGrid ?? null,
+    captionStyle: snap.captionStyle,
     zoomLevel: snap.zoomLevel,
     captions: snap.captions,
     chapters: snap.chapters ?? [],
@@ -196,6 +259,9 @@ export interface DeserializedProject {
   tracks: Track[]
   timelineItems: TimelineItem[]   // url = undefined means "offline"
   adjustments: VideoAdjustments
+  aspect: ProjectAspect
+  beatGrid: BeatGrid | null
+  captionStyle?: CaptionStyle
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
@@ -225,7 +291,30 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     cropZoom:         clip.cropZoom,
     cropX:            clip.cropX,
     cropY:            clip.cropY,
+    fitMode:          clip.fitMode,
     flags:            clip.flags,
+    enabled:          clip.enabled,
+    speedPoints:      clip.speedPoints,
+    motionBlurEnabled: clip.motionBlurEnabled,
+    blendMode:        clip.blendMode,
+    kenBurns:         clip.kenBurns,
+    titleText:        clip.titleText,
+    titleFontSize:    clip.titleFontSize,
+    titleColor:       clip.titleColor,
+    titleBg:          clip.titleBg,
+    titlePosition:    clip.titlePosition,
+    titleAnimation:   clip.titleAnimation,
+    eq:               clip.eq,
+    grade:            clip.grade,
+    lutId:            clip.lutId,
+    dawMixLinked:     clip.dawMixLinked,
+    dawMixStamp:      clip.dawMixStamp,
+    dawMixTracks:     clip.dawMixTracks,
+    dawMixLocked:     clip.dawMixLocked,
+    focusX:           clip.focusX,
+    focusY:           clip.focusY,
+    focusRadius:      clip.focusRadius,
+    focusKeyframes:   clip.focusKeyframes,
     // url is intentionally absent — media is offline until re-linked
   }))
 
@@ -246,6 +335,9 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     tracks:        file.tracks,
     timelineItems,
     adjustments:   file.adjustments,
+    aspect:        file.aspect ?? '16:9',
+    beatGrid:      file.beatGrid ?? null,
+    captionStyle:  file.captionStyle,
     zoomLevel:     file.zoomLevel,
     captions:      file.captions,
     outputs,

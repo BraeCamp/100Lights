@@ -3,7 +3,11 @@
 import { useState, useRef } from 'react'
 import { X, Film, Download, Trash2, Plus, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
-import type { TimelineItem, MediaItem } from '@/lib/editor-types'
+import { exportTimelineFidelity } from '@/lib/video-export'
+import type { Caption } from '@/lib/types'
+import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect, CaptionStyle } from '@/lib/editor-types'
+import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
+import type { LutData } from '@/lib/lut-parser'
 
 export interface RenderJob {
   id: string
@@ -15,6 +19,7 @@ export interface RenderJob {
   status: 'queued' | 'running' | 'done' | 'error'
   progress: ExportProgress | null
   downloadUrl: string | null
+  downloadExt: 'mp4' | 'webm' | 'm4a'
   error: string | null
   isAudioOnly: boolean
 }
@@ -22,6 +27,12 @@ export interface RenderJob {
 interface Props {
   timelineItems: TimelineItem[]
   mediaItems: MediaItem[]
+  tracks?: Track[]
+  adjustments?: VideoAdjustments
+  aspect?: ProjectAspect
+  captions?: Caption[]
+  captionStyle?: CaptionStyle
+  luts?: Map<string, LutData>
   projectName: string
   inPoint: number | null
   outPoint: number | null
@@ -72,7 +83,7 @@ function buildClips(
     })
 }
 
-export default function RenderQueue({ timelineItems, mediaItems, projectName, inPoint, outPoint, onClose, inline }: Props) {
+export default function RenderQueue({ timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions = [], captionStyle, luts, projectName, inPoint, outPoint, onClose, inline }: Props) {
   const [jobs, setJobs] = useState<RenderJob[]>([])
   const [draftQuality, setDraftQuality] = useState<ExportOptions['quality']>('medium')
   const [draftRes, setDraftRes] = useState<ExportOptions['resolution']>('original')
@@ -100,6 +111,7 @@ export default function RenderQueue({ timelineItems, mediaItems, projectName, in
       status: 'queued',
       progress: null,
       downloadUrl: null,
+      downloadExt: isAudioOnly ? 'm4a' : 'mp4',
       error: null,
       isAudioOnly,
     }
@@ -107,21 +119,45 @@ export default function RenderQueue({ timelineItems, mediaItems, projectName, in
   }
 
   async function runJob(job: RenderJob) {
-    const clips = buildClips(timelineItems, mediaItems, job.inPoint, job.outPoint)
     const controller = new AbortController()
     abortRefs.current.set(job.id, controller)
 
     setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'running', progress: null, error: null } : j))
 
     try {
-      const blob = await exportTimeline(
-        clips,
-        { quality: job.quality, resolution: job.resolution },
-        (p) => setJobs(prev => prev.map(j => j.id === job.id ? { ...j, progress: p } : j)),
-        controller.signal,
-      )
+      let blob: Blob
+      if (job.isAudioOnly) {
+        // Audio-only → fast ffmpeg trim+concat (.m4a).
+        const clips = buildClips(timelineItems, mediaItems, job.inPoint, job.outPoint)
+        blob = await exportTimeline(
+          clips,
+          { quality: job.quality, resolution: job.resolution },
+          (p) => setJobs(prev => prev.map(j => j.id === job.id ? { ...j, progress: p } : j)),
+          controller.signal,
+        )
+      } else {
+        // Video → the same full-fidelity pipeline as the Export button, so the
+        // Deliver page bakes in grades/titles/captions/transitions identically.
+        const useRange = job.inPoint != null && job.outPoint != null && job.outPoint > job.inPoint
+        blob = await exportTimelineFidelity({
+          timelineItems,
+          tracks,
+          adjustments,
+          captions,
+          captionStyle,
+          luts,
+          quality: job.quality,
+          resolution: job.resolution,
+          aspect,
+          range: useRange ? { start: job.inPoint!, end: job.outPoint! } : null,
+          onProgress: (frac, message) => setJobs(prev => prev.map(j =>
+            j.id === job.id ? { ...j, progress: { phase: 'encoding', percent: Math.round(frac * 100), message } } : j)),
+          signal: controller.signal,
+        })
+      }
+      const ext: RenderJob['downloadExt'] = job.isAudioOnly ? 'm4a' : blob.type.includes('mp4') ? 'mp4' : 'webm'
       const url = URL.createObjectURL(blob)
-      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'done', downloadUrl: url, progress: null } : j))
+      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'done', downloadUrl: url, downloadExt: ext, progress: null } : j))
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'queued', progress: null } : j))
@@ -155,7 +191,7 @@ export default function RenderQueue({ timelineItems, mediaItems, projectName, in
     const slug = job.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
     const a = Object.assign(document.createElement('a'), {
       href: job.downloadUrl,
-      download: job.isAudioOnly ? `${slug}.m4a` : `${slug}.mp4`,
+      download: `${slug}.${job.downloadExt}`,
     })
     a.click()
   }

@@ -3,8 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2 } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
-import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag } from '@/lib/editor-types'
-import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
+import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
+import { DEFAULT_ADJUSTMENTS, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption, Output, ChapterMarker } from '@/lib/types'
 
 type TranscribeStatus = 'idle' | 'transcribing' | 'done' | 'error'
@@ -38,6 +38,9 @@ interface Props {
   lutItems?: Array<{ id: string; name: string }>
   audioDuckingEnabled?: boolean
   onAudioDuckingToggle?: () => void
+  captionStyle?: CaptionStyle
+  onCaptionStyleChange?: (style: CaptionStyle) => void
+  onCaptionEdit?: (index: number, text: string) => void
 }
 
 type Tab = 'clip' | 'color' | 'outputs' | 'tools' | 'transcript'
@@ -303,9 +306,15 @@ export default function Inspector({
   lutItems = [],
   audioDuckingEnabled = false,
   onAudioDuckingToggle,
+  captionStyle = DEFAULT_CAPTION_STYLE,
+  onCaptionStyleChange,
+  onCaptionEdit,
 }: Props) {
   const [tab, setTab] = useState<Tab>('tools')
   const [transcriptSearch, setTranscriptSearch] = useState('')
+  const [editingCapIdx, setEditingCapIdx] = useState<number | null>(null)
+  const [editingCapText, setEditingCapText] = useState('')
+  const [showCapStyle, setShowCapStyle] = useState(false)
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null)
   const [editingChapterTitle, setEditingChapterTitle] = useState('')
   const activeCaptionRef = useRef<HTMLDivElement>(null)
@@ -525,7 +534,62 @@ export default function Inspector({
                       </button>
                     ))}
                     <span className="flex-1" />
+                    {onCaptionStyleChange && (
+                      <button onClick={() => setShowCapStyle(v => !v)}
+                        className="px-2 py-1 rounded text-xs"
+                        style={{ background: showCapStyle ? 'var(--accent-subtle)' : 'var(--bg-card)', border: `1px solid ${showCapStyle ? 'var(--accent)' : 'var(--border)'}`, color: showCapStyle ? 'var(--accent-light)' : 'var(--text-muted)' }}>
+                        Style
+                      </button>
+                    )}
                   </div>
+                  {/* Caption style — burned-in look */}
+                  {showCapStyle && onCaptionStyleChange && (
+                    <div className="flex flex-col gap-2 mb-2 p-2 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                      <Slider label="Size" value={Math.round(captionStyle.size * 100)} min={50} max={200} unit="%"
+                        onChange={v => onCaptionStyleChange({ ...captionStyle, size: v / 100 })} />
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Text</p>
+                          <input type="color" value={captionStyle.color}
+                            onChange={e => onCaptionStyleChange({ ...captionStyle, color: e.target.value })}
+                            className="w-full h-6 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Highlight</p>
+                          <input type="color" value={captionStyle.highlightColor}
+                            onChange={e => onCaptionStyleChange({ ...captionStyle, highlightColor: e.target.value })}
+                            className="w-full h-6 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {(['bottom', 'center', 'top'] as const).map(pos => (
+                          <button key={pos} onClick={() => onCaptionStyleChange({ ...captionStyle, position: pos })}
+                            className="flex-1 px-1.5 py-1 rounded text-xs capitalize"
+                            style={{ background: captionStyle.position === pos ? 'var(--accent-subtle)' : 'var(--bg-surface)', border: `1px solid ${captionStyle.position === pos ? 'var(--accent)' : 'var(--border)'}`, color: captionStyle.position === pos ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                            {pos}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 cursor-pointer select-none flex-1">
+                          <input type="checkbox" checked={captionStyle.bg !== 'none'}
+                            onChange={e => onCaptionStyleChange({ ...captionStyle, bg: e.target.checked ? DEFAULT_CAPTION_STYLE.bg : 'none' })}
+                            style={{ accentColor: 'var(--accent)', width: 12, height: 12 }} />
+                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Box</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer select-none flex-1"
+                          title="Highlight each word as it's spoken — needs a transcript with word timings">
+                          <input type="checkbox" checked={captionStyle.karaoke}
+                            onChange={e => onCaptionStyleChange({ ...captionStyle, karaoke: e.target.checked })}
+                            style={{ accentColor: 'var(--accent)', width: 12, height: 12 }} />
+                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Karaoke</span>
+                        </label>
+                      </div>
+                      {captionStyle.karaoke && !captions.some(c => c.words?.length) && (
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>This transcript predates word timings, so highlighting uses estimated timing — re-transcribe for exact sync.</p>
+                      )}
+                    </div>
+                  )}
                   <input type="text" placeholder="Search transcript…" value={transcriptSearch}
                     onChange={e => setTranscriptSearch(e.target.value)}
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg outline-none"
@@ -536,12 +600,20 @@ export default function Inspector({
                 </div>
                 <div className="flex flex-col px-3 pb-3 gap-0.5">
                   {filteredCaptions.map((cap, idx) => {
-                    const isActive = !transcriptSearch && captions.indexOf(cap) === activeCaptionIdx
+                    const capIdx = captions.indexOf(cap)
+                    const isActive = !transcriptSearch && capIdx === activeCaptionIdx
+                    const isEditing = editingCapIdx === capIdx
                     const speakerColor = cap.speaker ? getSpeakerColor(cap.speaker) : 'var(--text-muted)'
                     return (
                       <div key={idx} ref={isActive ? activeCaptionRef : null}
-                        onClick={() => onSeek?.(cap.start)}
+                        onClick={() => { if (!isEditing) onSeek?.(cap.start) }}
+                        onDoubleClick={() => {
+                          if (!onCaptionEdit) return
+                          setEditingCapIdx(capIdx)
+                          setEditingCapText(cap.text)
+                        }}
                         className="flex gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors"
+                        title={onCaptionEdit ? 'Double-click to edit' : undefined}
                         style={{ background: isActive ? 'rgba(139,92,246,0.12)' : 'transparent', borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent' }}
                         onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-card)' }}
                         onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}>
@@ -549,7 +621,24 @@ export default function Inspector({
                           <span className="text-xs font-mono" style={{ color: 'var(--text-muted)', fontSize: 9 }}>{formatDisplayTime(cap.start)}</span>
                           {cap.speaker && <span className="text-xs font-semibold" style={{ color: speakerColor, fontSize: 8 }}>{cap.speaker.replace('Speaker ', 'S')}</span>}
                         </div>
-                        <p className="text-xs leading-relaxed flex-1" style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{cap.text}</p>
+                        {isEditing ? (
+                          <textarea
+                            autoFocus
+                            value={editingCapText}
+                            onChange={e => setEditingCapText(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            onBlur={() => { onCaptionEdit?.(capIdx, editingCapText.trim() || cap.text); setEditingCapIdx(null) }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); (e.target as HTMLTextAreaElement).blur() }
+                              if (e.key === 'Escape') { setEditingCapIdx(null) }
+                            }}
+                            rows={2}
+                            className="text-xs leading-relaxed flex-1 rounded px-1.5 py-1 resize-none outline-none"
+                            style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', color: 'var(--text-primary)' }}
+                          />
+                        ) : (
+                          <p className="text-xs leading-relaxed flex-1" style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{cap.text}</p>
+                        )}
                       </div>
                     )
                   })}
@@ -651,6 +740,23 @@ export default function Inspector({
                 <div>
                   <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>CROP & ZOOM</p>
                   <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Frame fit</span>
+                      <div className="flex gap-1">
+                        {(['contain', 'cover'] as const).map(mode => {
+                          const active = (selectedItem.fitMode ?? 'contain') === mode
+                          return (
+                            <button key={mode}
+                              onClick={() => patchClip({ fitMode: mode === 'contain' ? undefined : mode })}
+                              title={mode === 'contain' ? 'Fit — whole clip visible, bars if shapes differ' : 'Fill — clip covers the frame, edges crop'}
+                              className="px-2 py-1 rounded text-xs"
+                              style={{ background: active ? 'var(--accent-subtle)' : 'var(--bg-card)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, color: active ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                              {mode === 'contain' ? 'Fit' : 'Fill'}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                     <Slider label="Zoom" value={selectedItem.cropZoom ?? 100} min={100} max={400} unit="%" onChange={v => patchClip({ cropZoom: v })} />
                     <Slider label="Pan X" value={selectedItem.cropX ?? 0} min={-50} max={50} unit="%" onChange={v => patchClip({ cropX: v })} />
                     <Slider label="Pan Y" value={selectedItem.cropY ?? 0} min={-50} max={50} unit="%" onChange={v => patchClip({ cropY: v })} />
@@ -838,6 +944,27 @@ export default function Inspector({
                           <option value="slide-up">Slide Up</option>
                         </select>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* CLIP COLOR — composes over the project-wide grade */}
+                {selectedItem.contentType !== 'title' && selectedItem.contentType !== 'audio' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>CLIP COLOR</p>
+                      {selectedItem.grade && (
+                        <button onClick={() => patchClip({ grade: undefined })}
+                          className="text-xs" style={{ color: 'var(--accent-light)' }}>Reset</button>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Slider label="Brightness" value={selectedItem.grade?.brightness ?? 100} min={0} max={200}
+                        onChange={v => patchClip({ grade: { brightness: v, contrast: selectedItem.grade?.contrast ?? 100, saturation: selectedItem.grade?.saturation ?? 100 } })} />
+                      <Slider label="Contrast" value={selectedItem.grade?.contrast ?? 100} min={0} max={200}
+                        onChange={v => patchClip({ grade: { brightness: selectedItem.grade?.brightness ?? 100, contrast: v, saturation: selectedItem.grade?.saturation ?? 100 } })} />
+                      <Slider label="Saturation" value={selectedItem.grade?.saturation ?? 100} min={0} max={200}
+                        onChange={v => patchClip({ grade: { brightness: selectedItem.grade?.brightness ?? 100, contrast: selectedItem.grade?.contrast ?? 100, saturation: v } })} />
                     </div>
                   </div>
                 )}

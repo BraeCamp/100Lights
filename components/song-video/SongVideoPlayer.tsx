@@ -355,7 +355,14 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       setStatus('Sending to editor…')
       const { saveRenderToVideoEditor } = await import('@/lib/song-video/to-video-editor')
       savedRef.current = true   // the mix is now persisted in the media library; keep its cache
-      await saveRenderToVideoEditor(blob, { name: `${slug} video`, durationSec: winBeats * (60 / song.tempo) })
+      // Maker aspect ('9 / 16' CSS style) → editor ProjectAspect ('9:16').
+      const editorAspect = aspect === '1 / 1' ? '1:1' as const : aspect === '16 / 9' ? '16:9' as const : '9:16' as const
+      await saveRenderToVideoEditor(blob, {
+        name: `${slug} video`,
+        durationSec: winBeats * (60 / song.tempo),
+        tempo: song.tempo,
+        aspect: editorAspect,
+      })
       // success → the page navigates to the video editor
     } catch (e) { setStatus(`Failed: ${(e as Error).message}`); setBusy(false); setTimeout(() => setStatus(null), 4000) }
   }

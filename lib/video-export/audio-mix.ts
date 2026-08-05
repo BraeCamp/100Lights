@@ -15,6 +15,8 @@
  */
 
 import type { TimelineItem, Track } from '@/lib/editor-types'
+import { instantSpeed } from './speed'
+import { wsola } from '@/lib/wsola'
 
 export interface MixClip {
   url?:         string
@@ -27,6 +29,8 @@ export interface MixClip {
   fadeIn?:      number
   fadeOut?:     number
   eq?:          { low: number; mid: number; high: number }
+  speed?:       number
+  speedPoints?: Array<{ t: number; speed: number }>
 }
 
 const SAMPLE_RATE = 48000
@@ -93,11 +97,56 @@ export async function renderTimelineAudio(
 
     const track = trackById.get(c.trackId)
     const vol = Math.max(0, Math.min(1, track?.volume ?? 1))
-    const dur = Math.min(c.outPoint - c.inPoint, Math.max(0, buffer.duration - c.inPoint))
+    const speed = c.speed ?? 1
+    const hasRamp = !!c.speedPoints?.length
+    // Timeline seconds the clip occupies. At speed ≠ 1 the element consumes
+    // source faster/slower, so the buffer-remaining clamp divides by speed.
+    const timelineDur = c.outPoint - c.inPoint
+    const dur = (speed !== 1 || hasRamp)
+      ? Math.min(timelineDur, Math.max(0, (buffer.duration - c.inPoint) / Math.max(0.0625, speed)))
+      : Math.min(timelineDur, Math.max(0, buffer.duration - c.inPoint))
     if (dur <= 0) continue
 
+    // Clip speed. Constant speed: WSOLA time-stretch so pitch is preserved —
+    // matching the live preview, whose <video> element pitch-corrects. Velocity
+    // ramps: playbackRate curve (resampled — pitch follows the ramp; a ramped
+    // WSOLA would need per-segment stretching). Compute BEFORE creating the
+    // source node: an AudioBufferSourceNode's buffer can only be set once.
+    let stretched: AudioBuffer | null = null
+    if (speed !== 1 && !hasRamp) {
+      try {
+        const sr = buffer.sampleRate
+        const srcStart = Math.max(0, Math.floor(c.inPoint * sr))
+        const srcLen = Math.min(buffer.length - srcStart, Math.max(1, Math.ceil(dur * speed * sr)))
+        if (srcLen > sr * 0.05) {
+          const slice = new AudioBuffer({ length: srcLen, sampleRate: sr, numberOfChannels: buffer.numberOfChannels })
+          for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+            slice.copyToChannel(buffer.getChannelData(ch).subarray(srcStart, srcStart + srcLen), ch)
+          }
+          stretched = wsola(slice, 1 / speed)
+        }
+      } catch {
+        stretched = null   // fall through to the resampling path
+      }
+    }
+
     const src = offline.createBufferSource()
-    src.buffer = buffer
+    src.buffer = stretched ?? buffer
+
+    if (!stretched && (speed !== 1 || hasRamp)) {
+      if (hasRamp) {
+        const n = Math.max(8, Math.min(512, Math.ceil(dur * 20)))
+        const curve = new Float32Array(n)
+        for (let k = 0; k < n; k++) curve[k] = instantSpeed(c, (dur * k) / (n - 1))
+        try {
+          src.playbackRate.setValueCurveAtTime(curve, Math.max(0, c.startTime), dur)
+        } catch {
+          src.playbackRate.value = speed
+        }
+      } else {
+        src.playbackRate.value = speed
+      }
+    }
 
     // Per-clip EQ (matches the live shared-graph shelves).
     const chainIn: AudioNode[] = []
@@ -128,7 +177,19 @@ export async function renderTimelineAudio(
       src.connect(g)
     }
     g.connect(offline.destination)
-    src.start(start, c.inPoint, dur)
+    if (stretched) {
+      // Pre-stretched to the timeline window: plays at rate 1 from its start.
+      src.start(start, 0)
+      src.stop(start + dur)
+    } else if (speed !== 1 || hasRamp) {
+      // start()'s duration arg is measured in SOURCE seconds and would be wrong
+      // under a varying rate — start at the in point and stop at the timeline
+      // window's end instead.
+      src.start(start, c.inPoint)
+      src.stop(start + dur)
+    } else {
+      src.start(start, c.inPoint, dur)
+    }
     scheduled++
   }
 
@@ -151,5 +212,7 @@ export function toMixClip(item: TimelineItem): MixClip {
     fadeIn: item.fadeIn,
     fadeOut: item.fadeOut,
     eq: item.eq,
+    speed: item.speed,
+    speedPoints: item.speedPoints,
   }
 }

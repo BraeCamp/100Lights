@@ -239,6 +239,39 @@ function findTempoFromEnvelope(energy: Float32Array, sr: number, hopSize: number
   return Math.round(bpm)
 }
 
+// ── Lightweight tempo estimate (no classification) ───────────────────────────
+// Used by the video editor's beat grid: BPM via envelope autocorrelation and a
+// downbeat guess from the first strong onset. Much cheaper than analyzeBeats —
+// one envelope pass, no FFT feature extraction.
+
+export function estimateTempo(audioBuffer: AudioBuffer): { bpm: number | null; firstOnset: number } {
+  const sr = audioBuffer.sampleRate
+  const raw = audioBuffer.getChannelData(0)
+  const frameSize = 512
+  const hopSize = 256
+  const nFrames = Math.max(0, Math.floor((raw.length - frameSize) / hopSize))
+  if (nFrames < 8) return { bpm: null, firstOnset: 0 }
+
+  const energy = new Float32Array(nFrames)
+  for (let i = 0; i < nFrames; i++) {
+    let s = 0
+    const base = i * hopSize
+    for (let j = 0; j < frameSize; j++) { const x = raw[base + j]; s += x * x }
+    energy[i] = Math.sqrt(s / frameSize)
+  }
+
+  const bpm = findTempoFromEnvelope(energy, sr, hopSize)
+
+  // Downbeat guess: first frame whose energy rise clears 30% of the peak rise.
+  let peakRise = 0
+  for (let i = 2; i < nFrames; i++) peakRise = Math.max(peakRise, energy[i] - energy[i - 2])
+  let firstOnset = 0
+  for (let i = 2; i < nFrames; i++) {
+    if (energy[i] - energy[i - 2] >= peakRise * 0.3) { firstOnset = (i * hopSize) / sr; break }
+  }
+  return { bpm, firstOnset }
+}
+
 const TYPE_FALLBACKS: Record<BeatType, BeatType[]> = {
   'kick':            ['tom', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],
   'tom':             ['kick', 'snare', 'clap', 'rim', 'hihat', 'open-hihat', 'crash', 'other'],

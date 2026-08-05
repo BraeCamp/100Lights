@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2 } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
@@ -15,6 +15,12 @@ interface Props {
   onRemove: (id: string) => void
   onContextMenu: (e: React.MouseEvent, items: ContextMenuItem[]) => void
   onAddFromLibrary: (item: LibraryMediaItem) => void
+  /** Present when the project carries a DAW arrangement — links its real mix
+   *  (or a single DAW track as a stem) as a live-updating clip. */
+  onBounceDawMix?: (trackIds?: string[]) => void
+  /** DAW tracks that carry clips — offered as stem link targets. */
+  dawTracks?: Array<{ id: string; name: string }>
+  bounceStatus?: 'idle' | 'working' | 'error'
 }
 
 function formatDur(s?: number) {
@@ -25,9 +31,11 @@ function formatDur(s?: number) {
 
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
+  onBounceDawMix, dawTracks = [], bounceStatus = 'idle',
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
+  const [showDawMenu, setShowDawMenu] = useState(false)
   const [tab, setTab] = useState<'local' | 'library'>('local')
   const [libraryItems, setLibraryItems] = useState<LibraryMediaItem[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
@@ -98,14 +106,67 @@ export default function MediaLibrary({
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
           Media Pool
         </span>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-          style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
-          title="Import media (also drag files onto the viewer)"
-        >
-          <FolderOpen size={11} /> Import
-        </button>
+        <div className="flex items-center gap-1">
+          {onBounceDawMix && (
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowDawMenu(v => !v)}
+                disabled={bounceStatus === 'working'}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                style={{
+                  background: 'var(--accent-subtle)', border: '1px solid var(--accent)',
+                  color: bounceStatus === 'error' ? '#f87171' : 'var(--accent-light)',
+                }}
+                title="Link this project's DAW audio — the full mix or a single track — as a clip that re-renders whenever the audio changes"
+              >
+                <Music2 size={11} />
+                {bounceStatus === 'working' ? 'Bouncing…' : bounceStatus === 'error' ? 'Failed' : 'DAW link'}
+              </button>
+              {showDawMenu && (<>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setShowDawMenu(false)} />
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 100,
+                  minWidth: 160, maxHeight: 260, overflowY: 'auto',
+                  background: 'var(--bg-card)', border: '1px solid var(--border-light)',
+                  borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4,
+                }}>
+                  <button
+                    onClick={() => { setShowDawMenu(false); onBounceDawMix() }}
+                    className="w-full text-left px-2.5 py-1.5 rounded text-xs font-medium"
+                    style={{ color: 'var(--text-primary)' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                  >
+                    Full mix
+                  </button>
+                  {dawTracks.length > 0 && (
+                    <p className="px-2.5 pt-1.5 pb-0.5 text-xs font-semibold" style={{ color: 'var(--text-muted)', fontSize: 9 }}>SINGLE TRACK</p>
+                  )}
+                  {dawTracks.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => { setShowDawMenu(false); onBounceDawMix([t.id]) }}
+                      className="w-full text-left px-2.5 py-1.5 rounded text-xs"
+                      style={{ color: 'var(--text-secondary)' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </>)}
+            </div>
+          )}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+            title="Import media (also drag files onto the viewer)"
+          >
+            <FolderOpen size={11} /> Import
+          </button>
+        </div>
         <input ref={fileInputRef} type="file" accept="video/*,audio/*,.cube" className="hidden" onChange={handleFileInput} />
       </div>
 

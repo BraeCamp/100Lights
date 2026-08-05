@@ -2,6 +2,73 @@ import type { Caption, ContentType } from '@/lib/types'
 
 export type TransitionType = 'dissolve' | 'dip_black' | 'wipe_right' | 'push'
 
+// ── Project aspect ratio ──────────────────────────────────────
+// The frame shape of the whole project: the preview stage, the compositor and
+// the export canvas all derive their dimensions from this (not a guide overlay).
+
+export type ProjectAspect = '16:9' | '9:16' | '1:1' | '4:5' | '2.35:1'
+
+export const PROJECT_ASPECTS: ProjectAspect[] = ['16:9', '9:16', '1:1', '4:5', '2.35:1']
+
+export const DEFAULT_ASPECT: ProjectAspect = '16:9'
+
+/** Width/height ratio for a project aspect. */
+export function aspectRatioOf(aspect: ProjectAspect | undefined): number {
+  switch (aspect) {
+    case '9:16':   return 9 / 16
+    case '1:1':    return 1
+    case '4:5':    return 4 / 5
+    case '2.35:1': return 2.35
+    default:       return 16 / 9
+  }
+}
+
+// ── Beat grid ─────────────────────────────────────────────────
+// Musical grid over the video timeline: the ruler draws beats/bars, snapping
+// includes beat positions, and cut-on-beat tools quantize to it. Constant BPM
+// (v1) — DAW projects with mid-song tempo changes flatten to their base tempo.
+
+export interface BeatGrid {
+  bpm: number          // beats per minute (> 0)
+  offset: number       // seconds where beat 0 / bar 1 falls
+  beatsPerBar?: number // default 4
+}
+
+/** Seconds per beat. */
+export function beatDur(grid: BeatGrid): number {
+  return 60 / Math.max(1, grid.bpm)
+}
+
+/** Nearest beat time (seconds) to `t`, clamped to ≥ 0. */
+export function nearestBeat(grid: BeatGrid, t: number): number {
+  const spb = beatDur(grid)
+  return Math.max(0, grid.offset + Math.round((t - grid.offset) / spb) * spb)
+}
+
+// ── Caption style ─────────────────────────────────────────────
+// Project-wide look for burned-in captions. `size` scales the base size the
+// renderer derives from frame height, so the same style reads correctly at
+// every aspect/resolution. Karaoke highlights the active word (needs word
+// timings on the caption — older transcripts without them render statically).
+
+export interface CaptionStyle {
+  size: number                          // 0.5–2, multiplier on the base size
+  color: string                         // text color
+  bg: string                            // box color, or 'none' for outline-only text
+  position: 'bottom' | 'center' | 'top'
+  karaoke: boolean
+  highlightColor: string                // active-word color when karaoke is on
+}
+
+export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
+  size: 1,
+  color: '#ffffff',
+  bg: 'rgba(0,0,0,0.75)',
+  position: 'bottom',
+  karaoke: false,
+  highlightColor: '#a78bfa',
+}
+
 export interface ClipFlag {
   id: string
   color: string
@@ -32,6 +99,7 @@ export interface TimelineItem {
   cropZoom?: number    // 100–400, default 100 (percent scale)
   cropX?: number       // -50 to 50, default 0 (percent pan)
   cropY?: number       // -50 to 50, default 0
+  fitMode?: 'contain' | 'cover'  // how the source fills the project frame (default contain)
   flags?: ClipFlag[]   // colored clip markers
   // Smoothness
   speedPoints?: Array<{ t: number; speed: number }>  // velocity curve: t=0–1 fraction of clip, speed=multiplier
@@ -56,8 +124,19 @@ export interface TimelineItem {
   titleAnimation?: 'none' | 'fade' | 'slide-up'       // default 'none'
   // Per-clip audio EQ (gain in dB: -12 to +12, 0 = flat)
   eq?: { low: number; mid: number; high: number }
+  // Per-clip color grade — composes ON TOP of the project-wide adjustments,
+  // so one shot can be matched against its neighbours (100 = neutral).
+  grade?: { brightness: number; contrast: number; saturation: number }
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
+  // Live DAW-mix link: this clip carries the project's bounced DAW arrangement
+  // and is re-rendered (media swapped in place) whenever the audio changes.
+  dawMixLinked?: boolean
+  dawMixStamp?: string       // ISO stamp of the audio state this bounce rendered
+  /** DAW track ids this link renders (a stem). Absent/empty = the full mix. */
+  dawMixTracks?: string[]
+  /** Locked: keep the current render — stop following audio changes until unlocked. */
+  dawMixLocked?: boolean
   // Draw Focus overlay fields (only for clips on drawfocus tracks)
   focusX?: number      // 0–1 horizontal position (default 0.5) — static fallback when no keyframes
   focusY?: number      // 0–1 vertical position (default 0.5)

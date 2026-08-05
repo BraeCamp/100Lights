@@ -28,12 +28,16 @@ const FP_INTERVAL_MS = 20_000      // divergence check cadence
 const FP_QUIET_MS    = 5_000       // only compare fingerprints when nobody is mid-edit
 
 // Cheap structural fingerprint: enough to notice a dropped broadcast (missing
-// clip, wrong note count, moved clip) without hashing every byte.
-function projectFingerprint(p: DawProject): string {
+// clip, wrong note count, moved clip) without hashing every byte. Exported so
+// the video editor's DawMixSync replica can run the same divergence check.
+export function projectFingerprint(p: DawProject): string {
   let h = 5381
   const mix = (s: string) => { for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0 }
+  // Tempo + mixer state: a dropped SET_TEMPO or mute/volume change alters the
+  // sound as much as a lost clip — it must trip the self-heal too.
+  mix(`${p.tempo}:${p.timeSignatureNum}:${p.timeSignatureDen}:${p.masterVolume}`)
   mix(String(p.tracks.length))
-  for (const t of p.tracks) mix(t.id)
+  for (const t of p.tracks) mix(`${t.id}:${t.mute ? 1 : 0}:${t.solo ? 1 : 0}:${t.volume}:${t.pan}`)
   mix(String(p.arrangementClips.length))
   for (const c of p.arrangementClips) {
     mix(`${c.id}:${c.startBeat}:${c.durationBeats}:${'notes' in c ? (c as { notes: unknown[] }).notes.length : 'a'}`)

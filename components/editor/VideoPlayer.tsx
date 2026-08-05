@@ -3,8 +3,14 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { Play, Pause, SkipBack, Mic, Film, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Caption, ContentType } from '@/lib/types'
-import type { VideoAdjustments } from '@/lib/editor-types'
+import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } from '@/lib/editor-types'
+import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
+import { captionWords } from '@/lib/captions'
+import { r2CorsEligible } from '@/lib/media-cors'
+import { instantSpeed, sourceOffsetAt } from '@/lib/video-export/speed'
+import { getLutGL } from '@/lib/video-export/lut-gl'
+import type { LutData } from '@/lib/lut-parser'
 
 const PREPLAY_LEAD = 0.5
 const WAVEFORM = [30, 55, 80, 45, 70, 90, 60, 40, 75, 85, 50, 65, 95, 70, 45, 80, 60, 35, 70, 90, 55, 80, 65, 40, 75, 95, 50, 65, 80, 55, 70, 40]
@@ -17,6 +23,7 @@ export interface ClipTransform {
   cropX: number         // -50 to 50
   cropY: number         // -50 to 50
   fadeOpacity: number   // 0–1, computed from fade in/out
+  fitMode?: 'contain' | 'cover'   // how the clip fills the project frame
 }
 
 export const DEFAULT_CLIP_TRANSFORM: ClipTransform = {
@@ -24,7 +31,42 @@ export const DEFAULT_CLIP_TRANSFORM: ClipTransform = {
   cropZoom: 100, cropX: 0, cropY: 0, fadeOpacity: 1,
 }
 
-export type AspectGuide = 'none' | '9:16' | '1:1' | '4:5' | '2.35:1'
+/** Transition-in of the ACTIVE clip, passed while its window could be on screen. */
+export interface ActiveClipTransition {
+  type: TransitionType
+  duration: number       // seconds, already clamped to the clip length
+  prevSrc: string | null // pool src of the outgoing clip (null = from black)
+  prevTime: number       // source time of the outgoing clip's frozen last frame
+  prevFitMode?: 'contain' | 'cover'
+}
+
+/** A layer stacked UNDER the active clip (multi-track compositing). Bottom → top. */
+export type UnderLayer =
+  | {
+      kind: 'video'
+      id: string
+      src: string
+      startTime: number
+      inPoint: number
+      outPoint: number
+      speed?: number
+      speedPoints?: Array<{ t: number; speed: number }>
+      transform: ClipTransform
+      blendMode?: string
+      /** Global grade + this clip's own grade, as a ready CSS filter chain. */
+      filter: string
+    }
+  | {
+      kind: 'title'
+      id: string
+      text: string
+      fontSize: number
+      color: string
+      bg: string
+      position: 'upper' | 'center' | 'lower-third'
+      animation: 'none' | 'fade' | 'slide-up'
+      localProgress: number
+    }
 
 interface ClipHint {
   inPoint: number
@@ -52,7 +94,14 @@ interface Props {
   clipTransform?: ClipTransform
   viewerZoom?: number
   showSafeAreas?: boolean
-  aspectGuide?: AspectGuide
+  projectAspect?: ProjectAspect
+  transition?: ActiveClipTransition
+  underLayers?: UnderLayer[]
+  captionStyle?: CaptionStyle
+  /** Per-clip grade of the active clip, as a CSS filter chain appended after the global grade. */
+  clipGradeFilter?: string
+  /** Parsed LUT of the active clip — rendered via a WebGL overlay canvas. */
+  lutData?: LutData | null
   showVUMeter?: boolean
   onSeekRequest?: (t: number) => void   // called when user types a timecode
   frameBlendEnabled?: boolean
@@ -123,30 +172,19 @@ function buildClipStyle(t: ClipTransform): React.CSSProperties {
   }
 }
 
-// Aspect ratio guide overlay dimensions (width%, height% of the container to SHOW)
-function aspectGuideStyle(guide: AspectGuide, containerW: number, containerH: number): React.CSSProperties {
-  if (guide === 'none') return { display: 'none' }
+// The stage is the project frame: an aspect-locked box centered in the monitor.
+// Everything frame-relative (video, vignette, titles, captions, safe areas,
+// focus) lives inside it, matching the export compositor's canvas exactly.
+function stageDims(aspect: ProjectAspect, containerW: number, containerH: number): { width: number; height: number } {
+  const ar = aspectRatioOf(aspect)
+  if (!containerW || !containerH) return { width: 640, height: 640 / ar }
   const containerAR = containerW / containerH
-  let targetAR: number
-  switch (guide) {
-    case '9:16':   targetAR = 9 / 16; break
-    case '1:1':    targetAR = 1; break
-    case '4:5':    targetAR = 4 / 5; break
-    case '2.35:1': targetAR = 2.35; break
-    default:       targetAR = containerAR
-  }
-  if (targetAR < containerAR) {
-    // Letterbox: bars on left/right
-    const w = (targetAR / containerAR) * 100
-    return { left: `${(100 - w) / 2}%`, right: `${(100 - w) / 2}%`, top: 0, bottom: 0 }
-  } else {
-    // Pillarbox: bars on top/bottom
-    const h = (containerAR / targetAR) * 100
-    return { top: `${(100 - h) / 2}%`, bottom: `${(100 - h) / 2}%`, left: 0, right: 0 }
-  }
+  return containerAR > ar
+    ? { width: containerH * ar, height: containerH }
+    : { width: containerW, height: containerW / ar }
 }
 
-function parseTimecode(s: string, fps = 24): number {
+function parseTimecode(s: string, fps = 30): number {
   const clean = s.trim()
   const parts = clean.split(':').map(Number)
   if (parts.some(isNaN)) return NaN
@@ -156,7 +194,7 @@ function parseTimecode(s: string, fps = 24): number {
   return Number(clean)
 }
 
-function formatTimecode(s: number, fps = 24): string {
+function formatTimecode(s: number, fps = 30): string {
   const t = Math.max(0, s)
   const h = Math.floor(t / 3600)
   const m = Math.floor((t % 3600) / 60)
@@ -173,7 +211,12 @@ export default function VideoPlayer({
   clipTransform = DEFAULT_CLIP_TRANSFORM,
   viewerZoom = 1,
   showSafeAreas = false,
-  aspectGuide = 'none',
+  projectAspect = '16:9',
+  transition,
+  underLayers = [],
+  captionStyle = DEFAULT_CAPTION_STYLE,
+  clipGradeFilter = '',
+  lutData = null,
   showVUMeter = false,
   onSeekRequest,
   frameBlendEnabled = false,
@@ -441,8 +484,9 @@ export default function VideoPlayer({
     }
   }, [optFlowActive, src]) // eslint-disable-line
 
-  // Monitor container ref for aspect guide sizing
+  // Monitor container ref for stage sizing; stage = the aspect-locked frame box
   const monitorRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
   const [monitorSize, setMonitorSize] = useState({ w: 640, h: 360 })
   useEffect(() => {
     const el = monitorRef.current
@@ -454,6 +498,127 @@ export default function VideoPlayer({
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  // ── Transition-in progress ────────────────────────────────────────────────
+  // p = 0–1 through the active clip's transition window, driven by an RAF that
+  // reads the video element's clock directly (React's currentTime updates at
+  // ~4 Hz — far too coarse for a 0.5 s dissolve). p stays correct when paused
+  // or scrubbing, so a half-finished wipe parks half-finished, like the export.
+  const [transP, setTransP] = useState(1)
+  const transPRef = useRef(1)
+  const transPrevElRef = useRef<HTMLVideoElement | null>(null)
+  useEffect(() => {
+    if (!transition || !src) { transPRef.current = 1; setTransP(1); return }
+    // Park the DEDICATED outgoing element on its frozen last frame (its own
+    // element, so even a same-source cut shows two different frames).
+    const prevEl = transPrevElRef.current
+    if (prevEl && Math.abs(prevEl.currentTime - transition.prevTime) > 0.1) {
+      try { prevEl.currentTime = transition.prevTime } catch { /* not seekable yet */ }
+    }
+    let rafId: number
+    const tick = () => {
+      // Playing: the element clock is smooth and authoritative. Paused or
+      // scrubbing: the element may sit within the seek tolerance of the true
+      // position, so use the timeline clock instead (exact while paused).
+      const el = poolRef.current.get(src)
+      const local = isPlayingRef.current && el
+        ? el.currentTime - clipInPoint
+        : currentTimeRef.current - timeOffsetRef.current - clipInPoint
+      const p = Math.max(0, Math.min(1, transition.duration > 0 ? local / transition.duration : 1))
+      if (Math.abs(p - transPRef.current) > 0.005 || (p === 1) !== (transPRef.current === 1)) {
+        transPRef.current = p; setTransP(p)
+      }
+      // Keep polling while the prop is set — scrubbing can re-enter the window.
+      rafId = requestAnimationFrame(tick)
+    }
+    transPRef.current = -1   // force an initial state write
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [transition, src, clipInPoint])
+
+  const transitionActive = !!transition && transP < 1
+
+  // ── Under-layers (multi-track compositing) ────────────────────────────────
+  // Each lower-track clip gets its OWN muted element (separate from the shared
+  // src pool, so the same source can appear on two tracks at once), kept in
+  // coarse sync with the timeline clock.
+  const layerPoolRef = useRef<Map<string, HTMLVideoElement>>(new Map())
+  useEffect(() => {
+    for (const layer of underLayers) {
+      if (layer.kind !== 'video') continue
+      const el = layerPoolRef.current.get(layer.id)
+      if (!el) continue
+      const local = Math.max(0, currentTime - layer.startTime)
+      let target = Math.max(0, layer.inPoint + sourceOffsetAt(layer, local))
+      const dur = el.duration
+      if (isFinite(dur) && dur > 0 && target > dur - 0.01) {
+        const cycle = dur - layer.inPoint
+        target = cycle > 0.05 ? layer.inPoint + ((target - layer.inPoint) % cycle) : dur - 0.01
+      }
+      const rate = Math.max(0.0625, Math.min(16, instantSpeed(layer, local) * playbackRate))
+      if (Math.abs(el.playbackRate - rate) > 0.01) el.playbackRate = rate
+      if (Math.abs(el.currentTime - target) > 0.35) {
+        try { el.currentTime = target } catch { /* not seekable yet */ }
+      }
+      if (isPlaying && el.paused) el.play().catch(() => {})
+      if (!isPlaying && !el.paused) el.pause()
+    }
+  }, [underLayers, currentTime, isPlaying, playbackRate])
+
+  // ── Karaoke clock ─────────────────────────────────────────────────────────
+  // Word highlighting needs finer time than React's ~4 Hz currentTime updates;
+  // an RAF reads the element clock and re-renders at 20 Hz only while karaoke
+  // captions are on screen.
+  const [karaokeT, setKaraokeT] = useState(0)
+  useEffect(() => {
+    if (!captionStyle.karaoke) return
+    let raf = 0
+    const tick = () => {
+      const el = src ? poolRef.current.get(src) : null
+      const t = el ? loopBaseRef.current + el.currentTime + timeOffsetRef.current : currentTimeRef.current
+      setKaraokeT(prev => Math.abs(prev - t) >= 0.05 ? Math.round(t * 20) / 20 : prev)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [captionStyle.karaoke, src])
+
+  // ── LUT overlay (WebGL) ───────────────────────────────────────────────────
+  // Draws the active clip's frames through the GPU LUT into a visible canvas
+  // covering the raw element. Skipped while frame-blend / optical-flow own the
+  // display (they already replace the video with their own canvases).
+  const lutCanvasVisRef = useRef<HTMLCanvasElement>(null)
+  const lutActive = !!lutData && !!src && contentType === 'video' && !blendActive && !optFlowActive
+  useEffect(() => {
+    const canvas = lutCanvasVisRef.current
+    if (!lutActive || !canvas || !src || !lutData) return
+    const video = poolRef.current.get(src)
+    const ctx2d = canvas.getContext('2d')
+    const gl = getLutGL()
+    if (!video || !ctx2d || !gl) return
+    let rvfc: number | null = null
+    let raf: number | null = null
+    const render = () => {
+      const vw = video.videoWidth, vh = video.videoHeight
+      if (vw > 0 && vh > 0) {
+        if (canvas.width !== vw || canvas.height !== vh) { canvas.width = vw; canvas.height = vh }
+        const graded = gl.apply(video, lutData, vw, vh)
+        if (graded) ctx2d.drawImage(graded, 0, 0)
+      }
+      schedule()
+    }
+    const schedule = () => {
+      const v = video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }
+      if (v.requestVideoFrameCallback) rvfc = v.requestVideoFrameCallback(render)
+      else raf = requestAnimationFrame(render)
+    }
+    render()
+    return () => {
+      const v = video as HTMLVideoElement & { cancelVideoFrameCallback?: (id: number) => void }
+      if (rvfc !== null) v.cancelVideoFrameCallback?.(rvfc)
+      if (raf !== null) cancelAnimationFrame(raf)
+    }
+  }, [lutActive, src, lutData])
 
   const allSrcs = useMemo(() => {
     const s = new Set(preloadSrcs)
@@ -636,7 +801,10 @@ export default function VideoPlayer({
   }
 
   const activeEl = src ? poolRef.current.get(src) : null
-  const baseFilter = buildFilter(showOriginal ? undefined : adjustments)
+  let baseFilter = buildFilter(showOriginal ? undefined : adjustments)
+  if (clipGradeFilter && !showOriginal) {
+    baseFilter = baseFilter === 'none' ? clipGradeFilter : `${baseFilter} ${clipGradeFilter}`
+  }
   const motionBlurPx = motionBlurEnabled
     ? Math.min(6, Math.max(0, (Math.abs(currentClipSpeed - 1)) * 2.5))
     : 0
@@ -645,8 +813,41 @@ export default function VideoPlayer({
     : baseFilter
   const cs = clipTransform
   const clipStyle = buildClipStyle(cs)
-  const guideDims = aspectGuideStyle(aspectGuide, monitorSize.w, monitorSize.h)
+  const stage = stageDims(projectAspect, monitorSize.w, monitorSize.h)
+  // On bucket-allowlisted origins, load media with CORS so pixel features
+  // (scopes/LUT/blend/flow) read frames without the blob-localize fallback.
+  const corsAttr = r2CorsEligible() ? ('anonymous' as const) : undefined
   const vignette = adjustments?.vignette ?? 0
+
+  // Style for each pool <video>, including transition-in compositing. Mirrors
+  // the export compositor: incoming clip on top (alpha/clip/translate by type),
+  // outgoing clip's frozen frame underneath.
+  function poolStyle(s: string): React.CSSProperties {
+    const isActive = s === src
+    const style: React.CSSProperties = {
+      position: 'absolute', inset: 0,
+      width: '100%', height: '100%',
+      objectFit: isActive ? (cs.fitMode ?? 'contain') : 'contain',
+      filter: isActive ? effectiveFilter : 'none',
+      opacity: s === visibleSrc && contentType === 'video' && !blendActive && !optFlowActive ? 1 : 0,
+      pointerEvents: 'none',
+      zIndex: s === visibleSrc ? 2 : 0,
+      mixBlendMode: (isActive && blendMode) ? blendMode as React.CSSProperties['mixBlendMode'] : undefined,
+      ...(isActive ? clipStyle : {}),
+    }
+    if (isActive && transitionActive) {
+      const ty = transition!.type
+      if (ty === 'dissolve' || ty === 'dip_black') {
+        style.opacity = Number(style.opacity ?? 1) * transP
+      } else if (ty === 'wipe_right') {
+        style.clipPath = `inset(0 ${((1 - transP) * 100).toFixed(2)}% 0 0)`
+      } else if (ty === 'push') {
+        const rest = !clipStyle.transform || clipStyle.transform === 'none' ? '' : ` ${clipStyle.transform}`
+        style.transform = `translateX(${((1 - transP) * 100).toFixed(2)}%)${rest}`
+      }
+    }
+    return style
+  }
 
   function handleTimecodeClick() {
     setTcInput(formatTimecode(currentTime))
@@ -676,8 +877,98 @@ export default function VideoPlayer({
             transformOrigin: 'center',
           }}
         >
+          {/* Stage — the project frame. Everything frame-relative lives here so
+              the preview geometry matches the export canvas 1:1. */}
+          <div
+            ref={stageRef}
+            style={{
+              position: 'relative',
+              width: stage.width, height: stage.height,
+              background: '#000', overflow: 'hidden',
+              outline: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+          {/* Under-layers — lower-track clips composited beneath the active clip */}
+          {underLayers.map(layer => layer.kind === 'video' ? (
+            <video
+              key={layer.id}
+              ref={el => { if (el) layerPoolRef.current.set(layer.id, el); else layerPoolRef.current.delete(layer.id) }}
+              src={layer.src}
+              crossOrigin={corsAttr}
+              muted playsInline preload="auto"
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: layer.transform.fitMode ?? 'contain',
+                filter: showOriginal ? 'none' : layer.filter || 'none',
+                pointerEvents: 'none',
+                zIndex: 1,
+                mixBlendMode: layer.blendMode as React.CSSProperties['mixBlendMode'],
+                ...buildClipStyle(layer.transform),
+              }}
+            />
+          ) : (
+            <div key={layer.id} style={{
+              position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%',
+              pointerEvents: 'none',
+              opacity: layer.animation === 'fade' ? Math.min(1, layer.localProgress * 4) * Math.min(1, (1 - layer.localProgress) * 4)
+                : layer.animation === 'slide-up' ? Math.min(1, layer.localProgress * 6) : 1,
+              ...(layer.position === 'upper' ? { top: '10%', left: 0, right: 0 }
+                : layer.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 }
+                : { top: '50%', left: 0, right: 0, transform: 'translateY(-50%)' }),
+            }}>
+              <span style={{
+                display: 'inline-block', fontSize: layer.fontSize, color: layer.color,
+                background: layer.bg !== 'transparent' ? layer.bg : undefined,
+                padding: layer.bg !== 'transparent' ? '4px 12px' : undefined,
+                borderRadius: layer.bg !== 'transparent' ? 4 : undefined,
+                fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2,
+                textShadow: layer.bg === 'transparent' ? '0 1px 4px rgba(0,0,0,0.8)' : undefined,
+              }}>{layer.text}</span>
+            </div>
+          ))}
+
+          {/* Transition-in: the outgoing clip's frozen last frame in its own
+              element (works even when both clips share one source file) */}
+          {transition?.prevSrc && (
+            <video
+              ref={transPrevElRef}
+              src={transition.prevSrc}
+              crossOrigin={corsAttr}
+              muted playsInline preload="auto"
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: transition.prevFitMode ?? 'contain',
+                filter: effectiveFilter,
+                opacity: transitionActive && transition.type !== 'dip_black' ? 1 : 0,
+                transform: transitionActive && transition.type === 'push' ? `translateX(${(-transP * 100).toFixed(2)}%)` : undefined,
+                pointerEvents: 'none',
+                zIndex: 1,
+              }}
+            />
+          )}
+
+          {/* LUT overlay — GPU-graded frames of the active clip */}
+          {lutActive && (
+            <canvas
+              ref={lutCanvasVisRef}
+              style={{
+                position: 'absolute',
+                top: '50%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+                maxWidth: '100%', maxHeight: '100%',
+                filter: effectiveFilter,
+                ...(clipStyle as React.CSSProperties),
+                zIndex: 3,
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+
           {/* Empty placeholder */}
-          {!src && (
+          {!src && underLayers.length === 0 && (
             <div className="flex flex-col items-center gap-3 select-none pointer-events-none">
               <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.04)' }}>
                 <Film size={26} color="rgba(255,255,255,0.12)" />
@@ -728,19 +1019,10 @@ export default function VideoPlayer({
               key={s}
               ref={el => setPoolRef(s, el)}
               src={s}
+              crossOrigin={corsAttr}
               preload="auto"
               playsInline
-              style={{
-                position: 'absolute', inset: 0,
-                width: '100%', height: '100%',
-                objectFit: 'contain',
-                filter: s === src ? effectiveFilter : 'none',
-                opacity: s === visibleSrc && contentType === 'video' && !blendActive && !optFlowActive ? 1 : 0,
-                pointerEvents: 'none',
-                zIndex: s === visibleSrc ? 1 : 0,
-                mixBlendMode: (s === src && blendMode) ? blendMode as React.CSSProperties['mixBlendMode'] : undefined,
-                ...(s === src ? clipStyle : {}),
-              }}
+              style={poolStyle(s)}
               onTimeUpdate={e => {
                 if (s !== src) return
                 onTimeUpdate(loopBaseRef.current + e.currentTarget.currentTime + timeOffset)
@@ -763,7 +1045,6 @@ export default function VideoPlayer({
               onError={() => { if (s === src) onMediaError?.() }}
             />
           ))}
-        </div>
 
         {/* Title clip overlay */}
         {titleClip && contentType === 'title' && (() => {
@@ -800,30 +1081,6 @@ export default function VideoPlayer({
           )
         })()}
 
-        {/* Audio mode overlay */}
-        {src && contentType === 'audio' && (
-          <div className="relative z-10 flex flex-col items-center gap-6 select-none px-8 w-full max-w-sm">
-            <div className="w-24 h-24 rounded-3xl flex items-center justify-center" style={{ background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
-              <Mic size={40} color="rgb(var(--accent-rgb) / 0.6)" />
-            </div>
-            <div className="flex items-end gap-0.5 h-14 w-full">
-              {WAVEFORM.map((h, i) => {
-                const progress = (currentTime - timeOffset) / Math.max(activeEl?.duration ?? 1, 1)
-                const isPast = i / WAVEFORM.length < progress
-                return (
-                  <div key={i} className="flex-1 rounded-full" style={{ height: `${h}%`, background: isPast ? 'var(--accent)' : '#2a2a2a', transition: 'background 0.1s' }} />
-                )
-              })}
-            </div>
-            {activeCaption && (
-              <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgb(var(--accent-rgb) / 0.06)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
-                {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}:</span>}
-                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{activeCaption.text}</span>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ── Overlays (always above video) ── */}
 
         {/* Vignette */}
@@ -832,28 +1089,6 @@ export default function VideoPlayer({
             position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 3,
             background: `radial-gradient(ellipse at center, transparent ${Math.max(20, 80 - vignette)}%, rgba(0,0,0,${Math.min(0.95, vignette / 80)}) 100%)`,
           }} />
-        )}
-
-        {/* Aspect ratio guide */}
-        {aspectGuide !== 'none' && (
-          <>
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, ...guideDims }}>
-              <div style={{ position: 'absolute', inset: 0, border: '1px solid rgba(255,255,255,0.35)' }} />
-            </div>
-            {/* Mask outside guide (semi-opaque bars) */}
-            {guideDims.left && (
-              <>
-                <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: guideDims.left, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-                <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: guideDims.right as string, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-              </>
-            )}
-            {guideDims.top && (
-              <>
-                <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: guideDims.top, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-                <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: guideDims.bottom as string, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-              </>
-            )}
-          </>
         )}
 
         {/* Safe areas */}
@@ -867,24 +1102,6 @@ export default function VideoPlayer({
             <div style={{ position: 'absolute', inset: '5%', border: '1px solid rgba(255,255,255,0.35)', boxSizing: 'border-box' }}>
               <span style={{ position: 'absolute', top: 2, left: 3, fontSize: 7, color: 'rgba(255,255,255,0.35)', fontWeight: 700 }}>TITLE</span>
             </div>
-          </div>
-        )}
-
-        {/* VU Meter — left side so right-side toolbars stay clear */}
-        {showVUMeter && (
-          <div style={{ position: 'absolute', left: 8, top: 8, bottom: 8, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
-            {vuLevels.map((lvl, i) => (
-              <div key={i} style={{ width: 8, height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                <div style={{
-                  width: '100%',
-                  height: `${lvl * 100}%`,
-                  background: lvl > 0.85 ? '#ef4444' : lvl > 0.65 ? '#f97316' : '#22c55e',
-                  borderRadius: '0 0 3px 3px',
-                  transition: 'height 0.05s',
-                  minHeight: isPlaying ? 2 : 0,
-                }} />
-              </div>
-            ))}
           </div>
         )}
 
@@ -940,7 +1157,7 @@ export default function VideoPlayer({
               onPointerDown={e => {
                 e.stopPropagation()
                 e.currentTarget.setPointerCapture(e.pointerId)
-                const rect = monitorRef.current!.getBoundingClientRect()
+                const rect = (stageRef.current ?? monitorRef.current!).getBoundingClientRect()
                 const onMove = (me: PointerEvent) => {
                   onFocusKeyframeMove(idx,
                     Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)),
@@ -1003,12 +1220,95 @@ export default function VideoPlayer({
                 {clipLabel}
               </div>
             )}
+            {activeCaption && (() => {
+              const st = captionStyle
+              const fs = Math.max(10, Math.round(stage.height * 0.028 * (st.size || 1)))
+              const kWords = st.karaoke ? captionWords(activeCaption) : []
+              const karaoke = kWords.length > 0
+              const posStyle: React.CSSProperties =
+                st.position === 'top'    ? { top: '8%', transform: 'translateX(-50%)' } :
+                st.position === 'center' ? { top: '50%', transform: 'translate(-50%, -50%)' } :
+                                           { bottom: '8%', transform: 'translateX(-50%)' }
+              return (
+                <div
+                  className="absolute left-1/2 rounded text-center"
+                  style={{
+                    ...posStyle,
+                    maxWidth: '90%',
+                    padding: '8px 16px',
+                    fontSize: fs,
+                    fontWeight: 500,
+                    lineHeight: 1.25,
+                    background: st.bg !== 'none' ? st.bg : undefined,
+                    color: st.color,
+                    textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                    backdropFilter: st.bg !== 'none' ? 'blur(4px)' : undefined,
+                  }}
+                >
+                  {karaoke
+                    ? kWords.map((w, i) => {
+                        const active = karaokeT >= w.s && karaokeT <= w.e
+                        const past = karaokeT > w.e
+                        return (
+                          <span key={i} style={{
+                            color: active ? st.highlightColor : st.color,
+                            opacity: active || past ? 1 : 0.55,
+                            marginRight: '0.28em',
+                          }}>{w.w}</span>
+                        )
+                      })
+                    : <>
+                        {activeCaption.speaker && <span className="font-semibold mr-1.5" style={{ color: 'var(--accent-light)', fontSize: Math.round(fs * 0.8) }}>{activeCaption.speaker}</span>}
+                        {activeCaption.text}
+                      </>}
+                </div>
+              )
+            })()}
+          </div>
+        )}
+
+          </div>{/* /stage */}
+        </div>{/* /zoom wrapper */}
+
+        {/* Audio mode overlay */}
+        {src && contentType === 'audio' && (
+          <div className="relative z-10 flex flex-col items-center gap-6 select-none px-8 w-full max-w-sm">
+            <div className="w-24 h-24 rounded-3xl flex items-center justify-center" style={{ background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
+              <Mic size={40} color="rgb(var(--accent-rgb) / 0.6)" />
+            </div>
+            <div className="flex items-end gap-0.5 h-14 w-full">
+              {WAVEFORM.map((h, i) => {
+                const progress = (currentTime - timeOffset) / Math.max(activeEl?.duration ?? 1, 1)
+                const isPast = i / WAVEFORM.length < progress
+                return (
+                  <div key={i} className="flex-1 rounded-full" style={{ height: `${h}%`, background: isPast ? 'var(--accent)' : '#2a2a2a', transition: 'background 0.1s' }} />
+                )
+              })}
+            </div>
             {activeCaption && (
-              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 rounded text-sm font-medium text-center max-w-[80%]" style={{ background: 'rgba(0,0,0,0.75)', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)' }}>
-                {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}</span>}
-                {activeCaption.text}
+              <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgb(var(--accent-rgb) / 0.06)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
+                {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}:</span>}
+                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{activeCaption.text}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* VU Meter — left side so right-side toolbars stay clear */}
+        {showVUMeter && (
+          <div style={{ position: 'absolute', left: 8, top: 8, bottom: 8, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
+            {vuLevels.map((lvl, i) => (
+              <div key={i} style={{ width: 8, height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                <div style={{
+                  width: '100%',
+                  height: `${lvl * 100}%`,
+                  background: lvl > 0.85 ? '#ef4444' : lvl > 0.65 ? '#f97316' : '#22c55e',
+                  borderRadius: '0 0 3px 3px',
+                  transition: 'height 0.05s',
+                  minHeight: isPlaying ? 2 : 0,
+                }} />
+              </div>
+            ))}
           </div>
         )}
 

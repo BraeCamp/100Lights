@@ -42,6 +42,7 @@
     "@stripe/stripe-js": "^9.8.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.17.0",
+    "mp4-muxer": "^5.2.2",
     "next": "16.2.7",
     "pg": "^8.22.0",
     "posthog-js": "^1.386.6",
