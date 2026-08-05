@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react'
 import { X, Download, Film, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
-import { exportTimelineFidelity, resDims } from '@/lib/video-export'
+import { exportTimelineFidelity, resDims, fastExportSupported } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
 import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
@@ -56,7 +56,10 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const [downloadExt, setDownloadExt] = useState<'mp4' | 'webm' | 'm4a'>('mp4')
   const [useRange, setUseRange]       = useState(false)
+  const [fastRender, setFastRender]   = useState(() => fastExportSupported())
+  const [shareStatus, setShareStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
   const abortRef = useRef<AbortController | null>(null)
+  const blobRef  = useRef<Blob | null>(null)
 
   const hasRange = inPoint != null && outPoint != null && outPoint > inPoint
   const rangeStart = (useRange && hasRange) ? inPoint! : null
@@ -125,6 +128,7 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
           quality,
           resolution,
           aspect,
+          fast: fastRender,
           range: rangeStart !== null && rangeEnd !== null ? { start: rangeStart, end: rangeEnd } : null,
           onProgress: (frac, message) => setProgress({ phase: 'encoding', percent: Math.round(frac * 100), message }),
           signal: controller.signal,
@@ -132,6 +136,8 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
         setDownloadExt(blob.type.includes('mp4') ? 'mp4' : 'webm')
       }
       setProgress({ phase: 'done', percent: 100, message: 'Export complete!' })
+      blobRef.current = blob
+      setShareStatus('idle')
       const url = URL.createObjectURL(blob)
       setDownloadUrl(url)
     } catch (err) {
@@ -146,6 +152,20 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
 
   function handleCancel() {
     abortRef.current?.abort()
+  }
+
+  async function handleShare() {
+    const blob = blobRef.current
+    if (!blob || shareStatus === 'working' || shareStatus === 'done') return
+    setShareStatus('working')
+    try {
+      const { shareClip } = await import('@/lib/community')
+      await shareClip(blob, projectName, 'Made in the 100Lights video editor')
+      setShareStatus('done')
+    } catch {
+      setShareStatus('error')
+      setTimeout(() => setShareStatus('idle'), 3000)
+    }
   }
 
   function handleDownload() {
@@ -270,6 +290,18 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
 
               {/* Options */}
               <div className="flex flex-col gap-2">
+                {!isAudioOnly && fastExportSupported() && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={fastRender} onChange={e => setFastRender(e.target.checked)}
+                      className="rounded" style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
+                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      Fast render
+                      <span className="ml-1.5" style={{ color: 'var(--text-muted)', fontSize: 10 }}>
+                        renders faster than real time; falls back automatically if unsupported
+                      </span>
+                    </span>
+                  </label>
+                )}
                 {hasRange && (
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox" checked={useRange} onChange={e => setUseRange(e.target.checked)}
@@ -330,6 +362,8 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
               <p className="text-xs" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {isAudioOnly
                   ? 'FFmpeg is running in your browser — this may take a few minutes. You can keep working in another tab.'
+                  : fastRender && fastExportSupported()
+                  ? 'Rendering everything you see in the preview — grades, titles, captions and effects — offline, usually faster than real time.'
                   : 'Rendering everything you see in the preview — grades, titles, captions and effects — in real time, so this runs about as long as the video itself. Keep this tab focused for smoothest capture.'}
               </p>
             </div>
@@ -343,6 +377,24 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
               </div>
               <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Export complete</p>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Your video is ready to download.</p>
+              {!isAudioOnly && (
+                <button
+                  onClick={handleShare}
+                  disabled={shareStatus === 'working' || shareStatus === 'done'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+                  style={{
+                    background: shareStatus === 'done' ? 'rgba(34,197,94,0.12)' : 'var(--bg-surface)',
+                    border: `1px solid ${shareStatus === 'done' ? 'rgba(34,197,94,0.4)' : shareStatus === 'error' ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+                    color: shareStatus === 'done' ? '#22c55e' : shareStatus === 'error' ? '#f87171' : 'var(--text-secondary)',
+                    cursor: shareStatus === 'done' ? 'default' : 'pointer',
+                  }}
+                >
+                  {shareStatus === 'working' ? 'Sharing…'
+                    : shareStatus === 'done' ? '✓ Shared to community'
+                    : shareStatus === 'error' ? 'Share failed — try again'
+                    : '↗ Share to community'}
+                </button>
+              )}
             </div>
           )}
         </div>

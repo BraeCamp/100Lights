@@ -14,7 +14,10 @@ import type { Caption } from '@/lib/types'
 import type { LutData } from '@/lib/lut-parser'
 import { renderTimelineAudio, toMixClip } from './audio-mix'
 import { captureTimeline } from './capture'
+import { exportTimelineFast, fastExportSupported } from './fast'
 import type { CompositorState } from './compositor'
+
+export { fastExportSupported }
 
 export type FidelityQuality    = 'high' | 'medium' | 'web'
 export type FidelityResolution = 'original' | '1080p' | '720p' | '480p'
@@ -59,12 +62,14 @@ export interface FidelityExportInput {
   resolution:    FidelityResolution
   aspect?:       ProjectAspect
   range?:        { start: number; end: number } | null
+  /** Try the WebCodecs offline renderer (faster than real time); falls back to real-time capture on failure. */
+  fast?:         boolean
   onProgress:    (frac: number, msg: string) => void
   signal?:       AbortSignal
 }
 
 export async function exportTimelineFidelity(input: FidelityExportInput): Promise<Blob> {
-  const { timelineItems, tracks, adjustments, captions, captionStyle, luts, quality, resolution, aspect, range, onProgress, signal } = input
+  const { timelineItems, tracks, adjustments, captions, captionStyle, luts, quality, resolution, aspect, range, fast, onProgress, signal } = input
 
   const items = timelineItems.filter(i => i.enabled !== false)
   const timelineEnd = items.reduce((m, i) => Math.max(m, i.startTime + (i.outPoint - i.inPoint)), 0)
@@ -84,16 +89,36 @@ export async function exportTimelineFidelity(input: FidelityExportInput): Promis
   )
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError')
 
-  // 2. Real-time composite + capture — 30%…100% (dominates wall-clock).
-  const blob = await captureTimeline({
+  // 2. Composite + encode — 30%…100% (dominates wall-clock).
+  const common = {
     state,
     totalDur: windowDur,
     startOffset: start,
     fps: EXPORT_FPS,
     videoBitsPerSecond: bitrateFor(quality, w, h),
     audioBuffer: audio,
-    onProgress: (f, msg) => onProgress(0.3 + f * 0.7, msg),
     signal,
+  }
+
+  // Fast path: offline WebCodecs render (no wall-clock, tab can background).
+  if (fast && fastExportSupported()) {
+    try {
+      const blob = await exportTimelineFast({
+        ...common,
+        onProgress: (f, msg) => onProgress(0.3 + f * 0.7, msg),
+      })
+      onProgress(1, 'Export complete!')
+      return blob
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err
+      // Codec/config failure — fall through to the proven real-time capture.
+      console.warn('[export] fast render failed, falling back to real-time capture:', err)
+    }
+  }
+
+  const blob = await captureTimeline({
+    ...common,
+    onProgress: (f, msg) => onProgress(0.3 + f * 0.7, msg),
   })
   onProgress(1, 'Export complete!')
   return blob
