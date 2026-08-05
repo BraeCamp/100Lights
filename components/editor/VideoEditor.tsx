@@ -1143,13 +1143,10 @@ export default function VideoEditor({
         podcastMeta: cfproj.podcastMeta,
         moduleSavedAt: cfproj.moduleSavedAt,
       }
-      // Linked DAW mix older than the audio module's last save → auto-refresh.
-      {
-        const audioAt = cfproj.moduleSavedAt?.audio
-        const linked = patchedItems.find(i => i.dawMixLinked)
-        if (cfproj.dawProject && audioAt && linked && (!linked.dawMixStamp || linked.dawMixStamp < audioAt)) {
-          pendingMixRefreshRef.current = audioAt
-        }
+      // Linked audio ALWAYS re-syncs from the project's audio on open — the
+      // link is live by definition until the user locks a clip.
+      if (cfproj.dawProject && patchedItems.some(i => i.dawMixLinked && !i.dawMixLocked)) {
+        pendingMixRefreshRef.current = cfproj.moduleSavedAt?.audio ?? new Date().toISOString()
       }
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
@@ -1770,6 +1767,18 @@ export default function VideoEditor({
     })
   }
 
+  /** Lock/unlock a linked DAW clip. Unlocking re-syncs it immediately. */
+  function handleToggleDawLock(id: string) {
+    const clip = timelineItemsRef.current.find(i => i.id === id)
+    if (!clip?.dawMixLinked) return
+    const nowLocked = !clip.dawMixLocked
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, dawMixLocked: nowLocked } : i))
+    if (!nowLocked) {
+      // Back on the live link — catch up with the current audio right away.
+      setTimeout(() => { void refreshDawMix(clip.dawMixTracks) }, 50)
+    }
+  }
+
   /** Move a clip's start to the nearest beat. */
   function handleQuantizeToBeat(id: string) {
     const grid = beatGrid
@@ -1826,7 +1835,8 @@ export default function VideoEditor({
     }
     const selections: Array<string[] | undefined> = []
     for (const i of timelineItemsRef.current) {
-      if (i.dawMixLinked && !selections.some(s => sameSel(s, i.dawMixTracks))) selections.push(i.dawMixTracks)
+      // Locked clips keep their render — only selections with an unlocked clip refresh.
+      if (i.dawMixLinked && !i.dawMixLocked && !selections.some(s => sameSel(s, i.dawMixTracks))) selections.push(i.dawMixTracks)
     }
     if (!selections.length) return
     dawMixBusyRef.current = true
@@ -1868,21 +1878,29 @@ export default function VideoEditor({
       const url = URL.createObjectURL(file)
       const dur = await readDuration(url, 'audio')
 
-      const linked = timelineItemsRef.current.find(i => i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))
+      const siblings = timelineItemsRef.current.filter(i => i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))
+      const linked = siblings.find(i => !i.dawMixLocked)
+      const hasLockedSibling = siblings.some(i => i.dawMixLocked && i.url === linked?.url)
       if (linked) {
         // Replace in place: same media item, same clip — new audio. `file`
-        // must follow too: the audio-only ffmpeg export path reads it.
+        // must follow too: the audio-only ffmpeg export path reads it. When a
+        // LOCKED copy shares this media, fork instead: the unlocked clips get
+        // a fresh media item and the locked one keeps its frozen render.
         const media = mediaItemsRef.current.find(m => m.url === linked.url)
         const prevUrl = linked.url
-        if (media) {
+        if (media && !hasLockedSibling) {
           setMediaItems(prev => prev.map(m => m.id === media.id
             ? { ...m, url, file, duration: dur, peaks: undefined, uploadStatus: 'uploading' as const }
             : m))
           // Live edits arrive in bursts — upload only the settled render.
           scheduleLinkedUpload(media.id, file)
+        } else {
+          const mediaId = crypto.randomUUID()
+          setMediaItems(prev => [...prev, { id: mediaId, name: file.name, contentType: 'audio', url, file, duration: dur, uploadStatus: 'uploading' }])
+          scheduleLinkedUpload(mediaId, file)
         }
         setTimelineItems(prev => prev.map(i => {
-          if (!(i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))) return i
+          if (!(i.dawMixLinked && !i.dawMixLocked && sameSel(i.dawMixTracks, trackIds))) return i
           // Untrimmed clips follow the new mix length; trimmed ones just clamp.
           const wasFull = i.inPoint === 0 && (!media?.duration || Math.abs((i.outPoint - i.inPoint) - media.duration) < 0.05)
           return {
@@ -1892,7 +1910,7 @@ export default function VideoEditor({
             outPoint: wasFull ? dur : Math.min(i.outPoint, dur),
           }
         }))
-        if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl)
+        if (prevUrl?.startsWith('blob:') && !hasLockedSibling) URL.revokeObjectURL(prevUrl)
       } else {
         // First bounce of this selection: its own audio track + linked clip.
         const mediaId = crypto.randomUUID()
@@ -1943,9 +1961,9 @@ export default function VideoEditor({
         : derived)
     if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
     liveMixTimerRef.current = setTimeout(() => {
-      // Only auto-render when a mix is linked (or adopting fresher joined
-      // state with linked clips) — a project that never bounced stays manual.
-      if (timelineItemsRef.current.some(i => i.dawMixLinked)) void refreshAllDawMixesRef.current()
+      // Only auto-render when an UNLOCKED mix is linked — a project that never
+      // bounced stays manual, and locked links keep their frozen render.
+      if (timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked)) void refreshAllDawMixesRef.current()
     }, live ? 2500 : 1200)
   }
 
@@ -3407,6 +3425,7 @@ export default function VideoEditor({
             detectBpmStatus={detectBpmStatus}
             onSplitAtBeats={handleSplitAtBeats}
             onQuantizeToBeat={handleQuantizeToBeat}
+            onToggleDawLock={handleToggleDawLock}
           />
         </>
       )}

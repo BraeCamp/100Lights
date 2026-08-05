@@ -135,6 +135,8 @@ export interface TimelineItem {
   dawMixStamp?: string       // ISO stamp of the audio state this bounce rendered
   /** DAW track ids this link renders (a stem). Absent/empty = the full mix. */
   dawMixTracks?: string[]
+  /** Locked: keep the current render — stop following audio changes until unlocked. */
+  dawMixLocked?: boolean
   // Draw Focus overlay fields (only for clips on drawfocus tracks)
   focusX?: number      // 0–1 horizontal position (default 0.5) — static fallback when no keyframes
   focusY?: number      // 0–1 vertical position (default 0.5)

@@ -59,6 +59,8 @@ interface Props {
   detectBpmStatus?: 'idle' | 'working' | 'error'
   onSplitAtBeats?: (id: string, unit: 'beat' | 'bar') => void
   onQuantizeToBeat?: (id: string) => void
+  /** Lock/unlock a linked DAW-mix clip (stops/resumes following audio changes). */
+  onToggleDawLock?: (id: string) => void
 }
 
 const LABEL_WIDTH = 64
@@ -152,6 +154,7 @@ export default function Timeline({
   detectBpmStatus = 'idle',
   onSplitAtBeats,
   onQuantizeToBeat,
+  onToggleDawLock,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
@@ -490,6 +493,13 @@ export default function Timeline({
       ] : []),
       ...(beatGrid && onQuantizeToBeat ? [
         { id: 'quant', label: 'Snap Start to Beat', onClick: () => onQuantizeToBeat(item.id) },
+      ] : []),
+      ...(item.dawMixLinked && onToggleDawLock ? [
+        {
+          id: 'dawlock',
+          label: item.dawMixLocked ? 'Unlock Audio Link (re-sync)' : 'Lock Audio Link',
+          onClick: () => onToggleDawLock(item.id),
+        },
       ] : []),
       { id: 's2',        separator: true, label: '' },
       { id: 'color',     label: 'Color',              colors: CLIP_COLORS_MENU, onColor: (c) => onChangeColor(item.id, c) },
@@ -1038,6 +1048,14 @@ export default function Timeline({
                           >
                             {isAudio ? (
                               <>
+                                {item.dawMixLinked && (
+                                  <span
+                                    title={item.dawMixLocked ? 'Audio link locked — right-click to unlock' : 'Live audio link — right-click to lock'}
+                                    style={{ position: 'absolute', left: 3, top: 1, fontSize: 8, lineHeight: 1, zIndex: 3, pointerEvents: 'none', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}
+                                  >
+                                    {item.dawMixLocked ? '🔒' : '🔗'}
+                                  </span>
+                                )}
                                 {mediaItem?.peaks ? (
                                   <WaveformBar peaks={mediaItem.peaks} color={item.color} clipWidth={width} />
                                 ) : (
@@ -1082,7 +1100,12 @@ export default function Timeline({
                                   <div style={{ width: 1.5, height: 12, background: 'rgba(255,255,255,0.6)', borderRadius: 1 }} />
                                 </div>
                                 {/* Label */}
-                                <div style={{ position: 'absolute', left: 8, right: 8, top: 0, bottom: 0, display: 'flex', alignItems: 'center', pointerEvents: 'none', overflow: 'hidden' }}>
+                                <div style={{ position: 'absolute', left: 8, right: 8, top: 0, bottom: 0, display: 'flex', alignItems: 'center', gap: 3, pointerEvents: 'none', overflow: 'hidden' }}>
+                                  {item.dawMixLinked && (
+                                    <span title={item.dawMixLocked ? 'Audio link locked' : 'Live audio link'} style={{ fontSize: 8, lineHeight: 1 }}>
+                                      {item.dawMixLocked ? '🔒' : '🔗'}
+                                    </span>
+                                  )}
                                   <span style={{ color: '#fff', fontSize: 10, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>
                                     {item.label}
                                   </span>
