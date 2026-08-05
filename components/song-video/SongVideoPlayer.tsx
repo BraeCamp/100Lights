@@ -110,6 +110,12 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   const [hookPos, setHookPos] = useState('bottom')
   const [hookAnim, setHookAnim] = useState('none')
   const [textOutline, setTextOutline] = useState(false)
+  type Layer = { id: string; text: string; x: number; y: number; size: number; color: string; from?: number; to?: number }
+  const [layers, setLayers] = useState<Layer[]>([])
+  const addLayer = () => setLayers(ls => [...ls, { id: crypto.randomUUID(), text: 'text', x: 0.5, y: 0.4, size: 0.05, color: '#ffffff' }])
+  const updLayer = (id: string, patch: Partial<Layer>) => setLayers(ls => ls.map(l => (l.id === id ? { ...l, ...patch } : l)))
+  const rmLayer = (id: string) => setLayers(ls => ls.filter(l => l.id !== id))
+  const layersKey = layers.map(l => `${l.text}|${l.x}|${l.y}|${l.size}|${l.color}|${l.from ?? ''}|${l.to ?? ''}`).join(';')
 
   // Theme — accent + a two-stop background gradient. Re-colors the VIDEO only;
   // the maker's own UI keeps a stable accent (ui) so themes don't repaint it.
@@ -145,7 +151,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     const inst = mountSongVideo(canvasRef.current, windowed, {
       format: fmt, brand: '100LIGHTS', meta: metaText, accent: accentColor,
       hook: hookArr, loopBeats: windowed.loopBeats ?? 32,
-      font, textScale, bg: bgColors, media,
+      font, textScale, bg: bgColors, media, layers,
       textColor, hookPos, hookAnim, textOutline, width: rw, height: rh,
       // With a project we ONLY ever play the real bounced mix — no synth, ever.
       // (Without one — no real-mix source — the synth is the only preview.)
@@ -178,9 +184,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
   // Look edits apply live (no remount, no playback restart).
   useEffect(() => {
-    instRef.current?.update({ hook: hookArr, meta: metaText, accent: accentColor, font, textScale, bg: bgColors, textColor, hookPos, hookAnim, textOutline })
+    instRef.current?.update({ hook: hookArr, meta: metaText, accent: accentColor, font, textScale, bg: bgColors, textColor, hookPos, hookAnim, textOutline, layers })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hookArr, metaText, accentColor, font, textScale, bgKey, textColor, hookPos, hookAnim, textOutline])
+  }, [hookArr, metaText, accentColor, font, textScale, bgKey, textColor, hookPos, hookAnim, textOutline, layersKey])
 
   function toggle() {
     const i = instRef.current; if (!i) return
@@ -257,6 +263,45 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     } catch { setStatus('Send failed') }
     setBusy(false)
     setTimeout(() => setStatus(null), 4000)
+  }
+
+  // Export the loop as an animated GIF: capture downscaled canvas frames across
+  // one loop, then encode (self-contained encoder). No audio (GIFs are silent).
+  async function exportGif() {
+    if (busy || waiting) return
+    const canvas = canvasRef.current, i = instRef.current; if (!canvas || !i) return
+    setBusy(true); setStatus('Capturing GIF…')
+    try {
+      const gifW = 400, gifH = Math.round(400 * canvas.height / canvas.width)
+      const off = document.createElement('canvas'); off.width = gifW; off.height = gifH
+      const octx = off.getContext('2d'); if (!octx) throw new Error('no canvas')
+      const gfps = 12, loopMs = winBeats * (60 / song.tempo) * 1000
+      const nFrames = Math.min(96, Math.max(8, Math.round((loopMs / 1000) * gfps)))
+      const interval = loopMs / nFrames
+      i.play(); setPlaying(true); playingRef.current = true; audioGraphRef.current?.ctx.resume?.()
+      await new Promise(r => setTimeout(r, 60))
+      const frames: { data: Uint8ClampedArray; width: number; height: number }[] = []
+      for (let k = 0; k < nFrames; k++) { await new Promise(r => setTimeout(r, interval)); octx.drawImage(canvas, 0, 0, gifW, gifH); frames.push({ data: octx.getImageData(0, 0, gifW, gifH).data, width: gifW, height: gifH }) }
+      setStatus('Encoding GIF…')
+      const { encodeGif } = await import('@/lib/song-video/gif')
+      const gif = encodeGif(frames, 1000 / gfps)
+      const url = URL.createObjectURL(new Blob([gif as BlobPart], { type: 'image/gif' }))
+      const link = document.createElement('a'); link.href = url; link.download = `${slug}-${fmt}.gif`; link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1500)
+      setStatus('GIF downloaded ✓')
+    } catch { setStatus('GIF failed') }
+    setBusy(false); setTimeout(() => setStatus(null), 2500)
+  }
+
+  // Pull an accent + background gradient out of an uploaded image.
+  async function applyImagePalette(file: File | undefined) {
+    if (!file) return
+    try {
+      const { extractPalette } = await import('@/lib/song-video/palette')
+      const { accent, bg } = await extractPalette(file)
+      setAccentColor(accent); setBgColors(bg); setThemeId('')
+      setStatus('Palette applied ✓'); setTimeout(() => setStatus(null), 2000)
+    } catch { setStatus('Could not read image'); setTimeout(() => setStatus(null), 3000) }
   }
 
   // Send the render into the app's VideoEditor (uploads to the media library +
@@ -363,6 +408,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={toggle} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
         <button onClick={exportVideo} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.6 : 1 }}>Download</button>
+        <button onClick={exportGif} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.6 : 1 }}>GIF</button>
         <button onClick={editInVideoEditor} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.6 : 1 }}>Edit in editor →</button>
         {canPublish && <button onClick={sendToQueue} disabled={busy || waiting} style={{ ...btn, background: ui, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy || waiting ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
       </div>
@@ -430,7 +476,37 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
             <span style={lbl}>BG</span>
             <input type="color" value={bgColors[0]} onChange={e => setBgColors([e.target.value, bgColors[1]])} title="Background top" style={swatchInput} />
             <input type="color" value={bgColors[1]} onChange={e => setBgColors([bgColors[0], e.target.value])} title="Background bottom" style={swatchInput} />
+            <label style={{ ...chip(false, ui), marginLeft: 'auto', cursor: 'pointer' }}>
+              From image
+              <input type="file" accept="image/*" onChange={e => applyImagePalette(e.target.files?.[0])} style={{ display: 'none' }} />
+            </label>
           </div>
+        </Section>
+
+        {/* Text layers — extra placed / timed text (lyrics etc.) */}
+        <Section label="Text layers">
+          {layers.map(l => (
+            <div key={l.id} style={{ display: 'grid', gap: 6, padding: '8px', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input value={l.text} onChange={e => updLayer(l.id, { text: e.target.value })} style={{ ...field, flex: 1 }} maxLength={60} />
+                <input type="color" value={l.color} onChange={e => updLayer(l.id, { color: e.target.value })} style={swatchInput} />
+                <button onClick={() => rmLayer(l.id)} style={{ ...chip(false, ui), color: '#f87171' }}>×</button>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={lbl}>X</span><input type="range" min={0.05} max={0.95} step={0.01} value={l.x} onChange={e => updLayer(l.id, { x: Number(e.target.value) })} style={{ width: 64, accentColor: ui }} />
+                <span style={lbl}>Y</span><input type="range" min={0.05} max={0.95} step={0.01} value={l.y} onChange={e => updLayer(l.id, { y: Number(e.target.value) })} style={{ width: 64, accentColor: ui }} />
+                <span style={lbl}>Size</span><input type="range" min={0.02} max={0.11} step={0.005} value={l.size} onChange={e => updLayer(l.id, { size: Number(e.target.value) })} style={{ width: 56, accentColor: ui }} />
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={lbl}>Show beats</span>
+                <input type="number" placeholder="from" value={l.from ?? ''} onChange={e => updLayer(l.id, { from: e.target.value === '' ? undefined : Number(e.target.value) })} style={{ ...field, width: 64, padding: '4px 7px' }} />
+                <span style={lbl}>–</span>
+                <input type="number" placeholder="to" value={l.to ?? ''} onChange={e => updLayer(l.id, { to: e.target.value === '' ? undefined : Number(e.target.value) })} style={{ ...field, width: 64, padding: '4px 7px' }} />
+                <span style={{ ...lbl, fontSize: 10.5 }}>blank = always</span>
+              </div>
+            </div>
+          ))}
+          <button onClick={addLayer} style={{ ...chip(false, ui) }}>+ Add text layer</button>
         </Section>
 
         {/* Audio — always the real mix; renders on load, cached after. */}
