@@ -37,6 +37,18 @@ export async function getCachedAudio(key: string): Promise<Blob | null> {
   })
 }
 
+export async function deleteCachedAudio(key: string): Promise<void> {
+  const db = await openDb(); if (!db) return
+  await new Promise<void>(resolve => {
+    try {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).delete(key)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+    } catch { resolve() }
+  })
+}
+
 export async function putCachedAudio(key: string, blob: Blob, now: number): Promise<void> {
   const db = await openDb(); if (!db) return
   await new Promise<void>(resolve => {

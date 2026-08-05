@@ -77,6 +77,16 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   const [renderFailed, setRenderFailed] = useState(false)
   const renderToken = useRef(0)      // discards results from a superseded render
   const renderingRef = useRef(false) // single-flight (one full render at a time)
+  // A render is only worth persisting if the user did something with it (export,
+  // queue, or send to editor). Otherwise it's a throwaway preview — delete its
+  // cached bounce on leave so previews don't pile up in IndexedDB over time.
+  const savedRef = useRef(false)
+  useEffect(() => () => {
+    if (!savedRef.current && audioKey) {
+      import('@/lib/song-video/audio-cache').then(m => m.deleteCachedAudio(`${audioKey}:full`)).catch(() => {})
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const latestWin = useRef({ s: 0, w: 32 })
   // The WHOLE song is bounced ONCE (from the start) into this decoded buffer; any
   // section is then SLICED from it instantly — changing bars never re-renders.
@@ -190,13 +200,21 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
 
   function toggle() {
     const i = instRef.current; if (!i) return
-    if (playing) { i.pause(); setPlaying(false); playingRef.current = false }
-    else { if (waiting) return; audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true } // no play until the real mix is ready
+    if (playing) { i.pause(); setPlaying(false); playingRef.current = false; return }
+    if (waiting) return // no play until the real mix is ready
+    // Create + resume the audio graph INSIDE the click gesture. A context made
+    // earlier (during the async render) starts suspended and can refuse to emit
+    // sound even after resume — meanwhile the visualiser still animates off note
+    // data, which looked like "bars moving but no audio". Hand the freshly built
+    // analyser to the already-running engine so reactive formats keep working.
+    const g = ensureAudioGraph()
+    if (g) { g.ctx.resume?.(); i.update({ analyser: g.analyser }) }
+    i.play(); setPlaying(true); playingRef.current = true
   }
 
   async function recordBlob(): Promise<Blob | null> {
     const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
-    setStatus('Recording…'); audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true
+    setStatus('Recording…'); ensureAudioGraph(); audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true
     const v = canvas.captureStream(fps)
     // With real audio, capture the analyser graph's output; otherwise the synth.
     const a = realUrl && audioGraphRef.current ? audioGraphRef.current.capture.stream : i.getAudioStream()
@@ -226,6 +244,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a'); link.href = url; link.download = `${slug}-${fmt}.${extFor(blob)}`; link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1500)
+      savedRef.current = true
       setStatus('Downloaded ✓')
     } catch { setStatus('Export failed') }
     setBusy(false)
@@ -259,6 +278,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         }),
       })
       const j = await res.json().catch(() => ({}))
+      if (res.ok) savedRef.current = true
       setStatus(res.ok ? 'Sent to queue ✓' : `Failed: ${j.error || res.status}`)
     } catch { setStatus('Send failed') }
     setBusy(false)
@@ -278,7 +298,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       const gfps = 12, loopMs = winBeats * (60 / song.tempo) * 1000
       const nFrames = Math.min(96, Math.max(8, Math.round((loopMs / 1000) * gfps)))
       const interval = loopMs / nFrames
-      i.play(); setPlaying(true); playingRef.current = true; audioGraphRef.current?.ctx.resume?.()
+      ensureAudioGraph(); i.play(); setPlaying(true); playingRef.current = true; audioGraphRef.current?.ctx.resume?.()
       await new Promise(r => setTimeout(r, 60))
       const frames: { data: Uint8ClampedArray; width: number; height: number }[] = []
       for (let k = 0; k < nFrames; k++) { await new Promise(r => setTimeout(r, interval)); octx.drawImage(canvas, 0, 0, gifW, gifH); frames.push({ data: octx.getImageData(0, 0, gifW, gifH).data, width: gifW, height: gifH }) }
@@ -314,6 +334,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       const blob = await recordBlob(); if (!blob) { setBusy(false); return }
       setStatus('Sending to editor…')
       const { saveRenderToVideoEditor } = await import('@/lib/song-video/to-video-editor')
+      savedRef.current = true   // the mix is now persisted in the media library; keep its cache
       await saveRenderToVideoEditor(blob, { name: `${slug} video`, durationSec: winBeats * (60 / song.tempo) })
       // success → the page navigates to the video editor
     } catch (e) { setStatus(`Failed: ${(e as Error).message}`); setBusy(false); setTimeout(() => setStatus(null), 4000) }
@@ -331,7 +352,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c).subarray(startSamp, startSamp + lenSamp))
     const wav = encodeWav16(chans, sr)
     const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
-    if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load(); ensureAudioGraph() }
+    // Note: the audio graph is created lazily inside a play/record gesture (see
+    // toggle) — a context built here, mid-async-render, starts suspended.
+    if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
     setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
   }
 
