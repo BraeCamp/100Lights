@@ -20,7 +20,12 @@ export default function AppLayoutClient({ children }: { children: React.ReactNod
   // Close the mobile drawer whenever the route changes (a nav link was tapped).
   useEffect(() => { setDrawer(false) }, [pathname])
 
-  const isEditor = pathname === '/new' || (pathname.startsWith('/projects/') && pathname !== '/projects')
+  // The editor opens at /new, /projects/[id], AND the canonical pretty URL
+  // /@user/slug-code (a two-segment @-path). All three are the full-screen
+  // editor — the global dashboard sidebar must NOT render on any of them.
+  // (/@user alone is the user profile page, which keeps the sidebar.)
+  const isVanityProject = /^\/@[^/]+\/[^/]+/.test(pathname)
+  const isEditor = pathname === '/new' || (pathname.startsWith('/projects/') && pathname !== '/projects') || isVanityProject
   const isLauncher = pathname === '/launcher'
 
   if (isEditor || isLauncher) {
