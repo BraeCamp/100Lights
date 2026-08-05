@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, PlusCircle, FolderOpen, Settings, Zap, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Library } from 'lucide-react'
+import { LayoutDashboard, FolderOpen, Settings, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Library, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -30,11 +30,14 @@ export default function Sidebar() {
   const [usage, setUsage] = useState<Usage | null>(null)
   const [enabledModules, setEnabledModules] = useState<string[]>(['audio'])
   const [isElectron, setIsElectron] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
   const { padTrafficLights: isElectronMac } = useElectronChrome()
 
   useEffect(() => {
     setIsElectron(typeof window !== 'undefined' && !!window.electronAPI)
+    try { setCollapsed(localStorage.getItem('sidebar-collapsed') === '1') } catch { /* ignore */ }
   }, [])
+  const toggleCollapsed = () => setCollapsed(c => { const n = !c; try { localStorage.setItem('sidebar-collapsed', n ? '1' : '0') } catch { /* ignore */ } return n })
 
   function fetchUsage() {
     fetch('/api/usage')
@@ -65,65 +68,75 @@ export default function Sidebar() {
         key={href}
         href={href}
         aria-current={active ? 'page' : undefined}
+        title={collapsed ? label : undefined}
         className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
         style={{
           background: active ? 'var(--accent-subtle)' : 'transparent',
           color: active ? 'var(--accent-light)' : 'var(--text-secondary)',
           fontWeight: active ? '500' : '400',
+          justifyContent: collapsed ? 'center' : 'flex-start',
         }}
       >
         <Icon size={15} />
-        {label}
+        {!collapsed && label}
       </Link>
     )
   }
 
   return (
     <aside
-      className="flex flex-col w-56 shrink-0 h-screen sticky top-0"
+      className={`flex flex-col ${collapsed ? 'w-16' : 'w-56'} shrink-0 h-screen sticky top-0`}
       aria-label="Application sidebar"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
     >
-      {/* Logo — shifts right on Electron/Mac to clear traffic light buttons */}
+      {/* Home + collapse toggle — shifts right on Electron/Mac to clear traffic lights */}
       <div
         className={isElectronMac ? 'electron-drag' : undefined}
-        style={{ borderBottom: '1px solid var(--border)' }}
+        style={{ borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, paddingTop: 16, paddingBottom: 16, paddingLeft: isElectronMac ? 80 : (collapsed ? 12 : 20), paddingRight: 12 }}
       >
         <Link
           href={isElectron ? '/launcher' : '/dashboard'}
-          className={isElectronMac ? 'electron-nodrag flex items-center gap-2.5' : 'flex items-center gap-2.5'}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            paddingTop: 20,
-            paddingBottom: 20,
-            paddingLeft: isElectronMac ? 80 : 20,
-            paddingRight: 20,
-            textDecoration: 'none',
-          }}
+          title="Home"
+          className={isElectronMac ? 'electron-nodrag' : undefined}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flex: 1, minWidth: 0, justifyContent: collapsed ? 'center' : 'flex-start' }}
         >
-          <LogoMark size={28} />
-          <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text-primary)' }}>
-            100Lights
-          </span>
+          <LogoMark size={26} />
+          {!collapsed && <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text-primary)' }}>100Lights</span>}
         </Link>
+        {!collapsed && (
+          <button onClick={toggleCollapsed} aria-label="Collapse sidebar" title="Collapse"
+            className="electron-nodrag"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+            <ChevronsLeft size={16} />
+          </button>
+        )}
       </div>
+      {collapsed && (
+        <button onClick={toggleCollapsed} aria-label="Expand sidebar" title="Expand"
+          className="electron-nodrag"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 30, margin: '6px 8px 0', borderRadius: 7, border: 'none', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <ChevronsRight size={16} />
+        </button>
+      )}
 
       <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto" aria-label="Main navigation">
         {/* Workspace */}
-        <div style={{ padding: '2px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-          Workspace
-        </div>
+        {!collapsed && (
+          <div style={{ padding: '2px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            Workspace
+          </div>
+        )}
         {navLink(isElectron ? '/launcher' : '/dashboard', 'Home', LayoutDashboard)}
-        {navLink('/new', 'New Project', PlusCircle)}
         {navLink('/projects', 'All Projects', FolderOpen)}
         {navLink('/library', 'Sound Library', Library)}
 
         {/* Apps */}
-        <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-          Apps
-        </div>
+        {!collapsed && (
+          <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            Apps
+          </div>
+        )}
+        {collapsed && <div style={{ height: 10 }} />}
         {MODULE_DEFS.filter(mod => enabledModules.includes(mod.key)).map(mod => {
           const Icon = APP_ICONS[mod.key]
           const href = `/apps/${mod.key}`
@@ -133,11 +146,13 @@ export default function Sidebar() {
               key={mod.key}
               href={href}
               aria-current={active ? 'page' : undefined}
+              title={collapsed ? mod.label : undefined}
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
               style={{
                 background: active ? `color-mix(in srgb, ${mod.color} 12%, transparent)` : 'transparent',
                 color: active ? mod.color : 'var(--text-secondary)',
                 fontWeight: active ? '500' : '400',
+                justifyContent: collapsed ? 'center' : 'flex-start',
               }}
             >
               {/* Colored dot */}
@@ -150,13 +165,13 @@ export default function Sidebar() {
               }}>
                 <Icon size={13} color={active ? mod.color : 'var(--text-muted)'} />
               </div>
-              {mod.label}
+              {!collapsed && mod.label}
             </Link>
           )
         })}
       </nav>
 
-      {!isPro && usage && (
+      {!isPro && usage && !collapsed && (
         <div className="mx-3 mb-3 px-3 py-2.5 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
           <button
             onClick={() => showUpgrade()}
@@ -171,38 +186,43 @@ export default function Sidebar() {
       <div className="px-3 pb-4 flex flex-col gap-1" style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
         <Link
           href="/settings"
+          title={collapsed ? 'Settings' : undefined}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
-          style={{ color: pathname === '/settings' ? 'var(--text-secondary)' : 'var(--text-muted)' }}
+          style={{ color: pathname === '/settings' ? 'var(--text-secondary)' : 'var(--text-muted)', justifyContent: collapsed ? 'center' : 'flex-start' }}
         >
           <Settings size={15} />
-          Settings
+          {!collapsed && 'Settings'}
         </Link>
         <Link
           href="/trash"
+          title={collapsed ? 'Trash' : undefined}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
-          style={{ color: pathname === '/trash' ? 'var(--text-secondary)' : 'var(--text-muted)' }}
+          style={{ color: pathname === '/trash' ? 'var(--text-secondary)' : 'var(--text-muted)', justifyContent: collapsed ? 'center' : 'flex-start' }}
         >
           <Trash2 size={15} />
-          Trash
+          {!collapsed && 'Trash'}
         </Link>
         {user ? (
-          <div className="flex items-center gap-3 px-3 py-2" aria-label="User menu">
+          <div className="flex items-center gap-3 px-3 py-2" aria-label="User menu" style={{ justifyContent: collapsed ? 'center' : 'flex-start' }}>
             <UserButton appearance={{ elements: { avatarBox: 'w-6 h-6' } }} />
-            <span className="text-xs truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }}>
-              {user.firstName ?? user.emailAddresses[0]?.emailAddress}
-            </span>
+            {!collapsed && (
+              <span className="text-xs truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }}>
+                {user.firstName ?? user.emailAddresses[0]?.emailAddress}
+              </span>
+            )}
           </div>
         ) : (
           <Link
             href="/sign-in"
+            title={collapsed ? 'Sign in' : undefined}
             className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all"
-            style={{ background: 'var(--accent)', color: '#fff', margin: '0 0 2px' }}
+            style={{ background: 'var(--accent)', color: '#fff', margin: '0 0 2px', justifyContent: collapsed ? 'center' : 'flex-start' }}
           >
             <LogIn size={14} />
-            Sign in
+            {!collapsed && 'Sign in'}
           </Link>
         )}
-        {!isElectron && (
+        {!isElectron && !collapsed && (
           <Link
             href="/download"
             className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
@@ -214,17 +234,20 @@ export default function Sidebar() {
         )}
         <button
           onClick={() => setFeedbackOpen(true)}
+          title={collapsed ? 'Send feedback' : undefined}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
-          style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left' }}
+          style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left', justifyContent: collapsed ? 'center' : 'flex-start' }}
         >
           <MessageSquare size={15} />
-          Send feedback
+          {!collapsed && 'Send feedback'}
         </button>
         {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
-        <div className="flex gap-3 px-3 pt-1">
-          <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
-          <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>
-        </div>
+        {!collapsed && (
+          <div className="flex gap-3 px-3 pt-1">
+            <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
+            <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>
+          </div>
+        )}
       </div>
     </aside>
   )
