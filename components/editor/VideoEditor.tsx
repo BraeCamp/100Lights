@@ -222,7 +222,7 @@ function ColorPage({
           <Slider label="Highlights" value={adjustments.highlights} min={-100} max={100} onChange={(v) => onAdjustmentsChange({ ...adjustments, highlights: v })} />
         </div>
         <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
-          Color wheels, curves, scopes, and LUT support — coming soon
+          Color wheels, tone curves, scopes &amp; LUT import — select a clip and open the <b>Color</b> tab in the Inspector.
         </p>
       </div>
     </div>
@@ -440,6 +440,11 @@ export default function VideoEditor({
   const { padTrafficLights: isElectronMac } = useElectronChrome()
 
   const [currentTime, setCurrentTime] = useState(0)
+  // Live playhead for keyboard handlers: the keydown effect doesn't re-bind on
+  // every frame, so reading `currentTime` directly there is stale during playback
+  // (split/markers/nav/paste would fire where playback STARTED). Read this ref.
+  const currentTimeRef = useRef(0)
+  useEffect(() => { currentTimeRef.current = currentTime }, [currentTime])
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [zoomLevel, setZoomLevel] = useState(1)
@@ -1098,6 +1103,7 @@ export default function VideoEditor({
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
       writeAutosave(savedProjectId, serialize(snapshot))
+      setIsDirty(false) // data is safely recoverable now — don't nag on unload
     }, 5000)
 
     // Cloud auto-save: 30 s after last change, writes to autosave_data column
@@ -1109,7 +1115,7 @@ export default function VideoEditor({
         cloudAutoSaveFnRef.current()
       }, 30_000)
     }
-  }, [timelineItems, tracks, adjustments, localCaptions, localOutputs, localProjectName]) // eslint-disable-line
+  }, [timelineItems, tracks, adjustments, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
   useEffect(() => {
@@ -1121,6 +1127,15 @@ export default function VideoEditor({
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [isDirty])
+
+  // Escape closes the shortcuts overlay (menus/modals previously only closed on
+  // mouse-leave, which strands them on touch/trackpad).
+  useEffect(() => {
+    if (!showShortcuts) return
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowShortcuts(false) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [showShortcuts])
 
   const effectiveUrl: string | null = viewerClip?.url ?? null
   const effectiveContentType: ContentType | null = viewerClip?.contentType ?? null
@@ -1239,7 +1254,7 @@ export default function VideoEditor({
 
   const duration = useMemo(() => {
     const lastClipEnd = timelineItems.reduce((m, i) => Math.max(m, i.startTime + (i.outPoint - i.inPoint)), 0)
-    return Math.max(lastClipEnd + 60, 600)
+    return Math.max(lastClipEnd + 30, 60)
   }, [timelineItems])
 
   // ── Master clock (RAF) ─────────────────────────────────────
@@ -1361,11 +1376,12 @@ export default function VideoEditor({
       // Cmd/Ctrl+B = split at playhead
       if (e.code === 'KeyB' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
+        const now = currentTimeRef.current
         const clipsAtPlayhead = timelineItems.filter(i =>
-          currentTime > i.startTime &&
-          currentTime < i.startTime + (i.outPoint - i.inPoint)
+          now > i.startTime &&
+          now < i.startTime + (i.outPoint - i.inPoint)
         )
-        clipsAtPlayhead.forEach(clip => handleSplitItem(clip.id, currentTime))
+        clipsAtPlayhead.forEach(clip => handleSplitItem(clip.id, now))
         return
       }
 
@@ -1409,7 +1425,7 @@ export default function VideoEditor({
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyV' && clipboardRef.current) {
         e.preventDefault()
         const trackId = clipboardRef.current.trackId
-        handlePasteItem(trackId, currentTime)
+        handlePasteItem(trackId, currentTimeRef.current)
         return
       }
 
@@ -1426,10 +1442,10 @@ export default function VideoEditor({
 
       // In/Out range markers (I and O — standard in every NLE)
       if (e.code === 'KeyI' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault(); setInPoint(currentTime); return
+        e.preventDefault(); setInPoint(currentTimeRef.current); return
       }
       if (e.code === 'KeyO' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault(); setOutPoint(currentTime); return
+        e.preventDefault(); setOutPoint(currentTimeRef.current); return
       }
       // Clear markers
       if (e.code === 'KeyI' && e.altKey) { e.preventDefault(); setInPoint(null); return }
@@ -1455,14 +1471,14 @@ export default function VideoEditor({
       if (e.code === 'ArrowUp' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         const points = [...new Set([0, ...timelineItems.flatMap(i => [i.startTime, i.startTime + (i.outPoint - i.inPoint)])])].sort((a, b) => b - a)
-        const prev = points.find(p => p < currentTime - 0.02)
+        const prev = points.find(p => p < currentTimeRef.current - 0.02)
         if (prev !== undefined) handleSeek(prev)
         return
       }
       if (e.code === 'ArrowDown' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         const points = [...new Set([...timelineItems.flatMap(i => [i.startTime, i.startTime + (i.outPoint - i.inPoint)])])].sort((a, b) => a - b)
-        const next = points.find(p => p > currentTime + 0.02)
+        const next = points.find(p => p > currentTimeRef.current + 0.02)
         if (next !== undefined) handleSeek(next)
         return
       }
@@ -2332,6 +2348,13 @@ export default function VideoEditor({
           >
             <Redo2 size={13} />
           </button>
+          <button
+            onClick={() => setShowShortcuts(true)}
+            className="p-1.5 rounded" title="Keyboard shortcuts (?)"
+            style={{ color: 'var(--text-muted)', fontWeight: 800, fontSize: 12, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            ?
+          </button>
         </div>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
 
@@ -2604,7 +2627,7 @@ export default function VideoEditor({
                     }}
                   >
                     <PanelsTopBottom size={12} />
-                    {audioLayout === 'below' ? 'Split' : 'Split'}
+                    Split
                   </button>
                 )}
 
