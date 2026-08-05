@@ -6,6 +6,7 @@
 // in collapsible category sections. Commits on release (pointer/key up).
 
 import { useEffect, useMemo, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { FX_FIELDS, FX_CATEGORIES, TOP_FIELDS, BASIC_FIELDS, fieldIsSet, type FxField, type FxCat } from '@/lib/roll-fx'
 import type { RollFx, AutoPoint } from '@/lib/daw-types'
 import MotionCurve from './MotionCurve'
@@ -123,7 +124,7 @@ export default function FxControls({ value, onCommit, hideCats, hideFields, rang
                 fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)',
               }}
             >
-              <span style={{ display: 'inline-block', width: 8, transition: 'transform 0.1s', transform: isOpen ? 'rotate(90deg)' : 'none', color: 'var(--text-muted)' }}>▶</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', transition: 'transform 0.1s', transform: isOpen ? 'rotate(90deg)' : 'none', color: 'var(--text-muted)' }}><ChevronRight size={11} /></span>
               {cat.label.toUpperCase()}
               {activeCount > 0 && <span style={{ color: ACCENT, fontSize: 9 }}>● {activeCount}</span>}
             </button>

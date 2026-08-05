@@ -11,6 +11,7 @@
 
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
+import { X } from 'lucide-react'
 import type { AutoPoint } from '@/lib/daw-types'
 import MotionCurve from './MotionCurve'
 import { GRAPH_COLOR } from '@/lib/draw-graphs'
@@ -53,7 +54,7 @@ export default function DrawnGraphModal({
             <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '0.04em', color: 'var(--text-primary)' }}>{title}</div>
             {subtitle && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>{subtitle}</div>}
           </div>
-          <button onClick={onClose} aria-label="Close" style={{ flexShrink: 0, fontSize: 14, lineHeight: 1, width: 26, height: 26, borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>✕</button>
+          <button onClick={onClose} aria-label="Close" style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}><X size={14} /></button>
         </div>
 
         <div style={{ padding: '16px 16px 8px' }}>

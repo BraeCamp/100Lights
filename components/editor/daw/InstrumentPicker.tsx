@@ -1,6 +1,7 @@
 'use client'
 
 import { memo, useCallback } from 'react'
+import { Play, Mic, Circle, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useState, useEffect } from 'react'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
@@ -254,8 +255,9 @@ const DrumPanel = memo(function DrumPanel({ instrument, onSet }: {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <button onClick={e => { e.stopPropagation(); void toggleRecord(selectedPad) }}
               style={{ flex: 1, padding: '6px 0', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
                 border: `1px solid ${recorder ? '#ef4444' : C.border}`, background: recorder ? 'rgba(239,68,68,0.16)' : C.bgCard, color: recorder ? '#ef4444' : C.textPrimary }}>
-              {recorder ? '● Stop & use' : sel.sample ? '🎤 Re-record' : '🎤 Record sample'}
+              {recorder ? <><Circle size={12} /> Stop & use</> : <><Mic size={12} /> {sel.sample ? 'Re-record' : 'Record sample'}</>}
             </button>
             {sel.sample && !recorder && (
               <button onClick={e => { e.stopPropagation(); updatePad(selectedPad, { sample: undefined }) }}
@@ -296,8 +298,8 @@ const FmPanel = memo(function FmPanel({ instrument, trackId, onSet }: {
         <SliderRow label="Detune"    value={p.detune}   min={-100} max={100} step={1}  fmt={v => `${v}¢`}     onChange={v => onSet({ detune: v })} />
       </Section>
       <button onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, 60) }}
-        style={{ alignSelf: 'flex-start', padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-        Preview ▶
+        style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+        Preview <Play size={13} />
       </button>
     </div>
   )
@@ -393,7 +395,7 @@ function OscillatorStack({ layers, onChange, onWarm }: {
             </div>
             {layers.length > 1 && (
               <button onClick={e => { e.stopPropagation(); remove(i) }} title="Remove oscillator"
-                style={{ marginLeft: 'auto', border: 'none', background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+                style={{ marginLeft: 'auto', border: 'none', background: 'none', color: C.textMuted, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}><X size={14} /></button>
             )}
           </div>
           {l.source === 'sample'
@@ -521,8 +523,8 @@ const PolyPanel = memo(function PolyPanel({ instrument, onSet }: {
       </Section>
 
       <button onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, 60) }}
-        style={{ alignSelf: 'flex-start', padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-        Preview ▶
+        style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+        Preview <Play size={13} />
       </button>
     </div>
   )
@@ -710,8 +712,8 @@ const Fm4OpPanel = memo(function Fm4OpPanel({ instrument, onSet }: {
       </Section>
 
       <button onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, 60) }}
-        style={{ alignSelf: 'flex-start', padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-        Preview ▶
+        style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+        Preview <Play size={13} />
       </button>
     </div>
   )
@@ -889,8 +891,8 @@ const WavetablePanel = memo(function WavetablePanel({ instrument, onSet }: {
         fmt={v => `${Math.round(v * 100)}%`} onChange={v => onSet({ masterGain: v })} />
 
       <button onClick={e => { e.stopPropagation(); previewNote(engine.ctx, engine.masterGain, instrument, 60) }}
-        style={{ alignSelf: 'flex-start', padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-        Preview ▶
+        style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 16px', borderRadius: 4, border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+        Preview <Play size={13} />
       </button>
     </div>
   )

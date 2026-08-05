@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { GraduationCap, Check, ChevronLeft, Sparkles, X } from 'lucide-react'
+import { GraduationCap, Check, ChevronLeft, ChevronDown, ChevronUp, Sparkles, X, Lock, RotateCcw, Play } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { PolyInstrumentParams } from '@/lib/daw-types'
 import { PRACTICE_PATHS, PRACTICE_CATEGORY_ORDER, type PracticeSnapshot } from '@/lib/practice-paths'
@@ -270,7 +270,7 @@ export default function PracticeButton() {
                   <button onClick={() => setLoadedRecipe(null)} style={{
                     marginTop: 4, fontSize: 10.5, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start',
                     color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, padding: '3px 9px',
-                  }}>← All recipes</button>
+                  }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><ChevronLeft size={12} /> All recipes</span></button>
                 </>
               )}
 
@@ -331,8 +331,8 @@ export default function PracticeButton() {
                           <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>{song.title}{locked && <ProTag />}</div>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{song.tagline}</div>
                         </div>
-                        <span style={{ fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: loaded === song.parts.length ? 'var(--success)' : 'var(--text-muted)' }}>
-                          {locked ? '🔒' : `${loaded}/${song.parts.length}`}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: loaded === song.parts.length ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {locked ? <Lock size={11} /> : `${loaded}/${song.parts.length}`}
                         </span>
                       </button>
                     )
@@ -381,7 +381,8 @@ export default function PracticeButton() {
                                 color: isDone ? 'var(--text-secondary)' : 'var(--accent-contrast)',
                                 background: isDone ? 'var(--bg-card)' : 'var(--accent)',
                                 border: isDone ? '1px solid var(--border)' : 'none', borderRadius: 5, padding: '4px 11px',
-                              }}>{isDone ? '↺ Add again' : 'Add this part'}</button>
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                              }}>{isDone ? <><RotateCcw size={12} /> Add again</> : 'Add this part'}</button>
                               {part.helpId && (
                                 <button onClick={() => { highlightHelpTargets([part.helpId!]); setOpen(false) }} style={{
                                   fontSize: 10.5, fontWeight: 600, cursor: 'pointer',
@@ -403,7 +404,8 @@ export default function PracticeButton() {
                         <button onClick={() => { highlightHelpTargets(['play']); setOpen(false) }} style={{
                           flexShrink: 0, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
                           color: 'var(--accent-contrast)', background: 'var(--accent)', border: 'none', borderRadius: 5, padding: '5px 12px',
-                        }}>▶ Play it</button>
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                        }}><Play size={12} /> Play it</button>
                       </div>
                     )}
                   </>
@@ -448,7 +450,7 @@ export default function PracticeButton() {
                                 color: complete ? 'var(--success)' : 'var(--text-muted)',
                                 display: 'flex', alignItems: 'center', gap: 4,
                               }}>
-                                {locked ? '🔒' : <>{complete && <Sparkles size={11} />}{done.size}/{path.steps.length}</>}
+                                {locked ? <Lock size={11} /> : <>{complete && <Sparkles size={11} />}{done.size}/{path.steps.length}</>}
                               </span>
                             </button>
                           )
@@ -499,9 +501,9 @@ export default function PracticeButton() {
                           <div style={{ marginTop: 4 }}>
                             <button
                               onClick={() => setOpenDetail(openDetail === step.id ? null : step.id)}
-                              style={{ fontSize: 10, fontWeight: 700, cursor: 'pointer', color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0 }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, cursor: 'pointer', color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0 }}
                             >
-                              {openDetail === step.id ? 'Hide detail ▴' : 'Learn more ▾'}
+                              {openDetail === step.id ? <>Hide detail <ChevronUp size={12} /></> : <>Learn more <ChevronDown size={12} /></>}
                             </button>
                             {openDetail === step.id && (
                               <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.55, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 9px' }}>
@@ -536,9 +538,9 @@ export default function PracticeButton() {
                       setProgress(p => { const n = { ...p }; delete n[activePath.id]; return n })
                     }}
                     title="Clear this path's progress so you can run it again"
-                    style={{ marginTop: 4, alignSelf: 'flex-start', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 12px' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, alignSelf: 'flex-start', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 12px' }}
                   >
-                    ↺ Restart this path
+                    <RotateCcw size={12} /> Restart this path
                   </button>
                 )}
                 </>

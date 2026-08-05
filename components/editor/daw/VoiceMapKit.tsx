@@ -7,7 +7,7 @@
 // and a delay control nudges everything earlier to cancel input latency.
 
 import { useEffect, useRef, useState } from 'react'
-import { Mic, Eye, EyeOff, X } from 'lucide-react'
+import { Mic, Eye, EyeOff, X, Circle } from 'lucide-react'
 import { detectPitch } from '@/lib/pitch-detect'
 import type { MidiClip } from '@/lib/daw-types'
 import type { DawEngine } from '@/lib/daw-engine'
@@ -348,7 +348,7 @@ export function VoiceMapControls({ vm }: { vm: VoiceMap }) {
           color: vm.recording ? '#ef4444' : TRACE_COLOR,
         }}
       >
-        <Mic size={10} /> {vm.recording ? '● Stop' : 'Voice'}
+        <Mic size={10} /> {vm.recording ? <><Circle size={8} fill="currentColor" /> Stop</> : 'Voice'}
       </button>
 
       {vm.hasTrace && !vm.recording && (

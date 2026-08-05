@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { Settings, Crop, Crosshair, ArrowLeftRight, AudioLines, Piano, Grid3x3 } from 'lucide-react'
 import type { DawTrack, DawClip, AudioClip, MidiClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
@@ -828,14 +829,14 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           >
             {(isAudioClip(clip)
               ? [
-                  { glyph: '⚙', label: 'Clip Settings', fn: () => onSettings?.() },
-                  { glyph: '⌗', label: 'Crop', fn: () => onCrop() },
-                  { glyph: '◎', label: 'Isolate on Playhead', fn: () => onIsolate(clip.startBeat) },
-                  { glyph: '⇄', label: 'Replace Sample', fn: () => onReplaceSample?.() },
-                  { glyph: '▦', label: 'Spectral Editor', fn: () => onSpectral?.() },
+                  { icon: <Settings size={12} />, label: 'Clip Settings', fn: () => onSettings?.() },
+                  { icon: <Crop size={12} />, label: 'Crop', fn: () => onCrop() },
+                  { icon: <Crosshair size={12} />, label: 'Isolate on Playhead', fn: () => onIsolate(clip.startBeat) },
+                  { icon: <ArrowLeftRight size={12} />, label: 'Replace Sample', fn: () => onReplaceSample?.() },
+                  { icon: <AudioLines size={12} />, label: 'Spectral Editor', fn: () => onSpectral?.() },
                 ]
               : [
-                  { glyph: isMidiClip(clip) && clip.isDrumClip ? '◼' : '🎹', label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: () => onDoubleClick() },
+                  { icon: isMidiClip(clip) && clip.isDrumClip ? <Grid3x3 size={12} /> : <Piano size={12} />, label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: () => onDoubleClick() },
                 ]
             ).map(a => (
               <button
@@ -845,11 +846,12 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                 onClick={e => { e.stopPropagation(); a.fn() }}
                 style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: 'var(--text-primary)', fontSize: 10, lineHeight: 1, padding: '2px 3px',
+                  color: 'var(--text-primary)', lineHeight: 1, padding: '2px 3px',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 }}
                 onMouseEnter={e => { e.currentTarget.style.color = '#fff' }}
                 onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-primary)' }}
-              >{a.glyph}</button>
+              >{a.icon}</button>
             ))}
           </div>
         )}

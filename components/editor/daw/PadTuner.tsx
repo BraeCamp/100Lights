@@ -4,6 +4,7 @@
  * Supports microphone and computer audio (system capture) as input sources.
  */
 import { useState, useEffect, useRef } from 'react'
+import { Play, Square, Check, PlusCircle } from 'lucide-react'
 import { LivePitchDetector, LivePitchResult } from '../../../lib/pitch-detector'
 import { captureAudioInput, listAudioInputDevices } from '../../../lib/audio-capture'
 import type { AudioDevice } from '../../../lib/audio-capture'
@@ -245,7 +246,8 @@ export default function PadTuner() {
             <button onClick={startListening} disabled={loadingDevs} style={{
               marginTop: 4, padding: '5px 18px', fontSize: 12, borderRadius: 6, cursor: loadingDevs ? 'not-allowed' : 'pointer', fontWeight: 600,
               border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
-            }}>▶ Start {selectedLabel}</button>
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            }}><Play size={13} /> Start {selectedLabel}</button>
             <div style={{ fontSize: 10, color: C.muted, opacity: 0.6, textAlign: 'center' }}>
               {inputSource === 'system'
                 ? 'Captures audio playing on this computer — works even with output muted'
@@ -262,7 +264,8 @@ export default function PadTuner() {
           <button onClick={stopListening} style={{
             padding: '5px 18px', fontSize: 12, borderRadius: 6, cursor: 'pointer', fontWeight: 600,
             border: `1px solid ${C.red}`, background: `${C.red}22`, color: C.red,
-          }}>⏹ Stop</button>
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          }}><Square size={12} /> Stop</button>
         </>
       )}
 
@@ -277,7 +280,8 @@ export default function PadTuner() {
             border: `1px solid ${captured ? C.green : C.border}`,
             background: captured ? `${C.green}22` : 'transparent',
             color: captured ? C.green : C.text, opacity: result ? 1 : 0.35,
-          }}>{captured ? '✓ Added' : '⊕ Capture note'}</button>
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          }}>{captured ? <><Check size={13} /> Added</> : <><PlusCircle size={13} /> Capture note</>}</button>
 
           {/* Duration */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>

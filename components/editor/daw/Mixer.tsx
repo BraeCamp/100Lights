@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { Circle, SlidersHorizontal } from 'lucide-react'
+import { Circle, SlidersHorizontal, X, Pencil, Disc } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import type { DawTrack, ReturnTrack, AutoPoint } from '@/lib/daw-types'
@@ -128,7 +128,7 @@ function EqGraphModal({ trackName, color, value, onChange, onChangeAll, onClose 
           <strong style={{ fontSize: 14, flex: 1 }}>{trackName} · Tone EQ</strong>
           <button onClick={() => onChangeAll({})}
             style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Flat</button>
-          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 22, cursor: 'pointer', lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={18} /></button>
         </div>
         <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', width: w }}>
           <EqCurve value={value} onChange={onChange} onChangeAll={onChangeAll} width={w} height={h} />
@@ -448,7 +448,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
             {/* Draw volume automation — lit when a volume curve is active. */}
             <button onClick={() => setDrawOpen(true)}
               style={{ ...ms, border: `1px solid ${volLane ? 'var(--accent)' : 'var(--border)'}`, background: volLane ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: volLane ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              title="Draw volume automation across the song" aria-label="Draw volume automation">✎</button>
+              title="Draw volume automation across the song" aria-label="Draw volume automation"><Pencil size={isMobile ? 15 : 11} /></button>
           </div>
         )
       })()}
@@ -476,9 +476,10 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
             borderColor: midi.armed ? '#f59e0b' : 'var(--border)',
             background: midi.armed ? 'rgba(245,158,11,0.18)' : 'var(--bg-surface)',
             color: midi.armed ? '#f59e0b' : 'var(--text-muted)', whiteSpace: 'nowrap', marginTop: 1,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 3,
           }}
         >
-          {midi.armed ? '◉ LEARN' : `CC ${midi.cc}`}
+          {midi.armed ? <><Disc size={9} /> LEARN</> : `CC ${midi.cc}`}
         </button>
       )}
 
@@ -672,9 +673,9 @@ function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
       {/* Remove button */}
       <button
         onClick={() => dispatch({ type: 'REMOVE_RETURN_TRACK', trackId: rt.id })}
-        style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}
+        style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
         title="Remove return track"
-      >×</button>
+      ><X size={11} /></button>
 
       {showFx && createPortal(
         <div
@@ -731,7 +732,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
       <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '92vh', overflowY: 'auto', background: 'var(--bg-surface)', borderTop: `3px solid ${track.color ?? 'var(--accent)'}`, borderRadius: '18px 18px 0 0', padding: '16px 18px calc(20px + env(safe-area-inset-bottom))' }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
           <strong style={{ fontSize: 17, flex: 1 }}>{track.name}</strong>
-          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 24, cursor: 'pointer' }}>×</button>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 24, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={20} /></button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

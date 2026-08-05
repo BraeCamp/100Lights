@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { X, GripVertical } from 'lucide-react'
+import { X, GripVertical, Music2, Film } from 'lucide-react'
 import type { TimelineItem, MediaItem } from '@/lib/editor-types'
 
 interface Props {
@@ -95,8 +95,8 @@ export default function StoryboardView({ items, mediaItems, selectedId, onSelect
                   ) : (
                     <div style={{ width: '100%', height: '100%', background: `${item.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {item.contentType === 'audio'
-                        ? <span style={{ color: item.color, fontSize: 28, opacity: 0.6 }}>♪</span>
-                        : <span style={{ color: item.color, fontSize: 22, opacity: 0.4 }}>▶</span>}
+                        ? <Music2 size={28} style={{ color: item.color, opacity: 0.6 }} />
+                        : <Film size={22} style={{ color: item.color, opacity: 0.4 }} />}
                     </div>
                   )}
                   {/* Overlay: clip index + duration */}

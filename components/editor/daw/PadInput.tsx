@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { RotateCcw, Square, Play, Check, Volume2, X, ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Folder, Repeat, Rewind, Minimize, Maximize } from 'lucide-react'
+import { TbMetronome } from 'react-icons/tb'
 import { useDaw, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { defaultReverb, defaultDelay, defaultFilter, defaultEq3, defaultCompressor, type EffectType } from '@/lib/daw-types'
 import { playInstrumentNote } from '@/lib/daw-instruments'
@@ -225,8 +227,8 @@ function PadWaveformCrop({ blob, trimStart, trimEnd, onTrimChange }: {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
         <span>{(trimStart * dur).toFixed(2)}s</span>
         <span style={{ color: 'var(--text-muted)' }}>drag handles · reset: </span>
-        <button onClick={() => onTrimChange(0, 1)} style={{ fontSize: 9, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, fontFamily: 'monospace' }}>
-          {(trimEnd * dur).toFixed(2)}s ↺
+        <button onClick={() => onTrimChange(0, 1)} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, fontFamily: 'monospace' }}>
+          {(trimEnd * dur).toFixed(2)}s <RotateCcw size={10} />
         </button>
       </div>
     </div>
@@ -527,8 +529,8 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
         <button
           onClick={e => { e.stopPropagation(); isPrev ? stopPreview() : playPreview(entry) }}
           title={isPrev ? 'Stop preview' : 'Preview'}
-          style={{ background: 'transparent', border: 'none', color: isPrev ? C.yellow : C.muted, cursor: 'pointer', fontSize: 10, padding: '0 4px', flexShrink: 0, lineHeight: 1, width: 20 }}
-        >{isPrev ? '■' : '▶'}</button>
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: isPrev ? C.yellow : C.muted, cursor: 'pointer', padding: '0 4px', flexShrink: 0, width: 20 }}
+        >{isPrev ? <Square size={10} /> : <Play size={10} />}</button>
         <button
           onClick={() => addSound(entry)}
           disabled={already}
@@ -536,7 +538,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
           onMouseEnter={e => { if (!already) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)' }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = already ? `${C.accent}22` : 'transparent' }}
         >
-          <span style={{ fontSize: 11 }}>{already ? '✓' : '🔊'}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>{already ? <Check size={12} /> : <Volume2 size={12} />}</span>
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
           <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>{entry.duration.toFixed(1)}s</span>
         </button>
@@ -569,7 +571,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '8px 10px', background: 'rgb(var(--accent-rgb) / 0.12)', borderBottom: `1px solid ${C.border}` }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: C.text, flex: 1 }}>{pad.drumLabel}</span>
-        <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+        <button onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 0 }}><X size={16} /></button>
       </div>
 
       {/* KEY */}
@@ -631,7 +633,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                 style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 7px', cursor: 'pointer' }}
                 onClick={() => setExpandedId(isExp ? null : sound.id)}
               >
-                <span style={{ fontSize: 12, flexShrink: 0 }}>🔊</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}><Volume2 size={13} /></span>
                 <span style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.text }}>
                   {(() => { const e = entries.find(x => x.id === sound.id); return e?.folder ? `${e.folder} – ${sound.name}` : sound.name })()}
                 </span>
@@ -643,8 +645,8 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                 <span style={{ fontSize: 9, color: C.muted, fontFamily: 'monospace', flexShrink: 0 }}>{Math.round((sound.volume ?? 1) * 100)}%</span>
                 <button
                   onClick={e => { e.stopPropagation(); removeSound(sound.id) }}
-                  style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
-                >×</button>
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+                ><X size={14} /></button>
               </div>
               {isExp && (
                 <div style={{ padding: '0 10px 8px', borderTop: `1px solid ${C.border}` }}>
@@ -694,8 +696,8 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
         {/* Library picker */}
         <button
           onClick={() => setShowLibrary(v => !v)}
-          style={{ width: '100%', fontSize: 11, padding: '5px 0', marginTop: 4, borderRadius: 4, border: `1px solid ${C.accent}`, background: showLibrary ? `${C.accent}22` : 'transparent', color: C.accent, cursor: 'pointer', fontWeight: 600 }}
-        >{showLibrary ? 'Hide Library ▴' : '+ Add Sound from Library ▾'}</button>
+          style={{ width: '100%', fontSize: 11, padding: '5px 0', marginTop: 4, borderRadius: 4, border: `1px solid ${C.accent}`, background: showLibrary ? `${C.accent}22` : 'transparent', color: C.accent, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+        >{showLibrary ? <>Hide Library <ChevronUp size={13} /></> : <>+ Add Sound from Library <ChevronDown size={13} /></>}</button>
 
         {showLibrary && (
           <div style={{ marginTop: 8 }}>
@@ -721,7 +723,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                   return (
                     <div key={pKey}>
                       <div onClick={() => togglePickerFolder(pKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', cursor: 'pointer', background: 'rgb(var(--accent-rgb) / 0.07)', borderRadius: 3, marginBottom: 1 }}>
-                        <span style={{ fontSize: 9, color: 'rgb(var(--accent-rgb) / 0.8)' }}>{pOpen ? '▾' : '▸'}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', color: 'rgb(var(--accent-rgb) / 0.8)' }}>{pOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
                         <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'rgb(var(--accent-rgb) / 0.9)' }}>{parentName}</span>
                         <span style={{ fontSize: 9, color: C.muted }}>{total}</span>
                       </div>
@@ -731,7 +733,7 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                         return (
                           <div key={sKey} style={{ paddingLeft: 8, marginBottom: 1 }}>
                             <div onClick={() => togglePickerFolder(sKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px', cursor: 'pointer', background: C.bgDark, borderRadius: 2 }}>
-                              <span style={{ fontSize: 9, color: C.muted }}>{sOpen ? '▾' : '▸'}</span>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', color: C.muted }}>{sOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
                               <span style={{ flex: 1, fontSize: 10, color: C.text }}>{subName}</span>
                               <span style={{ fontSize: 9, color: C.muted }}>{subEntries.length}</span>
                             </div>
@@ -749,8 +751,8 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                   return (
                     <div key={fKey} style={{ marginBottom: 1 }}>
                       <div onClick={() => togglePickerFolder(fKey)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px', cursor: 'pointer', background: C.bgDark, borderRadius: 2 }}>
-                        <span style={{ fontSize: 9, color: C.muted }}>{fOpen ? '▾' : '▸'}</span>
-                        <span style={{ flex: 1, fontSize: 10, color: C.text }}>📁 {folderName}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', color: C.muted }}>{fOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flex: 1, fontSize: 10, color: C.text }}><Folder size={11} /> {folderName}</span>
                         <span style={{ fontSize: 9, color: C.muted }}>{folderEntries.length}</span>
                       </div>
                       {fOpen && folderEntries.map(pickerEntry)}
@@ -827,8 +829,8 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
 
           {/* Playback toggles */}
           <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-            <button onClick={() => onPadChange({ sampleLoop: !pad.sampleLoop })} style={toggleStyle(!!pad.sampleLoop)}>↻ Loop</button>
-            <button onClick={() => onPadChange({ sampleReverse: !pad.sampleReverse })} style={toggleStyle(!!pad.sampleReverse)}>◁ Reverse</button>
+            <button onClick={() => onPadChange({ sampleLoop: !pad.sampleLoop })} style={{ ...toggleStyle(!!pad.sampleLoop), display: 'inline-flex', alignItems: 'center', gap: 4 }}><Repeat size={12} /> Loop</button>
+            <button onClick={() => onPadChange({ sampleReverse: !pad.sampleReverse })} style={{ ...toggleStyle(!!pad.sampleReverse), display: 'inline-flex', alignItems: 'center', gap: 4 }}><Rewind size={12} /> Reverse</button>
           </div>
         </div>
       )}
@@ -1502,17 +1504,17 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             <button
               onClick={e => { e.stopPropagation(); const next = !metronome; setMetronome(next); engine.setMetronome(next) }}
               title={metronome ? 'Metronome on' : 'Metronome off'}
-              style={{ background: metronome ? `${C.accent}22` : 'transparent', border: `1px solid ${metronome ? C.accent : C.border}`, color: metronome ? C.accent : C.muted, cursor: 'pointer', fontSize: 13, padding: '1px 5px', borderRadius: 3 }}>
-              ♩
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: metronome ? `${C.accent}22` : 'transparent', border: `1px solid ${metronome ? C.accent : C.border}`, color: metronome ? C.accent : C.muted, cursor: 'pointer', padding: '3px 5px', borderRadius: 3 }}>
+              <TbMetronome size={14} />
             </button>
             {!isMobile && <button onClick={e => { e.stopPropagation(); setIsFullscreen(v => !v) }}
               title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', fontSize: 11, padding: '2px 6px', borderRadius: 3 }}>
-              {isFullscreen ? '⊡' : '⊞'}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, cursor: 'pointer', padding: '3px 6px', borderRadius: 3 }}>
+              {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
             </button>}
             {!isFullscreen && !isMobile && <span style={{ fontSize: 10, color: C.muted }}>drag to move</span>}
             {!isMobile && <button onClick={e => { e.stopPropagation(); onClose() }}
-              style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}>×</button>}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: '0 2px' }}><X size={18} /></button>}
           </div>
         </div>
 
@@ -1676,7 +1678,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                             {p.name}
                           </button>
                           <button onClick={() => { deletePadPreset(p.id); setSavedPresets(getPadPresets()) }}
-                            style={{ padding: '4px 6px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={11} /></button>
                         </div>
                       ))}
                       <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
@@ -1706,10 +1708,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             <div style={{ padding: '12px 12px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                 <button onClick={() => setOctave(o => Math.max(0, o - 1))}
-                  style={{ padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer', fontSize: 13 }}>◀</button>
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer' }}><ChevronLeft size={14} /></button>
                 <span style={{ fontSize: 12, color: C.muted, minWidth: 60, textAlign: 'center' }}>Oct {octave}</span>
                 <button onClick={() => setOctave(o => Math.min(8, o + 1))}
-                  style={{ padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer', fontSize: 13 }}>▶</button>
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '3px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, cursor: 'pointer' }}><ChevronRight size={14} /></button>
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>Z–M lower · Q–U upper</span>
               </div>
 

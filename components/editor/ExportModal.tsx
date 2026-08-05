@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { X, Download, Film, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { X, Download, Film, AlertCircle, CheckCircle2, Check, Share2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
 import { exportTimelineFidelity, resDims, fastExportSupported } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
@@ -390,9 +390,9 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
                   }}
                 >
                   {shareStatus === 'working' ? 'Sharing…'
-                    : shareStatus === 'done' ? '✓ Shared to community'
+                    : shareStatus === 'done' ? <><Check size={13} /> Shared to community</>
                     : shareStatus === 'error' ? 'Share failed — try again'
-                    : '↗ Share to community'}
+                    : <><Share2 size={13} /> Share to community</>}
                 </button>
               )}
             </div>

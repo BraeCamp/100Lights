@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, createContext, useContext } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useMidiLearn } from '@/lib/midi-learn'
 import type {
@@ -375,7 +376,7 @@ function ReverbControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
             {p.irName || 'Load IR…'}
           </button>
           {p.irData && <button onClick={e => { e.stopPropagation(); up({ irData: undefined, irName: undefined }) }} title="Use the built-in reverb"
-            style={{ fontSize: 10, lineHeight: 1, padding: '2px 5px', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>}
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: '2px 5px', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={11} /></button>}
         </div>
       </CtrlRow>
     </>
@@ -790,7 +791,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
           onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)' }}
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)' }}
         >
-          ×
+          <X size={13} />
         </button>
       </div>
       {/* Controls */}
@@ -1050,7 +1051,7 @@ function MidiEffectCard({ effect, trackId }: { effect: MidiEffect; trackId: stri
         />
         <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: 'var(--accent-light)', letterSpacing: '0.04em' }}>{MIDI_EFFECT_LABELS[effect.type]}</span>
         <button onClick={() => dispatch({ type: 'REMOVE_MIDI_EFFECT', trackId, effectId: effect.id })}
-          style={{ width: 14, height: 14, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>×</button>
+          style={{ width: 14, height: 14, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}><X size={13} /></button>
       </div>
       <div style={{ padding: '8px 6px', flex: 1 }}>
         {effect.type === 'velocity' && (() => {

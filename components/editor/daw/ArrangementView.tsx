@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend, ChevronDown, Music, Grid3x3, X, Cloud, HardDrive, Folder, Check, MessageSquare, RectangleHorizontal, MoreHorizontal, Download } from 'lucide-react'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS, clipLockedBy } from '@/lib/daw-types'
@@ -381,8 +381,8 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
         <button
           onClick={() => dispatch({ type: 'REMOVE_RETURN_TRACK', trackId: rt.id })}
           title="Remove return track"
-          style={{ fontSize: 10, width: 14, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0, lineHeight: 1 }}
-        >×</button>
+          style={{ fontSize: 10, width: 14, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+        ><X size={11} /></button>
       </div>
       {/* Empty lane — returns have no clip lane in arrangement */}
       <div style={{ flex: 1, height: 36, background: 'rgba(100,60,150,0.05)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
@@ -941,7 +941,9 @@ export default function ArrangementView() {
         const oa = bounds[i] - clip.startBeat, ob = bounds[i + 1] - clip.startBeat
         const segNotes = notes.filter(n => n.startBeat >= oa - 1e-6 && n.startBeat < ob - 1e-6)
           .map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - oa, durationBeats: Math.min(n.durationBeats, ob - n.startBeat) }))
-        dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: bounds[i], durationBeats: bounds[i + 1] - bounds[i], notes: segNotes, loopEnabled: false, loopLengthBeats: undefined } })
+        // Loop unit = this segment's own length, so a later loop repeats the
+        // cut segment rather than snapping back to the un-split (bar-rounded) size.
+        dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: bounds[i], durationBeats: bounds[i + 1] - bounds[i], notes: segNotes, loopEnabled: false, loopLengthBeats: bounds[i + 1] - bounds[i] } })
       }
       return true
     }
@@ -1432,7 +1434,7 @@ export default function ArrangementView() {
         <div style={{ position: 'relative' }} data-help-id="snap">
           <button onClick={() => setSnapMenu(v => !v)} title="Grid snap"
             style={{ ...toolBtn, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border)', fontSize: 9, padding: '2px 7px', display: 'flex', alignItems: 'center', gap: 4, minWidth: 40 }}>
-            {snapLabelOf(snap)} <span style={{ fontSize: 7, opacity: 0.7 }}>▾</span>
+            {snapLabelOf(snap)} <ChevronDown size={10} style={{ opacity: 0.7 }} />
           </button>
           {snapMenu && (
             <>
@@ -1570,11 +1572,11 @@ export default function ArrangementView() {
               border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
               background: showEditorMenu ? 'var(--bg-card)' : active ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent',
               color: active ? 'var(--accent-light)' : 'var(--text-muted)', borderRadius: '0 3px 3px 0',
-            }}>▾</button>
+            }}><ChevronDown size={11} /></button>
             {showEditorMenu && (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
-                <button style={menuItem} onClick={() => { setShowEditorMenu(false); createEditorClip('roll') }}>♪ New Piano Roll</button>
-                <button style={{ ...menuItem, borderTop: '1px solid var(--border)' }} onClick={() => { setShowEditorMenu(false); createEditorClip('beat') }}>◼ New Beat</button>
+                <button style={{ ...menuItem, display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setShowEditorMenu(false); createEditorClip('roll') }}><Music size={13} /> New Piano Roll</button>
+                <button style={{ ...menuItem, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setShowEditorMenu(false); createEditorClip('beat') }}><Grid3x3 size={13} /> New Beat</button>
               </div>
             )}
             {prHint && (
@@ -1610,7 +1612,7 @@ export default function ArrangementView() {
               background: showExportDropdown ? 'var(--bg-card)' : 'transparent',
               color: 'var(--text-muted)', borderRadius: '0 3px 3px 0',
             }}
-          >▾</button>
+          ><ChevronDown size={11} /></button>
           {showExportDropdown && (
             <div style={{
               position: 'absolute', top: '100%', right: 0, marginTop: 2,
@@ -1678,7 +1680,7 @@ export default function ArrangementView() {
                 letterSpacing: '0.04em', borderRadius: '3px 0 0 3px',
                 animation: saveNudge ? 'saveNudge 1.3s ease-in-out 2' : undefined,
               }}
-            >{isSaving ? 'SAVING…' : saveDest === 'local' ? 'SAVE ⤓' : 'SAVE'}</button>
+            >{isSaving ? 'SAVING…' : saveDest === 'local' ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>SAVE <HardDrive size={11} /></span> : 'SAVE'}</button>
             <button
               onClick={() => setShowSaveDropdown(d => !d)}
               title="Where to save"
@@ -1688,23 +1690,23 @@ export default function ArrangementView() {
                 background: showSaveDropdown ? 'var(--bg-card)' : 'transparent',
                 color: 'var(--text-muted)', borderRadius: '0 3px 3px 0',
               }}
-            >▾</button>
+            ><ChevronDown size={11} /></button>
             {showSaveDropdown && (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 214, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
                 <div style={{ padding: '7px 11px 4px', fontSize: 8.5, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Where to save</div>
                 <button onClick={() => { setSaveDest('cloud'); try { localStorage.setItem('100lights-save-dest', 'cloud') } catch { /* private mode */ } setShowSaveDropdown(false); void onSave?.() }}
-                  style={{ display: 'block', width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'cloud' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'cloud' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
-                  ☁ Cloud — your account{saveDest === 'cloud' ? '  ✓' : ''}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'cloud' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'cloud' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
+                  <Cloud size={14} style={{ flexShrink: 0 }} /> <span style={{ flex: 1 }}>Cloud — your account</span>{saveDest === 'cloud' && <Check size={13} />}
                 </button>
                 {onSaveLocal && (
                   <button onClick={() => { setSaveDest('local'); try { localStorage.setItem('100lights-save-dest', 'local') } catch { /* private mode */ } setShowSaveDropdown(false); void onSaveLocal() }}
-                    style={{ display: 'block', width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'local' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'local' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
-                    💻 This computer — a .cfproj file{saveDest === 'local' ? '  ✓' : ''}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'local' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'local' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
+                    <HardDrive size={14} style={{ flexShrink: 0 }} /> <span style={{ flex: 1 }}>This computer — a .cfproj file</span>{saveDest === 'local' && <Check size={13} />}
                   </button>
                 )}
                 <button onClick={async () => { setShowSaveDropdown(false); try { const { pickWritableFolder } = await import('@/lib/local-folder'); await pickWritableFolder() } catch { /* cancelled */ } }}
-                  style={{ display: 'block', width: '100%', padding: '8px 11px', textAlign: 'left', background: 'transparent', border: 'none', borderTop: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer' }}>
-                  📁 Set a local folder…
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 11px', textAlign: 'left', background: 'transparent', border: 'none', borderTop: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer' }}>
+                  <Folder size={14} style={{ flexShrink: 0 }} /> Set a local folder…
                 </button>
                 <div style={{ padding: '6px 11px 8px', fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.4, borderTop: '1px solid var(--border)' }}>
                   Local saves don&rsquo;t count against your project limit.
@@ -2004,8 +2006,8 @@ export default function ArrangementView() {
               setTsPopover(null)
             }}
             title="Pin feedback to this spot — collaborators see it on the timeline"
-            style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
-            💬 Comment here
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
+            <MessageSquare size={13} /> Comment here
           </button>
           <button
             onClick={() => {
@@ -2015,8 +2017,8 @@ export default function ArrangementView() {
               setTsPopover(null)
             }}
             title="Marks an arrangement section (verse, chorus…) from this bar to the next section"
-            style={{ background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.4)', color: '#60a5fa', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
-            ▭ Section starts here
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.4)', color: '#60a5fa', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
+            <RectangleHorizontal size={13} /> Section starts here
           </button>
           <button
             onClick={() => {
@@ -2236,7 +2238,7 @@ function MobileToolbar(p: {
       <button onClick={p.onZoomOut} style={mTool} aria-label="Zoom out"><ZoomOut size={16} /></button>
       <button onClick={p.onZoomIn} style={mTool} aria-label="Zoom in"><ZoomIn size={16} /></button>
       <div style={{ position: 'relative' }}>
-        <button onClick={() => p.setSnapMenu(!p.snapMenu)} style={{ ...mTool, width: 'auto', padding: '0 12px', fontSize: 12.5, fontWeight: 700 }}>Snap: {snapLabel(p.snap)} ▾</button>
+        <button onClick={() => p.setSnapMenu(!p.snapMenu)} style={{ ...mTool, width: 'auto', padding: '0 12px', gap: 5, fontSize: 12.5, fontWeight: 700 }}>Snap: {snapLabel(p.snap)} <ChevronDown size={14} /></button>
         {p.snapMenu && (
           <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, overflow: 'hidden', minWidth: 130, boxShadow: '0 6px 18px rgba(0,0,0,0.5)' }}>
             {(['off', '1/16', '1/8', 'beat', 'bar'] as SnapMode[]).map(m => (
@@ -2247,11 +2249,11 @@ function MobileToolbar(p: {
       </div>
       <button onClick={p.onEditor} style={{ ...mTool, width: 'auto', padding: '0 14px', fontSize: 12.5, fontWeight: 800, background: p.editorActive ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-card)', color: p.editorActive ? 'var(--accent-light)' : 'var(--text-secondary)', border: `1px solid ${p.editorActive ? 'var(--accent)' : 'var(--border)'}` }}>Editor</button>
       <div style={{ flex: 1 }} />
-      <button onClick={() => p.setMore(true)} style={mTool} aria-label="More tools">⋯</button>
+      <button onClick={() => p.setMore(true)} style={mTool} aria-label="More tools"><MoreHorizontal size={18} /></button>
       {p.more && (
         <div onClick={() => p.setMore(false)} style={{ position: 'fixed', inset: 0, zIndex: 190, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
           <div onClick={e => e.stopPropagation()} style={{ width: '100%', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '16px 16px calc(18px + env(safe-area-inset-bottom))' }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}><strong style={{ fontSize: 14, flex: 1 }}>Tools</strong><button onClick={() => p.setMore(false)} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}><strong style={{ fontSize: 14, flex: 1 }}>Tools</strong><button onClick={() => p.setMore(false)} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={18} /></button></div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button onClick={() => { p.onFit(); p.setMore(false) }} style={row}><Maximize2 size={16} /> Fit to window</button>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 2px' }}>
@@ -2260,10 +2262,10 @@ function MobileToolbar(p: {
                 <span style={{ minWidth: 22, textAlign: 'center', fontFamily: 'monospace', fontSize: 14 }}>{p.wfZoom}</span>
                 <button onClick={() => p.onWf(1)} style={round}>+</button>
               </div>
-              <button onClick={p.onRipple} style={{ ...row, borderColor: p.ripple ? '#f59e0b' : 'var(--border)', color: p.ripple ? '#f59e0b' : 'var(--text-primary)' }}>{p.ripple ? '✓ ' : ''}Ripple edit</button>
-              <button onClick={() => { p.onExport(); p.setMore(false) }} style={row}>⇩ Export</button>
+              <button onClick={p.onRipple} style={{ ...row, borderColor: p.ripple ? '#f59e0b' : 'var(--border)', color: p.ripple ? '#f59e0b' : 'var(--text-primary)' }}>{p.ripple && <Check size={16} />}Ripple edit</button>
+              <button onClick={() => { p.onExport(); p.setMore(false) }} style={row}><Download size={16} /> Export</button>
               {p.onSave && <button onClick={() => { void p.onSave!(); p.setMore(false) }} style={{ ...row, justifyContent: 'center', background: 'var(--accent)', color: '#fff', border: 'none', fontWeight: 800 }}>{p.isSaving ? 'Saving…' : 'Save project'}</button>}
-              {p.onSaveLocal && <button onClick={() => { void p.onSaveLocal!(); p.setMore(false) }} style={row}>⤓ Save to my computer (.cfproj)</button>}
+              {p.onSaveLocal && <button onClick={() => { void p.onSaveLocal!(); p.setMore(false) }} style={row}><HardDrive size={16} /> Save to my computer (.cfproj)</button>}
             </div>
           </div>
         </div>

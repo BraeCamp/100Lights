@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useOthers } from '@/lib/liveblocks.config'
-import { Link2, Globe2, Lock, X, Plus } from 'lucide-react'
+import { Link2, Globe2, Lock, X, Plus, Share2 } from 'lucide-react'
 
 interface Sharing {
   visibility: 'private' | 'public'
@@ -114,7 +114,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
           transition: 'all 0.15s',
         }}
       >
-        <span style={{ fontSize: 11 }}>⊕</span>
+        <Share2 size={11} />
         Share
         {count > 0 && (
           <span style={{

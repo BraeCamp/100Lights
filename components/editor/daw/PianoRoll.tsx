@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp } from 'lucide-react'
+import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp, Play } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useVoiceMap, VoiceMapTrace, VoiceMapControls } from './VoiceMapKit'
 import { RollSettings } from './RollSettings'
@@ -1339,7 +1339,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   disabled={previewing}
                   title="Preview middle C of this preset"
                   style={{ ...prBtn, fontSize: 10, padding: '2px 5px', border: '1px solid rgb(var(--accent-rgb) / 0.4)', background: previewing ? 'rgb(var(--accent-rgb) / 0.25)' : 'rgb(var(--accent-rgb) / 0.10)', color: 'var(--accent-light)' }}
-                >▶</button>
+                ><Play size={12} /></button>
               )}
               <button
                 onClick={() => setShowPresetPicker(v => !v)}
@@ -1403,8 +1403,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                               style={{
                                 flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer',
                                 color: previewing ? 'var(--text-muted)' : 'var(--accent-light)', fontSize: 10, padding: '4px 0 4px 8px', textAlign: 'left',
+                                display: 'inline-flex', alignItems: 'center',
                               }}>
-                              ▶
+                              <Play size={11} />
                             </button>
                             <button
                               onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } }); engine.setPresets(combinePresets(project.presets)); setShowPresetPicker(false) }}

@@ -6,6 +6,7 @@
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ChevronRight, ChevronLeft, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { ClipEffect, RollFx, AutoPoint } from '@/lib/daw-types'
 import { activeBarFields } from '@/lib/effect-bar'
@@ -83,10 +84,10 @@ export default function BarEditor({ effect: atOpen, anchor, onClose }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button onClick={toggleMode}
             title={mode === 'basic' ? 'Show all effects' : 'Show just the essentials'}
-            style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
-            {mode === 'basic' ? 'ADVANCED ▸' : '◂ BASIC'}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+            {mode === 'basic' ? <>ADVANCED <ChevronRight size={10} /></> : <><ChevronLeft size={10} /> BASIC</>}
           </button>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
         </div>
       </div>
 

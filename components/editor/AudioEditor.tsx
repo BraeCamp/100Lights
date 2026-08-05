@@ -14,7 +14,7 @@ import { consumeStudioSeed } from '@/lib/open-in-studio'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Code2, PanelLeft } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Code2, PanelLeft, PlusCircle, RotateCw, Pencil, Keyboard, X } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
@@ -155,7 +155,7 @@ function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
         cursor: busy ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
       }}
     >
-      <span style={{ fontSize: 11 }}>⊕</span>
+      <PlusCircle size={12} />
       {busy ? 'Saving…' : 'Share'}
     </button>,
     slot,
@@ -1788,7 +1788,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 <button onClick={() => void syncOfflineEditsRef.current(true)} disabled={syncing}
                   title="Reconcile any offline edits with the current shared version"
                   style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 8px', borderRadius: 4, marginRight: 6, cursor: 'pointer', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
-                  {syncing ? 'SYNCING…' : '↻ SYNC'}
+                  {syncing ? 'SYNCING…' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><RotateCw size={9} /> SYNC</span>}
                 </button>
               )}
               {props.readOnly && !suggesting && (
@@ -1801,7 +1801,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                   {props.onSuggest && (
                     <button onClick={enterSuggest} title="Make edits locally and send them to the owner to accept"
                       style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: 'none', background: '#f59e0b', color: '#1a1206' }}>
-                      ✎ Suggest changes
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Pencil size={11} /> Suggest changes</span>
                     </button>
                   )}
                 </span>
@@ -1879,14 +1879,14 @@ export default function AudioEditor(props: AudioEditorProps) {
                         title="Open pad / keyboard input"
                         data-help-id="pads"
                         style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
-                      >⌨ Pads</button>
+                      ><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Keyboard size={12} /> Pads</span></button>
                     ) : null
                   })()}
                   <button
                     onClick={() => { setSelectedTrackId(null); setSelectedReturnId(null) }}
                     style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
                     title="Close panel"
-                  >×</button>
+                  ><X size={16} /></button>
                 </div>
                 {/* Panel content */}
                 <div style={{ height: bottomResize.size, overflowY: 'auto', overflowX: 'auto' }}>

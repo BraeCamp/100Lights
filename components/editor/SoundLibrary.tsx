@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2 } from 'lucide-react'
+import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2, ArrowLeft } from 'lucide-react'
 import {
   libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound,
   initLibrary,
@@ -879,11 +879,11 @@ export function AddToLibraryModal({
         <button onClick={togglePreview} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 8, border: `1px solid ${previewing ? 'rgba(139,92,246,0.5)' : 'var(--border)'}`, background: previewing ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)', color: previewing ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}>
           {previewing ? <><Square size={10} fill="currentColor" /> Stop</> : <><Play size={10} fill="currentColor" style={{ marginLeft: 1 }} /> Preview</>}
         </button>
-        <button onClick={() => { setMode('choose'); setLayers([]); setFxs([]); setAddingLayer(false); setSynthLayerId(null) }} style={{ flex: '0 0 auto', padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
-          ← Start over
+        <button onClick={() => { setMode('choose'); setLayers([]); setFxs([]); setAddingLayer(false); setSynthLayerId(null) }} style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
+          <ArrowLeft size={12} /> Start over
         </button>
         <button onClick={save} disabled={saving || savedOk} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: savedOk ? '#22c55e' : saving ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: savedOk ? '#062812' : '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-          {savedOk ? 'Saved ✓' : saving ? 'Saving…' : 'Save to Library'}
+          {savedOk ? <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}><Check size={13} /> Saved</span> : saving ? 'Saving…' : 'Save to Library'}
         </button>
       </div>
       {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
@@ -927,8 +927,8 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
                 <p style={{ fontSize: 10, color: 'var(--accent-light)', margin: 0 }}>
                   Adding a layer — it lands on the timeline over your current sound.
                 </p>
-                <button onClick={() => { setAddingLayer(false); setMode('edit') }} style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
-                  ← Back to sound
+                <button onClick={() => { setAddingLayer(false); setMode('edit') }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+                  <ArrowLeft size={11} /> Back to sound
                 </button>
               </div>
             ) : (
@@ -949,8 +949,8 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
                 onUse={applySynth}
                 applyLabel={synthLayerId && layers.some(l => l.id === synthLayerId) ? 'Update layer ↻' : 'Add to sound →'}
               />
-              <button onClick={() => { setSynthLayerId(null); setMode(layers.length ? 'edit' : 'choose') }} style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
-                {layers.length ? '← Close synth' : '← Back'}
+              <button onClick={() => { setSynthLayerId(null); setMode(layers.length ? 'edit' : 'choose') }} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
+                <ArrowLeft size={11} /> {layers.length ? 'Close synth' : 'Back'}
               </button>
             </div>
             <div style={{ flex: '1 1 340px', minWidth: 300, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -972,8 +972,8 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
               onError={setError}
             />
             {error && <p style={{ fontSize: 11, color: '#ef4444', textAlign: 'center' }}>{error}</p>}
-            <button onClick={() => { setError(''); setMode('choose') }} style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
-              ← Back
+            <button onClick={() => { setError(''); setMode('choose') }} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>
+              <ArrowLeft size={11} /> Back
             </button>
           </>
         )}
@@ -1908,7 +1908,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             style={{ flex: 1, fontSize: 10, background: 'var(--bg-surface)', border: '1px solid var(--accent)', borderRadius: 4, padding: '3px 6px', color: 'var(--text-primary)' }}
           />
           <button onClick={createFolder} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Create</button>
-          <button onClick={() => { setAddingFolder(false); setNewFolderDraft('') }} style={{ fontSize: 10, padding: '3px 6px', borderRadius: 4, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}>✕</button>
+          <button onClick={() => { setAddingFolder(false); setNewFolderDraft('') }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, padding: '3px 6px', borderRadius: 4, background: 'none', color: 'var(--text-muted)', border: '1px solid var(--border)', cursor: 'pointer' }}><X size={12} /></button>
         </div>
       )}
 

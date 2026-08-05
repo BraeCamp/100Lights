@@ -9,7 +9,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Settings2 } from 'lucide-react'
+import { Settings2, Play, ChevronDown, ChevronRight, ChevronLeft, Check, Copy, RotateCw, RotateCcw } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
 import DrawnGraphModal from './DrawnGraphModal'
 import { GRAPH_AREAS, defaultFieldGraph, type MotionAreaId } from '@/lib/draw-graphs'
@@ -410,6 +410,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px' }
   const label: React.CSSProperties = { fontSize: 10, color: 'var(--text-secondary)', width: 70, flexShrink: 0 }
   const clipBtn = (enabled: boolean): React.CSSProperties => ({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
     fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 4, flexShrink: 0,
     border: '1px solid var(--border-light)', background: 'var(--bg-card)',
     color: enabled ? 'var(--text-secondary)' : 'var(--text-muted)',
@@ -429,8 +430,8 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         {soundAdvancedAllowed && (
           <button onClick={toggleMode}
             title={mode === 'basic' ? 'Show all sound controls' : 'Show just the essentials'}
-            style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', flexShrink: 0, border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? CYAN : 'var(--text-secondary)' }}>
-            {mode === 'basic' ? 'ADVANCED ▸' : '◂ BASIC'}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 4, cursor: 'pointer', flexShrink: 0, border: '1px solid var(--border-light)', background: mode === 'advanced' ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)', color: mode === 'advanced' ? CYAN : 'var(--text-secondary)' }}>
+            {mode === 'basic' ? <>ADVANCED <ChevronRight size={10} /></> : <><ChevronLeft size={10} /> BASIC</>}
           </button>
         )}
       </div>
@@ -452,7 +453,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           {onChangeSound && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>tap to change</span>}
           {canPreview && onPreviewSound && (
             <button onClick={onPreviewSound} title="Listen — plays middle C"
-              style={{ border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 11, padding: '2px 4px', flexShrink: 0 }}>▶</button>
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 11, padding: '2px 4px', flexShrink: 0 }}><Play size={12} /></button>
           )}
         </div>
       )}
@@ -480,7 +481,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
                 {activeTone ? activeTone.name : 'Choose a tone…'}
                 {activeTone && !soundAdvancedAllowed && extraFx > 0 && <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> · {extraFx} fx</span>}
               </span>
-              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▾</span>
+              <ChevronDown size={11} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             </button>
             {toneOpen && createPortal(
               <div
@@ -509,7 +510,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
                         }}
                         onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'var(--bg-card)' }}
                         onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent' }}>
-                        <span style={{ width: 12, flexShrink: 0, color: CYAN }}>{on ? '✓' : ''}</span>
+                        <span style={{ width: 12, flexShrink: 0, color: CYAN, display: 'inline-flex', alignItems: 'center' }}>{on ? <Check size={12} /> : null}</span>
                         {t.name}
                       </button>
                     )
@@ -532,12 +533,13 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
               onClick={() => commitFx({ ...(clip.rollFx || {}), legato: legatoOn ? 0 : 1 })}
               title="Legato: across a run of touching/overlapping notes, only the first attacks — the rest keep the bow/breath moving. Notes after a gap start fresh."
               style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
                 fontSize: 9.5, fontWeight: 600, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', flexShrink: 0,
                 border: legatoOn ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
                 background: legatoOn ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
                 color: legatoOn ? CYAN : 'var(--text-secondary)',
               }}>
-              {legatoOn ? '✓ Legato' : 'Legato'}{legatoAuto ? ' · auto' : ''}
+              {legatoOn && <Check size={11} />}Legato{legatoAuto ? ' · auto' : ''}
             </button>
           )}
           {artOpts.slide.available && (legatoOn || !artOpts.legato.available) ? (
@@ -570,7 +572,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           onClick={doCopy}
           title={hereCount ? 'Copy this clip’s sound settings' : 'Copy this clip’s (unchanged) settings — paste to reset another clip to defaults'}
           style={clipBtn(true)}
-        >{flash ? 'Copied ✓' : `⧉ Copy${hereCount ? ` (${hereCount})` : ''}`}</button>
+        >{flash ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy{hereCount ? ` (${hereCount})` : ''}</>}</button>
         <button
           onClick={() => {
             // An empty copy pastes as "reset to defaults" (rollFx cleared).
@@ -591,7 +593,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           style={reverted
             ? { ...clipBtn(true), border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.18)', color: CYAN }
             : clipBtn(canRevert)}
-        >{reverted ? '⟳ Reverted' : '⟲ Revert'}</button>
+        >{reverted ? <><RotateCw size={11} /> Reverted</> : <><RotateCcw size={11} /> Revert</>}</button>
         <span style={{ flex: 1 }} />
       </div>
 
@@ -673,8 +675,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
               <button onClick={() => setDrawMenuOpen(o => !o)}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.1)', color: CYAN }}>
                 <span style={{ flex: 1 }}>Draw a graph</span>
-                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                  {drawAreas.filter(a => areaBind[a].points).length || ''} {drawAreas.filter(a => areaBind[a].points).length ? 'on' : ''} ▾
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--text-muted)' }}>
+                  {drawAreas.filter(a => areaBind[a].points).length ? `${drawAreas.filter(a => areaBind[a].points).length} on` : ''}
+                  <ChevronDown size={10} />
                 </span>
               </button>
               {drawMenuOpen && createPortal(

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2 } from 'lucide-react'
+import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2, X } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
@@ -691,7 +691,7 @@ export default function Inspector({
                     {(selectedItem.flags ?? []).map(f => (
                       <div key={f.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded group" style={{ background: `${f.color}22`, border: `1px solid ${f.color}66` }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.color, display: 'inline-block', flexShrink: 0 }} />
-                        <button onClick={() => removeFlag(f.id)} className="opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: f.color, lineHeight: 1, fontSize: 10 }}>×</button>
+                        <button onClick={() => removeFlag(f.id)} className="opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: f.color, lineHeight: 1, fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={10} /></button>
                       </div>
                     ))}
                     {FLAG_COLORS.map(c => (

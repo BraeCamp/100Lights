@@ -6,6 +6,7 @@
 // Track effects show below — each can be muted individually or clicked to select
 // it on the project (the clip's own effects are edited in the code as rollFx).
 import { useEffect, useRef, useState } from 'react'
+import { Play, ChevronDown, GripVertical } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { MidiClip, DawTrack, TrackEffect, TrackInstrument, PolyInstrumentParams } from '@/lib/daw-types'
 import { playInstrumentNote } from '@/lib/daw-instruments'
@@ -367,10 +368,10 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
           </div>
         )}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', position: 'relative' }}>
-          <button onClick={listen} disabled={running} style={{ ...btn, opacity: running ? 0.6 : 1 }} title="Play the generated notes">
-            {running ? '…' : '▶ Listen'}
+          <button onClick={listen} disabled={running} style={{ ...btn, display: 'inline-flex', alignItems: 'center', gap: 4, opacity: running ? 0.6 : 1 }} title="Play the generated notes">
+            {running ? '…' : <><Play size={12} /> Listen</>}
           </button>
-          <button onClick={() => setShowTemplates((v) => !v)} style={btn}>Add new ▾</button>
+          <button onClick={() => setShowTemplates((v) => !v)} style={{ ...btn, display: 'inline-flex', alignItems: 'center', gap: 4 }}>Add new <ChevronDown size={12} /></button>
           <button onClick={duplicate} style={btn} title="Make a copy of this as a new item">Duplicate</button>
           <span
             draggable={!!preview}
@@ -390,8 +391,8 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
               setTimeout(() => document.body.removeChild(ghost), 0)
             }}
             title={preview ? 'Drag onto a track to add this item' : 'Run once (Listen) to enable drag'}
-            style={{ ...btn, cursor: preview ? 'grab' : 'not-allowed', opacity: preview ? 1 : 0.5, userSelect: 'none' }}>
-            ⠿ Drag
+            style={{ ...btn, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: preview ? 'grab' : 'not-allowed', opacity: preview ? 1 : 0.5, userSelect: 'none' }}>
+            <GripVertical size={12} /> Drag
           </span>
           <button onClick={isEditingClip ? saveToClip : addNewTrack} disabled={running}
             style={{ ...btn, background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)', marginLeft: 'auto' }}>

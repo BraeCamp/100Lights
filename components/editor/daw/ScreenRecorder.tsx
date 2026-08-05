@@ -12,6 +12,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Circle, RotateCcw, SkipBack, SkipForward, Pause, Play, Square, Volume2, Combine, PictureInPicture, PictureInPicture2, Share2, X } from 'lucide-react'
 import { useDaw, reducer } from '@/lib/daw-state'
 import type { DawAction } from '@/lib/daw-state'
 import { defaultProject, type DawProject, type DawHistoryEntry } from '@/lib/daw-types'
@@ -358,7 +359,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
           {mode === 'history' ? 'History' : 'Record session'}
         </span>
         <button onClick={() => { restoreProject(); onClose() }} aria-label="Close"
-          style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={15} /></button>
       </div>
 
       {/* Mode toggle */}
@@ -369,7 +370,8 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
               flex: 1, padding: '5px 0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
               background: mode === m ? 'var(--accent, #7c3aed)' : 'transparent',
               color: mode === m ? '#fff' : 'var(--text-muted)',
-            }}>{m === 'screen' ? '● Screen' : '↺ History'}</button>
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            }}>{m === 'screen' ? <><Circle size={11} /> Screen</> : <><RotateCcw size={11} /> History</>}</button>
           ))}
         </div>
       )}
@@ -408,8 +410,8 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
             </div>
           )}
           <button onClick={() => void start()}
-            style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-            ● Start recording
+            style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <Circle size={12} fill="currentColor" /> Start recording
           </button>
         </>
       )}
@@ -423,8 +425,8 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
         ) : poppedOut ? (
           <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
             🎚 Controls are open in a separate window — drag it to another screen. Scrubbing there drives this studio live.
-            <button onClick={bringBack} style={{ display: 'block', marginTop: 9, padding: '6px 11px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
-              ⧉ Bring controls back here
+            <button onClick={bringBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 9, padding: '6px 11px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
+              <PictureInPicture2 size={13} /> Bring controls back here
             </button>
           </div>
         ) : (
@@ -444,23 +446,23 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
               style={{ width: '100%', accentColor: 'var(--accent, #7c3aed)', cursor: 'pointer' }} />
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 7 }}>
-              <button onClick={() => { setAutoPlay(false); goToStep(scrubStep - 1) }} title="Previous edit" style={ctrlBtn}>◀</button>
-              <button onClick={togglePlay} title={autoPlay ? 'Pause' : 'Play'} style={{ ...ctrlBtn, flex: 1, background: 'var(--accent, #7c3aed)', color: '#fff', border: 'none' }}>{autoPlay ? '⏸' : '▶'}</button>
-              <button onClick={() => { setAutoPlay(false); goToStep(scrubStep + 1) }} title="Next edit" style={ctrlBtn}>▶</button>
+              <button onClick={() => { setAutoPlay(false); goToStep(scrubStep - 1) }} title="Previous edit" style={ctrlBtn}><SkipBack size={13} /></button>
+              <button onClick={togglePlay} title={autoPlay ? 'Pause' : 'Play'} style={{ ...ctrlBtn, flex: 1, background: 'var(--accent, #7c3aed)', color: '#fff', border: 'none' }}>{autoPlay ? <Pause size={14} /> : <Play size={14} />}</button>
+              <button onClick={() => { setAutoPlay(false); goToStep(scrubStep + 1) }} title="Next edit" style={ctrlBtn}><SkipForward size={13} /></button>
               <select value={speed} onChange={e => setSpeed(Number(e.target.value))} title="Speed" style={{ ...ctrlBtn, width: 'auto', padding: '0 4px', cursor: 'pointer' }}>
                 {SPEEDS.map(s => <option key={s} value={s}>{s}×</option>)}
               </select>
-              <button onClick={toggleListen} title="Listen to this version" style={{ ...ctrlBtn, background: listening ? '#059669' : 'transparent', color: listening ? '#fff' : 'var(--text-primary)', border: listening ? 'none' : '1px solid var(--border)' }}>{listening ? '■' : '♪'}</button>
+              <button onClick={toggleListen} title="Listen to this version" style={{ ...ctrlBtn, background: listening ? '#059669' : 'transparent', color: listening ? '#fff' : 'var(--text-primary)', border: listening ? 'none' : '1px solid var(--border)' }}>{listening ? <Square size={12} /> : <Volume2 size={14} />}</button>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
               <button onClick={doConsolidate} title="Merge repeated tweaks of the same control into their final value"
-                style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer' }}>
-                ⤳ Consolidate
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer' }}>
+                <Combine size={13} /> Consolidate
               </button>
               <button onClick={popOut} title="Open the controls in a separate window — drag to another screen"
-                style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer' }}>
-                ⧉ Pop out
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 9px', borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer' }}>
+                <PictureInPicture size={13} /> Pop out
               </button>
               {consolidateInfo && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{consolidateInfo}</span>}
             </div>
@@ -479,7 +481,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
             <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginLeft: 'auto' }}>{includeMic ? 'screen + studio + mic' : 'screen + studio'}</span>
           </div>
           <button onClick={() => void finish()}
-            style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>■ Stop</button>
+            style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}><Square size={12} /> Stop</button>
         </>
       )}
 
@@ -496,8 +498,8 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
             <p style={{ fontSize: 11, color: '#34d399', fontWeight: 600, margin: 0 }}>✓ Shared to the community</p>
           ) : (
             <button onClick={() => void shareToCommunity()} disabled={share === 'sharing'}
-              style={{ width: '100%', padding: '7px 0', borderRadius: 8, border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.14)', color: 'var(--accent-light)', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: share === 'sharing' ? 0.6 : 1 }}>
-              {share === 'sharing' ? 'Sharing…' : '↑ Share to community'}
+              style={{ width: '100%', padding: '7px 0', borderRadius: 8, border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.14)', color: 'var(--accent-light)', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: share === 'sharing' ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {share === 'sharing' ? 'Sharing…' : <><Share2 size={13} /> Share to community</>}
             </button>
           )}
           {shareErr && <p style={{ fontSize: 11, color: '#ef4444', margin: '6px 0 0' }}>{shareErr}</p>}

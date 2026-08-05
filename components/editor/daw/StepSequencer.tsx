@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Dices } from 'lucide-react'
+import { Dices, Trash2, X, ArrowRight, Rows2, Rows3 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isMidiClip } from '@/lib/daw-types'
 import type { MidiClip, DrumInstrumentParams } from '@/lib/daw-types'
@@ -303,7 +303,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
             )}
           </select>
           <button onClick={saveKit} disabled={!isDrum} style={{ ...miniBtn, width: 'auto', padding: '0 6px', opacity: isDrum ? 1 : 0.4 }} title="Save the current sounds as a kit">＋</button>
-          {userKitSelected && <button onClick={delKit} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved kit">🗑</button>}
+          {userKitSelected && <button onClick={delKit} style={{ ...miniBtn, width: 'auto', padding: '0 6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Delete this saved kit"><Trash2 size={13} /></button>}
         </label>
 
         {/* Pattern */}
@@ -321,7 +321,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
             )}
           </select>
           <button onClick={savePattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Save the current hits as a pattern">＋</button>
-          {userPatternSelected && <button onClick={delPattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved pattern">🗑</button>}
+          {userPatternSelected && <button onClick={delPattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Delete this saved pattern"><Trash2 size={13} /></button>}
           <button onClick={dicePattern} style={{ ...miniBtn, width: 'auto', padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderColor: 'var(--accent)', color: 'var(--accent-light)' }} title="Surprise me — drop in a random groove"><Dices size={15} /></button>
           <button onClick={() => setSmartOpen(o => !o)} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 11, fontWeight: 700, borderColor: smartOpen ? 'var(--accent)' : 'var(--border)', color: smartOpen ? 'var(--accent-light)' : 'var(--text-muted)' }} title="Smart Drums — drag to sculpt density × loudness">Smart</button>
         </label>
@@ -335,9 +335,9 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
         </div>
 
         <button onClick={() => { if (clip.notes.length) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: [] } }) }} style={{ ...selStyle, color: 'var(--text-secondary)' }} title="Clear all hits">Clear</button>
-        <button onClick={() => { setExpandedStepSeqClipId(null); setExpandedPianoRollClipId(clip.id) }} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 9 }} title="Open this beat in the piano roll for velocity, note lengths, and ghost notes">⇢ Roll</button>
-        <button onClick={() => setTall(t => !t)} style={{ ...miniBtn, width: 'auto', padding: '0 8px' }} title="Taller rows">{tall ? '▤' : '▥'}</button>
-        <button onClick={() => setExpandedStepSeqClipId(null)} style={{ ...miniBtn, width: 'auto', padding: '0 8px' }} title="Close">✕</button>
+        <button onClick={() => { setExpandedStepSeqClipId(null); setExpandedPianoRollClipId(clip.id) }} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 9, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 3 }} title="Open this beat in the piano roll for velocity, note lengths, and ghost notes"><ArrowRight size={13} /> Roll</button>
+        <button onClick={() => setTall(t => !t)} style={{ ...miniBtn, width: 'auto', padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Taller rows">{tall ? <Rows2 size={14} /> : <Rows3 size={14} />}</button>
+        <button onClick={() => setExpandedStepSeqClipId(null)} style={{ ...miniBtn, width: 'auto', padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close"><X size={14} /></button>
       </div>
 
       {smartOpen && (
@@ -381,7 +381,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
                   title={`${lane.label} volume — ${Math.round(padVolume(lane.pitch) * 100)}%`} aria-label={`${lane.label} volume`}
                   style={{ width: 34, flexShrink: 0, accentColor: 'var(--accent)', height: 12, cursor: 'pointer' }} />
                 {padSample(lane.pitch) && (
-                  <button onClick={() => clearSample(lane.pitch)} title="Remove sample (back to the synth voice)" style={{ flexShrink: 0, fontSize: 8, lineHeight: 1, padding: '1px 3px', borderRadius: 3, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}>✕</button>
+                  <button onClick={() => clearSample(lane.pitch)} title="Remove sample (back to the synth voice)" style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: '1px 3px', borderRadius: 3, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}><X size={10} /></button>
                 )}
                 <button onClick={() => openSamplePicker(lane.pitch)}
                   title={padSample(lane.pitch) ? 'Change this lane’s sample' : 'Load a sample onto this lane (baked into the kit)'}
@@ -440,7 +440,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>Load a sample onto {DRUM_LANES.find(l => l.pitch === samplePicker)?.label ?? 'lane'}</span>
               <span style={{ flex: 1 }} />
-              <button onClick={() => setSamplePicker(null)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+              <button onClick={() => setSamplePicker(null)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
             </div>
             <input value={libQuery} onChange={e => setLibQuery(e.target.value)} placeholder="Search your library…" autoFocus
               style={{ margin: '10px 12px', padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }} />

@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react'
+import { X, HelpCircle } from 'lucide-react'
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -78,9 +79,9 @@ function TooltipCard({ card, onDismiss }: { card: Card; onDismiss: () => void })
         {card.pinned && (
           <button
             onClick={onDismiss}
-            style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.4)', fontSize: 14, lineHeight: 1, padding: 0 }}
+            style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.4)', fontSize: 14, lineHeight: 1, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
           >
-            ×
+            <X size={14} />
           </button>
         )}
       </div>
@@ -238,7 +239,7 @@ export function TooltipModeToggle() {
       }}
     >
       <style>{`@keyframes tip-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,0.4)} 50%{box-shadow:0 0 0 4px rgba(139,92,246,0)} }`}</style>
-      {active ? '✕ Help' : '? Help'}
+      {active ? <><X size={12} /> Help</> : <><HelpCircle size={12} /> Help</>}
     </button>
   )
 }

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
 import { createPortal } from 'react-dom'
-import { Plus, Headphones } from 'lucide-react'
+import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { uploadRecordingBlob } from '@/lib/record-upload'
@@ -281,8 +281,8 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
       <div style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {lane.label}
       </div>
-      <button onClick={() => dispatch({ type: 'CLEAR_AUTOMATION_LANE', laneId: lane.id })} title="Clear" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}>⌫</button>
-      <button onClick={() => dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id })} title="Remove lane" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}>×</button>
+      <button onClick={() => dispatch({ type: 'CLEAR_AUTOMATION_LANE', laneId: lane.id })} title="Clear" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}><Eraser size={10} /></button>
+      <button onClick={() => dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id })} title="Remove lane" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}><X size={11} /></button>
     </div>
   )
 }
@@ -866,8 +866,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           >
             <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) }}
               title={isFolded ? 'Expand group' : 'Fold group'}
-              style={{ fontSize: 9, width: 14, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0 }}>
-              {isFolded ? '▸' : '▾'}
+              style={{ fontSize: 9, width: 14, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              {isFolded ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
             </button>
             <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>▤</span>
             {editing ? (
@@ -979,9 +979,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <button
               onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) }}
               title={collapsed ? 'Expand track' : 'Collapse track'}
-              style={{ fontSize: 8, width: 12, height: 12, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, lineHeight: 1 }}
+              style={{ fontSize: 8, width: 12, height: 12, flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              {collapsed ? '▸' : '▾'}
+              {collapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
             </button>
             {frozen && <span title="Frozen" style={{ fontSize: 10, flexShrink: 0 }}>❄</span>}
             {collabPeers.filter(pr => pr.selectedTrackId === track.id).slice(0, 3).map(pr => (
@@ -1026,8 +1026,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 title={track.armed ? (recording ? 'Recording…' : 'Disarm track') : 'Arm for recording'}
                 data-help-id="arm"
                 onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { armed: !track.armed } }) }}
-                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0, animation: blinkIds.has(`arm:${track.id}`) ? 'dawBlink 0.45s ease-in-out 3' : undefined }}>
-                ●
+                style={{ fontSize: 8, width: 16, height: 14, borderRadius: 2, border: `1px solid ${recording && track.armed ? '#ff3b3b' : track.armed ? '#ef4444' : 'var(--border)'}`, background: recording && track.armed ? '#ff3b3b' : track.armed ? 'rgba(239,68,68,0.2)' : 'var(--bg-surface)', color: recording && track.armed ? '#fff' : track.armed ? '#ef4444' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', animation: blinkIds.has(`arm:${track.id}`) ? 'dawBlink 0.45s ease-in-out 3' : undefined }}>
+                <Circle size={9} fill="currentColor" />
               </button>
             )}
           </div>
@@ -1122,8 +1122,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               title="Track settings (right-click for more)"
               data-help-id="track-settings"
               onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
-              style={{ fontSize: 9, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
-            >⚙</button>
+              style={{ fontSize: 9, width: 16, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+            ><Settings size={11} /></button>
           </div>
         </div>
 
@@ -1167,7 +1167,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
             >
-              <span>❄</span>
+              <Snowflake size={13} />
               <span>{frozen ? 'Unfreeze Track' : 'Freeze Track'}</span>
             </button>
 
@@ -1175,10 +1175,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 (On desktop the FX chain lives inline + in the tools row.) */}
             {isMobile && (<>
               <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
-              {([['fx', '🎚', 'Effects'], ['sounds', '🎛', 'Sound'], ['keys', '🎹', 'Play / Keys']] as const).map(([sub, icon, label]) => (
+              {([['fx', <SlidersHorizontal key="i" size={15} />, 'Effects'], ['sounds', <Music key="i" size={15} />, 'Sound'], ['keys', <Piano key="i" size={15} />, 'Play / Keys']] as const).map(([sub, icon, label]) => (
                 <button key={sub} onClick={() => { window.dispatchEvent(new CustomEvent('mobile-open-sounds', { detail: { trackId: track.id, sub } })); setTrackCtxMenu(null) }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 14px', fontSize: 12, color: 'var(--accent-light)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                  <span>{icon}</span><span>{label}</span>
+                  {icon}<span>{label}</span>
                 </button>
               ))}
             </>)}
@@ -1192,7 +1192,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(96,165,250,0.10)' }}
                   onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
                 >
-                  <span>⊞</span>
+                  <Group size={13} />
                   <span>Group Selected Tracks ({selectedTrackIds.size})</span>
                 </button>
               </>
@@ -1206,7 +1206,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
-                <span>♩</span>
+                <Music size={13} />
                 <span>New MIDI Clip</span>
               </button>
               <button onClick={() => { openDigitalMidi(); setTrackCtxMenu(null) }}
@@ -1214,7 +1214,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >
-                <span>🎹</span>
+                <Piano size={13} />
                 <span>Open Digital MIDI</span>
               </button>
               {(() => {
@@ -1229,7 +1229,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
                     onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
                   >
-                    <span>{beat ? '◼' : '▦'}</span>
+                    <span style={{ display: 'inline-flex' }}>{beat ? <Grid3x3 size={13} /> : <Piano size={13} />}</span>
                     <span>{isExpanded ? `Close ${noun}` : `Open ${noun}`}</span>
                   </button>
                 )
@@ -1683,8 +1683,12 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                       const leftNotes  = notes.filter(n => n.startBeat < beatOffset).map(n => ({ ...n, durationBeats: Math.min(n.durationBeats, beatOffset - n.startBeat) }))
                       const rightNotes = notes.filter(n => n.startBeat >= beatOffset).map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - beatOffset }))
                       dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
-                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, notes: leftNotes, loopEnabled: false, loopLengthBeats: undefined } })
-                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, notes: rightNotes, loopEnabled: false, loopLengthBeats: undefined } })
+                      // Each half's loop unit is its OWN length (the splice
+                      // boundary), so turning loop on later repeats the spliced
+                      // segment — not the note pattern rounded up to a whole bar,
+                      // which would snap the loop back to the un-spliced size.
+                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, notes: leftNotes, loopEnabled: false, loopLengthBeats: beatOffset } })
+                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, notes: rightNotes, loopEnabled: false, loopLengthBeats: clip.durationBeats - beatOffset } })
                     }
                   }}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
@@ -1772,7 +1776,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               onClick={() => dispatch({ type: 'REMOVE_TAKE_LANE', laneId: lane.id })}
               title="Delete take"
               style={{ width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}
-            >×</button>
+            ><X size={10} /></button>
           </div>
           {/* Take lane clip area */}
           <div style={{ flex: 1, height: TAKE_H, position: 'relative', background: 'rgba(120,80,160,0.06)', borderBottom: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -1912,7 +1916,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>{(track.name || 'TRACK').toUpperCase()} · EFFECTS</span>
-            <button onClick={() => setFxRackOpen(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}>×</button>
+            <button onClick={() => setFxRackOpen(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={13} /></button>
           </div>
           <DeviceChain trackId={track.id} />
         </div>,
@@ -1935,7 +1939,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
           >
-            <span style={{ color: 'var(--accent-light)' }}>♩</span>
+            <Music size={13} style={{ color: 'var(--accent-light)', flexShrink: 0 }} />
             <span>Piano Roll here</span>
             <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-muted)' }}>bar {Math.floor(laneCtxMenu.beat / project.timeSignatureNum) + 1}</span>
           </button>
@@ -1949,7 +1953,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
           >
-            <span>♫ Sound from library here</span>
+            <Music size={13} style={{ flexShrink: 0 }} />
+            <span>Sound from library here</span>
           </button>
         </div>
       )}
@@ -1959,17 +1964,17 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           <div style={{ position: 'fixed', inset: 0, zIndex: 1999 }} onMouseDown={() => setCreateMenu(null)} />
           <div ref={createMenuRef} style={{ position: 'fixed', zIndex: 2000, left: createMenu.x, top: createMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 190, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
             {([
-              ['⬆', 'Upload audio / video', () => importFileAtBeat(createMenu.beat)],
-              ['●', 'Record from mic', () => recordIntoTrack()],
-              ['♫', 'Browse library', () => { setPickerInsertBeat(snapBeat(createMenu.beat, snap, project.timeSignatureNum, meterSegments(project))); setShowLibraryPicker(true) }],
-              ['⌁', 'Synthesize (code)', () => setShowSynth(true)],
-            ] as [string, string, () => void][]).map(([icon, label, action]) => (
+              [<Upload size={13} key="i" />, 'Upload audio / video', () => importFileAtBeat(createMenu.beat)],
+              [<Circle size={13} fill="currentColor" key="i" />, 'Record from mic', () => recordIntoTrack()],
+              [<Library size={13} key="i" />, 'Browse library', () => { setPickerInsertBeat(snapBeat(createMenu.beat, snap, project.timeSignatureNum, meterSegments(project))); setShowLibraryPicker(true) }],
+              [<Code size={13} key="i" />, 'Synthesize (code)', () => setShowSynth(true)],
+            ] as [React.ReactNode, string, () => void][]).map(([icon, label, action]) => (
               <button key={label}
                 onClick={() => { action(); setCreateMenu(null) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '7px 14px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
-                <span style={{ color: 'var(--accent-light)', width: 14, textAlign: 'center' }}>{icon}</span>
+                <span style={{ color: 'var(--accent-light)', width: 14, display: 'inline-flex', justifyContent: 'center' }}>{icon}</span>
                 <span>{label}</span>
               </button>
             ))}
@@ -2000,8 +2005,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   }}>✎ {peer.name}</span>
                 ) : null
               })()}
-              <button onClick={() => rollResize.setSize(rollResize.size < 440 ? 640 : 260)} style={{ background: 'transparent', border: 'none', color: rollResize.size >= 440 ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title={rollResize.size >= 440 ? 'Shrink piano roll' : 'Expand piano roll'}>{rollResize.size >= 440 ? '⤡' : '⤢'}</button>
-              <button onClick={() => setExpandedPianoRollClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close piano roll">✕</button>
+              <button onClick={() => rollResize.setSize(rollResize.size < 440 ? 640 : 260)} style={{ background: 'transparent', border: 'none', color: rollResize.size >= 440 ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title={rollResize.size >= 440 ? 'Shrink piano roll' : 'Expand piano roll'}>{rollResize.size >= 440 ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
+              <button onClick={() => setExpandedPianoRollClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close piano roll"><X size={12} /></button>
             </div>
             <div style={{ flex: 1, height: rollResize.size, overflow: 'hidden' }}>
               <PianoRoll clipId={expandedClip.id} />
@@ -2020,7 +2025,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <div style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box' }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>BEAT</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{seqClip.name}</span>
-              <button onClick={() => setExpandedStepSeqClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }} title="Close step sequencer">✕</button>
+              <button onClick={() => setExpandedStepSeqClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close step sequencer"><X size={12} /></button>
             </div>
             <div style={{ flex: 1, height: seqResize.size, overflowY: 'auto', overflowX: 'hidden' }}>
               <StepSequencer clipId={seqClip.id} />
@@ -2038,7 +2043,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{pickerInsertBeat !== null ? 'Add a Sound' : 'Replace Sample'}</span>
               <button onClick={() => setShowLibraryPicker(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1 }}>✕</button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <SoundLibrary embedded onPick={handlePickFromLibrary} />
@@ -2054,7 +2059,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.7)
           <div style={{ width: 480, height: 560, background: 'var(--bg-card)', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 48px rgba(0,0,0,0.8)' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Synthesize with code</span>
-              <button onClick={() => setShowSynth(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1 }}>✕</button>
+              <button onClick={() => setShowSynth(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <PolyCodePanel onDone={() => setShowSynth(false)} />

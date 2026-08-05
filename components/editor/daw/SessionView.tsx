@@ -2,7 +2,7 @@
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Square, Circle, ChevronRight } from 'lucide-react'
+import { Plus, Square, Circle, ChevronRight, X } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
@@ -506,9 +506,9 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
             {clip.color && (
               <button
                 onClick={() => { dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, color: undefined } }); setCtxMenu(null) }}
-                style={{ fontSize: 8, color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, cursor: 'pointer', padding: '0 3px', height: 16, lineHeight: '14px' }}
+                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, cursor: 'pointer', padding: '0 3px', height: 16 }}
                 title="Reset to track color"
-              >✕</button>
+              ><X size={9} /></button>
             )}
           </div>
         </div>
@@ -810,8 +810,8 @@ function SceneLaunchButton({ scene, sceneIndex, onLaunch }: { scene: Scene; scen
               {scene.color && (
                 <button
                   onClick={() => { dispatch({ type: 'UPDATE_SCENE', sceneIndex, patch: { color: undefined } }); setCtxMenu(null) }}
-                  style={{ fontSize: 8, color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, cursor: 'pointer', padding: '0 3px', height: 14, lineHeight: '12px' }}
-                >✕</button>
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, cursor: 'pointer', padding: '0 3px', height: 14 }}
+                ><X size={9} /></button>
               )}
             </div>
           </div>

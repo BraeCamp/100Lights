@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import type { AudioClip } from '@/lib/daw-types'
 import { ROOT_NOTES } from '@/lib/scale-constants'
@@ -247,7 +248,7 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
             onKeyDown={e => { if (e.key === 'Enter') { if (nameVal.trim()) patch({ name: nameVal.trim() }); e.currentTarget.blur() } e.stopPropagation() }}
             style={{ flex: 1, fontSize: 13, fontWeight: 700, background: 'transparent', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--text-primary)', padding: '2px 0', outline: 'none' }}
           />
-          <button onClick={onClose} style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, flexShrink: 0 }}>✕</button>
+          <button onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}><X size={13} /></button>
         </div>
 
         {/* Waveform preview */}

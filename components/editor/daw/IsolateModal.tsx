@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { SkipBack, SkipForward, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useDaw, makeAudioClip, extractPeaks } from '@/lib/daw-state'
 import { isAudioClip } from '@/lib/daw-types'
 import { encodeWav } from '@/lib/wav-codec'
@@ -301,10 +302,10 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
 
         {/* Scrub buttons */}
         <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 18 }}>
-          {[{ label: '◀◀ 1 bar', delta: -4, shift: false }, { label: '◀ 1 beat', delta: -1, shift: false }, { label: '▶ 1 beat', delta: 1, shift: false }, { label: '▶▶ 1 bar', delta: 4, shift: false }].map(({ label, delta }) => (
-            <button key={label} onClick={() => { const next = Math.max(0, beat + delta); setBeat(next); void loadAt(next) }}
-              style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-              {label}
+          {[{ key: 'bb', icon: <SkipBack size={11} />, text: '1 bar', delta: -4 }, { key: 'b', icon: <ChevronLeft size={12} />, text: '1 beat', delta: -1 }, { key: 'f', icon: <ChevronRight size={12} />, text: '1 beat', delta: 1 }, { key: 'ff', icon: <SkipForward size={11} />, text: '1 bar', delta: 4 }].map(({ key, icon, text, delta }) => (
+            <button key={key} onClick={() => { const next = Math.max(0, beat + delta); setBeat(next); void loadAt(next) }}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, fontSize: 10, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              {icon}{text}
             </button>
           ))}
         </div>

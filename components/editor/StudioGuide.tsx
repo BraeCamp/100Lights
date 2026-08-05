@@ -8,6 +8,7 @@
 // targets. Illustrated page and live guide can't drift — they share the steps.
 
 import { useEffect, useState } from 'react'
+import { X } from 'lucide-react'
 import { highlightHelpTargets } from './daw/HelpButton'
 import { getTutorial, type Tutorial } from '@/lib/tutorials'
 import { usePlan } from '@/hooks/usePlan'
@@ -39,7 +40,7 @@ export default function StudioGuide() {
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', flex: 1, lineHeight: 1.3 }}>🔒 {tutorial.title}</span>
-          <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 17, lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
+          <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 17, lineHeight: 1, padding: 0, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
         </div>
         <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, margin: '0 0 10px' }}>
           This is a {tutorial.tier === 'full' ? 'Everything' : 'Standard'}-mode lesson. The Simplified lessons are free — upgrade to Pro for the rest.
@@ -60,7 +61,7 @@ export default function StudioGuide() {
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', flex: 1, lineHeight: 1.3 }}>{tutorial.title}</span>
-        <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 17, lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
+        <button onClick={() => setDismissed(true)} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 17, lineHeight: 1, padding: 0, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
       </div>
       <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>
         {tutorial.steps.map((s, i) => (

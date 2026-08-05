@@ -4,7 +4,7 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, SlidersHorizontal, RotateCcw } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
@@ -367,7 +367,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', width: 'min(400px,92vw)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>● Record — set your sound</span>
-          <button onClick={closeRecordSetup} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>✕</button>
+          <button onClick={closeRecordSetup} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
         </div>
         <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
           Recording to: {armedReady.map(t => t.name).join(', ') || '—'}. Toggle the monitor to hear yourself with the effects before the take.
@@ -383,7 +383,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             color: monitorOn ? '#4ade80' : '#aaa',
           }}
         >
-          🎧 Monitor {monitorOn ? 'ON — you should hear yourself' : 'off'}
+          <Headphones size={14} /> Monitor {monitorOn ? 'ON — you should hear yourself' : 'off'}
         </button>
         <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '-4px 0 0', lineHeight: 1.4 }}>
           Use wired headphones for the tightest monitoring — Bluetooth adds delay no software can remove.
@@ -420,7 +420,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                   style={{ flex: 1, accentColor: '#dc2626' }} />
                 <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 38, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.value)}</span>
                 <button onClick={() => patchRecFx(recFx.filter((_, j) => j !== i))} aria-label="Remove effect"
-                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={12} /></button>
               </div>
             )
           })}
@@ -457,8 +457,8 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             Cancel
           </button>
           <button onClick={() => void startRecordingNow()}
-            style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}>
-            ● Start recording
+            style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+            <Circle size={13} fill="currentColor" /> Start recording
           </button>
         </div>
       </div>
@@ -861,7 +861,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       {/* Performance FX — parity with the mobile ⚡ hold-FX */}
       <div style={{ position: 'relative' }}>
         <button onClick={() => setFxOpen(o => !o)} style={fxOpen ? active : base} title="Performance FX — hold a pad to sweep the master" data-help-id="perf-fx">
-          <span style={{ fontSize: 13, lineHeight: 1 }}>🎛️</span>
+          <SlidersHorizontal size={15} />
         </button>
         {fxOpen && (
           <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, display: 'flex', gap: 5, padding: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
@@ -991,8 +991,8 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <button
             onClick={() => setMoreOpen(o => !o)}
             title="More — swing, tape speed, masking"
-            style={{ ...base, width: 'auto', padding: '0 9px', fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', background: moreOpen ? 'var(--accent-subtle)' : '#1e1e1e', border: moreOpen ? '1px solid var(--accent)' : '1px solid var(--border)', color: moreOpen ? 'var(--accent-light)' : 'var(--text-secondary)' }}
-          >More ▾</button>
+            style={{ ...base, width: 'auto', padding: '0 9px', gap: 3, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', background: moreOpen ? 'var(--accent-subtle)' : '#1e1e1e', border: moreOpen ? '1px solid var(--accent)' : '1px solid var(--border)', color: moreOpen ? 'var(--accent-light)' : 'var(--text-secondary)' }}
+          >More<ChevronDown size={11} /></button>
           {moreOpen && (
             <>
               <div onClick={() => setMoreOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1400 }} />
@@ -1033,7 +1033,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                   <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', fontFamily: 'monospace', width: 30, textAlign: 'right', flexShrink: 0 }}>{varispeed}%</span>
                   {varispeed !== 100 && (
                     <button onClick={() => { setVarispeed(100); engine.setPlaybackRate(1.0) }} title="Reset speed to 100%"
-                      style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b', flexShrink: 0 }}>↺</button>
+                      style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b', flexShrink: 0 }}><RotateCcw size={12} /></button>
                   )}
                 </div>
                 {/* Masking detector */}
@@ -1215,7 +1215,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             padding: '7px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
           }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>♩ Tuner</span>
-            <button onClick={() => setShowTuner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+            <button onClick={() => setShowTuner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
           </div>
           <PadTuner />
         </div>,
@@ -1235,7 +1235,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             padding: '7px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)',
           }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Masking Detector</span>
-            <button onClick={() => setShowMask(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+            <button onClick={() => setShowMask(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
           </div>
           <MaskingPanel />
         </div>,

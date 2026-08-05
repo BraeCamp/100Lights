@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
@@ -390,7 +390,7 @@ function FairlightPage({
                             onClick={() => onClipChange(eqItem.id, { eq: { low: 0, mid: 0, high: 0, ...(eqItem.eq ?? {}), [band]: 0 } })}
                             style={{ fontSize: 8, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                             title="Reset"
-                          >✕</button>
+                          ><X size={10} /></button>
                         )}
                       </div>
                     </div>
@@ -2839,7 +2839,7 @@ export default function VideoEditor({
               }}
             >
               {saveStatus === 'saving' ? (
-                <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span> Saving…</>
+                <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Saving…</>
               ) : saveStatus === 'saved' ? (
                 <><CheckCircle2 size={11} /> Saved</>
               ) : saveStatus === 'error' ? (
@@ -3589,7 +3589,7 @@ export default function VideoEditor({
           >
             <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
               <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Keyboard Shortcuts</span>
-              <button onClick={() => setShowShortcuts(false)} style={{ color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}>×</button>
+              <button onClick={() => setShowShortcuts(false)} style={{ color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}><X size={18} /></button>
             </div>
             <div className="p-5 grid gap-5" style={{ gridTemplateColumns: '1fr 1fr' }}>
               {[

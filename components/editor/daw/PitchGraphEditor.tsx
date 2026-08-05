@@ -6,6 +6,7 @@
 // a sound can, e.g., dim its brightness as notes are pitched up.
 
 import { useRef, useState } from 'react'
+import { Pencil, X } from 'lucide-react'
 import type { PitchGraph, PitchGraphTarget } from '@/lib/daw-types'
 import { FX_FIELD_BY_KEY, GRAPH_TARGETS, pitchGraphValue, defaultPitchGraph } from '@/lib/roll-fx'
 
@@ -121,8 +122,8 @@ function GraphCard({ graph, onPatch, onRemove, onRetarget, available }: {
           {isVel ? 'velocity' : 'pitch'} →
         </button>
         <button onClick={() => setDrawMode(d => !d)} title={drawMode ? 'Drawing — drag across to sketch the curve' : 'Draw the curve freehand'}
-          style={{ background: drawMode ? 'rgb(var(--accent-rgb) / 0.18)' : 'none', border: `1px solid ${drawMode ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 5, color: drawMode ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '1px 6px' }}>✎</button>
-        <button onClick={onRemove} title="Remove graph" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}>×</button>
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: drawMode ? 'rgb(var(--accent-rgb) / 0.18)' : 'none', border: `1px solid ${drawMode ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 5, color: drawMode ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', padding: '1px 6px' }}><Pencil size={13} /></button>
+        <button onClick={onRemove} title="Remove graph" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px' }}><X size={13} /></button>
       </div>
 
       <svg ref={svgRef} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', touchAction: 'none', opacity: graph.enabled ? 1 : 0.45, cursor: drawMode ? 'crosshair' : 'default' }}

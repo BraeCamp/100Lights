@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Pencil, Square, ArrowUpRight, Crop, Undo2, Check, X } from 'lucide-react'
 
 type Tool = 'pen' | 'rect' | 'arrow' | 'crop'
 
@@ -160,9 +161,9 @@ export default function ScreenshotAnnotator({ blob, defaultName, onClose }: {
     } catch { /* clipboard blocked — Save still works */ }
   }
 
-  const toolBtn = (t: Tool, label: string, title: string): React.ReactNode => (
+  const toolBtn = (t: Tool, label: React.ReactNode, title: string): React.ReactNode => (
     <button onClick={() => setTool(t)} title={title}
-      style={{ fontSize: 11, fontWeight: 700, padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
         border: `1px solid ${tool === t ? 'var(--accent-light)' : 'var(--border)'}`,
         background: tool === t ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-card)',
         color: tool === t ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{label}</button>
@@ -176,10 +177,10 @@ export default function ScreenshotAnnotator({ blob, defaultName, onClose }: {
         style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 12px', boxShadow: '0 10px 30px rgba(0,0,0,0.6)' }}>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-muted)' }}>SCREENSHOT</span>
         <div style={{ display: 'flex', gap: 5 }}>
-          {toolBtn('pen', '✎ Draw', 'Freehand pen')}
-          {toolBtn('rect', '▭ Box', 'Draw a box')}
-          {toolBtn('arrow', '↗ Arrow', 'Draw an arrow')}
-          {toolBtn('crop', '⛶ Crop', 'Drag to crop to a region')}
+          {toolBtn('pen', <><Pencil size={12} /> Draw</>, 'Freehand pen')}
+          {toolBtn('rect', <><Square size={12} /> Box</>, 'Draw a box')}
+          {toolBtn('arrow', <><ArrowUpRight size={13} /> Arrow</>, 'Draw an arrow')}
+          {toolBtn('crop', <><Crop size={12} /> Crop</>, 'Drag to crop to a region')}
         </div>
         {/* Colour picker */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -197,11 +198,11 @@ export default function ScreenshotAnnotator({ blob, defaultName, onClose }: {
           <input type="range" min={1} max={24} value={width} onChange={e => setWidth(Number(e.target.value))} style={{ width: 70 }} />
         </label>
         <button onClick={undo} disabled={shapes.length === 0} title="Undo last drawing"
-          style={{ fontSize: 11, padding: '4px 9px', borderRadius: 6, cursor: shapes.length ? 'pointer' : 'default', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', opacity: shapes.length ? 1 : 0.5 }}>↶ Undo</button>
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 6, cursor: shapes.length ? 'pointer' : 'default', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', opacity: shapes.length ? 1 : 0.5 }}><Undo2 size={12} /> Undo</button>
         <span style={{ flex: 1 }} />
         <button onClick={() => void copy()} style={{ fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Copy</button>
-        <button onClick={() => void save()} style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}>{saved ? 'Saved ✓' : 'Save PNG'}</button>
-        <button onClick={onClose} aria-label="Close" style={{ fontSize: 14, padding: '2px 6px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}>✕</button>
+        <button onClick={() => void save()} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}>{saved ? <>Saved <Check size={12} /></> : 'Save PNG'}</button>
+        <button onClick={onClose} aria-label="Close" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '2px 6px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}><X size={15} /></button>
       </div>
 
       {/* Canvas */}

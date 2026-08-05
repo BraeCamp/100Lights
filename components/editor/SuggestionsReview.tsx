@@ -5,6 +5,7 @@
 // what it changes, and Accept (writes the proposed project + reloads) or Reject.
 
 import { useCallback, useEffect, useState } from 'react'
+import { Pencil, X } from 'lucide-react'
 import type { DawProject } from '@/lib/daw-types'
 import type { CfProjFile } from '@/lib/project-serializer'
 
@@ -76,7 +77,7 @@ export default function SuggestionsReview({ projectId, currentDaw }: { projectId
           padding: '9px 15px', borderRadius: 999, cursor: 'pointer', border: 'none',
           background: '#7c3aed', color: '#fff', fontSize: 12.5, fontWeight: 700, boxShadow: '0 8px 26px rgba(124,58,237,0.5)',
         }}>
-        ✎ {items.length} suggestion{items.length === 1 ? '' : 's'}
+        <Pencil size={13} /> {items.length} suggestion{items.length === 1 ? '' : 's'}
       </button>
 
       {open && (
@@ -87,7 +88,7 @@ export default function SuggestionsReview({ projectId, currentDaw }: { projectId
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', borderBottom: '1px solid var(--border)' }}>
             <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text-primary)' }}>Suggested changes</span>
             <span style={{ flex: 1 }} />
-            <button onClick={() => setOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+            <button onClick={() => setOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
           </div>
           {err && <p style={{ fontSize: 11, color: '#ef4444', margin: '8px 14px 0' }}>{err}</p>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12 }}>
