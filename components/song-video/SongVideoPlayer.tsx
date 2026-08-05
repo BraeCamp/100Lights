@@ -242,6 +242,21 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     setTimeout(() => setStatus(null), 4000)
   }
 
+  // Send the render into the app's VideoEditor (uploads to the media library +
+  // opens a video project with the clip on the timeline) so it can be edited
+  // further. Navigates away on success.
+  async function editInVideoEditor() {
+    if (busy || waiting) return
+    setBusy(true); setStatus('Rendering…')
+    try {
+      const blob = await recordBlob(); if (!blob) { setBusy(false); return }
+      setStatus('Sending to editor…')
+      const { saveRenderToVideoEditor } = await import('@/lib/song-video/to-video-editor')
+      await saveRenderToVideoEditor(blob, { name: `${slug} video`, durationSec: winBeats * (60 / song.tempo) })
+      // success → the page navigates to the video editor
+    } catch (e) { setStatus(`Failed: ${(e as Error).message}`); setBusy(false); setTimeout(() => setStatus(null), 4000) }
+  }
+
   // Slice [s, s+w] out of the already-rendered full-song buffer and play it. Pure
   // array work — instant, so scrubbing bars never re-renders.
   const sliceAndApply = (s: number, w: number, token: number) => {
@@ -330,7 +345,8 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       {/* Transport + export */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={toggle} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.5 : 1 }}>{playing ? 'Pause' : 'Play'}</button>
-        <button onClick={exportVideo} disabled={busy || waiting} style={{ ...btn, ...(canPublish ? {} : { background: ui, color: '#0a0812', border: 'none', fontWeight: 700 }), opacity: busy || waiting ? 0.6 : 1 }}>Download</button>
+        <button onClick={exportVideo} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.6 : 1 }}>Download</button>
+        <button onClick={editInVideoEditor} disabled={busy || waiting} style={{ ...btn, opacity: busy || waiting ? 0.6 : 1 }}>Edit in editor →</button>
         {canPublish && <button onClick={sendToQueue} disabled={busy || waiting} style={{ ...btn, background: ui, color: '#0a0812', border: 'none', fontWeight: 700, opacity: busy || waiting ? 0.7 : 1 }}>{busy && status ? status : 'Send to queue →'}</button>}
       </div>
       {status && !busy && <p style={{ fontSize: 12, fontWeight: 600, color: status.startsWith('Failed') || status.endsWith('failed') ? '#f87171' : '#4ade80', textAlign: 'center', margin: 0 }}>{status}</p>}
