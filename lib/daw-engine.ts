@@ -160,7 +160,7 @@ export class DawEngine extends EventTarget {
   // MIDI preset playback
   private _presets:         MidiPreset[] = []
   private _presetBufCache = new Map<string, AudioBuffer | null>()   // key: `${presetId}:${pitch}`
-  private _presetLoading  = new Set<string>()
+  private _presetLoading  = new Map<string, Promise<void>>()   // key → in-flight load, so awaiters share the same decode
 
   setPresets(presets: MidiPreset[]) { this._presets = presets }
 
@@ -1324,44 +1324,57 @@ export class DawEngine extends EventTarget {
 
   // ── Preset buffer loading ─────────────────────────────────────────────────
 
-  private async _loadPresetBuffer(presetId: string, pitch: number): Promise<void> {
+  private _loadPresetBuffer(presetId: string, pitch: number): Promise<void> {
     const key = `${presetId}:${pitch}`
-    if (this._presetLoading.has(key)) return
-    this._presetLoading.add(key)
-    try {
-      const preset = this._presets.find(p => p.id === presetId)
-      if (!preset) { this._presetBufCache.set(key, null); return }
+    // De-dupe by returning the IN-FLIGHT promise, not a bare early-return.
+    // updateProject() fires a fire-and-forget load for every note (populating
+    // _presetLoading synchronously up to the first await); the offline bounce
+    // then calls _preloadAll() which loads the same keys and AWAITS them before
+    // the single scheduling pass. If a duplicate call just `return`ed, that await
+    // resolved instantly while the real decode was still in flight, so _tick()
+    // ran with every preset buffer still `undefined` and skipped every melodic
+    // note — the offline "real mix" came out drums-only. Handing back the shared
+    // promise makes the await actually wait for the decode.
+    const inflight = this._presetLoading.get(key)
+    if (inflight) return inflight
+    const job = (async () => {
+      try {
+        const preset = this._presets.find(p => p.id === presetId)
+        if (!preset) { this._presetBufCache.set(key, null); return }
 
-      const entries = await libraryGetAll()
-      const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
-      const noteName = `${NOTE_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
-      const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
-      const exact    = inFolder.find(e => e.name === noteName)
-      const entry    = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
-        if (!best) return e
-        const eMidi  = e.renderSpec?.midiNote ?? 60
-        const bMidi  = best.renderSpec?.midiNote ?? 60
-        return Math.abs(eMidi - pitch) < Math.abs(bMidi - pitch) ? e : best
-      }, null)
-      if (!entry) { this._presetBufCache.set(key, null); return }
+        const entries = await libraryGetAll()
+        const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+        const noteName = `${NOTE_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
+        const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
+        const exact    = inFolder.find(e => e.name === noteName)
+        const entry    = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
+          if (!best) return e
+          const eMidi  = e.renderSpec?.midiNote ?? 60
+          const bMidi  = best.renderSpec?.midiNote ?? 60
+          return Math.abs(eMidi - pitch) < Math.abs(bMidi - pitch) ? e : best
+        }, null)
+        if (!entry) { this._presetBufCache.set(key, null); return }
 
-      let buf: AudioBuffer | null = null
-      if (exact) {
-        const fulfilled = await libraryFulfill(entry.id)
-        if (fulfilled?.audioBlob && this.ctx) buf = await this.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
-      } else if (entry.renderSpec && this.ctx) {
-        // No native sample for this exact note — it's outside the instrument's
-        // seeded range. Render the instrument AT the requested pitch so it plays
-        // the right note instead of the nearest seeded one (e.g. Synth Lead's
-        // range was C3–C5, so a G5 lead note used to fold down to C5).
-        buf = await renderPresetAtPitch(entry.renderSpec, pitch)
+        let buf: AudioBuffer | null = null
+        if (exact) {
+          const fulfilled = await libraryFulfill(entry.id)
+          if (fulfilled?.audioBlob && this.ctx) buf = await this.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+        } else if (entry.renderSpec && this.ctx) {
+          // No native sample for this exact note — it's outside the instrument's
+          // seeded range. Render the instrument AT the requested pitch so it plays
+          // the right note instead of the nearest seeded one (e.g. Synth Lead's
+          // range was C3–C5, so a G5 lead note used to fold down to C5).
+          buf = await renderPresetAtPitch(entry.renderSpec, pitch)
+        }
+        this._presetBufCache.set(key, buf)
+      } catch {
+        this._presetBufCache.set(key, null)
+      } finally {
+        this._presetLoading.delete(key)
       }
-      this._presetBufCache.set(key, buf)
-    } catch {
-      this._presetBufCache.set(key, null)
-    } finally {
-      this._presetLoading.delete(key)
-    }
+    })()
+    this._presetLoading.set(key, job)
+    return job
   }
 
   /** Kick off buffer decodes for notes/clips coming up within PREFETCH_LOOKAHEAD
