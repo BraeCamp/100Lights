@@ -28,13 +28,16 @@ import {
 } from '@/lib/project-serializer'
 import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
-  DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS,
+  DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, DEFAULT_ASPECT, PROJECT_ASPECTS,
   RULER_HEIGHT, TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
   MODULE_DEFS, ALL_MODULE_KEYS,
-  type ModuleKey,
+  type ModuleKey, type ProjectAspect,
 } from '@/lib/editor-types'
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
+import { interpSpeedRamp } from '@/lib/video-export/speed'
+import { pickViewerClip } from '@/lib/video-export/compositor'
+import type { ActiveClipTransition } from '@/components/editor/VideoPlayer'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -104,7 +107,7 @@ function generateVideoThumbnail(url: string): Promise<string | undefined> {
 const MIN_LEFT = 140; const MAX_LEFT = 420
 const MIN_RIGHT = 160; const MAX_RIGHT = 400
 const MIN_TL = 120;  const MAX_TL = 480
-const FRAME_DURATION = 1 / 24  // 24fps
+const FRAME_DURATION = 1 / 30  // 30fps — matches the export pipeline (EXPORT_FPS)
 
 type EditorPage = 'edit' | 'color' | 'audio' | 'deliver'
 export type EditorTool = 'select' | 'blade'
@@ -688,7 +691,8 @@ export default function VideoEditor({
 
   // Viewer overlays
   const [showSafeAreas, setShowSafeAreas] = useState(false)
-  const [aspectGuide, setAspectGuide] = useState<'none' | '9:16' | '1:1' | '4:5' | '2.35:1'>('none')
+  // Project frame shape — sizes the preview stage AND the export canvas
+  const [projectAspect, setProjectAspect] = useState<ProjectAspect>(DEFAULT_ASPECT)
   const [viewerZoom, setViewerZoom] = useState(1)
   const [showStoryboard, setShowStoryboard] = useState(false)
   const [showVUMeter, setShowVUMeter] = useState(false)
@@ -799,23 +803,6 @@ export default function VideoEditor({
   const hasVideo      = activeModules.includes('video')
   const hasAudio      = activeModules.includes('audio')
   const hasStoryboard = (activeModules as string[]).includes('storyboard')
-
-  // Interpolate speed from a clip's velocity curve keyframes
-  function interpSpeedRamp(points: Array<{ t: number; speed: number }>, t: number): number {
-    if (!points.length) return 1
-    const sorted = [...points].sort((a, b) => a.t - b.t)
-    if (t <= sorted[0].t) return sorted[0].speed
-    if (t >= sorted[sorted.length - 1].t) return sorted[sorted.length - 1].speed
-    for (let i = 0; i < sorted.length - 1; i++) {
-      if (t >= sorted[i].t && t <= sorted[i + 1].t) {
-        const frac = (t - sorted[i].t) / (sorted[i + 1].t - sorted[i].t)
-        // Smooth-step (cubic) interpolation for the velocity ease
-        const smooth = frac * frac * (3 - 2 * frac)
-        return sorted[i].speed + (sorted[i + 1].speed - sorted[i].speed) * smooth
-      }
-    }
-    return 1
-  }
 
   // Viewer is a pure timeline monitor — shows the enabled clip at the playhead.
   // Respects mute/solo: muted tracks are skipped; when any track is soloed, only
@@ -965,10 +952,35 @@ export default function VideoEditor({
       flipV: clip.flipV ?? false,
       cropZoom, cropX, cropY,
       fadeOpacity,
+      fitMode: clip.fitMode,
     }
   }, [viewerClip?.id, viewerClip?.opacity, viewerClip?.flipH, viewerClip?.flipV, // eslint-disable-line
-      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY,
+      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode,
       viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns, currentTime]) // eslint-disable-line
+
+  // Transition-in of the active clip: what the viewer showed just before this
+  // clip began becomes the frozen frame the transition blends from. Mirrors
+  // lib/video-export/compositor.transitionAt so preview and export agree.
+  const viewerTransition = useMemo((): ActiveClipTransition | undefined => {
+    const clip = viewerClip
+    if (!clip?.transitionIn) return undefined
+    const clipDur = clip.outPoint - clip.inPoint
+    let prev = pickViewerClip(timelineItems, tracks, clip.startTime - 0.001)
+    if (prev && (
+      prev.id === clip.id ||
+      prev.contentType === 'title' ||
+      prev.contentType === 'audio' ||
+      !prev.url ||
+      prev.url === clip.url
+    )) prev = null
+    return {
+      type: clip.transitionIn,
+      duration: Math.max(0.05, Math.min(clip.transitionDuration ?? 0.5, clipDur)),
+      prevSrc: prev?.url ?? null,
+      prevTime: prev?.outPoint ?? 0,
+      prevFitMode: prev?.fitMode,
+    }
+  }, [viewerClip?.id, viewerClip?.transitionIn, viewerClip?.transitionDuration, timelineItems, tracks]) // eslint-disable-line
 
   // Converts timeline time ↔ source clip time:  clipTime = timelineTime − offset
   const clipTimeOffset = viewerClip ? viewerClip.startTime - viewerClip.inPoint : 0
@@ -1037,6 +1049,7 @@ export default function VideoEditor({
       setLocalOutputs(loaded.outputs)
       setChapters(loaded.chapters ?? [])
       setMediaItems(resolvedMedia)
+      setProjectAspect(loaded.aspect)
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
 
@@ -1112,7 +1125,7 @@ export default function VideoEditor({
         cloudAutoSaveFnRef.current()
       }, 30_000)
     }
-  }, [timelineItems, tracks, adjustments, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
+  }, [timelineItems, tracks, adjustments, projectAspect, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
   useEffect(() => {
@@ -2031,6 +2044,7 @@ export default function VideoEditor({
       tracks,
       timelineItems,
       adjustments,
+      aspect: projectAspect,
       zoomLevel,
       captions: localCaptions,
       outputs: localOutputs,
@@ -2061,6 +2075,7 @@ export default function VideoEditor({
     captionsRef.current = loaded.captions
     setLocalOutputs(loaded.outputs)
     setChapters(loaded.chapters ?? [])
+    setProjectAspect(loaded.aspect)
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
     if (recovery.source === 'cloud' && projectId) {
@@ -2673,22 +2688,18 @@ export default function VideoEditor({
                   >Safe</button>
                 )}
 
-                {/* Aspect guide */}
+                {/* Project aspect ratio — sizes the preview frame AND the export */}
                 {viewportTab === 'video' && !isAudioOnly && (
-                  <select value={aspectGuide}
-                    onChange={e => setAspectGuide(e.target.value as typeof aspectGuide)}
+                  <select value={projectAspect}
+                    onChange={e => setProjectAspect(e.target.value as ProjectAspect)}
                     className="text-xs rounded px-1 py-0.5"
-                    title="Aspect ratio guide"
+                    title="Project aspect ratio — the preview frame and exported video use this shape (9:16 for TikTok/Reels/Shorts)"
                     style={{
                       background: 'var(--bg-card)', border: '1px solid var(--border)',
-                      color: aspectGuide !== 'none' ? 'var(--accent-light)' : 'var(--text-muted)',
+                      color: projectAspect !== '16:9' ? 'var(--accent-light)' : 'var(--text-muted)',
                     }}
                   >
-                    <option value="none">No guide</option>
-                    <option value="9:16">9:16</option>
-                    <option value="1:1">1:1</option>
-                    <option value="4:5">4:5</option>
-                    <option value="2.35:1">2.35:1</option>
+                    {PROJECT_ASPECTS.map(a => <option key={a} value={a}>{a}</option>)}
                   </select>
                 )}
 
@@ -2801,7 +2812,8 @@ export default function VideoEditor({
                       viewerZoom={viewerZoom}
                       onViewerZoomChange={setViewerZoom}
                       showSafeAreas={showSafeAreas}
-                      aspectGuide={aspectGuide}
+                      projectAspect={projectAspect}
+                      transition={viewerTransition}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -2876,7 +2888,8 @@ export default function VideoEditor({
                       viewerZoom={viewerZoom}
                       onViewerZoomChange={setViewerZoom}
                       showSafeAreas={showSafeAreas}
-                      aspectGuide={aspectGuide}
+                      projectAspect={projectAspect}
+                      transition={viewerTransition}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -3022,6 +3035,10 @@ export default function VideoEditor({
             inline
             timelineItems={timelineItems}
             mediaItems={mediaItems}
+            tracks={tracks}
+            adjustments={adjustments}
+            aspect={projectAspect}
+            captions={localCaptions}
             projectName={localProjectName}
             inPoint={inPoint}
             outPoint={outPoint}
@@ -3104,6 +3121,7 @@ export default function VideoEditor({
           mediaItems={mediaItems}
           tracks={tracks}
           adjustments={adjustments}
+          aspect={projectAspect}
           captions={localCaptions}
           inPoint={inPoint}
           outPoint={outPoint}
@@ -3116,6 +3134,10 @@ export default function VideoEditor({
           projectName={localProjectName}
           timelineItems={timelineItems}
           mediaItems={mediaItems}
+          tracks={tracks}
+          adjustments={adjustments}
+          aspect={projectAspect}
+          captions={localCaptions}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowRenderQueue(false)}

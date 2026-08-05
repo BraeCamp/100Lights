@@ -2,6 +2,27 @@ import type { Caption, ContentType } from '@/lib/types'
 
 export type TransitionType = 'dissolve' | 'dip_black' | 'wipe_right' | 'push'
 
+// ── Project aspect ratio ──────────────────────────────────────
+// The frame shape of the whole project: the preview stage, the compositor and
+// the export canvas all derive their dimensions from this (not a guide overlay).
+
+export type ProjectAspect = '16:9' | '9:16' | '1:1' | '4:5' | '2.35:1'
+
+export const PROJECT_ASPECTS: ProjectAspect[] = ['16:9', '9:16', '1:1', '4:5', '2.35:1']
+
+export const DEFAULT_ASPECT: ProjectAspect = '16:9'
+
+/** Width/height ratio for a project aspect. */
+export function aspectRatioOf(aspect: ProjectAspect | undefined): number {
+  switch (aspect) {
+    case '9:16':   return 9 / 16
+    case '1:1':    return 1
+    case '4:5':    return 4 / 5
+    case '2.35:1': return 2.35
+    default:       return 16 / 9
+  }
+}
+
 export interface ClipFlag {
   id: string
   color: string
@@ -32,6 +53,7 @@ export interface TimelineItem {
   cropZoom?: number    // 100–400, default 100 (percent scale)
   cropX?: number       // -50 to 50, default 0 (percent pan)
   cropY?: number       // -50 to 50, default 0
+  fitMode?: 'contain' | 'cover'  // how the source fills the project frame (default contain)
   flags?: ClipFlag[]   // colored clip markers
   // Smoothness
   speedPoints?: Array<{ t: number; speed: number }>  // velocity curve: t=0–1 fraction of clip, speed=multiplier

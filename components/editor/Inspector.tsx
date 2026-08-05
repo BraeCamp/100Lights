@@ -651,6 +651,23 @@ export default function Inspector({
                 <div>
                   <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>CROP & ZOOM</p>
                   <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Frame fit</span>
+                      <div className="flex gap-1">
+                        {(['contain', 'cover'] as const).map(mode => {
+                          const active = (selectedItem.fitMode ?? 'contain') === mode
+                          return (
+                            <button key={mode}
+                              onClick={() => patchClip({ fitMode: mode === 'contain' ? undefined : mode })}
+                              title={mode === 'contain' ? 'Fit — whole clip visible, bars if shapes differ' : 'Fill — clip covers the frame, edges crop'}
+                              className="px-2 py-1 rounded text-xs"
+                              style={{ background: active ? 'var(--accent-subtle)' : 'var(--bg-card)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, color: active ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                              {mode === 'contain' ? 'Fit' : 'Fill'}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                     <Slider label="Zoom" value={selectedItem.cropZoom ?? 100} min={100} max={400} unit="%" onChange={v => patchClip({ cropZoom: v })} />
                     <Slider label="Pan X" value={selectedItem.cropX ?? 0} min={-50} max={50} unit="%" onChange={v => patchClip({ cropX: v })} />
                     <Slider label="Pan Y" value={selectedItem.cropY ?? 0} min={-50} max={50} unit="%" onChange={v => patchClip({ cropY: v })} />

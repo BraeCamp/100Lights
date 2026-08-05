@@ -3,9 +3,9 @@
 import { useState, useRef } from 'react'
 import { X, Download, Film, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
-import { exportTimelineFidelity } from '@/lib/video-export'
+import { exportTimelineFidelity, resDims } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, MediaItem, Track, VideoAdjustments } from '@/lib/editor-types'
+import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 
 interface Props {
@@ -14,6 +14,7 @@ interface Props {
   mediaItems: MediaItem[]
   tracks?: Track[]
   adjustments?: VideoAdjustments
+  aspect?: ProjectAspect
   captions?: Caption[]
   inPoint?: number | null
   outPoint?: number | null
@@ -44,7 +45,7 @@ const RESOLUTIONS = [
   { id: '480p',     label: '480p' },
 ] as const
 
-export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, captions, inPoint, outPoint, onClose }: Props) {
+export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions, inPoint, outPoint, onClose }: Props) {
   const [quality, setQuality]         = useState<ExportOptions['quality']>('medium')
   const [resolution, setResolution]   = useState<ExportOptions['resolution']>('original')
   const [progress, setProgress]       = useState<ExportProgress | null>(null)
@@ -118,6 +119,7 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
           captions: captions ?? [],
           quality,
           resolution,
+          aspect,
           range: rangeStart !== null && rangeEnd !== null ? { start: rangeStart, end: rangeEnd } : null,
           onProgress: (frac, message) => setProgress({ phase: 'encoding', percent: Math.round(frac * 100), message }),
           signal: controller.signal,
@@ -236,7 +238,13 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
 
               {/* Resolution */}
               <div>
-                <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>Resolution</p>
+                <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  Resolution
+                  {!isAudioOnly && (() => {
+                    const { w, h } = resDims(resolution, aspect)
+                    return <span className="ml-1.5 font-mono" style={{ color: 'var(--text-muted)', fontSize: 10 }}>{w}×{h} · {aspect}</span>
+                  })()}
+                </p>
                 <div className="flex gap-2">
                   {RESOLUTIONS.map(r => (
                     <button

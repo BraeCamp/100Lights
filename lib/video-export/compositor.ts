@@ -10,11 +10,16 @@
  * the colour grade is reproduced verbatim rather than re-approximated.
  *
  * NOT reproduced (because the preview itself does not render them): multi-track
- * compositing, transitions, and LUTs (LUTs are applied only to an invisible
- * offscreen buffer today). Those would need preview support first.
+ * compositing and LUTs (LUTs are applied only to an invisible offscreen buffer
+ * today). Those would need preview support first.
+ *
+ * Transitions ARE rendered (dissolve / dip-to-black / wipe / push): during the
+ * first `transitionDuration` seconds of a clip with `transitionIn`, the frame
+ * blends from the PREVIOUS clip's frozen last frame — same freeze-frame model
+ * the preview uses, so the two stay in parity.
  */
 
-import type { TimelineItem, Track, VideoAdjustments } from '@/lib/editor-types'
+import type { TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
 
 export interface CompositorState {
@@ -104,12 +109,49 @@ export function computeClipTransform(clip: TimelineItem, t: number): ClipTransfo
   }
 }
 
-/** objectFit:contain rect of a `srcW×srcH` image inside `W×H`. */
-function containRect(srcW: number, srcH: number, W: number, H: number) {
+/** objectFit rect of a `srcW×srcH` image inside `W×H` (contain letterboxes, cover fills). */
+function fitRect(srcW: number, srcH: number, W: number, H: number, mode: 'contain' | 'cover') {
   if (!srcW || !srcH) return { x: 0, y: 0, w: W, h: H }
-  const scale = Math.min(W / srcW, H / srcH)
+  const scale = mode === 'cover' ? Math.max(W / srcW, H / srcH) : Math.min(W / srcW, H / srcH)
   const w = srcW * scale, h = srcH * scale
   return { x: (W - w) / 2, y: (H - h) / 2, w, h }
+}
+
+// ── Transition-in ─────────────────────────────────────────────────────────────
+
+export interface ActiveTransition {
+  type: TransitionType
+  p: number                    // 0–1 progress through the transition
+  prev: TimelineItem | null    // clip whose frozen last frame we blend from (null = from black)
+}
+
+/**
+ * The transition state for `clip` at timeline time `t`, or null when outside
+ * the transition window. `prev` is the clip the viewer showed just before this
+ * one started; it's null (blend from black) when there was none, it can't be
+ * drawn (title/audio), or it shares the active clip's <video> element.
+ */
+export function transitionAt(
+  items: TimelineItem[],
+  tracks: Track[],
+  clip: TimelineItem,
+  t: number,
+): ActiveTransition | null {
+  const type = clip.transitionIn
+  if (!type) return null
+  const clipDur = clip.outPoint - clip.inPoint
+  const dur = Math.max(0.05, Math.min(clip.transitionDuration ?? 0.5, clipDur))
+  const local = t - clip.startTime
+  if (local < 0 || local >= dur) return null
+  let prev = pickViewerClip(items, tracks, clip.startTime - 0.001)
+  if (prev && (
+    prev.id === clip.id ||
+    prev.contentType === 'title' ||
+    prev.contentType === 'audio' ||
+    !prev.url ||
+    prev.url === clip.url          // same source element can't show two frames at once
+  )) prev = null
+  return { type, p: Math.max(0, Math.min(1, local / dur)), prev }
 }
 
 /**
@@ -141,33 +183,38 @@ export function drawFrame(
 
   // Video (audio-only clips render as black here; captions still draw below).
   if (clip.contentType !== 'audio' && clip.url) {
-    const v = media.get(clip.url)
-    if (v && v.videoWidth > 0) {
-      const tf = computeClipTransform(clip, t)
-      const rect = containRect(v.videoWidth, v.videoHeight, W, H)
-
-      ctx.save()
-      // Match CSS transform-origin:center and the buildClipStyle list order
-      // (scale → translate(%) → flipX → flipV), which composes to the same matrix.
-      ctx.translate(W / 2, H / 2)
-      if (tf.cropZoom !== 100) ctx.scale(tf.cropZoom / 100, tf.cropZoom / 100)
-      if (tf.cropX !== 0 || tf.cropY !== 0) ctx.translate((tf.cropX / 100) * W, (tf.cropY / 100) * H)
-      if (tf.flipH) ctx.scale(-1, 1)
-      if (tf.flipV) ctx.scale(1, -1)
-      ctx.translate(-W / 2, -H / 2)
-
-      // Colour grade + motion blur, exactly as the preview builds them.
-      let filter = buildFilter(adjustments)
-      if (clip.motionBlurEnabled) {
-        const speed = clip.speed ?? 1
-        const px = Math.min(6, Math.max(0, Math.abs(speed - 1) * 2.5))
-        if (px > 0.1) filter = filter === 'none' ? `blur(${px.toFixed(1)}px)` : `${filter} blur(${px.toFixed(1)}px)`
+    const trans = transitionAt(state.items, state.tracks, clip, t)
+    if (!trans) {
+      drawVideoClip(ctx, state, media, clip, t)
+    } else {
+      const { type, p, prev } = trans
+      // The outgoing clip is drawn as its frozen last frame — the capture layer
+      // pauses its element at the cut, so evaluating at just-before-the-cut
+      // gives the matching transform/fade state.
+      const tPrev = clip.startTime - 0.001
+      switch (type) {
+        case 'dissolve':
+          if (prev) drawVideoClip(ctx, state, media, prev, tPrev)
+          drawVideoClip(ctx, state, media, clip, t, { alphaMul: p })
+          break
+        case 'dip_black':
+          // Fade up from black (background is already black).
+          drawVideoClip(ctx, state, media, clip, t, { alphaMul: p })
+          break
+        case 'wipe_right':
+          if (prev) drawVideoClip(ctx, state, media, prev, tPrev)
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(0, 0, p * W, H)
+          ctx.clip()
+          drawVideoClip(ctx, state, media, clip, t)
+          ctx.restore()
+          break
+        case 'push':
+          if (prev) drawVideoClip(ctx, state, media, prev, tPrev, { offsetX: -p * W })
+          drawVideoClip(ctx, state, media, clip, t, { offsetX: (1 - p) * W })
+          break
       }
-      ctx.filter = filter
-      ctx.globalAlpha = (tf.opacity / 100) * tf.fadeOpacity
-      if (clip.blendMode) ctx.globalCompositeOperation = clip.blendMode as GlobalCompositeOperation
-      ctx.drawImage(v, rect.x, rect.y, rect.w, rect.h)
-      ctx.restore()
     }
   }
 
@@ -192,6 +239,48 @@ export function drawFrame(
   // Captions (video-mode overlay). Matches VideoPlayer's bottom caption box.
   const cap = state.captions.find(c => t >= c.start && t <= c.end)
   if (cap) drawCaption(ctx, cap.text, cap.speaker, W, H)
+}
+
+// ── Single video clip draw (transform + grade + blend) ────────────────────────
+function drawVideoClip(
+  ctx: CanvasRenderingContext2D,
+  state: CompositorState,
+  media: MediaResolver,
+  clip: TimelineItem,
+  t: number,
+  opts?: { alphaMul?: number; offsetX?: number },
+): void {
+  if (!clip.url) return
+  const v = media.get(clip.url)
+  if (!v || v.videoWidth === 0) return
+  const { width: W, height: H, adjustments } = state
+
+  const tf = computeClipTransform(clip, t)
+  const rect = fitRect(v.videoWidth, v.videoHeight, W, H, clip.fitMode ?? 'contain')
+
+  ctx.save()
+  if (opts?.offsetX) ctx.translate(opts.offsetX, 0)
+  // Match CSS transform-origin:center and the buildClipStyle list order
+  // (scale → translate(%) → flipX → flipV), which composes to the same matrix.
+  ctx.translate(W / 2, H / 2)
+  if (tf.cropZoom !== 100) ctx.scale(tf.cropZoom / 100, tf.cropZoom / 100)
+  if (tf.cropX !== 0 || tf.cropY !== 0) ctx.translate((tf.cropX / 100) * W, (tf.cropY / 100) * H)
+  if (tf.flipH) ctx.scale(-1, 1)
+  if (tf.flipV) ctx.scale(1, -1)
+  ctx.translate(-W / 2, -H / 2)
+
+  // Colour grade + motion blur, exactly as the preview builds them.
+  let filter = buildFilter(adjustments)
+  if (clip.motionBlurEnabled) {
+    const speed = clip.speed ?? 1
+    const px = Math.min(6, Math.max(0, Math.abs(speed - 1) * 2.5))
+    if (px > 0.1) filter = filter === 'none' ? `blur(${px.toFixed(1)}px)` : `${filter} blur(${px.toFixed(1)}px)`
+  }
+  ctx.filter = filter
+  ctx.globalAlpha = (tf.opacity / 100) * tf.fadeOpacity * (opts?.alphaMul ?? 1)
+  if (clip.blendMode) ctx.globalCompositeOperation = clip.blendMode as GlobalCompositeOperation
+  ctx.drawImage(v, rect.x, rect.y, rect.w, rect.h)
+  ctx.restore()
 }
 
 // ── Title clip ────────────────────────────────────────────────────────────────

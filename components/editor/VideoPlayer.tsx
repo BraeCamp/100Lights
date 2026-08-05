@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { Play, Pause, SkipBack, Mic, Film, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Caption, ContentType } from '@/lib/types'
-import type { VideoAdjustments } from '@/lib/editor-types'
+import type { ProjectAspect, TransitionType, VideoAdjustments } from '@/lib/editor-types'
+import { aspectRatioOf } from '@/lib/editor-types'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
 
 const PREPLAY_LEAD = 0.5
@@ -17,6 +18,7 @@ export interface ClipTransform {
   cropX: number         // -50 to 50
   cropY: number         // -50 to 50
   fadeOpacity: number   // 0–1, computed from fade in/out
+  fitMode?: 'contain' | 'cover'   // how the clip fills the project frame
 }
 
 export const DEFAULT_CLIP_TRANSFORM: ClipTransform = {
@@ -24,7 +26,14 @@ export const DEFAULT_CLIP_TRANSFORM: ClipTransform = {
   cropZoom: 100, cropX: 0, cropY: 0, fadeOpacity: 1,
 }
 
-export type AspectGuide = 'none' | '9:16' | '1:1' | '4:5' | '2.35:1'
+/** Transition-in of the ACTIVE clip, passed while its window could be on screen. */
+export interface ActiveClipTransition {
+  type: TransitionType
+  duration: number       // seconds, already clamped to the clip length
+  prevSrc: string | null // pool src of the outgoing clip (null = from black)
+  prevTime: number       // source time of the outgoing clip's frozen last frame
+  prevFitMode?: 'contain' | 'cover'
+}
 
 interface ClipHint {
   inPoint: number
@@ -52,7 +61,8 @@ interface Props {
   clipTransform?: ClipTransform
   viewerZoom?: number
   showSafeAreas?: boolean
-  aspectGuide?: AspectGuide
+  projectAspect?: ProjectAspect
+  transition?: ActiveClipTransition
   showVUMeter?: boolean
   onSeekRequest?: (t: number) => void   // called when user types a timecode
   frameBlendEnabled?: boolean
@@ -123,30 +133,19 @@ function buildClipStyle(t: ClipTransform): React.CSSProperties {
   }
 }
 
-// Aspect ratio guide overlay dimensions (width%, height% of the container to SHOW)
-function aspectGuideStyle(guide: AspectGuide, containerW: number, containerH: number): React.CSSProperties {
-  if (guide === 'none') return { display: 'none' }
+// The stage is the project frame: an aspect-locked box centered in the monitor.
+// Everything frame-relative (video, vignette, titles, captions, safe areas,
+// focus) lives inside it, matching the export compositor's canvas exactly.
+function stageDims(aspect: ProjectAspect, containerW: number, containerH: number): { width: number; height: number } {
+  const ar = aspectRatioOf(aspect)
+  if (!containerW || !containerH) return { width: 640, height: 640 / ar }
   const containerAR = containerW / containerH
-  let targetAR: number
-  switch (guide) {
-    case '9:16':   targetAR = 9 / 16; break
-    case '1:1':    targetAR = 1; break
-    case '4:5':    targetAR = 4 / 5; break
-    case '2.35:1': targetAR = 2.35; break
-    default:       targetAR = containerAR
-  }
-  if (targetAR < containerAR) {
-    // Letterbox: bars on left/right
-    const w = (targetAR / containerAR) * 100
-    return { left: `${(100 - w) / 2}%`, right: `${(100 - w) / 2}%`, top: 0, bottom: 0 }
-  } else {
-    // Pillarbox: bars on top/bottom
-    const h = (containerAR / targetAR) * 100
-    return { top: `${(100 - h) / 2}%`, bottom: `${(100 - h) / 2}%`, left: 0, right: 0 }
-  }
+  return containerAR > ar
+    ? { width: containerH * ar, height: containerH }
+    : { width: containerW, height: containerW / ar }
 }
 
-function parseTimecode(s: string, fps = 24): number {
+function parseTimecode(s: string, fps = 30): number {
   const clean = s.trim()
   const parts = clean.split(':').map(Number)
   if (parts.some(isNaN)) return NaN
@@ -156,7 +155,7 @@ function parseTimecode(s: string, fps = 24): number {
   return Number(clean)
 }
 
-function formatTimecode(s: number, fps = 24): string {
+function formatTimecode(s: number, fps = 30): string {
   const t = Math.max(0, s)
   const h = Math.floor(t / 3600)
   const m = Math.floor((t % 3600) / 60)
@@ -173,7 +172,8 @@ export default function VideoPlayer({
   clipTransform = DEFAULT_CLIP_TRANSFORM,
   viewerZoom = 1,
   showSafeAreas = false,
-  aspectGuide = 'none',
+  projectAspect = '16:9',
+  transition,
   showVUMeter = false,
   onSeekRequest,
   frameBlendEnabled = false,
@@ -441,8 +441,9 @@ export default function VideoPlayer({
     }
   }, [optFlowActive, src]) // eslint-disable-line
 
-  // Monitor container ref for aspect guide sizing
+  // Monitor container ref for stage sizing; stage = the aspect-locked frame box
   const monitorRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
   const [monitorSize, setMonitorSize] = useState({ w: 640, h: 360 })
   useEffect(() => {
     const el = monitorRef.current
@@ -454,6 +455,46 @@ export default function VideoPlayer({
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  // ── Transition-in progress ────────────────────────────────────────────────
+  // p = 0–1 through the active clip's transition window, driven by an RAF that
+  // reads the video element's clock directly (React's currentTime updates at
+  // ~4 Hz — far too coarse for a 0.5 s dissolve). p stays correct when paused
+  // or scrubbing, so a half-finished wipe parks half-finished, like the export.
+  const [transP, setTransP] = useState(1)
+  const transPRef = useRef(1)
+  useEffect(() => {
+    if (!transition || !src) { transPRef.current = 1; setTransP(1); return }
+    // Park the outgoing clip's element on its frozen last frame.
+    if (transition.prevSrc && transition.prevSrc !== src) {
+      const prevEl = poolRef.current.get(transition.prevSrc)
+      if (prevEl && Math.abs(prevEl.currentTime - transition.prevTime) > 0.1) {
+        try { prevEl.currentTime = transition.prevTime } catch { /* not seekable yet */ }
+      }
+    }
+    let rafId: number
+    const tick = () => {
+      // Playing: the element clock is smooth and authoritative. Paused or
+      // scrubbing: the element may sit within the seek tolerance of the true
+      // position, so use the timeline clock instead (exact while paused).
+      const el = poolRef.current.get(src)
+      const local = isPlayingRef.current && el
+        ? el.currentTime - clipInPoint
+        : currentTimeRef.current - timeOffsetRef.current - clipInPoint
+      const p = Math.max(0, Math.min(1, transition.duration > 0 ? local / transition.duration : 1))
+      if (Math.abs(p - transPRef.current) > 0.005 || (p === 1) !== (transPRef.current === 1)) {
+        transPRef.current = p; setTransP(p)
+      }
+      // Keep polling while the prop is set — scrubbing can re-enter the window.
+      rafId = requestAnimationFrame(tick)
+    }
+    transPRef.current = -1   // force an initial state write
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [transition, src, clipInPoint])
+
+  const transitionActive = !!transition && transP < 1
+  const transPrevSrc = transitionActive && transition!.prevSrc !== src ? transition!.prevSrc : null
 
   const allSrcs = useMemo(() => {
     const s = new Set(preloadSrcs)
@@ -645,8 +686,44 @@ export default function VideoPlayer({
     : baseFilter
   const cs = clipTransform
   const clipStyle = buildClipStyle(cs)
-  const guideDims = aspectGuideStyle(aspectGuide, monitorSize.w, monitorSize.h)
+  const stage = stageDims(projectAspect, monitorSize.w, monitorSize.h)
   const vignette = adjustments?.vignette ?? 0
+
+  // Style for each pool <video>, including transition-in compositing. Mirrors
+  // the export compositor: incoming clip on top (alpha/clip/translate by type),
+  // outgoing clip's frozen frame underneath.
+  function poolStyle(s: string): React.CSSProperties {
+    const isActive = s === src
+    const style: React.CSSProperties = {
+      position: 'absolute', inset: 0,
+      width: '100%', height: '100%',
+      objectFit: isActive ? (cs.fitMode ?? 'contain') : 'contain',
+      filter: isActive ? effectiveFilter : 'none',
+      opacity: s === visibleSrc && contentType === 'video' && !blendActive && !optFlowActive ? 1 : 0,
+      pointerEvents: 'none',
+      zIndex: s === visibleSrc ? 2 : 0,
+      mixBlendMode: (isActive && blendMode) ? blendMode as React.CSSProperties['mixBlendMode'] : undefined,
+      ...(isActive ? clipStyle : {}),
+    }
+    if (isActive && transitionActive) {
+      const ty = transition!.type
+      if (ty === 'dissolve' || ty === 'dip_black') {
+        style.opacity = Number(style.opacity ?? 1) * transP
+      } else if (ty === 'wipe_right') {
+        style.clipPath = `inset(0 ${((1 - transP) * 100).toFixed(2)}% 0 0)`
+      } else if (ty === 'push') {
+        const rest = !clipStyle.transform || clipStyle.transform === 'none' ? '' : ` ${clipStyle.transform}`
+        style.transform = `translateX(${((1 - transP) * 100).toFixed(2)}%)${rest}`
+      }
+    } else if (s === transPrevSrc && transition) {
+      // Frozen last frame of the outgoing clip, under the incoming clip.
+      style.opacity = transition.type === 'dip_black' ? 0 : 1
+      style.objectFit = transition.prevFitMode ?? 'contain'
+      style.zIndex = 1
+      if (transition.type === 'push') style.transform = `translateX(${(-transP * 100).toFixed(2)}%)`
+    }
+    return style
+  }
 
   function handleTimecodeClick() {
     setTcInput(formatTimecode(currentTime))
@@ -676,6 +753,18 @@ export default function VideoPlayer({
             transformOrigin: 'center',
           }}
         >
+          {/* Stage — the project frame. Everything frame-relative lives here so
+              the preview geometry matches the export canvas 1:1. */}
+          <div
+            ref={stageRef}
+            style={{
+              position: 'relative',
+              width: stage.width, height: stage.height,
+              background: '#000', overflow: 'hidden',
+              outline: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
           {/* Empty placeholder */}
           {!src && (
             <div className="flex flex-col items-center gap-3 select-none pointer-events-none">
@@ -730,17 +819,7 @@ export default function VideoPlayer({
               src={s}
               preload="auto"
               playsInline
-              style={{
-                position: 'absolute', inset: 0,
-                width: '100%', height: '100%',
-                objectFit: 'contain',
-                filter: s === src ? effectiveFilter : 'none',
-                opacity: s === visibleSrc && contentType === 'video' && !blendActive && !optFlowActive ? 1 : 0,
-                pointerEvents: 'none',
-                zIndex: s === visibleSrc ? 1 : 0,
-                mixBlendMode: (s === src && blendMode) ? blendMode as React.CSSProperties['mixBlendMode'] : undefined,
-                ...(s === src ? clipStyle : {}),
-              }}
+              style={poolStyle(s)}
               onTimeUpdate={e => {
                 if (s !== src) return
                 onTimeUpdate(loopBaseRef.current + e.currentTarget.currentTime + timeOffset)
@@ -763,7 +842,6 @@ export default function VideoPlayer({
               onError={() => { if (s === src) onMediaError?.() }}
             />
           ))}
-        </div>
 
         {/* Title clip overlay */}
         {titleClip && contentType === 'title' && (() => {
@@ -800,30 +878,6 @@ export default function VideoPlayer({
           )
         })()}
 
-        {/* Audio mode overlay */}
-        {src && contentType === 'audio' && (
-          <div className="relative z-10 flex flex-col items-center gap-6 select-none px-8 w-full max-w-sm">
-            <div className="w-24 h-24 rounded-3xl flex items-center justify-center" style={{ background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
-              <Mic size={40} color="rgb(var(--accent-rgb) / 0.6)" />
-            </div>
-            <div className="flex items-end gap-0.5 h-14 w-full">
-              {WAVEFORM.map((h, i) => {
-                const progress = (currentTime - timeOffset) / Math.max(activeEl?.duration ?? 1, 1)
-                const isPast = i / WAVEFORM.length < progress
-                return (
-                  <div key={i} className="flex-1 rounded-full" style={{ height: `${h}%`, background: isPast ? 'var(--accent)' : '#2a2a2a', transition: 'background 0.1s' }} />
-                )
-              })}
-            </div>
-            {activeCaption && (
-              <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgb(var(--accent-rgb) / 0.06)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
-                {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}:</span>}
-                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{activeCaption.text}</span>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ── Overlays (always above video) ── */}
 
         {/* Vignette */}
@@ -832,28 +886,6 @@ export default function VideoPlayer({
             position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 3,
             background: `radial-gradient(ellipse at center, transparent ${Math.max(20, 80 - vignette)}%, rgba(0,0,0,${Math.min(0.95, vignette / 80)}) 100%)`,
           }} />
-        )}
-
-        {/* Aspect ratio guide */}
-        {aspectGuide !== 'none' && (
-          <>
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, ...guideDims }}>
-              <div style={{ position: 'absolute', inset: 0, border: '1px solid rgba(255,255,255,0.35)' }} />
-            </div>
-            {/* Mask outside guide (semi-opaque bars) */}
-            {guideDims.left && (
-              <>
-                <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: guideDims.left, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-                <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: guideDims.right as string, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-              </>
-            )}
-            {guideDims.top && (
-              <>
-                <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: guideDims.top, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-                <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: guideDims.bottom as string, background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 4 }} />
-              </>
-            )}
-          </>
         )}
 
         {/* Safe areas */}
@@ -867,24 +899,6 @@ export default function VideoPlayer({
             <div style={{ position: 'absolute', inset: '5%', border: '1px solid rgba(255,255,255,0.35)', boxSizing: 'border-box' }}>
               <span style={{ position: 'absolute', top: 2, left: 3, fontSize: 7, color: 'rgba(255,255,255,0.35)', fontWeight: 700 }}>TITLE</span>
             </div>
-          </div>
-        )}
-
-        {/* VU Meter — left side so right-side toolbars stay clear */}
-        {showVUMeter && (
-          <div style={{ position: 'absolute', left: 8, top: 8, bottom: 8, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
-            {vuLevels.map((lvl, i) => (
-              <div key={i} style={{ width: 8, height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                <div style={{
-                  width: '100%',
-                  height: `${lvl * 100}%`,
-                  background: lvl > 0.85 ? '#ef4444' : lvl > 0.65 ? '#f97316' : '#22c55e',
-                  borderRadius: '0 0 3px 3px',
-                  transition: 'height 0.05s',
-                  minHeight: isPlaying ? 2 : 0,
-                }} />
-              </div>
-            ))}
           </div>
         )}
 
@@ -940,7 +954,7 @@ export default function VideoPlayer({
               onPointerDown={e => {
                 e.stopPropagation()
                 e.currentTarget.setPointerCapture(e.pointerId)
-                const rect = monitorRef.current!.getBoundingClientRect()
+                const rect = (stageRef.current ?? monitorRef.current!).getBoundingClientRect()
                 const onMove = (me: PointerEvent) => {
                   onFocusKeyframeMove(idx,
                     Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)),
@@ -1009,6 +1023,51 @@ export default function VideoPlayer({
                 {activeCaption.text}
               </div>
             )}
+          </div>
+        )}
+
+          </div>{/* /stage */}
+        </div>{/* /zoom wrapper */}
+
+        {/* Audio mode overlay */}
+        {src && contentType === 'audio' && (
+          <div className="relative z-10 flex flex-col items-center gap-6 select-none px-8 w-full max-w-sm">
+            <div className="w-24 h-24 rounded-3xl flex items-center justify-center" style={{ background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
+              <Mic size={40} color="rgb(var(--accent-rgb) / 0.6)" />
+            </div>
+            <div className="flex items-end gap-0.5 h-14 w-full">
+              {WAVEFORM.map((h, i) => {
+                const progress = (currentTime - timeOffset) / Math.max(activeEl?.duration ?? 1, 1)
+                const isPast = i / WAVEFORM.length < progress
+                return (
+                  <div key={i} className="flex-1 rounded-full" style={{ height: `${h}%`, background: isPast ? 'var(--accent)' : '#2a2a2a', transition: 'background 0.1s' }} />
+                )
+              })}
+            </div>
+            {activeCaption && (
+              <div className="w-full text-center px-4 py-3 rounded-xl" style={{ background: 'rgb(var(--accent-rgb) / 0.06)', border: '1px solid rgb(var(--accent-rgb) / 0.15)' }}>
+                {activeCaption.speaker && <span className="text-xs font-semibold mr-1.5" style={{ color: 'var(--accent-light)' }}>{activeCaption.speaker}:</span>}
+                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{activeCaption.text}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VU Meter — left side so right-side toolbars stay clear */}
+        {showVUMeter && (
+          <div style={{ position: 'absolute', left: 8, top: 8, bottom: 8, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
+            {vuLevels.map((lvl, i) => (
+              <div key={i} style={{ width: 8, height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                <div style={{
+                  width: '100%',
+                  height: `${lvl * 100}%`,
+                  background: lvl > 0.85 ? '#ef4444' : lvl > 0.65 ? '#f97316' : '#22c55e',
+                  borderRadius: '0 0 3px 3px',
+                  transition: 'height 0.05s',
+                  minHeight: isPlaying ? 2 : 0,
+                }} />
+              </div>
+            ))}
           </div>
         )}
 

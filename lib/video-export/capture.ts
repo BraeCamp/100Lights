@@ -13,6 +13,7 @@
  */
 
 import { drawFrame, pickViewerClip, type CompositorState, type MediaResolver } from './compositor'
+import { instantSpeed, sourceOffsetAt } from './speed'
 
 export interface CaptureOptions {
   state:              CompositorState
@@ -125,22 +126,49 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
   let raf = 0
   let lastClipId: string | null = null
   let activeEl: HTMLVideoElement | null = null
+  let activeClip: (typeof state.items)[number] | null = null
+  const rampCache = new Map<string, Float64Array>()   // cumulative speed integrals per clip
 
   function syncPlayback(t: number) {
     const clip = pickViewerClip(state.items, state.tracks, t)
     const id = clip?.id ?? null
-    if (id === lastClipId) return
-    lastClipId = id
-    if (activeEl) { activeEl.pause(); activeEl = null }
-    if (clip && (clip.contentType === 'video' || clip.contentType == null) && clip.url) {
-      const el = elByUrl.get(clip.url)
-      if (el) {
-        try { el.currentTime = Math.max(0, clip.inPoint + (t - clip.startTime)) } catch { /* seek race */ }
-        el.playbackRate = clip.speed ?? 1
-        el.play().catch(() => {})
-        activeEl = el
+
+    if (id !== lastClipId) {
+      lastClipId = id
+      // Pause the outgoing element WITHOUT reseeking it — its frozen last frame
+      // is what transition-in effects on the next clip blend from.
+      if (activeEl) { activeEl.pause(); activeEl = null }
+      activeClip = null
+      if (clip && (clip.contentType === 'video' || clip.contentType == null) && clip.url) {
+        const el = elByUrl.get(clip.url)
+        if (el) {
+          const local = Math.max(0, t - clip.startTime)
+          try { el.currentTime = Math.max(0, clip.inPoint + sourceOffsetAt(clip, local, rampCache, clip.id)) } catch { /* seek race */ }
+          el.playbackRate = clampRate(instantSpeed(clip, local))
+          el.play().catch(() => {})
+          activeEl = el
+          activeClip = clip
+        }
+      }
+      return
+    }
+
+    // Same clip: keep the element tracking the clip's speed curve. The timeline
+    // clock runs at wall-clock rate, so the element's position must follow the
+    // integral of speed — update the rate each frame and correct drift.
+    if (activeEl && activeClip) {
+      const local = Math.max(0, t - activeClip.startTime)
+      const rate = clampRate(instantSpeed(activeClip, local))
+      if (Math.abs(activeEl.playbackRate - rate) > 0.01) activeEl.playbackRate = rate
+      const expected = activeClip.inPoint + sourceOffsetAt(activeClip, local, rampCache, activeClip.id)
+      if (Math.abs(activeEl.currentTime - expected) > 0.3) {
+        try { activeEl.currentTime = expected } catch { /* seek race */ }
       }
     }
+  }
+
+  function clampRate(r: number): number {
+    return Math.max(0.0625, Math.min(16, r))
   }
 
   await audioCtx.resume().catch(() => {})

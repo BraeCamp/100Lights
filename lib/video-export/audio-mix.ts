@@ -15,6 +15,7 @@
  */
 
 import type { TimelineItem, Track } from '@/lib/editor-types'
+import { instantSpeed } from './speed'
 
 export interface MixClip {
   url?:         string
@@ -27,6 +28,8 @@ export interface MixClip {
   fadeIn?:      number
   fadeOut?:     number
   eq?:          { low: number; mid: number; high: number }
+  speed?:       number
+  speedPoints?: Array<{ t: number; speed: number }>
 }
 
 const SAMPLE_RATE = 48000
@@ -93,11 +96,37 @@ export async function renderTimelineAudio(
 
     const track = trackById.get(c.trackId)
     const vol = Math.max(0, Math.min(1, track?.volume ?? 1))
-    const dur = Math.min(c.outPoint - c.inPoint, Math.max(0, buffer.duration - c.inPoint))
+    const speed = c.speed ?? 1
+    const hasRamp = !!c.speedPoints?.length
+    // Timeline seconds the clip occupies. At speed ≠ 1 the element consumes
+    // source faster/slower, so the buffer-remaining clamp divides by speed.
+    const timelineDur = c.outPoint - c.inPoint
+    const dur = (speed !== 1 || hasRamp)
+      ? Math.min(timelineDur, Math.max(0, (buffer.duration - c.inPoint) / Math.max(0.0625, speed)))
+      : Math.min(timelineDur, Math.max(0, buffer.duration - c.inPoint))
     if (dur <= 0) continue
 
     const src = offline.createBufferSource()
     src.buffer = buffer
+
+    // Clip speed: drive the source's playbackRate so the export consumes the
+    // same source range over the same timeline window as the preview element.
+    // (AudioBufferSourceNode resamples — pitch follows speed, like most quick
+    // social editors; the live preview's <video> pitch-corrects instead.)
+    if (speed !== 1 || hasRamp) {
+      if (hasRamp) {
+        const n = Math.max(8, Math.min(512, Math.ceil(dur * 20)))
+        const curve = new Float32Array(n)
+        for (let k = 0; k < n; k++) curve[k] = instantSpeed(c, (dur * k) / (n - 1))
+        try {
+          src.playbackRate.setValueCurveAtTime(curve, Math.max(0, c.startTime), dur)
+        } catch {
+          src.playbackRate.value = speed
+        }
+      } else {
+        src.playbackRate.value = speed
+      }
+    }
 
     // Per-clip EQ (matches the live shared-graph shelves).
     const chainIn: AudioNode[] = []
@@ -128,7 +157,15 @@ export async function renderTimelineAudio(
       src.connect(g)
     }
     g.connect(offline.destination)
-    src.start(start, c.inPoint, dur)
+    if (speed !== 1 || hasRamp) {
+      // start()'s duration arg is measured in SOURCE seconds and would be wrong
+      // under a varying rate — start at the in point and stop at the timeline
+      // window's end instead.
+      src.start(start, c.inPoint)
+      src.stop(start + dur)
+    } else {
+      src.start(start, c.inPoint, dur)
+    }
     scheduled++
   }
 
@@ -151,5 +188,7 @@ export function toMixClip(item: TimelineItem): MixClip {
     fadeIn: item.fadeIn,
     fadeOut: item.fadeOut,
     eq: item.eq,
+    speed: item.speed,
+    speedPoints: item.speedPoints,
   }
 }
