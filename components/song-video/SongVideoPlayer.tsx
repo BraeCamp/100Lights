@@ -5,6 +5,15 @@ import { mountSongVideo } from '@/lib/song-video/engine.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
 import type { DawProject } from '@/lib/daw-types'
 import { encodeWav16 } from '@/lib/song-video/wav16'
+import { ProgressivePlayer, makeMediaShim, XFADE_SEC, type MediaShim } from '@/lib/song-video/progressive-audio'
+
+// The real mix is rendered in ordered CHUNKS so playback can start ~1s in (after
+// the first chunk) while later chunks stream into a gapless ProgressivePlayer.
+// Each chunk is rendered with a LOOK-BACK so incoming note/reverb tails are intact
+// at the cut, then trimmed to keep the chunk plus a tiny crossfade overlap.
+const CHUNK_BEATS = 16      // render granularity (~one phrase)
+const LOOKBACK_BEATS = 8    // warm-up bars so tails ring correctly at the cut
+
 
 // Turn a song (from lib/song-video/from-project) into a vertical, beat-synced
 // video. Beyond picking a format you can now edit the overlay text (+ font/size),
@@ -49,53 +58,61 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   song: SongData; meta?: string; accent?: string; slug?: string; projectId?: string; canPublish?: boolean; totalBeats?: number; dawProject?: DawProject; userId?: string | null; audioKey?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
   const instRef = useRef<ReturnType<typeof mountSongVideo> | null>(null)
   const playingRef = useRef(false)
-  // Persistent Web Audio graph on the <audio> element: source → analyser →
-  // (speakers + a capture stream). Created once (a MediaElementSource can only be
-  // made once per element) and reused across remounts; feeds audio-reactive formats.
-  const audioGraphRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; capture: MediaStreamAudioDestinationNode } | null>(null)
+  // Persistent Web Audio graph: ProgressivePlayer → analyser → (speakers + a
+  // capture stream for export). The player schedules rendered chunks gaplessly;
+  // the analyser feeds audio-reactive formats. Built once and reused across
+  // remounts. The context is created up front (so chunk decode uses the real
+  // output sample rate) but only RESUMED inside a play/record gesture — a
+  // suspended context is inaudible until then, and the visualiser still animates
+  // off note data, so audio is only ever heard after an explicit gesture-resume.
+  const audioGraphRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; capture: MediaStreamAudioDestinationNode; player: ProgressivePlayer; shim: MediaShim } | null>(null)
+  const [playerReady, setPlayerReady] = useState(false)
   function ensureAudioGraph() {
-    if (audioGraphRef.current || !audioRef.current) return audioGraphRef.current
+    if (audioGraphRef.current) return audioGraphRef.current
     try {
       const ACtor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = new ACtor()
-      const src = ctx.createMediaElementSource(audioRef.current)
       const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.82
       const capture = ctx.createMediaStreamDestination()
-      src.connect(analyser); analyser.connect(ctx.destination); analyser.connect(capture)
-      audioGraphRef.current = { ctx, analyser, capture }
-    } catch { /* already connected or unsupported */ }
+      analyser.connect(ctx.destination); analyser.connect(capture)
+      const totalSec = Math.max(0.01, latestWin.current.w * (60 / song.tempo))
+      const player = new ProgressivePlayer({ ctx, destination: analyser, totalSec, loop: true })
+      const shim = makeMediaShim(player)
+      audioGraphRef.current = { ctx, analyser, capture, player, shim }
+      setPlayerReady(true)
+    } catch { /* unsupported */ }
     return audioGraphRef.current
   }
 
-  // Real project audio (bounced for the current section) — when set, the video
-  // uses the actual mix instead of the preview synth.
-  const [realUrl, setRealUrl] = useState<string | null>(null)
   const [rendering, setRendering] = useState(false)
   const [renderFailed, setRenderFailed] = useState(false)
+  const [firstReady, setFirstReady] = useState(false) // first chunk playable
+  const firstReadyRef = useRef(false)
   const renderToken = useRef(0)      // discards results from a superseded render
-  const renderingRef = useRef(false) // single-flight (one full render at a time)
+  const renderingRef = useRef(false) // single-flight (one chunked render at a time)
   // A render is only worth persisting if the user did something with it (export,
   // queue, or send to editor). Otherwise it's a throwaway preview — delete its
   // cached bounce on leave so previews don't pile up in IndexedDB over time.
   const savedRef = useRef(false)
   useEffect(() => () => {
+    audioGraphRef.current?.player.destroy()
+    audioGraphRef.current?.ctx.close?.().catch?.(() => {})
     if (!savedRef.current && audioKey) {
       import('@/lib/song-video/audio-cache').then(m => m.deleteCachedAudio(`${audioKey}:full`)).catch(() => {})
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const latestWin = useRef({ s: 0, w: 32 })
-  // The WHOLE song is bounced ONCE (from the start) into this decoded buffer; any
-  // section is then SLICED from it instantly — changing bars never re-renders.
+  // Session cache: the decoded full-song mix for the current project version, so
+  // re-opening the full-song window pushes one seamless section instantly.
   const fullBufferRef = useRef<AudioBuffer | null>(null)
   const fullKeyRef = useRef<string | null>(null)
-  // When we have a project, the video uses ONLY the real mix — never a synth.
-  // `waiting` = the full-song render for this project isn't ready yet.
+  // With a project the video plays ONLY the real mix (never a synth). `waiting` =
+  // not even the first chunk is ready yet.
   const realOnly = !!dawProject
-  const waiting = realOnly && !realUrl
+  const waiting = realOnly && !firstReady
 
   const [fmt, setFmt] = useState('falling-notes')
   const [playing, setPlaying] = useState(false)
@@ -157,7 +174,9 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   // whether the real bounced audio is driving playback).
   useEffect(() => {
     if (!canvasRef.current) return
-    const media = realUrl && audioRef.current ? audioRef.current : null
+    // Real-mix projects drive the engine clock from the ProgressivePlayer via a
+    // media shim (once the graph exists); synth-only previews pass no media.
+    const media = realOnly && playerReady ? audioGraphRef.current?.shim ?? null : null
     const inst = mountSongVideo(canvasRef.current, windowed, {
       format: fmt, brand: '100LIGHTS', meta: metaText, accent: accentColor,
       hook: hookArr, loopBeats: windowed.loopBeats ?? 32,
@@ -172,22 +191,22 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     if (playingRef.current) inst.play()
     return () => inst.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fmt, windowed, realUrl, rw, rh])
+  }, [fmt, windowed, playerReady, rw, rh])
 
   useEffect(() => { latestWin.current = { s: start, w: winBeats } }, [start, winBeats])
 
-  // The full song renders once (from the start); the current section is then
-  // sliced from it instantly — so changing bars NEVER re-renders. A new project
-  // version (audioKey) invalidates the buffer and triggers one fresh full render.
+  // The current window's real mix renders in chunks (progressive + gapless).
+  // Changing the window/version resets the player and re-renders; a session or
+  // IndexedDB cache hit for the full song pushes one seamless section instantly.
   useEffect(() => {
     if (!dawProject) return
     const token = ++renderToken.current
-    if (fullBufferRef.current && fullKeyRef.current === (audioKey ?? null)) {
-      sliceAndApply(start, winBeats, token) // instant — no re-render
-      return
-    }
-    setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
-    const t = setTimeout(() => { void ensureFull(token, false) }, 250)
+    const g = ensureAudioGraph()
+    g?.player.pause()
+    setPlaying(false); playingRef.current = false
+    firstReadyRef.current = false; setFirstReady(false)
+    g?.player.reset(Math.max(0.01, winBeats * (60 / song.tempo)))
+    const t = setTimeout(() => { void ensureChunked(token, false) }, 250)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start, winBeats, dawProject, audioKey])
@@ -201,23 +220,24 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   function toggle() {
     const i = instRef.current; if (!i) return
     if (playing) { i.pause(); setPlaying(false); playingRef.current = false; return }
-    if (waiting) return // no play until the real mix is ready
-    // Create + resume the audio graph INSIDE the click gesture. A context made
-    // earlier (during the async render) starts suspended and can refuse to emit
-    // sound even after resume — meanwhile the visualiser still animates off note
-    // data, which looked like "bars moving but no audio". Hand the freshly built
-    // analyser to the already-running engine so reactive formats keep working.
-    const g = ensureAudioGraph()
-    if (g) { g.ctx.resume?.(); i.update({ analyser: g.analyser }) }
+    if (waiting) return // no play until the first chunk is ready
+    // Resume the audio context INSIDE the click gesture. The context is created
+    // up front (for decode) but starts suspended and stays inaudible until this
+    // gesture-resume — meanwhile the visualiser animates off note data. Hand the
+    // analyser to the running engine so reactive formats keep working. The engine
+    // then calls the shim (→ player.play), which schedules the rendered chunks.
+    if (realOnly) { const g = ensureAudioGraph(); if (g) { g.ctx.resume?.(); i.update({ analyser: g.analyser }) } }
     i.play(); setPlaying(true); playingRef.current = true
   }
 
   async function recordBlob(): Promise<Blob | null> {
     const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
-    setStatus('Recording…'); ensureAudioGraph(); audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true
+    setStatus('Recording…')
+    if (realOnly) { const g = ensureAudioGraph(); if (g) { g.ctx.resume?.(); i.update({ analyser: g.analyser }) } }
+    i.play(); setPlaying(true); playingRef.current = true
     const v = canvas.captureStream(fps)
     // With real audio, capture the analyser graph's output; otherwise the synth.
-    const a = realUrl && audioGraphRef.current ? audioGraphRef.current.capture.stream : i.getAudioStream()
+    const a = realOnly && audioGraphRef.current ? audioGraphRef.current.capture.stream : i.getAudioStream()
     const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
     const prefer = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
     const mime = prefer.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
@@ -340,49 +360,100 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     } catch (e) { setStatus(`Failed: ${(e as Error).message}`); setBusy(false); setTimeout(() => setStatus(null), 4000) }
   }
 
-  // Slice [s, s+w] out of the already-rendered full-song buffer and play it. Pure
-  // array work — instant, so scrubbing bars never re-renders.
-  const sliceAndApply = (s: number, w: number, token: number) => {
-    const buf = fullBufferRef.current
-    if (!buf || token !== renderToken.current) return
-    const SPB = 60 / song.tempo, sr = buf.sampleRate
-    const startSamp = Math.max(0, Math.floor(s * SPB * sr))
-    const lenSamp = Math.max(1, Math.min(Math.floor(w * SPB * sr), buf.length - startSamp))
-    const chans: Float32Array[] = []
-    for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c).subarray(startSamp, startSamp + lenSamp))
-    const wav = encodeWav16(chans, sr)
-    const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
-    // Note: the audio graph is created lazily inside a play/record gesture (see
-    // toggle) — a context built here, mid-async-render, starts suspended.
-    if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
-    setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+  // Copy [startSec, endSec) of an AudioBuffer into a fresh one (on the graph ctx).
+  const sliceBuffer = (ctx: AudioContext, buf: AudioBuffer, startSec: number, endSec?: number): AudioBuffer => {
+    const sr = buf.sampleRate
+    const s = Math.max(0, Math.floor(startSec * sr))
+    const e = endSec == null ? buf.length : Math.min(buf.length, Math.floor(endSec * sr))
+    const len = Math.max(1, e - s)
+    const out = ctx.createBuffer(buf.numberOfChannels, len, sr)
+    for (let c = 0; c < buf.numberOfChannels; c++) out.getChannelData(c).set(buf.getChannelData(c).subarray(s, s + len))
+    return out
   }
 
-  // Ensure the WHOLE song is rendered once (from the start) into fullBufferRef,
-  // from cache if we've done it before, then slice the current section. This is
-  // the only expensive step and it happens a single time per project version.
-  async function ensureFull(token: number, force: boolean) {
+  // Render the current window's real mix in ordered CHUNKS and stream them into
+  // the gapless ProgressivePlayer. Each chunk is rendered with a LOOK-BACK so
+  // incoming note/reverb tails ring correctly at the cut, then trimmed to keep
+  // [chunk] plus one crossfade's worth of pre-roll (the overlap the player
+  // equal-power crossfades against the previous chunk's tail). Playback becomes
+  // available after the FIRST chunk. The full concatenated mix is assembled and
+  // cached (`${audioKey}:full`) so re-opening the full song is instant.
+  async function ensureChunked(token: number, force: boolean) {
     if (!dawProject || renderingRef.current) return
+    const g = ensureAudioGraph(); if (!g) return
     renderingRef.current = true
     setRendering(true); setRenderFailed(false)
-    const fullSec = Math.round(songTotal * (60 / song.tempo))
-    setStatus(`Rendering full song… ~${fullSec}s (one time)`)
+    const spb = 60 / song.tempo
+    const winStartBeat = latestWin.current.s, winLen = latestWin.current.w
+    const isFull = winStartBeat === 0 && winLen >= songTotal
+    g.player.reset(Math.max(0.01, winLen * spb))
+    firstReadyRef.current = false; setFirstReady(false)
+    const fullKey = audioKey && isFull ? `${audioKey}:full` : null
+    const markFirst = () => { if (!firstReadyRef.current) { firstReadyRef.current = true; setFirstReady(true) } }
+    setStatus('Rendering real mix…')
     try {
-      const fullKey = audioKey ? `${audioKey}:full` : null
-      let fullBlob: Blob | null = null
-      if (fullKey && !force) { try { const { getCachedAudio } = await import('@/lib/song-video/audio-cache'); fullBlob = await getCachedAudio(fullKey) } catch { /* render */ } }
-      if (!fullBlob) {
-        const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-        fullBlob = await renderProjectAudioBlob(dawProject, { startBeat: 0, endBeat: songTotal, userId })
-        if (fullKey) { try { const { putCachedAudio } = await import('@/lib/song-video/audio-cache'); await putCachedAudio(fullKey, fullBlob, Date.now()) } catch { /* non-fatal */ } }
+      // Instant re-open: session-decoded full mix for this version → one section.
+      if (isFull && !force && fullBufferRef.current && fullKeyRef.current === (audioKey ?? null)) {
+        g.player.pushSection(0, fullBufferRef.current, 0); markFirst()
+        setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 1500)
+        return
       }
-      const ACtor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      const ac = new ACtor()
-      const decoded = await ac.decodeAudioData(await fullBlob.arrayBuffer())
-      ac.close()
-      fullBufferRef.current = decoded
-      fullKeyRef.current = audioKey ?? null
-      if (token === renderToken.current) { setRenderFailed(false); sliceAndApply(latestWin.current.s, latestWin.current.w, token); setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 2500) }
+      // Persisted full mix (IndexedDB) → one seamless section.
+      if (fullKey && !force) {
+        try {
+          const { getCachedAudio } = await import('@/lib/song-video/audio-cache')
+          const blob = await getCachedAudio(fullKey)
+          if (blob && token === renderToken.current) {
+            const buf = await g.ctx.decodeAudioData(await blob.arrayBuffer())
+            fullBufferRef.current = buf; fullKeyRef.current = audioKey ?? null
+            g.player.pushSection(0, buf, 0); markFirst()
+            setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 1500)
+            return
+          }
+        } catch { /* fall through to render */ }
+      }
+
+      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+      const nChunks = Math.max(1, Math.ceil(winLen / CHUNK_BEATS))
+      const fullChans: Float32Array[] = [] // exact [chunk] audio, concatenated → cache
+      let sr = 44100
+      for (let i = 0; i < nChunks; i++) {
+        if (token !== renderToken.current) return
+        const cs = i * CHUNK_BEATS, ce = Math.min(winLen, cs + CHUNK_BEATS)
+        const absCs = winStartBeat + cs, absCe = winStartBeat + ce
+        const lookbackBeats = Math.min(LOOKBACK_BEATS, absCs)
+        const blob = await renderProjectAudioBlob(dawProject, { startBeat: absCs - lookbackBeats, endBeat: absCe, userId })
+        if (token !== renderToken.current) return
+        const decoded = await g.ctx.decodeAudioData(await blob.arrayBuffer())
+        sr = decoded.sampleRate
+        const csSec = cs * spb
+        const leadSec = i === 0 ? 0 : XFADE_SEC
+        // Drop the look-back down to just the crossfade pre-roll; kept audio then
+        // covers [csSec - leadSec, ceSec] in window-media time.
+        const kept = sliceBuffer(g.ctx, decoded, lookbackBeats * spb - leadSec)
+        g.player.pushSection(csSec, kept, leadSec)
+        markFirst()
+        setStatus(`Rendering… ${Math.min(100, Math.round(((i + 1) / nChunks) * 100))}%`)
+        // Exact [csSec, ceSec] region (drop the pre-roll) for the concatenated cache.
+        const exact = sliceBuffer(g.ctx, kept, leadSec)
+        for (let c = 0; c < exact.numberOfChannels; c++) {
+          const prev = fullChans[c] ?? new Float32Array(0), add = exact.getChannelData(c)
+          const merged = new Float32Array(prev.length + add.length); merged.set(prev); merged.set(add, prev.length)
+          fullChans[c] = merged
+        }
+      }
+      if (token !== renderToken.current) return
+      setRenderFailed(false); setStatus('Real mix ✓'); setTimeout(() => setStatus(null), 2000)
+      // Assemble + cache the full mix (and keep a decoded copy for instant re-open).
+      if (fullChans.length && fullKey) {
+        try {
+          const fullBlob = new Blob([encodeWav16(fullChans, sr)], { type: 'audio/wav' })
+          const { putCachedAudio } = await import('@/lib/song-video/audio-cache')
+          await putCachedAudio(fullKey, fullBlob, Date.now())
+          fullBufferRef.current = await g.ctx.decodeAudioData(await fullBlob.arrayBuffer())
+          fullKeyRef.current = audioKey ?? null
+        } catch { /* non-fatal */ }
+      }
     } catch {
       if (token === renderToken.current) { setRenderFailed(true); setStatus('Render failed — retry') }
     } finally {
@@ -396,7 +467,6 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   return (
     <div style={{ display: 'grid', gap: 14, maxWidth: 'min(96vw, 560px)', margin: '0 auto' }}>
       <style>{'@keyframes svspin{to{transform:rotate(360deg)}}'}</style>
-      <audio ref={audioRef} style={{ display: 'none' }} preload="auto" />
       {/* Format */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.entries(FORMATS as Record<string, { name: string }>).map(([id, f]) => (
@@ -412,13 +482,13 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
             {renderFailed ? (
               <>
                 <span style={{ fontSize: 13, fontWeight: 700, color: '#f87171' }}>Real mix render failed</span>
-                <button onClick={() => { const token = ++renderToken.current; void ensureFull(token, false) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: ui, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
+                <button onClick={() => { const token = ++renderToken.current; void ensureChunked(token, false) }} style={{ fontSize: 12.5, fontWeight: 700, color: '#0a0812', background: ui, border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer' }}>Retry</button>
               </>
             ) : (
               <>
                 <div style={{ width: 34, height: 34, borderRadius: '50%', border: `3px solid ${ui}`, borderTopColor: 'transparent', animation: 'svspin 0.8s linear infinite' }} />
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Rendering the full song…</span>
-                <span style={{ fontSize: 11, color: '#a3a2b5' }}>~{Math.round(songTotal * (60 / song.tempo))}s · one time — then every section is instant</span>
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Rendering the real mix…</span>
+                <span style={{ fontSize: 11, color: '#a3a2b5' }}>starts playing in about a second — the rest streams in as you watch</span>
               </>
             )}
           </div>
@@ -536,10 +606,10 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         {dawProject && (
           <Section label="Audio">
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={() => { fullBufferRef.current = null; const token = ++renderToken.current; void ensureFull(token, true) }} disabled={rendering || busy} style={{ ...chip(false, ui), opacity: rendering ? 0.6 : 1 }}>
+              <button onClick={() => { fullBufferRef.current = null; fullKeyRef.current = null; const token = ++renderToken.current; void ensureChunked(token, true) }} disabled={rendering || busy} style={{ ...chip(false, ui), opacity: rendering ? 0.6 : 1 }}>
                 {rendering ? 'Rendering…' : 'Re-render song'}
               </button>
-              <span style={lbl}>{rendering ? 'rendering your real mix…' : realUrl ? 'your real mix ✓' : renderFailed ? 'render failed — retry' : 'real mix'}</span>
+              <span style={lbl}>{rendering ? 'rendering your real mix…' : firstReady ? 'your real mix ✓' : renderFailed ? 'render failed — retry' : 'real mix'}</span>
             </div>
           </Section>
         )}
