@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Dices } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isMidiClip } from '@/lib/daw-types'
 import type { MidiClip, DrumInstrumentParams } from '@/lib/daw-types'
@@ -321,7 +322,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
           </select>
           <button onClick={savePattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Save the current hits as a pattern">＋</button>
           {userPatternSelected && <button onClick={delPattern} style={{ ...miniBtn, width: 'auto', padding: '0 6px' }} title="Delete this saved pattern">🗑</button>}
-          <button onClick={dicePattern} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 14, borderColor: 'var(--accent)', color: 'var(--accent-light)' }} title="Surprise me — drop in a random groove">🎲</button>
+          <button onClick={dicePattern} style={{ ...miniBtn, width: 'auto', padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderColor: 'var(--accent)', color: 'var(--accent-light)' }} title="Surprise me — drop in a random groove"><Dices size={15} /></button>
           <button onClick={() => setSmartOpen(o => !o)} style={{ ...miniBtn, width: 'auto', padding: '0 8px', fontSize: 11, fontWeight: 700, borderColor: smartOpen ? 'var(--accent)' : 'var(--border)', color: smartOpen ? 'var(--accent-light)' : 'var(--text-muted)' }} title="Smart Drums — drag to sculpt density × loudness">Smart</button>
         </label>
 

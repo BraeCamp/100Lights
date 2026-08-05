@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { Circle } from 'lucide-react'
+import { Circle, SlidersHorizontal } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import type { DawTrack, ReturnTrack, AutoPoint } from '@/lib/daw-types'
@@ -808,7 +808,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
             <button onClick={() => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } })}
               style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-card)', color: track.solo ? '#000' : 'var(--text-secondary)', fontWeight: 800, fontSize: 15, cursor: 'pointer' }}>Solo</button>
             <button onClick={() => { window.dispatchEvent(new CustomEvent('mobile-open-sounds', { detail: { trackId: track.id, sub: 'fx' } })); onClose() }}
-              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.18)', color: 'var(--accent-light)', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>🎚 Effects</button>
+              style={{ flex: 1, height: 46, borderRadius: 10, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.18)', color: 'var(--accent-light)', fontWeight: 800, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}><SlidersHorizontal size={16} /> Effects</button>
           </div>
         </div>
       </div>

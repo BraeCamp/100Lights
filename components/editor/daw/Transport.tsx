@@ -4,7 +4,8 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Music2, Volume2, Camera, Video, ChevronDown, History, Upload } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload } from 'lucide-react'
+import { TbMetronome } from 'react-icons/tb'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject } from '@/lib/daw-state'
@@ -977,7 +978,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         title="Toggle metronome (M)"
         data-help-id="metronome"
       >
-        <Music2 size={13} />
+        <TbMetronome size={15} />
       </button>
 
       {showMore && <div style={divider} />}
@@ -1109,7 +1110,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           color: showTuner ? 'var(--accent-contrast)' : 'var(--text-secondary)',
         }}
       >
-        ♩
+        <Gauge size={14} />
       </button>
 
       {/* (MASK moved into the "More" popover — item 14.) */}
