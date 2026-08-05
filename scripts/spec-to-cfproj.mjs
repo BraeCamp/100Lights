@@ -13,7 +13,10 @@ import { buildHistoryFor } from '../lib/build-history.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SPEC_DIR = join(ROOT, 'public', '_songgen')
-const OUT_DIR = join(ROOT, 'Content', 'Audio')
+// Default output is the repo's Content/Audio; --outdir=<path> redirects (e.g. to
+// keep the tracked Content/Audio clean and write to a Desktop folder instead).
+const outdirArg = process.argv.find(a => a.startsWith('--outdir='))
+const OUT_DIR = outdirArg ? outdirArg.split('=')[1] : join(ROOT, 'Content', 'Audio')
 const uid = () => randomUUID()
 
 // Distinct track colors (drums, bass, keys, pad, lead, extras…).
@@ -72,7 +75,7 @@ const slugFor = (spec, file) => {
   return base
 }
 
-let files = process.argv.slice(2)
+let files = process.argv.slice(2).filter(a => !a.startsWith('--outdir='))
 if (files.includes('--all') || files.length === 0) {
   // Every composer spec (skip the older gen_rhythm song1/song2).
   files = readdirSync(SPEC_DIR).filter(f => f.endsWith('.json') && !/^song[12]\.json$/.test(f)).map(f => join(SPEC_DIR, f))

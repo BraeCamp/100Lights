@@ -39,6 +39,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { analyzeSpec } from './analyze-arrangement.mjs'
+import { TEMPLATES, resolveTemplate } from './song-templates.mjs'
 import { createSession } from '../lib/session-capture/index.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -923,45 +924,53 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const progs = { A: recA, B: recB, C: recC }
   const seen = { A: 0, B: 0, C: 0 }   // section-appearance counter → development
 
-  const form = buildForm(FORM_FAMILY[genreId] || 'loop', rand)
+  const form = buildForm(opts.formFamily || FORM_FAMILY[genreId] || 'loop', rand)
+  // Template "lengthen": stretch each section so slow/spacious templates breathe.
+  if (opts.lengthen && opts.lengthen !== 1) for (const s of form) s.bars = Math.max(2, Math.min(24, Math.round(s.bars * opts.lengthen)))
   const hook = makeHook(rand)
   let leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   if (opts.sig === 'guitar') leadPreset = 'builtin-15'   // electric guitar lead (Artemas)
+  if (opts.presets?.lead) leadPreset = opts.presets.lead   // template variant forces a lead timbre
   const keyRhythm = KEY_RHYTHMS[pal.keyRhythm] || KEY_RHYTHMS.stab
   // Seed-vary the keys/pad/bass timbre too — mostly the genre default, sometimes
   // an alternate from the wider library, so songs draw on more of the 46 voices.
   const altTimbre = (def, arr) => rand.chance(0.5) ? def : rand.pick(arr)
-  const keysPreset = altTimbre(pal.keys, KEYS_ALTS)
-  const padPreset  = altTimbre(pal.pad, PAD_ALTS)
-  const bassPreset = altTimbre(pal.bass, BASS_ALTS)
+  const keysPreset = opts.presets?.keys ?? altTimbre(pal.keys, KEYS_ALTS)
+  const padPreset  = opts.presets?.pad  ?? altTimbre(pal.pad, PAD_ALTS)
+  const bassPreset = opts.presets?.bass ?? altTimbre(pal.bass, BASS_ALTS)
 
   // ── Technique palette — EVERY dynamic feature is OPTIONAL and seed-gated, so
   // each song draws a DIFFERENT subset. Two songs (even same genre) should share
   // few of these: same-y makeup is the enemy. Each song still evolves its mood
   // (via whichever techniques it drew) but no two sound built the same way.
-  const useFilterArc = rand.chance(0.7)                              // per-section brightness arc
-  const introStyle   = rand.pick(['layered', 'layered', 'soft', 'soft', 'plain'])  // how the song opens
+  // A TEMPLATE (opts.bias) can FORCE any of these switches to give a song-type
+  // its character; `B.x ?? default` keeps the seed-driven default when unforced
+  // (nullish, so a forced `false` or `0` still wins). See song-templates.mjs.
+  const B = opts.bias || {}
+  const useFilterArc = B.filterArc ?? rand.chance(0.7)               // per-section brightness arc
+  const introStyle   = B.introStyle ?? rand.pick(['layered', 'layered', 'soft', 'soft', 'plain'])  // how the song opens
   const fourFloor    = genre.drums === 'four-floor' || ['house', 'deep-house', 'techno', 'trance', 'disco', 'future-bass'].includes(genreId)
-  const useSidechain = (fourFloor && rand.chance(0.8)) || opts.sig === 'pump'  // kick pump on sustained layers
-  const useSweeps    = rand.chance(0.7)                              // filter-sweep transitions into peaks
-  const useClipFx    = rand.chance(0.7)                              // drawn effect BARS on the track FX lanes
-  const useRolls     = rand.chance(0.45)                             // ascending chord strums on high-energy downbeats
-  const voicing      = rand.pick(['close', 'close', 'inv1', 'inv2', 'open', 'drop2'])  // how chords sit
-  const arpDir       = rand.pick(['up', 'up', 'down', 'updown'])     // arp shape
-  const arpRate      = rand.pick([2, 2, 4])                          // 16ths vs 8ths
-  const bassMotif    = rand.chance(0.5) ? null : rand.pick(['drive', 'drive', 'push', 'pulse', 'gallop', 'walk'])  // null → genre-idiom default; the song's low-end identity
+  const useSidechain = B.sidechain ?? ((fourFloor && rand.chance(0.8)) || opts.sig === 'pump')  // kick pump on sustained layers
+  const useSweeps    = B.sweeps ?? rand.chance(0.7)                  // filter-sweep transitions into peaks
+  const useClipFx    = B.clipFx ?? rand.chance(0.7)                  // drawn effect BARS on the track FX lanes
+  const useRolls     = B.rolls ?? rand.chance(0.45)                  // ascending chord strums on high-energy downbeats
+  const voicing      = B.voicing ?? rand.pick(['close', 'close', 'inv1', 'inv2', 'open', 'drop2'])  // how chords sit
+  const arpDir       = B.arpDir ?? rand.pick(['up', 'up', 'down', 'updown'])     // arp shape
+  const arpRate      = B.arpRate ?? rand.pick([2, 2, 4])             // 16ths vs 8ths
+  const bassMotif    = B.bassMotif !== undefined ? B.bassMotif
+    : (rand.chance(0.5) ? null : rand.pick(['drive', 'drive', 'push', 'pulse', 'gallop', 'walk']))  // null → genre-idiom default; the song's low-end identity
   const useSwap      = rand.chance(0.4)                              // swap the keys timbre in the bridge
   const swapPreset   = useSwap ? rand.pick(KEYS_ALTS.filter(p => p !== keysPreset)) : null
-  const humanize     = rand.chance(0.6) ? rand.pick([0.006, 0.01, 0.015]) : 0  // melodic timing jitter (beats)
+  const humanize     = B.humanize ?? (rand.chance(0.6) ? rand.pick([0.006, 0.01, 0.015]) : 0)  // melodic timing jitter (beats)
   // ── Toolbox moves ──
-  const useRiser     = rand.chance(0.55)                             // ascending run into drops
-  const useImpact    = rand.chance(0.55)                             // sub-boom on the drop downbeat
-  const useStutter   = rand.chance(0.4)                              // rapid note-repeat build in the last beat
-  const useFalseDrop = rand.chance(0.25)                             // first bar of a drop teases, full band at bar 2
-  const useKeyChange = rand.chance(0.16)                             // final chorus modulates UP (a lift)
+  const useRiser     = B.riser ?? rand.chance(0.55)                  // ascending run into drops
+  const useImpact    = B.impact ?? rand.chance(0.55)                 // sub-boom on the drop downbeat
+  const useStutter   = B.stutter ?? rand.chance(0.4)                 // rapid note-repeat build in the last beat
+  const useFalseDrop = B.falseDrop ?? rand.chance(0.25)              // first bar of a drop teases, full band at bar 2
+  const useKeyChange = B.keyChange ?? rand.chance(0.16)              // final chorus modulates UP (a lift)
   const keyShift     = rand.pick([2, 2, 1])                          // whole step (mostly) or half step
   const peakIdx      = form.map((s, i) => (/drop|chorus|hook/.test(s.role) ? i : -1)).filter(i => i >= 0)
-  const halfTimeIdx  = (rand.chance(0.3) && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1  // last peak flips half-time
+  const halfTimeIdx  = ((B.halfTime ?? rand.chance(0.3)) && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1  // last peak flips half-time
   const keyChangeIdx = (useKeyChange && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1        // final peak lifts
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
@@ -995,8 +1004,8 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     ['keys', 'pad', 'arp'],                              // texture-led, no distinct lead
     ['pad', 'arp', 'lead'],                              // arp + pad wash
   ]
-  const arpPreset = rand.pick(LEAD_ALTS.arp)
-  const counterPreset = rand.pick(LEAD_ALTS.melody)
+  const arpPreset = opts.presets?.arp ?? rand.pick(LEAD_ALTS.arp)
+  const counterPreset = opts.presets?.counter ?? rand.pick(LEAD_ALTS.melody)
   const ROLE = {
     drums:   { name: 'Drums',   instr: kit.instrument, preset: null,          rf: null,             pan: 0,     vol: 0.6,  drum: true, fx: 'drums' },
     bass:    { name: 'Bass',    instr: NONE,           preset: bassPreset,    rf: RF.bass,          pan: 0,     vol: 0.58, fx: 'bass' },
@@ -1006,12 +1015,16 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     arp:     { name: 'Arp',     instr: NONE,           preset: arpPreset,     rf: RF.lead,          pan: -0.2,  vol: 0.4,  fx: 'keys' },
     counter: { name: 'Counter', instr: NONE,           preset: counterPreset, rf: RF.lead,          pan: -0.08, vol: 0.4,  fx: 'lead' },
   }
-  let ens = rand.pick(ENSEMBLES)
+  // A TEMPLATE can supply its OWN ensemble pool (the song-type's lineup) — else
+  // the seed picks from the global set.
+  let ens = rand.pick(opts.roster?.ensembles || ENSEMBLES)
   // Cap voices sharing the lead register (lead/arp/counter) at TWO. The 3-voice
   // stacks were the main source of clashing, over-dense melodies in one octave.
   const leadReg = ens.filter(r => r === 'lead' || r === 'arp' || r === 'counter')
   if (leadReg.length > 2) { const drop = new Set(leadReg.slice(2)); ens = ens.filter(r => !drop.has(r)) }
-  const roleList = [...(genre.drums !== 'none' ? ['drums'] : []), 'bass', ...ens]
+  // Drums present unless the genre has none OR the template forbids them (ambient).
+  const useDrums = genre.drums !== 'none' && opts.roster?.drums !== 'none'
+  const roleList = [...(useDrums ? ['drums'] : []), 'bass', ...ens]
   const TK = roleList.map(r => ({ key: r, ...ROLE[r] }))
   const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.fx, pal, genreId, rand, () => uid('e')) }))
   // Style signature — stamp the artist flavor onto the racks.
@@ -1293,8 +1306,11 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   }
 
   const keyLabel = modeName ? `${KEY_NAMES[root]} ${scale}` : (keyStr || `${KEY_NAMES[root]} ${scale}`)
+  const label = opts.templateName
+    ? `${opts.templateName}${opts.variantName ? ` (${opts.variantName})` : ''} · ${genre.name} — ${keyLabel}`
+    : `${opts.styleName ? opts.styleName + ' · ' : ''}${genre.name} — ${keyLabel}`
   return {
-    name: `${opts.styleName ? opts.styleName + ' · ' : ''}${genre.name} — ${keyLabel}`,
+    name: label,
     genre: genre.id, tempo: opts.tempo || genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
     swing: genre.swing, key: root, scale,
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
@@ -1308,18 +1324,50 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
 async function main() {
   const argv = process.argv.slice(2)
   const libs = await loadAppLibs()
+  if (argv.includes('--templates')) {
+    console.log('Song templates (id — character · variants):')
+    for (const [id, t] of Object.entries(TEMPLATES)) {
+      console.log(`  ${id.padEnd(14)} ${t.desc}`)
+      console.log(`  ${''.padEnd(14)} variants: ${Object.keys(t.variants || {}).join(', ')}  ·  genres: ${t.genres.join(', ')}`)
+    }
+    console.log('\nUsage: node scripts/compose.mjs --template=<id> [--tvariant=<name>] [--genre=<id>] [key] [--seed=N] [--out=path]')
+    return
+  }
   if (argv.includes('--list') || argv.length === 0) {
     console.log('Genres (id · bpm · feel):')
     for (const g of libs.GENRES) console.log(`  ${g.id.padEnd(13)} ${String(g.bpm).padStart(3)} bpm · ${g.drums}`)
     console.log('\nUsage: node scripts/compose.mjs <genreId> [key] [--seed=N] [--out=path]')
+    console.log('       node scripts/compose.mjs --templates          (song-type templates)')
     return
   }
   const pos = argv.filter(a => !a.startsWith('--'))
   const seedArg = argv.find(a => a.startsWith('--seed='))
   const outArg = argv.find(a => a.startsWith('--out='))
   const styleArg = argv.find(a => a.startsWith('--style='))
+  const templateArg = argv.find(a => a.startsWith('--template='))
+  const tvariantArg = argv.find(a => a.startsWith('--tvariant='))
+  const tgenreArg   = argv.find(a => a.startsWith('--genre='))
   const seed = seedArg ? parseInt(seedArg.split('=')[1], 10) : 12345
   let genreId = pos[0], keyStr = pos[1] || '', opts = {}
+
+  // TEMPLATE mode: a song-type reshapes structure/roster/dynamics/mix, then
+  // draws a genre from its pool. Resolved PER-SEED so --best=K explores variants
+  // and genres too (a fresh rand off each candidate's seed). See song-templates.mjs.
+  const tplId = templateArg ? templateArg.split('=')[1] : null
+  if (tplId && !TEMPLATES[tplId]) { console.error(`unknown template "${tplId}" — try: ${Object.keys(TEMPLATES).join(', ')} (or --templates)`); process.exit(1) }
+  const tvariant = tvariantArg ? tvariantArg.split('=')[1] : undefined
+  const tgenre   = tgenreArg ? tgenreArg.split('=')[1] : undefined   // genre pinned ONLY via --genre
+  // In --template mode the first positional is the KEY (there is no genre
+  // positional); the genre comes from --genre or the template's own pool.
+  if (tplId) keyStr = pos[0] || ''
+  const resolveForSeed = (seedUsed) => {
+    if (tplId) {
+      const res = resolveTemplate(tplId, makeRand(seedUsed), { variant: tvariant, genre: tgenre })
+      return { genreId: res.genreId, opts: res.opts }
+    }
+    return { genreId, opts }
+  }
+
   if (styleArg) {
     const st = STYLES[styleArg.split('=')[1]]
     if (!st) { console.error(`unknown style — try: ${Object.keys(STYLES).join(', ')}`); process.exit(1) }
@@ -1340,7 +1388,7 @@ async function main() {
   const cap = createSession({
     enabled: !!captureArg,
     root: captureArg && captureArg.includes('=') ? captureArg.split('=')[1] : undefined,
-    sessionId: `compose-${genreId}-${seed}`,
+    sessionId: `compose-${tplId || genreId}-${seed}`,
   })
 
   let spec, pick = null
@@ -1354,7 +1402,8 @@ async function main() {
         attempt: i,
       })
       cap.event('take_started', { index: i, seed: seedUsed })
-      const s = compose(libs, genreId, keyStr, seedUsed, opts)
+      const r0 = resolveForSeed(seedUsed)
+      const s = compose(libs, r0.genreId, keyStr, seedUsed, r0.opts)
       const r = analyzeSpec(s)
       const rank = r.score - r.flags.length * 10
       const c = { i, seedUsed, spec: s, r, rank }
@@ -1386,7 +1435,7 @@ async function main() {
   if (K > 1) console.log(`  self-select: best of ${K} — seed ${pick.seedUsed} · score ${pick.r.score}/100 · ${pick.r.flags.length} flag(s) · density ${pick.r.spark.density}`)
   const nNotes = spec.clips.reduce((a, c) => a + c.notes.length, 0)
   const end = Math.max(...spec.clips.map(c => c.startBeat + c.durationBeats), 0)
-  const slug = `${styleArg ? styleArg.split('=')[1] + '-' : ''}${spec.genre}-${(keyStr || spec.scale).replace(/\s+/g, '')}`.toLowerCase()
+  const slug = `${tplId ? tplId + '-' : ''}${styleArg ? styleArg.split('=')[1] + '-' : ''}${spec.genre}-${(keyStr || spec.scale).replace(/\s+/g, '')}`.toLowerCase()
   const out = outArg ? outArg.split('=')[1] : join(OUT_DIR, `${slug}.json`)
   mkdirSync(dirname(out), { recursive: true })
   writeFileSync(out, JSON.stringify(spec))
