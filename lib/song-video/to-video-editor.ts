@@ -1,5 +1,5 @@
 import { CF_VERSION, type CfProjFile } from '@/lib/project-serializer'
-import { DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS } from '@/lib/editor-types'
+import { DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, type ProjectAspect } from '@/lib/editor-types'
 
 // Send a rendered song-video into the app's VideoEditor so it can be edited
 // further (trim, add clips/overlays/text/transitions). Uploads the render to the
@@ -7,7 +7,17 @@ import { DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS } from '@/lib/editor-types'
 // with the clip already on the timeline, via the stash-and-open flow the editor
 // uses for .cfproj files. Client-only.
 
-export async function saveRenderToVideoEditor(blob: Blob, opts: { name: string; durationSec: number }): Promise<void> {
+export async function saveRenderToVideoEditor(
+  blob: Blob,
+  opts: {
+    name: string
+    durationSec: number
+    /** Song tempo — arrives in the editor as its beat grid, so cuts snap to the music. */
+    tempo?: number | null
+    /** The maker's channel aspect — the editor project opens in the same frame shape. */
+    aspect?: ProjectAspect
+  },
+): Promise<void> {
   const mediaId = crypto.randomUUID()
   const projId = crypto.randomUUID()
   const ext = blob.type.includes('mp4') ? 'mp4' : 'webm'
@@ -39,6 +49,8 @@ export async function saveRenderToVideoEditor(blob: Blob, opts: { name: string; 
       color: '#a78bfa', trackId: DEFAULT_TRACKS[0].id, mediaRefId: mediaId, captions: [], contentType: 'video',
     }],
     adjustments: { ...DEFAULT_ADJUSTMENTS },
+    aspect: opts.aspect,
+    beatGrid: opts.tempo ? { bpm: opts.tempo, offset: 0, beatsPerBar: 4 } : null,
     zoomLevel: 1, captions: [], outputs: [], chapters: [],
     media: [{ id: mediaId, name: filename, contentType: 'video', duration: opts.durationSec, r2Key: pj.key }],
     modules: ['video'], audioMode: 'music',

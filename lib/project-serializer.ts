@@ -11,7 +11,7 @@ import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bun
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -121,6 +121,8 @@ export interface CfProjFile {
   adjustments: VideoAdjustments
   /** Project frame shape (preview stage + export dims). Absent = 16:9 (pre-aspect files). */
   aspect?: ProjectAspect
+  /** Musical grid (BPM + downbeat offset) for beat snapping / cut-on-beat. */
+  beatGrid?: BeatGrid | null
   zoomLevel: number
   // Content
   captions: Caption[]
@@ -150,6 +152,7 @@ export interface EditorSnapshot {
   timelineItems: TimelineItem[]
   adjustments: VideoAdjustments
   aspect?: ProjectAspect
+  beatGrid?: BeatGrid | null
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
@@ -209,6 +212,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
     })),
     adjustments: snap.adjustments,
     aspect: snap.aspect,
+    beatGrid: snap.beatGrid ?? null,
     zoomLevel: snap.zoomLevel,
     captions: snap.captions,
     chapters: snap.chapters ?? [],
@@ -241,6 +245,7 @@ export interface DeserializedProject {
   timelineItems: TimelineItem[]   // url = undefined means "offline"
   adjustments: VideoAdjustments
   aspect: ProjectAspect
+  beatGrid: BeatGrid | null
   zoomLevel: number
   captions: Caption[]
   outputs: Output[]
@@ -310,6 +315,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     timelineItems,
     adjustments:   file.adjustments,
     aspect:        file.aspect ?? '16:9',
+    beatGrid:      file.beatGrid ?? null,
     zoomLevel:     file.zoomLevel,
     captions:      file.captions,
     outputs,

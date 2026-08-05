@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2 } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
@@ -15,6 +15,9 @@ interface Props {
   onRemove: (id: string) => void
   onContextMenu: (e: React.MouseEvent, items: ContextMenuItem[]) => void
   onAddFromLibrary: (item: LibraryMediaItem) => void
+  /** Present when the project carries a DAW arrangement — bounces its real mix into the pool. */
+  onBounceDawMix?: () => void
+  bounceStatus?: 'idle' | 'working' | 'error'
 }
 
 function formatDur(s?: number) {
@@ -25,6 +28,7 @@ function formatDur(s?: number) {
 
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
+  onBounceDawMix, bounceStatus = 'idle',
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
@@ -98,14 +102,31 @@ export default function MediaLibrary({
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
           Media Pool
         </span>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-          style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
-          title="Import media (also drag files onto the viewer)"
-        >
-          <FolderOpen size={11} /> Import
-        </button>
+        <div className="flex items-center gap-1">
+          {onBounceDawMix && (
+            <button
+              onClick={onBounceDawMix}
+              disabled={bounceStatus === 'working'}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+              style={{
+                background: 'var(--accent-subtle)', border: '1px solid var(--accent)',
+                color: bounceStatus === 'error' ? '#f87171' : 'var(--accent-light)',
+              }}
+              title="Bounce this project's DAW mix to audio and add it to the pool (sets the beat grid from its tempo)"
+            >
+              <Music2 size={11} />
+              {bounceStatus === 'working' ? 'Bouncing…' : bounceStatus === 'error' ? 'Failed' : 'DAW mix'}
+            </button>
+          )}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+            title="Import media (also drag files onto the viewer)"
+          >
+            <FolderOpen size={11} /> Import
+          </button>
+        </div>
         <input ref={fileInputRef} type="file" accept="video/*,audio/*,.cube" className="hidden" onChange={handleFileInput} />
       </div>
 

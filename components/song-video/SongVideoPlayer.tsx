@@ -314,7 +314,14 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       const blob = await recordBlob(); if (!blob) { setBusy(false); return }
       setStatus('Sending to editor…')
       const { saveRenderToVideoEditor } = await import('@/lib/song-video/to-video-editor')
-      await saveRenderToVideoEditor(blob, { name: `${slug} video`, durationSec: winBeats * (60 / song.tempo) })
+      // Maker aspect ('9 / 16' CSS style) → editor ProjectAspect ('9:16').
+      const editorAspect = aspect === '1 / 1' ? '1:1' as const : aspect === '16 / 9' ? '16:9' as const : '9:16' as const
+      await saveRenderToVideoEditor(blob, {
+        name: `${slug} video`,
+        durationSec: winBeats * (60 / song.tempo),
+        tempo: song.tempo,
+        aspect: editorAspect,
+      })
       // success → the page navigates to the video editor
     } catch (e) { setStatus(`Failed: ${(e as Error).message}`); setBusy(false); setTimeout(() => setStatus(null), 4000) }
   }

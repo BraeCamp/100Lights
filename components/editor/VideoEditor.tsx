@@ -30,8 +30,8 @@ import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
   DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, DEFAULT_ASPECT, PROJECT_ASPECTS,
   RULER_HEIGHT, TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
-  MODULE_DEFS, ALL_MODULE_KEYS,
-  type ModuleKey, type ProjectAspect,
+  MODULE_DEFS, ALL_MODULE_KEYS, beatDur, nearestBeat,
+  type ModuleKey, type ProjectAspect, type BeatGrid,
 } from '@/lib/editor-types'
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
@@ -693,6 +693,14 @@ export default function VideoEditor({
   const [showSafeAreas, setShowSafeAreas] = useState(false)
   // Project frame shape — sizes the preview stage AND the export canvas
   const [projectAspect, setProjectAspect] = useState<ProjectAspect>(DEFAULT_ASPECT)
+  // Musical beat grid — ruler ticks, snap-to-beat, cut-on-beat tools
+  const [beatGrid, setBeatGrid] = useState<BeatGrid | null>(null)
+  const [detectBpmStatus, setDetectBpmStatus] = useState<'idle' | 'working' | 'error'>('idle')
+  // Full DAW arrangement carried by this project (audio module) — lets the
+  // video editor bounce the real mix without opening the DAW.
+  const dawProjectRef = useRef<import('@/lib/daw-types').DawProject | null>(null)
+  const [hasDawProject, setHasDawProject] = useState(false)
+  const [bounceStatus, setBounceStatus] = useState<'idle' | 'working' | 'error'>('idle')
   const [viewerZoom, setViewerZoom] = useState(1)
   const [showStoryboard, setShowStoryboard] = useState(false)
   const [showVUMeter, setShowVUMeter] = useState(false)
@@ -1050,6 +1058,9 @@ export default function VideoEditor({
       setChapters(loaded.chapters ?? [])
       setMediaItems(resolvedMedia)
       setProjectAspect(loaded.aspect)
+      setBeatGrid(loaded.beatGrid)
+      dawProjectRef.current = cfproj.dawProject ?? null
+      setHasDawProject(!!cfproj.dawProject)
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
 
@@ -1125,7 +1136,7 @@ export default function VideoEditor({
         cloudAutoSaveFnRef.current()
       }, 30_000)
     }
-  }, [timelineItems, tracks, adjustments, projectAspect, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
+  }, [timelineItems, tracks, adjustments, projectAspect, beatGrid, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
   useEffect(() => {
@@ -1598,6 +1609,106 @@ export default function VideoEditor({
     setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, transitionIn: type, transitionDuration: dur } : i))
   }
 
+  // ── Beat grid ───────────────────────────────────────────────
+
+  /** Detect BPM from the selected clip's audio (falls back to the first audio-bearing clip). */
+  async function handleDetectBpm() {
+    const source =
+      (selectedItem?.url && selectedItem.contentType !== 'title' ? selectedItem : null) ??
+      timelineItems.find(i => i.url && (i.contentType === 'audio' || i.contentType === 'video' || !i.contentType)) ??
+      null
+    const url = source?.url ?? mediaItems.find(m => m.url && m.contentType !== 'lut')?.url
+    if (!url) { setDetectBpmStatus('error'); setTimeout(() => setDetectBpmStatus('idle'), 2500); return }
+    setDetectBpmStatus('working')
+    try {
+      const [{ estimateTempo }, ab] = await Promise.all([
+        import('@/lib/beat-analyzer'),
+        fetch(url).then(r => r.arrayBuffer()),
+      ])
+      const ctx = new AudioContext()
+      const buffer = await ctx.decodeAudioData(ab)
+      ctx.close?.().catch(() => {})
+      const { bpm, firstOnset } = estimateTempo(buffer)
+      if (!bpm) throw new Error('no tempo')
+      // Downbeat: align the grid to the first strong onset, mapped to the
+      // timeline through the clip it came from (source ⇒ timeline seconds).
+      const offset = source ? Math.max(0, source.startTime + (firstOnset - source.inPoint)) : firstOnset
+      setBeatGrid(g => ({ beatsPerBar: 4, ...(g ?? {}), bpm, offset }))
+      setDetectBpmStatus('idle')
+    } catch {
+      setDetectBpmStatus('error')
+      setTimeout(() => setDetectBpmStatus('idle'), 2500)
+    }
+  }
+
+  /** Split a clip at every beat (or bar) boundary the grid puts inside it. */
+  function handleSplitAtBeats(id: string, unit: 'beat' | 'bar') {
+    const grid = beatGrid
+    if (!grid) return
+    setTimelineItems(prev => {
+      const clip = prev.find(i => i.id === id)
+      if (!clip) return prev
+      const step = beatDur(grid) * (unit === 'bar' ? (grid.beatsPerBar ?? 4) : 1)
+      const clipStart = clip.startTime
+      const clipEnd = clip.startTime + (clip.outPoint - clip.inPoint)
+      const cuts: number[] = []
+      let k = Math.ceil((clipStart + 0.05 - grid.offset) / step)
+      for (; grid.offset + k * step < clipEnd - 0.05; k++) {
+        const t = grid.offset + k * step
+        if (t > clipStart + 0.05) cuts.push(t)
+      }
+      if (!cuts.length) return prev
+      const segments: TimelineItem[] = []
+      let segStart = clipStart
+      let segIn = clip.inPoint
+      for (const cut of [...cuts, clipEnd]) {
+        const segOut = segIn + (cut - segStart)
+        segments.push({
+          ...clip,
+          id: segments.length === 0 ? clip.id : crypto.randomUUID(),
+          startTime: segStart,
+          inPoint: segIn,
+          outPoint: segOut,
+          // A transition-in belongs to the original head only.
+          transitionIn: segments.length === 0 ? clip.transitionIn : undefined,
+          transitionDuration: segments.length === 0 ? clip.transitionDuration : undefined,
+        })
+        segStart = cut
+        segIn = segOut
+      }
+      return prev.flatMap(i => i.id === id ? segments : [i])
+    })
+  }
+
+  /** Move a clip's start to the nearest beat. */
+  function handleQuantizeToBeat(id: string) {
+    const grid = beatGrid
+    if (!grid) return
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, startTime: nearestBeat(grid, i.startTime) } : i))
+  }
+
+  /** Bounce the project's DAW arrangement to a wav and drop it in the media pool. */
+  async function handleBounceDawMix() {
+    const daw = dawProjectRef.current
+    if (!daw || bounceStatus === 'working') return
+    const clips = (daw.tracks ?? []).flatMap(t => (t as { clips?: Array<{ startBeat: number; durationBeats?: number }> }).clips ?? [])
+    const endBeat = clips.reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
+    if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
+    setBounceStatus('working')
+    try {
+      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+      const blob = await renderProjectAudioBlob(daw, { startBeat: 0, endBeat, userId: user?.id })
+      const file = new File([blob], `${localProjectName || 'Project'} mix.wav`, { type: 'audio/wav' })
+      handleFileImport(file)
+      // The mix defines the musical grid — set it from the DAW tempo.
+      if (daw.tempo) setBeatGrid({ bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
+      setBounceStatus('idle')
+    } catch {
+      setBounceStatus('error')
+      setTimeout(() => setBounceStatus('idle'), 2500)
+    }
+  }
+
   // Blade split: split a clip at a given timeline time
   function handleSplitItem(id: string, atTime: number) {
     setTimelineItems(prev => {
@@ -2045,6 +2156,7 @@ export default function VideoEditor({
       timelineItems,
       adjustments,
       aspect: projectAspect,
+      beatGrid,
       zoomLevel,
       captions: localCaptions,
       outputs: localOutputs,
@@ -2076,6 +2188,7 @@ export default function VideoEditor({
     setLocalOutputs(loaded.outputs)
     setChapters(loaded.chapters ?? [])
     setProjectAspect(loaded.aspect)
+    setBeatGrid(loaded.beatGrid)
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
     if (recovery.source === 'cloud' && projectId) {
@@ -2613,6 +2726,8 @@ export default function VideoEditor({
                 items={mediaItems} selectedId={selectedMediaId}
                 onSelect={setSelectedMediaId}
                 onImport={handleFileImport}
+                onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
+                bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
                 onRemove={(id) => setMediaItems(prev => prev.filter(m => m.id !== id))}
                 onContextMenu={openCtx}
@@ -3010,6 +3125,12 @@ export default function VideoEditor({
             selectedIds={selectedIds}
             onMultiSelect={setSelectedIds}
             mediaItems={mediaItems}
+            beatGrid={beatGrid}
+            onBeatGridChange={setBeatGrid}
+            onDetectBpm={handleDetectBpm}
+            detectBpmStatus={detectBpmStatus}
+            onSplitAtBeats={handleSplitAtBeats}
+            onQuantizeToBeat={handleQuantizeToBeat}
           />
         </>
       )}

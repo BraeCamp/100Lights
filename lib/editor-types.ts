@@ -23,6 +23,28 @@ export function aspectRatioOf(aspect: ProjectAspect | undefined): number {
   }
 }
 
+// ── Beat grid ─────────────────────────────────────────────────
+// Musical grid over the video timeline: the ruler draws beats/bars, snapping
+// includes beat positions, and cut-on-beat tools quantize to it. Constant BPM
+// (v1) — DAW projects with mid-song tempo changes flatten to their base tempo.
+
+export interface BeatGrid {
+  bpm: number          // beats per minute (> 0)
+  offset: number       // seconds where beat 0 / bar 1 falls
+  beatsPerBar?: number // default 4
+}
+
+/** Seconds per beat. */
+export function beatDur(grid: BeatGrid): number {
+  return 60 / Math.max(1, grid.bpm)
+}
+
+/** Nearest beat time (seconds) to `t`, clamped to ≥ 0. */
+export function nearestBeat(grid: BeatGrid, t: number): number {
+  const spb = beatDur(grid)
+  return Math.max(0, grid.offset + Math.round((t - grid.offset) / spb) * spb)
+}
+
 export interface ClipFlag {
   id: string
   color: string
