@@ -726,6 +726,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // Marquee drag shared by Edit (shift+drag select) and Erase (drag erase):
   // draws the rubber-band rect and reports the swept note ids on mouseup.
   function startMarquee(e: React.MouseEvent<HTMLDivElement>, rect: DOMRect, onDone: (ids: Set<string>) => void) {
+    // Suppress the browser's own drag-selection rectangle — without this a
+    // shift-drag drew the native text/element selection box UNDER our marquee,
+    // so two boxes appeared.
+    e.preventDefault()
     selBoxRef.current = { startX: e.clientX - rect.left, startY: e.clientY - rect.top, endX: e.clientX - rect.left, endY: e.clientY - rect.top }
     setSelRect({ x: selBoxRef.current.startX, y: selBoxRef.current.startY, w: 0, h: 0 })
 
