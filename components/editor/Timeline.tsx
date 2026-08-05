@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useLayoutEffect } from 'react'
 import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2, ChevronDown } from 'lucide-react'
 import type { Caption } from '@/lib/types'
 import type { TimelineItem, Track, TransitionType, MediaItem } from '@/lib/editor-types'
@@ -160,6 +160,25 @@ export default function Timeline({
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   useEffect(() => { playbackRateRef.current = playbackRate }, [playbackRate])
 
+  // Zoom-to-playhead: when the zoom (pps) changes, keep an anchor point pinned
+  // to its on-screen position instead of letting the whole timeline slide out
+  // from under the cursor. Anchor = playhead if it's visible, else the viewport
+  // centre. Runs before paint so there's no visible jump.
+  const prevPpsRef = useRef(pps)
+  useLayoutEffect(() => {
+    const el = trackAreaRef.current
+    const prev = prevPpsRef.current
+    if (!el || prev === pps) { prevPpsRef.current = pps; return }
+    const phAbsOld  = LABEL_WIDTH + currentTime * prev
+    const phVisible = phAbsOld >= el.scrollLeft && phAbsOld <= el.scrollLeft + el.clientWidth
+    const anchorOld = phVisible ? phAbsOld : el.scrollLeft + el.clientWidth / 2
+    const screenX   = anchorOld - el.scrollLeft                    // keep this fixed
+    const anchorT   = (anchorOld - LABEL_WIDTH) / prev
+    const anchorNew = LABEL_WIDTH + anchorT * pps
+    el.scrollLeft = Math.max(0, anchorNew - screenX)
+    prevPpsRef.current = pps
+  }, [pps]) // eslint-disable-line
+
   // (close-outside is handled by the backdrop div rendered when showAddMenu is true)
 
   // Sync anchor whenever the parent delivers a new currentTime (video timeupdate / seek).
@@ -170,6 +189,7 @@ export default function Timeline({
   // RAF loop — interpolates playhead position at display refresh rate.
   useEffect(() => {
     let rafId: number
+    let frame = 0
 
     function applyX(x: number) {
       if (phLineRef.current)  phLineRef.current.style.transform  = `translateX(${x}px)`
@@ -184,7 +204,24 @@ export default function Timeline({
       const effect = syncRef.current
       const { time, wall } = (direct && direct.wall >= effect.wall) ? direct : effect
       const elapsed = isPlayingRef.current ? (performance.now() - wall) / 1000 : 0
-      applyX((time + elapsed * playbackRateRef.current) * ppsRef.current)
+      const px = (time + elapsed * playbackRateRef.current) * ppsRef.current
+      applyX(px)
+
+      // Follow the playhead during playback: when it drifts out of the visible
+      // band, recenter so it sits ~15% in from the left with a full viewport of
+      // lookahead. Gated to playback (never fights manual scroll/scrub) and
+      // sampled every 5th frame to avoid a forced reflow every frame.
+      if (isPlayingRef.current && frame++ % 5 === 0) {
+        const el = trackAreaRef.current
+        if (el) {
+          const abs    = LABEL_WIDTH + px           // playhead x in scroll-content coords
+          const cw     = el.clientWidth
+          const margin = 60
+          if (abs < el.scrollLeft + margin || abs > el.scrollLeft + cw - margin) {
+            el.scrollLeft = Math.max(0, abs - cw * 0.15)
+          }
+        }
+      }
       rafId = requestAnimationFrame(tick)
     }
 
