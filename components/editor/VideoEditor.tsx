@@ -13,6 +13,7 @@ import Timeline from '@/components/editor/Timeline'
 import MediaLibrary from '@/components/editor/MediaLibrary'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { saveProject } from '@/lib/project-store'
+import { projectPath } from '@/lib/project-url'
 import type { LutData } from '@/lib/lut-parser'
 
 // Heavy panels — loaded on demand so the initial editor paint is fast
@@ -426,7 +427,10 @@ export default function VideoEditor({
 
   function navigateToProject(slug: string, username?: string | null) {
     const uname = username ?? ownerUsername()
-    if (uname && slug) router.replace(`/${uname}/${slug}`)
+    // Canonical vanity URL is `/@user/slug-code` (see lib/project-url). Building
+    // `/${uname}/${slug}` by hand dropped the @ and the -code, so the route's
+    // resolver 404'd on reload. projectPath() adds both.
+    if (uname && slug && projectId) router.replace(projectPath(uname, slug, projectId))
   }
 
   const videoRef      = useRef<HTMLVideoElement | null>(null)
