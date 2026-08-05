@@ -1134,7 +1134,9 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Start closed so the rail (logo + toggle) is all that shows on load; the
+  // open/hide button reveals the panel on demand rather than it always being there.
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showAppearance, setShowAppearance] = useState(false)
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
   const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })

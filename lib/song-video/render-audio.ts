@@ -1,7 +1,11 @@
 import { DawEngine } from '@/lib/daw-engine'
 import type { DawProject } from '@/lib/daw-types'
 import { initLibrary } from '@/lib/sound-library'
-import { seedDefaultSamples } from '@/lib/default-samples'
+import {
+  seedDefaultSamples,
+  seedKeyboardNotes, seedRealInstruments, seedBass, seedStrings,
+  seedBrass, seedWind, seedDarkwave, seedDarkKit, seedArp, seedFx, seedPercussion,
+} from '@/lib/default-samples'
 import { combinePresets } from '@/lib/midi-presets'
 import { tempoSegments, beatToSeconds } from '@/lib/tempo-map'
 import { encodeWav16 } from './wav16'
@@ -18,6 +22,18 @@ export async function renderProjectAudioBlob(
 ): Promise<Blob> {
   initLibrary(opts.userId ?? null)
   await seedDefaultSamples().catch(() => {})
+  // seedDefaultSamples() fires the multisample instrument folders (Rhodes/EP/
+  // pad/bass/strings/brass/…) off WITHOUT awaiting them, to keep normal app load
+  // fast. But the offline bounce runs a single synchronous scheduling pass, so
+  // any preset whose library folder isn't populated yet resolves to a null
+  // buffer and every one of its notes is silently skipped — which is why only
+  // the (synth) drums came through. Await the seeds here so the whole mix is
+  // present before we render. Idempotent: already-seeded folders return fast.
+  await Promise.all([
+    seedKeyboardNotes(), seedRealInstruments(), seedBass(), seedStrings(),
+    seedBrass(), seedWind(), seedDarkwave(), seedDarkKit(), seedArp(),
+    seedFx(), seedPercussion(),
+  ].map(p => p.catch(() => {})))
 
   // Size the offline context to the window's exact duration through the tempo map.
   const segs = tempoSegments(project)
