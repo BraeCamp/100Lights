@@ -151,7 +151,7 @@ function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
         display: 'flex', alignItems: 'center', gap: 5,
         fontSize: 10, height: 24, padding: '0 8px', borderRadius: 5,
         border: '1px solid var(--border)',
-        background: 'rgb(var(--accent-rgb) / 0.08)', color: '#7ab4f5',
+        background: 'rgb(var(--accent-rgb) / 0.08)', color: 'var(--accent-light)',
         cursor: busy ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
       }}
     >

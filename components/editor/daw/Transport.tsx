@@ -601,7 +601,9 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     ...base,
     background: 'var(--accent)',
     border: '1px solid var(--accent)',
-    color: '#fff',
+    // Auto-contrast: the theme sets --accent-contrast to black on a light accent
+    // and white on a dark one, so a selected button's icon stays legible.
+    color: 'var(--accent-contrast)',
   }
 
   const divider: React.CSSProperties = {
@@ -693,7 +695,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         )}
 
         <button
-          style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgb(var(--accent-rgb) / 0.7)', color: '#7ab4f5' } : base}
+          style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgb(var(--accent-rgb) / 0.7)', color: 'var(--accent-light)' } : base}
           onClick={handleLoopToggle}
           onDoubleClick={handleLoopFullSpan}
           title="Loop — click, then drag across the timeline to set the region. Double-click to loop the whole project."
@@ -846,7 +848,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       )}
 
       <button
-        style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgb(var(--accent-rgb) / 0.7)', color: '#7ab4f5' } : base}
+        style={project.loopEnabled ? active : loopToolArmed ? { ...base, border: '1px solid rgb(var(--accent-rgb) / 0.7)', color: 'var(--accent-light)' } : base}
         onClick={handleLoopToggle}
         onDoubleClick={handleLoopFullSpan}
         title="Loop — click, then drag across the timeline to set the region. Double-click to loop the whole project."
@@ -1104,7 +1106,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           fontSize: 12,
           background: showTuner ? 'var(--accent)' : '#1e1e1e',
           border: showTuner ? '1px solid var(--accent)' : '1px solid var(--border)',
-          color: showTuner ? '#fff' : 'var(--text-secondary)',
+          color: showTuner ? 'var(--accent-contrast)' : 'var(--text-secondary)',
         }}
       >
         ♩
