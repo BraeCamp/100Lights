@@ -14,7 +14,8 @@ import { consumeStudioSeed } from '@/lib/open-in-studio'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Home, Code2 } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Code2, PanelLeft } from 'lucide-react'
+import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
 import { DawEngine } from '@/lib/daw-engine'
@@ -1588,22 +1589,36 @@ export default function AudioEditor(props: AudioEditorProps) {
               background: 'var(--bg-surface)',
               borderRight: sidebarOpen ? '1px solid var(--border)' : 'none',
             }}>
-              {/* Home — back to the projects page */}
+              {/* Logo — takes the user straight home */}
               <a
-                href="/projects"
-                title="Back to projects"
+                href="/dashboard"
+                title="Home"
                 data-help-id="home"
                 style={{
-                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0,
+                  width: 28, height: 28, marginBottom: 4, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none',
+                }}
+              >
+                <LogoMark size={22} />
+              </a>
+              {/* Opens/closes the dashboard sidebar; opening defaults to the Sound Library */}
+              <button
+                onClick={() => setSidebarOpen(v => { const next = !v; if (next && !isPodcast) setLeftTab('library'); return next })}
+                title={sidebarOpen ? 'Hide sidebar' : 'Open sidebar'}
+                aria-expanded={sidebarOpen}
+                data-help-id="toggle-sidebar"
+                style={{
+                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, border: 'none', cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: 'var(--text-muted)', textDecoration: 'none',
+                  background: sidebarOpen ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
+                  color: sidebarOpen ? 'var(--accent)' : 'var(--text-muted)',
                   transition: 'background 0.12s, color 0.12s',
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+                onMouseEnter={e => { if (!sidebarOpen) { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' } }}
+                onMouseLeave={e => { if (!sidebarOpen) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' } }}
               >
-                <Home size={15} />
-              </a>
+                <PanelLeft size={15} />
+              </button>
               {!isPodcast ? (
                 ([
                   { tab: 'library', Icon: Library, label: 'Sound Library',                     help: 'sound-library' },

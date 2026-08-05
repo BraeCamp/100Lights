@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FolderOpen, Settings, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Library } from 'lucide-react'
+import { LayoutDashboard, FolderOpen, Settings, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Library, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
@@ -60,12 +60,9 @@ export default function Sidebar() {
   }, [])
 
   const isPro = usage?.plan === 'pro'
-  // Inside an open project the sidebar has no matching route, so default its
-  // active section to the Sound Library — the sidebar "opens on" samples.
-  const inProject = pathname.startsWith('/projects/') && pathname !== '/projects'
 
-  function navLink(href: string, label: string, Icon: React.ComponentType<{ size?: number; color?: string }>, forceActive = false) {
-    const active = pathname === href || forceActive
+  function navLink(href: string, label: string, Icon: React.ComponentType<{ size?: number; color?: string }>) {
+    const active = pathname === href
     return (
       <Link
         key={href}
@@ -92,25 +89,35 @@ export default function Sidebar() {
       aria-label="Application sidebar"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
     >
-      {/* The home logo doubles as the open/close toggle — shifts right on
-          Electron/Mac to clear the traffic lights. (Home itself is reachable
-          from the Home item in the nav below.) */}
+      {/* Home + collapse toggle — shifts right on Electron/Mac to clear traffic lights */}
       <div
         className={isElectronMac ? 'electron-drag' : undefined}
-        style={{ borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', paddingTop: 16, paddingBottom: 16, paddingLeft: isElectronMac ? 80 : (collapsed ? 12 : 20), paddingRight: 12 }}
+        style={{ borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, paddingTop: 16, paddingBottom: 16, paddingLeft: isElectronMac ? 80 : (collapsed ? 12 : 20), paddingRight: 12 }}
       >
-        <button
-          onClick={toggleCollapsed}
-          aria-label={collapsed ? 'Open sidebar' : 'Collapse sidebar'}
-          aria-expanded={!collapsed}
-          title={collapsed ? 'Open sidebar' : 'Collapse sidebar'}
+        <Link
+          href={isElectron ? '/launcher' : '/dashboard'}
+          title="Home"
           className={isElectronMac ? 'electron-nodrag' : undefined}
-          style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', flex: 1, minWidth: 0, justifyContent: collapsed ? 'center' : 'flex-start' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flex: 1, minWidth: 0, justifyContent: collapsed ? 'center' : 'flex-start' }}
         >
           <LogoMark size={26} />
           {!collapsed && <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text-primary)' }}>100Lights</span>}
-        </button>
+        </Link>
+        {!collapsed && (
+          <button onClick={toggleCollapsed} aria-label="Collapse sidebar" title="Collapse"
+            className="electron-nodrag"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+            <ChevronsLeft size={16} />
+          </button>
+        )}
       </div>
+      {collapsed && (
+        <button onClick={toggleCollapsed} aria-label="Expand sidebar" title="Expand"
+          className="electron-nodrag"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 30, margin: '6px 8px 0', borderRadius: 7, border: 'none', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <ChevronsRight size={16} />
+        </button>
+      )}
 
       <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5 overflow-y-auto" aria-label="Main navigation">
         {/* Workspace */}
@@ -121,7 +128,7 @@ export default function Sidebar() {
         )}
         {navLink(isElectron ? '/launcher' : '/dashboard', 'Home', LayoutDashboard)}
         {navLink('/projects', 'All Projects', FolderOpen)}
-        {navLink('/library', 'Sound Library', Library, inProject)}
+        {navLink('/library', 'Sound Library', Library)}
 
         {/* Apps */}
         {!collapsed && (
