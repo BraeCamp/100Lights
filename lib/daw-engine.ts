@@ -3497,7 +3497,11 @@ export class DawEngine extends EventTarget {
       }
     }
 
-    const CONCURRENCY = 4
+    // Preset-note decodes render into their OWN OfflineAudioContexts (which don't
+    // count against the browser's ~6 live *real* AudioContext cap — soundfonts now
+    // share one decode context), so we can fan out wider than the old bound of 4
+    // to use more cores and shorten the one-time full-song bounce.
+    const CONCURRENCY = 8
     let next = 0
     const worker = async () => {
       while (next < thunks.length) {

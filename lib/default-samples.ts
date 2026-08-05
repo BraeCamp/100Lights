@@ -313,12 +313,32 @@ export async function renderSoundfont(
  *  the seeded sample range so any instrument can play any note. Synth voices
  *  synthesize the exact note; soundfont voices pitch-shift the nearest sample.
  *  (Fixes narrow-range presets like Synth Lead clamping high notes to C5.) */
-export async function renderPresetAtPitch(spec: RenderSpec, pitch: number): Promise<AudioBuffer | null> {
+// Cross-render cache of rendered preset notes. renderPresetAtPitch is
+// deterministic for a given (spec, pitch), and AudioBuffers aren't bound to a
+// context, so a note decoded for one bounce can be reused by the next — the
+// per-engine _presetBufCache is cold on every render, so this is what makes a
+// re-render (e.g. after the maker clears an unsaved bounce) fast. Bounded so a
+// long session can't grow it without limit; entries are tiny (one short note).
+const _presetRenderCache = new Map<string, AudioBuffer | null>()
+const PRESET_CACHE_MAX = 3000
+async function renderPresetAtPitchInner(spec: RenderSpec, pitch: number): Promise<AudioBuffer | null> {
   try {
     if (spec.kind === 'soundfont' && spec.soundfontUrl) return await renderSoundfont(spec.soundfontUrl, pitch)
     if (spec.kind === 'melodic') return await renderMelodic(spec.beatType as BeatType, pitch, spec.duration, spec.channels ?? 2)
   } catch { /* fall through to null */ }
   return null
+}
+
+export async function renderPresetAtPitch(spec: RenderSpec, pitch: number): Promise<AudioBuffer | null> {
+  const key = `${spec.kind}|${spec.soundfontUrl ?? spec.beatType ?? ''}|${spec.midiNote ?? ''}|${spec.duration ?? ''}|${spec.channels ?? ''}|${pitch}`
+  const hit = _presetRenderCache.get(key)
+  if (hit !== undefined) return hit
+  const buf = await renderPresetAtPitchInner(spec, pitch)
+  if (buf) {   // only cache successful renders; a null may be a transient fetch failure worth retrying
+    if (_presetRenderCache.size >= PRESET_CACHE_MAX) _presetRenderCache.delete(_presetRenderCache.keys().next().value!)
+    _presetRenderCache.set(key, buf)
+  }
+  return buf
 }
 
 // ── Note tag helpers ──────────────────────────────────────────────────────────
