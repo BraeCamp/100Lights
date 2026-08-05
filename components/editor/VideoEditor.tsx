@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
@@ -1863,6 +1863,26 @@ export default function VideoEditor({
     handleSeek(newItem.startTime)
   }
 
+  // Insert a text/title clip at the playhead (the title system was fully built —
+  // model, Inspector editor, renderer — but had no way to create one).
+  function addTitleClip() {
+    const track = tracks.find(t => t.type === 'media' || t.type === 'video') ?? tracks[0]
+    const trackId = track?.id ?? 'v1'
+    const at = currentTimeRef.current
+    const newItem: TimelineItem = {
+      id: crypto.randomUUID(),
+      label: 'Title',
+      startTime: at, inPoint: 0, outPoint: 3,
+      captions: [], color: CLIP_COLORS[timelineItems.length % CLIP_COLORS.length],
+      trackId, contentType: 'title',
+      titleText: 'Your title', titleFontSize: 48, titleColor: '#ffffff',
+      titleBg: 'transparent', titlePosition: 'center', titleAnimation: 'fade',
+    }
+    setTimelineItems(prev => [...prev, newItem])
+    setSelectedId(newItem.id)
+    handleSeek(at)
+  }
+
   async function handleDropMedia(mediaId: string, trackId: string, startTime: number) {
     const media = mediaItems.find(m => m.id === mediaId)
     if (!media) return
@@ -2357,6 +2377,18 @@ export default function VideoEditor({
           </button>
         </div>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
+
+        {/* Insert a title/text clip */}
+        {activePage === 'edit' && (
+          <button
+            onClick={addTitleClip}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+            title="Add a text / title clip at the playhead"
+            style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+          >
+            <Type size={12} /> Title
+          </button>
+        )}
 
         {/* Tool selector — only relevant on Edit page */}
         {activePage === 'edit' && (
