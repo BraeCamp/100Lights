@@ -42,6 +42,23 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   const audioRef = useRef<HTMLAudioElement>(null)
   const instRef = useRef<ReturnType<typeof mountSongVideo> | null>(null)
   const playingRef = useRef(false)
+  // Persistent Web Audio graph on the <audio> element: source → analyser →
+  // (speakers + a capture stream). Created once (a MediaElementSource can only be
+  // made once per element) and reused across remounts; feeds audio-reactive formats.
+  const audioGraphRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; capture: MediaStreamAudioDestinationNode } | null>(null)
+  function ensureAudioGraph() {
+    if (audioGraphRef.current || !audioRef.current) return audioGraphRef.current
+    try {
+      const ACtor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const ctx = new ACtor()
+      const src = ctx.createMediaElementSource(audioRef.current)
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.82
+      const capture = ctx.createMediaStreamDestination()
+      src.connect(analyser); analyser.connect(ctx.destination); analyser.connect(capture)
+      audioGraphRef.current = { ctx, analyser, capture }
+    } catch { /* already connected or unsupported */ }
+    return audioGraphRef.current
+  }
 
   // Real project audio (bounced for the current section) — when set, the video
   // uses the actual mix instead of the preview synth.
@@ -116,6 +133,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
       // With a project we ONLY ever play the real bounced mix — no synth, ever.
       // (Without one — no real-mix source — the synth is the only preview.)
       synth: !dawProject,
+      analyser: audioGraphRef.current?.analyser ?? null,
     })
     instRef.current = inst
     if (playingRef.current) inst.play()
@@ -150,18 +168,15 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
   function toggle() {
     const i = instRef.current; if (!i) return
     if (playing) { i.pause(); setPlaying(false); playingRef.current = false }
-    else { if (waiting) return; i.play(); setPlaying(true); playingRef.current = true } // no play until the real mix is ready
+    else { if (waiting) return; audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true } // no play until the real mix is ready
   }
 
   async function recordBlob(): Promise<Blob | null> {
     const i = instRef.current, canvas = canvasRef.current; if (!i || !canvas) return null
-    setStatus('Recording…'); i.play(); setPlaying(true); playingRef.current = true
+    setStatus('Recording…'); audioGraphRef.current?.ctx.resume?.(); i.play(); setPlaying(true); playingRef.current = true
     const v = canvas.captureStream(30)
-    // With real audio, capture the <audio> element's output; otherwise the synth.
-    const mediaEl = audioRef.current as (HTMLAudioElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream }) | null
-    const a = realUrl && mediaEl && (mediaEl.captureStream || mediaEl.mozCaptureStream)
-      ? (mediaEl.captureStream ? mediaEl.captureStream() : mediaEl.mozCaptureStream!())
-      : i.getAudioStream()
+    // With real audio, capture the analyser graph's output; otherwise the synth.
+    const a = realUrl && audioGraphRef.current ? audioGraphRef.current.capture.stream : i.getAudioStream()
     const stream = new MediaStream([...v.getVideoTracks(), ...(a ? a.getAudioTracks() : [])])
     const prefer = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
     const mime = prefer.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
@@ -239,7 +254,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
     for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c).subarray(startSamp, startSamp + lenSamp))
     const wav = encodeWav16(chans, sr)
     const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
-    if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load() }
+    if (audioRef.current) { audioRef.current.src = url; audioRef.current.loop = true; audioRef.current.load(); ensureAudioGraph() }
     setRealUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
   }
 
