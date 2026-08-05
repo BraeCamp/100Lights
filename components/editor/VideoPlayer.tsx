@@ -7,6 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
 import { captionWords } from '@/lib/captions'
+import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt } from '@/lib/video-export/speed'
 import { getLutGL } from '@/lib/video-export/lut-gl'
 import type { LutData } from '@/lib/lut-parser'
@@ -813,6 +814,9 @@ export default function VideoPlayer({
   const cs = clipTransform
   const clipStyle = buildClipStyle(cs)
   const stage = stageDims(projectAspect, monitorSize.w, monitorSize.h)
+  // On bucket-allowlisted origins, load media with CORS so pixel features
+  // (scopes/LUT/blend/flow) read frames without the blob-localize fallback.
+  const corsAttr = r2CorsEligible() ? ('anonymous' as const) : undefined
   const vignette = adjustments?.vignette ?? 0
 
   // Style for each pool <video>, including transition-in compositing. Mirrors
@@ -891,6 +895,7 @@ export default function VideoPlayer({
               key={layer.id}
               ref={el => { if (el) layerPoolRef.current.set(layer.id, el); else layerPoolRef.current.delete(layer.id) }}
               src={layer.src}
+              crossOrigin={corsAttr}
               muted playsInline preload="auto"
               style={{
                 position: 'absolute', inset: 0,
@@ -930,6 +935,7 @@ export default function VideoPlayer({
             <video
               ref={transPrevElRef}
               src={transition.prevSrc}
+              crossOrigin={corsAttr}
               muted playsInline preload="auto"
               style={{
                 position: 'absolute', inset: 0,
@@ -1013,6 +1019,7 @@ export default function VideoPlayer({
               key={s}
               ref={el => setPoolRef(s, el)}
               src={s}
+              crossOrigin={corsAttr}
               preload="auto"
               playsInline
               style={poolStyle(s)}

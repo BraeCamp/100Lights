@@ -35,6 +35,7 @@ import {
 } from '@/lib/editor-types'
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
+import { r2CorsEligible } from '@/lib/media-cors'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
 import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
@@ -896,6 +897,9 @@ export default function VideoEditor({
   const localizedUrlsRef = useRef<Map<string, string | 'pending'>>(new Map())
   const pixelFeatureActive = showColorScopes || frameBlendEnabled || opticalFlowEnabled || !!activeLut
   useEffect(() => {
+    // On bucket-allowlisted origins the elements load with crossOrigin and
+    // frames are readable directly — no download needed.
+    if (r2CorsEligible()) return
     const url = viewerClip?.url
     if (!pixelFeatureActive || !url) return
     if (url.startsWith('blob:') || url.startsWith('data:')) return
