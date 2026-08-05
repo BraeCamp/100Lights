@@ -3098,6 +3098,13 @@ export class DawEngine extends EventTarget {
       fresh.connect(nodes.effectsInput)
       nodes.midiInput = fresh
     }
+
+    // Cached per-clip FX chains (shared reverb/delay/EQ graphs) were built wired
+    // to the midiInput buses we just swapped away — leaving them cached would
+    // route every note scheduled after this point into the dead old bus (silent).
+    // Tear them down so the next note rebuilds against the fresh midiInput. This
+    // is the loop-wrap / seek counterpart to stop()'s _clearClipFxChains().
+    this._clearClipFxChains()
   }
 
   clearStretchedCache(clipId?: string) {
