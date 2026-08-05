@@ -145,9 +145,21 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
     const p = pool[Math.floor(Math.random() * pool.length)]
     lastDiceRef.current = p.id
     setPatternSel('')
-    const dur = Math.max(clip.durationBeats, p.bars * beatsPerBar)
-    // Humanise velocities a touch so the dice feels alive, not stamped.
-    const notes = patternToNotes(p).map(nt => ({ ...nt, velocity: Math.max(55, Math.min(127, nt.velocity + Math.round((Math.random() - 0.5) * 26))) }))
+    const patLen = Math.max(1, p.bars * beatsPerBar)
+    const dur = Math.max(clip.durationBeats, patLen)
+    // Tile the groove across the WHOLE track item (not just the first bar),
+    // humanising each repetition independently so a long clip feels alive
+    // rather than one stamped loop.
+    const humanize = (v: number) => Math.max(55, Math.min(127, v + Math.round((Math.random() - 0.5) * 26)))
+    const base = patternToNotes(p)
+    const notes: typeof base = []
+    for (let off = 0; off < dur - 1e-6; off += patLen) {
+      for (const nt of base) {
+        const startBeat = nt.startBeat + off
+        if (startBeat >= dur - 1e-6) continue
+        notes.push({ ...nt, id: crypto.randomUUID(), startBeat, velocity: humanize(nt.velocity) })
+      }
+    }
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes, durationBeats: dur } })
   }
   function saveKit() {
