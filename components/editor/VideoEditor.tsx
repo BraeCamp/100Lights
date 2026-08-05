@@ -708,6 +708,12 @@ export default function VideoEditor({
   const [bounceStatus, setBounceStatus] = useState<'idle' | 'working' | 'error'>('idle')
   // Set during load when the saved audio is newer than the linked mix bounce
   const pendingMixRefreshRef = useRef<string | null>(null)
+  // DAW tracks that carry clips — the link picker's options
+  const [dawTracks, setDawTracks] = useState<Array<{ id: string; name: string }>>([])
+  function deriveDawTracks(daw: import('@/lib/daw-types').DawProject): Array<{ id: string; name: string }> {
+    const withClips = new Set((daw.arrangementClips ?? []).map(c => c.trackId))
+    return daw.tracks.filter(t => withClips.has(t.id)).map(t => ({ id: t.id, name: t.name || 'Track' }))
+  }
   const [viewerZoom, setViewerZoom] = useState(1)
   const [showStoryboard, setShowStoryboard] = useState(false)
   const [showVUMeter, setShowVUMeter] = useState(false)
@@ -1112,6 +1118,7 @@ export default function VideoEditor({
       setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
       dawProjectRef.current = cfproj.dawProject ?? null
       setHasDawProject(!!cfproj.dawProject)
+      setDawTracks(cfproj.dawProject ? deriveDawTracks(cfproj.dawProject) : [])
       // Linked DAW mix older than the audio module's last save → auto-refresh.
       {
         const audioAt = cfproj.moduleSavedAt?.audio
@@ -1747,28 +1754,72 @@ export default function VideoEditor({
   }
 
   /**
-   * Bounce the project's DAW arrangement to a wav as the LINKED mix track.
-   * First run creates a "DAW" audio track with one linked clip; later runs
-   * (manual button, stale-on-load, live edits arriving over the collab room)
-   * re-render and swap the same clip's media in place.
+   * Bounce the DAW arrangement — or a single DAW track (a stem) — to a wav as
+   * a LINKED clip. The first bounce of a selection creates its own audio track
+   * and clip; later runs (manual, stale-on-load, live edits over the collab
+   * room) re-render each linked selection and swap the media in place. Stems
+   * always render the FULL arrangement window, so every linked clip stays
+   * time-aligned with every other and with the full mix.
    */
+  const sameSel = (a?: string[], b?: string[]) => [...(a ?? [])].sort().join(',') === [...(b ?? [])].sort().join(',')
   const dawMixBusyRef = useRef(false)
-  async function refreshDawMix(stamp?: string) {
+
+  async function refreshDawMix(trackIds?: string[], stamp?: string) {
     const daw = dawProjectRef.current
     if (!daw || dawMixBusyRef.current) return
+    dawMixBusyRef.current = true
+    try {
+      await renderDawSelection(daw, trackIds, stamp ?? new Date().toISOString())
+    } finally {
+      dawMixBusyRef.current = false
+    }
+  }
+
+  /** Re-render EVERY linked selection (live edits, stale-on-load). */
+  async function refreshAllDawMixes(stamp?: string) {
+    const daw = dawProjectRef.current
+    if (!daw || dawMixBusyRef.current) return
+    const selections: Array<string[] | undefined> = []
+    for (const i of timelineItemsRef.current) {
+      if (i.dawMixLinked && !selections.some(s => sameSel(s, i.dawMixTracks))) selections.push(i.dawMixTracks)
+    }
+    if (!selections.length) return
+    dawMixBusyRef.current = true
+    const stampVal = stamp ?? new Date().toISOString()
+    try {
+      for (const sel of selections) await renderDawSelection(daw, sel, stampVal)
+    } finally {
+      dawMixBusyRef.current = false
+    }
+  }
+
+  async function renderDawSelection(daw: import('@/lib/daw-types').DawProject, trackIds: string[] | undefined, stampVal: string) {
+    // The window always spans the FULL arrangement so stems stay aligned.
     const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
     if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
-    dawMixBusyRef.current = true
     setBounceStatus('working')
     try {
+      const isStem = !!trackIds?.length
+      const source = isStem ? {
+        ...daw,
+        // Clip filter isolates the stem; muting the rest is belt-and-braces.
+        arrangementClips: (daw.arrangementClips ?? []).filter(c => trackIds!.includes(c.trackId)),
+        tracks: daw.tracks.map(t => trackIds!.includes(t.id) ? t : { ...t, mute: true }),
+      } : daw
+      const stemNames = isStem
+        ? daw.tracks.filter(t => trackIds!.includes(t.id)).map(t => t.name || 'Track')
+        : []
+      const label = isStem
+        ? `DAW: ${stemNames.slice(0, 2).join(' + ')}${stemNames.length > 2 ? ` +${stemNames.length - 2}` : ''}`
+        : 'DAW Mix'
+
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-      const blob = await renderProjectAudioBlob(daw, { startBeat: 0, endBeat, userId: user?.id })
-      const file = new File([blob], `${localProjectName || 'Project'} mix.wav`, { type: 'audio/wav' })
+      const blob = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
+      const file = new File([blob], `${localProjectName || 'Project'} ${isStem ? stemNames.join('+') : 'mix'}.wav`, { type: 'audio/wav' })
       const url = URL.createObjectURL(file)
       const dur = await readDuration(url, 'audio')
-      const stampVal = stamp ?? new Date().toISOString()
 
-      const linked = timelineItemsRef.current.find(i => i.dawMixLinked)
+      const linked = timelineItemsRef.current.find(i => i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))
       if (linked) {
         // Replace in place: same media item, same clip — new audio.
         const media = mediaItemsRef.current.find(m => m.url === linked.url)
@@ -1780,7 +1831,7 @@ export default function VideoEditor({
           uploadMediaToR2(file, media.id)
         }
         setTimelineItems(prev => prev.map(i => {
-          if (!i.dawMixLinked) return i
+          if (!(i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))) return i
           // Untrimmed clips follow the new mix length; trimmed ones just clamp.
           const wasFull = i.inPoint === 0 && (!media?.duration || Math.abs((i.outPoint - i.inPoint) - media.duration) < 0.05)
           return {
@@ -1792,22 +1843,21 @@ export default function VideoEditor({
         }))
         if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl)
       } else {
-        // First bounce: dedicated audio track + linked clip spanning the mix.
+        // First bounce of this selection: its own audio track + linked clip.
         const mediaId = crypto.randomUUID()
         setMediaItems(prev => [...prev, { id: mediaId, name: file.name, contentType: 'audio', url, file, duration: dur, uploadStatus: 'uploading' }])
         uploadMediaToR2(file, mediaId)
-        let trackId = tracksRef.current.find(t => t.type === 'audio' && t.label === 'DAW')?.id
-        if (!trackId) {
-          trackId = crypto.randomUUID()
-          setTracks(prev => [...prev, { id: trackId!, label: 'DAW', type: 'audio', height: AUDIO_TRACK_HEIGHT }])
-        }
+        const trackLabel = isStem ? (stemNames[0] ?? 'DAW').slice(0, 8) : 'DAW'
+        const trackId = crypto.randomUUID()
+        setTracks(prev => [...prev, { id: trackId, label: trackLabel, type: 'audio', height: AUDIO_TRACK_HEIGHT }])
         setTimelineItems(prev => [...prev, {
           id: crypto.randomUUID(),
-          label: 'DAW Mix',
+          label,
           startTime: 0, inPoint: 0, outPoint: dur,
           captions: [], color: '#3b82f6',
-          trackId: trackId!, url, contentType: 'audio',
+          trackId, url, contentType: 'audio',
           dawMixLinked: true, dawMixStamp: stampVal,
+          dawMixTracks: trackIds?.length ? [...trackIds] : undefined,
         }])
       }
       computeAudioPeaks(url).then(peaks => {
@@ -1820,13 +1870,12 @@ export default function VideoEditor({
     } catch {
       setBounceStatus('error')
       setTimeout(() => setBounceStatus('idle'), 2500)
-    } finally {
-      dawMixBusyRef.current = false
     }
   }
-  const refreshDawMixRef = useRef(refreshDawMix)
-  refreshDawMixRef.current = refreshDawMix
-  function handleBounceDawMix() { void refreshDawMix() }
+
+  const refreshAllDawMixesRef = useRef(refreshAllDawMixes)
+  refreshAllDawMixesRef.current = refreshAllDawMixes
+  function handleBounceDawMix(trackIds?: string[]) { void refreshDawMix(trackIds) }
 
   // Live audio→video: edits arriving over the project's collab room update the
   // DawProject replica immediately; the actual re-bounce debounces behind the
@@ -1835,11 +1884,12 @@ export default function VideoEditor({
   function handleLiveDawProject(project: import('@/lib/daw-types').DawProject, live: boolean) {
     dawProjectRef.current = project
     setHasDawProject(true)
+    setDawTracks(deriveDawTracks(project))
     if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
     liveMixTimerRef.current = setTimeout(() => {
-      // Only auto-render when the mix is linked (or adopting fresher joined
-      // state with a linked clip) — a project that never bounced stays manual.
-      if (timelineItemsRef.current.some(i => i.dawMixLinked)) void refreshDawMixRef.current()
+      // Only auto-render when a mix is linked (or adopting fresher joined
+      // state with linked clips) — a project that never bounced stays manual.
+      if (timelineItemsRef.current.some(i => i.dawMixLinked)) void refreshAllDawMixesRef.current()
     }, live ? 2500 : 1200)
   }
 
@@ -1848,7 +1898,7 @@ export default function VideoEditor({
     if (!pendingMixRefreshRef.current || !hasDawProject) return
     const stamp = pendingMixRefreshRef.current
     pendingMixRefreshRef.current = null
-    void refreshDawMixRef.current(stamp)
+    void refreshAllDawMixesRef.current(stamp)
   }, [hasDawProject]) // eslint-disable-line
 
   // Blade split: split a clip at a given timeline time
@@ -2871,6 +2921,7 @@ export default function VideoEditor({
                 onSelect={setSelectedMediaId}
                 onImport={handleFileImport}
                 onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
+                dawTracks={dawTracks}
                 bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
                 onRemove={(id) => setMediaItems(prev => prev.filter(m => m.id !== id))}
