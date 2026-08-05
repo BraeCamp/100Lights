@@ -3454,20 +3454,45 @@ export class DawEngine extends EventTarget {
   /** Await every sample / preset / poly buffer this project needs, so an offline
    *  render (one synchronous pass) never drops a note whose buffer wasn't ready. */
   private async _preloadAll(): Promise<void> {
-    const jobs: Promise<unknown>[] = []
-    for (const clip of this._clips) jobs.push(Promise.resolve(this.loadClipBuffer(clip)))
+    // Collect THUNKS (not started promises) so we can throttle them. Fulfilling a
+    // sampled/soundfont preset note spins up a real AudioContext per note (see
+    // renderSoundfont); firing every note at once blows past the browser's
+    // ~6-live-context limit, so most sampled instruments throw, resolve to a null
+    // buffer, and get silently dropped from the bounce — which is why an offline
+    // render of a sample-heavy song came out as drums only. Studio playback never
+    // hit this because notes load gradually. Run the jobs through a small pool.
+    const thunks: Array<() => Promise<unknown>> = []
+    for (const clip of this._clips) thunks.push(() => Promise.resolve(this.loadClipBuffer(clip)))
     for (const clip of this._midiClips) {
-      if (!clip.presetId) continue
+      const presetId = clip.presetId
+      if (!presetId) continue
       const seen = new Set<number>()
-      for (const note of clip.notes) { if (seen.has(note.pitch)) continue; seen.add(note.pitch); jobs.push(Promise.resolve(this._loadPresetBuffer(clip.presetId, note.pitch))) }
+      for (const note of clip.notes) {
+        if (seen.has(note.pitch)) continue
+        seen.add(note.pitch)
+        const pitch = note.pitch
+        thunks.push(() => Promise.resolve(this._loadPresetBuffer(presetId, pitch)))
+      }
     }
     for (const track of this._tracks) {
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
       if (!oscs) continue
-      for (const l of oscs) if (l.source === 'sample' && l.sampleId) jobs.push(Promise.resolve(ensurePolySample(this.ctx, l.sampleId)))
+      for (const l of oscs) if (l.source === 'sample' && l.sampleId) {
+        const sampleId = l.sampleId
+        thunks.push(() => Promise.resolve(ensurePolySample(this.ctx, sampleId)))
+      }
     }
-    await Promise.all(jobs.map(p => p.catch(() => {})))
+
+    const CONCURRENCY = 4
+    let next = 0
+    const worker = async () => {
+      while (next < thunks.length) {
+        const idx = next++
+        try { await thunks[idx]() } catch { /* a failed preload just leaves that note silent */ }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, thunks.length) }, worker))
   }
 
   /**

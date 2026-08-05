@@ -101,6 +101,20 @@ const SF_NOTE_NAMES  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']
 const SF_NOTE_SHARP  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 const sfCache        = new Map<string, Record<string, string>>()
 
+// One shared, reused AudioContext for decodeAudioData. Creating a fresh
+// `new AudioContext()` per note (as this used to) blows past the browser's
+// ~6-live-context cap when many notes decode at once (offline song-video
+// bounce), throwing and silently dropping sampled instruments. A single
+// suspended context decodes fine and never counts more than once.
+let _decodeCtx: AudioContext | null = null
+function sharedDecodeCtx(): AudioContext {
+  if (!_decodeCtx) {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    _decodeCtx = new AC()
+  }
+  return _decodeCtx
+}
+
 function midiToSfKey(midi: number): string {
   return `${SF_NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`
 }
@@ -221,19 +235,26 @@ export async function importSoundfontToLibrary(
   return { count: entries.length, loNote, hiNote }
 }
 
+const sfInflight = new Map<string, Promise<Record<string, string>>>()
 async function fetchSoundfont(url: string): Promise<Record<string, string>> {
   if (sfCache.has(url)) return sfCache.get(url)!
-  const resp = await fetch(url)
-  if (!resp.ok) throw new Error(`Soundfont fetch failed: ${resp.status}`)
-  const text     = await resp.text()
-  const assignIdx = text.lastIndexOf('= {')
-  const start = assignIdx >= 0 ? text.indexOf('{', assignIdx) : text.indexOf('{')
-  const end   = text.lastIndexOf('}')
-  if (start === -1 || end === -1 || end <= start) throw new Error('Could not parse soundfont JS')
-  const raw = text.slice(start, end + 1).replace(/,\s*}$/, '}')
-  const map = JSON.parse(raw) as Record<string, string>
-  sfCache.set(url, map)
-  return map
+  const existing = sfInflight.get(url)
+  if (existing) return existing   // dedup concurrent fetches of the same soundfont file
+  const job = (async () => {
+    const resp = await fetch(url)
+    if (!resp.ok) throw new Error(`Soundfont fetch failed: ${resp.status}`)
+    const text     = await resp.text()
+    const assignIdx = text.lastIndexOf('= {')
+    const start = assignIdx >= 0 ? text.indexOf('{', assignIdx) : text.indexOf('{')
+    const end   = text.lastIndexOf('}')
+    if (start === -1 || end === -1 || end <= start) throw new Error('Could not parse soundfont JS')
+    const raw = text.slice(start, end + 1).replace(/,\s*}$/, '}')
+    const map = JSON.parse(raw) as Record<string, string>
+    sfCache.set(url, map)
+    return map
+  })()
+  sfInflight.set(url, job)
+  try { return await job } finally { sfInflight.delete(url) }
 }
 
 export async function renderSoundfont(
@@ -256,9 +277,7 @@ export async function renderSoundfont(
   const bytes   = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
-  const tmpCtx    = new AudioContext()
-  const sourceBuf = await tmpCtx.decodeAudioData(bytes.buffer)
-  tmpCtx.close()
+  const sourceBuf = await sharedDecodeCtx().decodeAudioData(bytes.buffer)
 
   const SR  = 44100
   const dur = sourceBuf.duration
