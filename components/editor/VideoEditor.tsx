@@ -3098,6 +3098,8 @@ export default function VideoEditor({
           projectName={localProjectName}
           timelineItems={timelineItems}
           mediaItems={mediaItems}
+          tracks={tracks}
+          adjustments={adjustments}
           captions={localCaptions}
           inPoint={inPoint}
           outPoint={outPoint}

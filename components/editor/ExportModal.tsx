@@ -3,13 +3,17 @@
 import { useState, useRef } from 'react'
 import { X, Download, Film, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
+import { exportTimelineFidelity } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, MediaItem } from '@/lib/editor-types'
+import type { TimelineItem, MediaItem, Track, VideoAdjustments } from '@/lib/editor-types'
+import { DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
 
 interface Props {
   projectName: string
   timelineItems: TimelineItem[]
   mediaItems: MediaItem[]
+  tracks?: Track[]
+  adjustments?: VideoAdjustments
   captions?: Caption[]
   inPoint?: number | null
   outPoint?: number | null
@@ -40,13 +44,13 @@ const RESOLUTIONS = [
   { id: '480p',     label: '480p' },
 ] as const
 
-export default function ExportModal({ projectName, timelineItems, mediaItems, captions, inPoint, outPoint, onClose }: Props) {
+export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, captions, inPoint, outPoint, onClose }: Props) {
   const [quality, setQuality]         = useState<ExportOptions['quality']>('medium')
   const [resolution, setResolution]   = useState<ExportOptions['resolution']>('original')
   const [progress, setProgress]       = useState<ExportProgress | null>(null)
   const [error, setError]             = useState<string | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
-  const [burnInSubs, setBurnInSubs]   = useState(false)
+  const [downloadExt, setDownloadExt] = useState<'mp4' | 'webm' | 'm4a'>('mp4')
   const [useRange, setUseRange]       = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -99,12 +103,28 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
     abortRef.current = controller
 
     try {
-      const blob = await exportTimeline(
-        buildExportClips(),
-        { quality, resolution },
-        setProgress,
-        controller.signal,
-      )
+      let blob: Blob
+      if (isAudioOnly) {
+        // Audio-only → fast ffmpeg path (produces an .m4a).
+        blob = await exportTimeline(buildExportClips(), { quality, resolution }, setProgress, controller.signal)
+        setDownloadExt('m4a')
+      } else {
+        // Video → full-fidelity path: composites exactly what the preview shows,
+        // with a real multitrack audio mix. Records in real time.
+        blob = await exportTimelineFidelity({
+          timelineItems,
+          tracks,
+          adjustments,
+          captions: captions ?? [],
+          quality,
+          resolution,
+          range: rangeStart !== null && rangeEnd !== null ? { start: rangeStart, end: rangeEnd } : null,
+          onProgress: (frac, message) => setProgress({ phase: 'encoding', percent: Math.round(frac * 100), message }),
+          signal: controller.signal,
+        })
+        setDownloadExt(blob.type.includes('mp4') ? 'mp4' : 'webm')
+      }
+      setProgress({ phase: 'done', percent: 100, message: 'Export complete!' })
       const url = URL.createObjectURL(blob)
       setDownloadUrl(url)
     } catch (err) {
@@ -126,7 +146,7 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
     const slug = projectName.toLowerCase().replace(/\s+/g, '-')
     const a = Object.assign(document.createElement('a'), {
       href:     downloadUrl,
-      download: isAudioOnly ? `${slug}.m4a` : `${slug}.mp4`,
+      download: `${slug}.${downloadExt}`,
     })
     a.click()
   }
@@ -250,14 +270,10 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
                   </label>
                 )}
                 {captions && captions.length > 0 && !isAudioOnly && (
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input type="checkbox" checked={burnInSubs} onChange={e => setBurnInSubs(e.target.checked)}
-                      className="rounded" style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
-                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      Burn-in subtitles
-                      <span className="ml-1.5" style={{ color: 'var(--text-muted)', fontSize: 10 }}>({captions.length} utterances)</span>
-                    </span>
-                  </label>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Captions, titles &amp; effects are baked in automatically
+                    <span className="ml-1.5" style={{ fontSize: 10 }}>({captions.length} caption{captions.length !== 1 ? 's' : ''})</span>
+                  </p>
                 )}
               </div>
 
@@ -269,8 +285,9 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
                         {exportableClips.length} {isAudioOnly ? 'audio' : 'media'} clip{exportableClips.length !== 1 ? 's' : ''}
                         {useRange && hasRange ? ' (in range)' : ''}
                       </span>{' '}
-                      will be encoded and merged into a single {isAudioOnly ? 'M4A' : 'MP4'}.
-                      {burnInSubs && ' Subtitles will be embedded.'}
+                      {isAudioOnly
+                        ? 'will be encoded and merged into a single M4A.'
+                        : 'will be exported exactly as they appear in the preview — colour, titles, captions, fades and effects included.'}
                     </>
                   : <span style={{ color: '#ef4444' }}>No clips on the timeline. Add video or audio clips before exporting.</span>
                 }
@@ -298,7 +315,9 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
               </div>
               <p className="text-xs text-right" style={{ color: 'var(--text-muted)' }}>{progress.percent}%</p>
               <p className="text-xs" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                FFmpeg is running in your browser — this may take a few minutes depending on clip length and quality settings. You can keep working in another tab.
+                {isAudioOnly
+                  ? 'FFmpeg is running in your browser — this may take a few minutes. You can keep working in another tab.'
+                  : 'Rendering everything you see in the preview — grades, titles, captions and effects — in real time, so this runs about as long as the video itself. Keep this tab focused for smoothest capture.'}
               </p>
             </div>
           )}
@@ -342,7 +361,7 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, ca
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
                 style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
               >
-                <Download size={14} /> Download MP4
+                <Download size={14} /> Download {downloadExt.toUpperCase()}
               </button>
             </>
           ) : (
