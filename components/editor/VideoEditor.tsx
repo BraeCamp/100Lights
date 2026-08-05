@@ -698,48 +698,73 @@ export default function VideoEditor({
 
   // Audio ducking: analyzes primary track, reduces volume on music tracks under dialogue
   const duckingRafRef    = useRef<number | null>(null)
-  const duckingCtxRef    = useRef<AudioContext | null>(null)
-  const duckingSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const duckingAnalyser  = useRef<AnalyserNode | null>(null)
-  const duckingGainRef   = useRef<GainNode | null>(null)
+  // ── Shared Web Audio graph ──────────────────────────────────────────────
+  // A media element allows exactly ONE MediaElementSourceNode for its whole
+  // lifetime, so EQ and audio-ducking cannot each build their own graph — the
+  // second createMediaElementSource() throws and the clip goes silent. Both
+  // features share one AudioContext + source, wired as a single chain:
+  //   source → duckGain → low → mid → high → destination
+  // with a read-only analyser tap off the source for the ducking RMS. Nodes
+  // stay neutral (duckGain = 1, eq gains = 0) when their feature is off, so
+  // building the graph never changes the sound on its own.
+  const audioCtxRef   = useRef<AudioContext | null>(null)
+  const mediaSrcRef   = useRef<MediaElementAudioSourceNode | null>(null)
+  const audioChainRef = useRef<{
+    duckGain: GainNode
+    analyser: AnalyserNode
+    low:  BiquadFilterNode
+    mid:  BiquadFilterNode
+    high: BiquadFilterNode
+  } | null>(null)
+
+  function ensureAudioChain() {
+    if (audioChainRef.current) return audioChainRef.current
+    const v = videoRef.current
+    if (!v) return null
+    try {
+      const ctx = audioCtxRef.current ?? (audioCtxRef.current = new AudioContext())
+      // createMediaElementSource can only ever run once per element — cache it
+      const src = mediaSrcRef.current ?? (mediaSrcRef.current = ctx.createMediaElementSource(v))
+      const duckGain = ctx.createGain()
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 256
+      const low  = ctx.createBiquadFilter(); low.type  = 'lowshelf';  low.frequency.value  = 200
+      const mid  = ctx.createBiquadFilter(); mid.type  = 'peaking';   mid.frequency.value  = 1000; mid.Q.value = 1
+      const high = ctx.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 6000
+      src.connect(analyser)                                         // read-only tap (ducking RMS)
+      src.connect(duckGain).connect(low).connect(mid).connect(high).connect(ctx.destination)
+      audioChainRef.current = { duckGain, analyser, low, mid, high }
+      ctx.resume?.().catch(() => {})
+      return audioChainRef.current
+    } catch {
+      // AudioContext blocked before a user gesture, or the source was already claimed
+      return null
+    }
+  }
 
   useEffect(() => {
     if (!audioDuckingEnabled) {
       if (duckingRafRef.current !== null) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null }
+      if (audioChainRef.current) audioChainRef.current.duckGain.gain.value = 1  // release the duck
       return
     }
-    const v = videoRef.current
-    if (!v) return
+    const chain = ensureAudioChain()
+    if (!chain) return
+    audioCtxRef.current?.resume?.().catch(() => {})
 
-    try {
-      if (!duckingCtxRef.current) duckingCtxRef.current = new AudioContext()
-      const ctx = duckingCtxRef.current
-      if (!duckingSourceRef.current) {
-        const src = ctx.createMediaElementSource(v)
-        const analyser = ctx.createAnalyser()
-        analyser.fftSize = 256
-        const gain = ctx.createGain()
-        src.connect(analyser).connect(gain).connect(ctx.destination)
-        duckingSourceRef.current = src
-        duckingAnalyser.current  = analyser
-        duckingGainRef.current   = gain
-      }
-
-      const buf = new Uint8Array(duckingAnalyser.current!.frequencyBinCount)
-      function tick() {
-        duckingAnalyser.current!.getByteTimeDomainData(buf)
-        // RMS level of primary clip audio
-        let sum = 0
-        for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
-        const rms = Math.sqrt(sum / buf.length)
-        // Duck: reduce gain when RMS > 0.05 (dialogue threshold)
-        const target = rms > 0.05 ? 0.3 : 1.0
-        const current = duckingGainRef.current!.gain.value
-        duckingGainRef.current!.gain.value = current + (target - current) * 0.05 // smooth 50ms RC
-        duckingRafRef.current = requestAnimationFrame(tick)
-      }
+    const buf = new Uint8Array(chain.analyser.frequencyBinCount)
+    function tick() {
+      chain!.analyser.getByteTimeDomainData(buf)
+      // RMS level of primary clip audio
+      let sum = 0
+      for (let i = 0; i < buf.length; i++) { const s = (buf[i] - 128) / 128; sum += s * s }
+      const rms = Math.sqrt(sum / buf.length)
+      // Duck: reduce gain when RMS > 0.05 (dialogue threshold)
+      const target = rms > 0.05 ? 0.3 : 1.0
+      const cur = chain!.duckGain.gain.value
+      chain!.duckGain.gain.value = cur + (target - cur) * 0.05 // smooth 50ms RC
       duckingRafRef.current = requestAnimationFrame(tick)
-    } catch { /* blocked before user gesture */ }
+    }
+    duckingRafRef.current = requestAnimationFrame(tick)
 
     return () => {
       if (duckingRafRef.current !== null) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null }
@@ -748,12 +773,6 @@ export default function VideoEditor({
 
   // LUT data keyed by MediaItem id
   const [lutMap, setLutMap] = useState<Map<string, LutData>>(new Map())
-
-  // EQ — Web Audio chain per active clip (low/mid/high BiquadFilter + GainNode)
-  const eqCtxRef    = useRef<AudioContext | null>(null)
-  const eqSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const eqNodesRef  = useRef<{ low: BiquadFilterNode; mid: BiquadFilterNode; high: BiquadFilterNode; gain: GainNode } | null>(null)
-  const eqSrcIdRef  = useRef<string | null>(null)  // tracks which clip the EQ chain was built for
 
   // Multi-select
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -843,50 +862,24 @@ export default function VideoEditor({
     v.playbackRate = rampSpeed
   }, [rampSpeed])
 
-  // Per-clip EQ via Web Audio API
+  // Per-clip EQ — drives the shared graph's shelf/peak gains (see ensureAudioChain)
   useEffect(() => {
-    const v = videoRef.current
     const clip = viewerClip
     const eq = clip?.eq
 
-    // Tear down chain if no EQ or clip changed
-    if (!eq || !clip || !v) {
-      eqNodesRef.current?.gain.disconnect()
-      eqNodesRef.current = null
-      eqSourceRef.current?.disconnect()
-      eqSourceRef.current = null
-      eqSrcIdRef.current = null
-      return
+    if (eq && clip) {
+      const chain = ensureAudioChain()
+      if (chain) {
+        chain.low.gain.value  = eq.low
+        chain.mid.gain.value  = eq.mid
+        chain.high.gain.value = eq.high
+      }
+    } else if (audioChainRef.current) {
+      // No EQ on this clip → flatten the shelves (keep the graph intact for ducking)
+      audioChainRef.current.low.gain.value  = 0
+      audioChainRef.current.mid.gain.value  = 0
+      audioChainRef.current.high.gain.value = 0
     }
-
-    try {
-      // Create AudioContext lazily
-      if (!eqCtxRef.current) eqCtxRef.current = new AudioContext()
-      const ctx = eqCtxRef.current
-
-      // Rebuild chain when clip changes
-      if (eqSrcIdRef.current !== clip.id) {
-        eqNodesRef.current?.gain.disconnect()
-        eqSourceRef.current?.disconnect()
-        const src = ctx.createMediaElementSource(v)
-        const low  = ctx.createBiquadFilter(); low.type  = 'lowshelf';  low.frequency.value  = 200
-        const mid  = ctx.createBiquadFilter(); mid.type  = 'peaking';   mid.frequency.value  = 1000; mid.Q.value = 1
-        const high = ctx.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 6000
-        const gain = ctx.createGain()
-        src.connect(low).connect(mid).connect(high).connect(gain).connect(ctx.destination)
-        eqSourceRef.current = src
-        eqNodesRef.current  = { low, mid, high, gain }
-        eqSrcIdRef.current  = clip.id
-      }
-
-      // Update filter gains
-      const nodes = eqNodesRef.current
-      if (nodes) {
-        nodes.low.gain.value  = eq.low
-        nodes.mid.gain.value  = eq.mid
-        nodes.high.gain.value = eq.high
-      }
-    } catch { /* AudioContext may be blocked before user interaction */ }
   }, [viewerClip?.id, viewerClip?.eq]) // eslint-disable-line
 
   // LUT — apply color lookup table to video frames via OffscreenCanvas
