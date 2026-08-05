@@ -830,29 +830,42 @@ function chordToneAt(chord, idx) {
   const oct = Math.floor(idx / n)
   return chord[((idx % n) + n) % n] + oct * 12 + 12 // an octave up = lead register
 }
-function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpDir = 'up', rate = 2) {
+// `reg` = mood register shift (semitones; darker moods sit LOWER). `motion` =
+// 0..1 how busy the line is: low motion rests more, holds notes, takes smaller
+// steps and stays in a tighter range — so dark/calm music isn't a constant
+// high-register run. Base register lowered from +72 (≈octave 5) to +60 (≈octave
+// 4), which was Brae's "always very high pitched".
+function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpDir = 'up', rate = 2, reg = 0, motion = 0.7) {
   const steps = SCALES[scale], N = steps.length
-  // deg = position in the scale, in the lead register (root at octave 5).
-  const degPitch = d => root + 72 + steps[((d % N) + N) % N] + 12 * Math.floor(d / N)
+  const degPitch = d => root + 60 + reg + steps[((d % N) + N) % N] + 12 * Math.floor(d / N)
 
   if (style === 'arp') {
+    // Arp register follows the mood: the old fixed +12 push (on top of the +12
+    // upper tones) is what read as "constantly ascending & high". Low motion
+    // slows it to 8ths so it pulses rather than runs.
+    const aReg = Math.max(-12, 6 + reg)
+    const aRate = motion < 0.4 ? Math.max(rate, 4) : rate
     chords.forEach((chord, b) => {
       const bt = (bar0 + b) * 4
-      const nn = [...chord, chord[1] + 12, chord[2] + 12].map(p => p + 12)   // arp tones, lead register
+      const nn = [...chord, chord[1] + 12, chord[2] + 12].map(p => p + aReg)
       let ord = nn
       if (arpDir === 'down') ord = [...nn].reverse()
       else if (arpDir === 'updown') ord = [...nn, ...[...nn].reverse().slice(1, -1)]
-      for (let i = 0, k = 0; i < 16; i += rate, k++) clip.notes.push(note(ord[k % ord.length], bt + i * STEP, rate * STEP * 0.9, hvel(rand, base - 6, i)))
+      for (let i = 0, k = 0; i < 16; i += aRate, k++) clip.notes.push(note(ord[k % ord.length], bt + i * STEP, aRate * STEP * 0.9, hvel(rand, base - 6, i)))
     })
     return
   }
   if (style === 'sustained') {
-    chords.forEach((chord, b) => clip.notes.push(note(chordToneAt(chord, 2), (bar0 + b) * 4, 4 * 0.98, hvel(rand, base - 10, 0))))
+    chords.forEach((chord, b) => clip.notes.push(note(chordToneAt(chord, 2) - 12, (bar0 + b) * 4, 4 * 0.98, hvel(rand, base - 10, 0))))
     return
   }
 
   // melody / riff / stab: walk the hook's contour, anchoring to chord tones on
   // strong beats so the line outlines the harmony and never wanders out of key.
+  const restP = 0.05 + (1 - motion) * 0.5          // calm lines breathe more
+  const holdP = (1 - motion) * 0.55                // …and repeat a note instead of always stepping
+  const hi = motion < 0.4 ? 6 : (motion < 0.7 ? 9 : 13)  // tighter range when calm → stays lower
+  const lm = 1 + (1 - motion) * 0.9                // longer notes when calm
   let cur = null
   chords.forEach((chord, b) => {
     const bt = (bar0 + b) * 4
@@ -860,16 +873,19 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpD
     for (let d = -2; d <= 14; d++) if (chord.some(p => ((p % 12) + 12) % 12 === ((degPitch(d) % 12) + 12) % 12)) cds.push(d)
     const snap = to => cds.reduce((a, c) => Math.abs(c - to) < Math.abs(a - to) ? c : a, cds[0])
     for (const ev of hook.events.filter(e => e.bar === (b % hook.bars))) {
-      if (cur === null) cur = snap(3)                 // open near mid-register
+      if (cur === null) cur = snap(1)                 // open low-mid, not up high
       else if (ev.strong) cur = snap(cur)             // land on a chord tone
+      else if (rand.chance(holdP)) { /* hold — repeat the last note, no step */ }
       else {
-        cur += ev.move                                // step through the scale
-        if (cur > 13) cur -= N; else if (cur < -2) cur += N
-        if (rand.chance(0.28)) cur = snap(cur)        // don't drift too far off the chord
+        let mv = ev.move
+        if (motion < 0.4) mv = Math.sign(mv)          // calm → single steps only
+        cur += mv
+        if (cur > hi) cur -= N; else if (cur < -2) cur += N
+        if (rand.chance(0.3)) cur = snap(cur)         // don't drift too far off the chord
       }
-      if (rand.chance(0.07)) continue                 // an occasional rest to breathe
+      if (rand.chance(restP)) continue                // rests to breathe (more when calm)
       const len = (style === 'stab' ? 1 : ev.len) * STEP
-      clip.notes.push(note(degPitch(cur), bt + ev.slot * STEP, len * 0.92, hvel(rand, base - (ev.strong ? 0 : 6), ev.slot)))
+      clip.notes.push(note(degPitch(cur), bt + ev.slot * STEP, len * lm * 0.92, hvel(rand, base - (ev.strong ? 0 : 6), ev.slot)))
     }
   })
 }
@@ -891,10 +907,37 @@ const STYLES = {
   chillfuture:{ genre: 'future-bass', bpm: 100, key: 'E minor', sig: 'space' },   // ODESZA — lush, airy
 }
 
+// Score a progression's harmonic DARKNESS 0..1 from its roman numerals — high =
+// sits on tonic / ♭II / ♭VI / ♭VII (dark), low = major IV / V / III lifts. Lets a
+// MOOD prefer matching harmony ("darker sounds in dark music") without hand-
+// tagging every recipe — the "feeling assigned to each recipe" is computed.
+const DARK_W = { I: 0.3, II: 1, III: -0.8, IV: -0.7, V: -0.6, VI: 0.8, VII: 0.5 }
+function recipeDarkness(rec) {
+  const ch = (rec && rec.chords) || []
+  let s = 0, n = 0
+  for (const c of ch) { const t = c.toUpperCase().replace(/[^IV]/g, ''); if (t in DARK_W) { s += DARK_W[t]; n++ } }
+  return n ? Math.max(0, Math.min(1, 0.5 + (s / n) * 0.5)) : 0.5
+}
+// Pick a recipe whose darkness is near `target` (mood), with some spread so it's
+// not always the single closest. target null → plain random (non-template songs).
+function pickByDarkness(bank, target, rand) {
+  if (target == null || bank.length < 2) return rand.pick(bank)
+  const scored = bank.map(r => ({ r, d: Math.abs(recipeDarkness(asRecipe(r)) - target) })).sort((a, b) => a.d - b.d)
+  const top = scored.slice(0, Math.max(3, Math.ceil(scored.length * 0.4)))
+  return rand.pick(top).r
+}
+const DEFAULT_MOOD = { leadRegister: 0, leadMotion: 0.7, leadPolicy: 'peak', bright: 1, drumEnergy: 0, darkness: null }
+
 function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const genre = GENRES.find(g => g.id === genreId)
   if (!genre) throw new Error(`unknown genre "${genreId}" — try --list`)
   const rand = makeRand(seed)
+  // MOOD (from the template, else neutral) — reshapes lead register/motion/
+  // presence, brightness, drum energy, and which harmony (darkness) is preferred.
+  const mood = opts.mood || DEFAULT_MOOD
+  const leadRegShift = mood.leadRegister || 0
+  const leadMotion = mood.leadMotion ?? 0.7
+  const leadPolicy = mood.leadPolicy || 'peak'
   const pal = { ...DEF, ...(PAL[genreId] || {}) }
   const kit = DRUM_KITS.find(k => k.id === pal.kit) || DRUM_KITS[0]
   const feel = rand.pick(FEELS[genre.drums] || FEELS.backbeat)
@@ -918,8 +961,11 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const liftBank   = [...((gr && gr.lift)   || fb.lift),   ...(ex.lift   || []), ...(ex.extra || [])].map(asRecipe)
   const bridgeBank = [...((gr && gr.bridge) || [...fb.ground, ...fb.lift]), ...(ex.bridge || []), ...(ex.extra || [])].map(asRecipe)
 
-  const recA = rand.pick(groundBank)
-  let recB = rand.pick(liftBank); if (recKey(recB) === recKey(recA)) recB = rand.pick(liftBank)
+  // Harmony picked to match the mood's darkness (choruses lift a touch brighter).
+  const darkT = mood.darkness
+  const liftT = darkT == null ? null : Math.max(0, darkT - 0.15)
+  const recA = pickByDarkness(groundBank, darkT, rand)
+  let recB = pickByDarkness(liftBank, liftT, rand); if (recKey(recB) === recKey(recA)) recB = pickByDarkness(liftBank, liftT, rand)
   const recC = rand.pick(bridgeBank.filter(r => recKey(r) !== recKey(recA) && recKey(r) !== recKey(recB))) || rand.pick(bridgeBank)
   const progs = { A: recA, B: recB, C: recC }
   const seen = { A: 0, B: 0, C: 0 }   // section-appearance counter → development
@@ -974,9 +1020,10 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const keyChangeIdx = (useKeyChange && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1        // final peak lifts
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
   // peaks fully open. Bass keeps some body so it never disappears.
+  const bright = mood.bright ?? 1   // dark moods keep the whole song darker
   const cutoffFor = (energy, isBass) => {
     if (!useFilterArc) return null
-    const hz = Math.round(500 + Math.pow(Math.max(0, Math.min(1, energy)), 2.2) * 17500)
+    const hz = Math.round(500 + Math.pow(Math.max(0, Math.min(1, energy)), 2.2) * 17500 * bright)
     return isBass ? Math.max(900, hz) : hz
   }
 
@@ -1120,7 +1167,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
         const st = secStart + sb * 4
         if (role === 'pad') { const c = secClip('pad', st, remBars, e * 0.85); fillPadLong(c, rand, 0, padCh.slice(sb), 42); push(c) }
         else if (role === 'keys') { const c = secClip('keys', st, remBars, Math.min(e, 0.6)); fillChords(c, rand, 0, chords.slice(sb), keyRhythm, 52, null, false, 0, voicing); push(c) }
-        else if (role === 'arp') { const c = secClip('arp', st, remBars, Math.min(e, 0.6)); fillLead(c, rand, 0, chords.slice(sb), hook, 50, 'arp', secRoot, scale, arpDir, arpRate); push(c) }
+        else if (role === 'arp') { const c = secClip('arp', st, remBars, Math.min(e, 0.6)); fillLead(c, rand, 0, chords.slice(sb), hook, 50, 'arp', secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); push(c) }
         else if (role === 'bass') { const c = secClip('bass', st, remBars, 0.5); fillBass(c, rand, 0, roots.slice(sb), pal.bassStyle, 68, secRoot, scale, 0.5, bassMotif); push(c) }
         else if (role === 'drums') { const c = secClip('drums', st, remBars, 0.55); fillDrums(c, rand, 0, remBars, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.6, role: 'intro' }); push(c) }
       }
@@ -1145,30 +1192,34 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
 
     // Drums
     const halfTime = form.indexOf(sec) === halfTimeIdx
+    const de = Math.max(0, Math.min(1, e + (mood.drumEnergy || 0)))   // mood calms/energizes the kit
     if (has('drums') && genre.drums !== 'none') {
-      if (L.drums) { const c = secClip('drums', secStart, sec.bars, e); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, halfTime }); push(c) }
-      else if (L.softDrums) { const c = secClip('drums', secStart, sec.bars, Math.min(e, 0.5)); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, breakdown: true }); push(c) }
+      if (L.drums) { const c = secClip('drums', secStart, sec.bars, de); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, energy: de, halfTime }); push(c) }
+      else if (L.softDrums) { const c = secClip('drums', secStart, sec.bars, Math.min(de, 0.5)); fillDrums(c, rand, 0, sec.bars, feel, { ...sec, energy: Math.min(de, 0.5), breakdown: true }); push(c) }
     }
     // Bass
     if (has('bass') && L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, secRoot, scale, e, bassMotif); push(c) }
     // Keys — rhythmic chords (voiced per the song's voicing; swaps timbre in the
     // bridge for a mid-song "development" when this song drew useSwap).
     if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e, sec.role === 'bridge' ? swapPreset : null); fillChords(c, rand, 0, chords, keyRhythm, Math.round(44 + e * 30), null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0, voicing); humanizeClip(c, humanize, rand); push(c) }
-    // Arp — a rolling 16th layer, its own track when the ensemble has one
-    if (has('arp') && e >= 0.5 && !sparse) { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', secRoot, scale, arpDir, arpRate); humanizeClip(c, humanize, rand); push(c) }
+    // Arp — a rolling 16th layer, its own track when the ensemble has one. Mood
+    // register/motion keep it from being a constant high ascending run.
+    if (has('arp') && e >= 0.5 && !sparse && leadPolicy !== 'none') { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); humanizeClip(c, humanize, rand); push(c) }
     // Pad — held long when sparse
     if (has('pad')) { const c = secClip('pad', secStart, sec.bars, sparse ? e * 0.85 : e)
       if (sparse) fillPadLong(c, rand, 0, padCh, 42)
       else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true, 0, voicing)
       push(c) }
-    // Lead — melody at peaks; falls back to an arp during builds only if there's
-    // no dedicated arp track.
-    if (has('lead') && !sparse) {
-      if (peak && e >= 0.85) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, secRoot, scale); humanizeClip(c, humanize, rand); push(c) }
-      else if (!has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', secRoot, scale, arpDir, arpRate); push(c) }
+    // Lead — melody at peaks, register/motion set by the mood. leadPolicy governs
+    // presence: 'none' = no lead at all; 'sparse' = peaks only (calm); 'peak' =
+    // peaks; 'featured' = peaks + an arp fallback during builds. (Brae: many songs
+    // are better with little or no lead — dark/chill moods default to sparse/none.)
+    if (has('lead') && !sparse && leadPolicy !== 'none') {
+      if (peak && e >= 0.85) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 66, pal.leadStyle, secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); humanizeClip(c, humanize, rand); push(c) }
+      else if (leadPolicy === 'featured' && !has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); push(c) }
     }
     // Counter — a second melodic line at peaks (its own hook, lower register)
-    if (has('counter') && peak && e >= 0.9 && !sparse) { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 48, 'melody', secRoot, scale); humanizeClip(c, humanize, rand); push(c) }
+    if (has('counter') && peak && e >= 0.9 && !sparse && leadPolicy !== 'none') { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 48, 'melody', secRoot, scale, 'up', 2, leadRegShift - 5, leadMotion * 0.8); humanizeClip(c, humanize, rand); push(c) }
     bar += sec.bars
   }
   const totalBeats = bar * 4
@@ -1182,13 +1233,16 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
       const cur = secList[i], prev = secList[i - 1]
       if (!(/drop|chorus|hook/.test(cur.role) && cur.energy >= 0.9) || cur.energy - prev.energy < 0.15 || cur.start < 4) continue
       const S = cur.start
-      if (useRiser) {
+      // A riser is a build-into-drop device — out of place (and too high) in calm
+      // or dark music, so only fire it when the mood actually moves. Lowered base +
+      // capped octave so it doesn't scream up to the top of the register.
+      if (useRiser && leadMotion >= 0.45) {
         const rRole = ['arp', 'lead', 'keys'].find(has)
-        if (rRole) { const c = secClip(rRole, S - 4, 4, 0.75); for (let k = 0; k < 16; k++) { const d = k + 2; c.notes.push(note(root + 60 + steps[((d % NN) + NN) % NN] + 12 * Math.floor(d / NN), k * STEP, STEP * 0.9, Math.min(122, 48 + k * 5))) } push(c) }
+        if (rRole) { const c = secClip(rRole, S - 4, 4, 0.75); for (let k = 0; k < 16; k++) { const d = k + 2; c.notes.push(note(root + 48 + leadRegShift + steps[((d % NN) + NN) % NN] + 12 * Math.min(1, Math.floor(d / NN)), k * STEP, STEP * 0.9, Math.min(122, 48 + k * 5))) } push(c) }
       }
       if (useStutter) {
         const stRole = ['keys', 'arp', 'lead'].find(has)
-        if (stRole) { const c = secClip(stRole, S - 1, 1, 0.7); const reps = rand.pick([6, 8, 8, 12]); const p = root + 72 + steps[0]; for (let k = 0; k < reps; k++) c.notes.push(note(p, k * (1 / reps), (1 / reps) * 0.9, Math.min(120, 55 + Math.round(k * 55 / reps)))); push(c) }
+        if (stRole) { const c = secClip(stRole, S - 1, 1, 0.7); const reps = rand.pick([6, 8, 8, 12]); const p = root + 60 + leadRegShift + steps[0]; for (let k = 0; k < reps; k++) c.notes.push(note(p, k * (1 / reps), (1 / reps) * 0.9, Math.min(120, 55 + Math.round(k * 55 / reps)))); push(c) }
       }
       if (useImpact && has('bass')) { const c = secClip('bass', S, 1, cur.energy); c.notes.push(note(root + 24, 0, 1.5 * 0.98, 116)); push(c) }
       if (useFalseDrop && cur.bars >= 2) { const keep = tid[['lead', 'keys', 'arp'].find(has) || 'lead']; for (const c of clips) if (c.trackId !== keep) trimNotes(c, S, S + 4) }
@@ -1309,6 +1363,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const label = opts.templateName
     ? `${opts.templateName}${opts.variantName ? ` (${opts.variantName})` : ''} · ${genre.name} — ${keyLabel}`
     : `${opts.styleName ? opts.styleName + ' · ' : ''}${genre.name} — ${keyLabel}`
+  const moodTag = opts.moodName ? ` mood:${opts.moodName}(lead:${leadPolicy}/reg${leadRegShift}/mo${leadMotion})` : ''
   return {
     name: label,
     genre: genre.id, tempo: opts.tempo || genre.bpm, timeSignatureNum: 4, timeSignatureDen: 4,
@@ -1316,7 +1371,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
     _tracks: roleList.join('+'),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} bass:${bassMotif || BASS_MOTIF_FOR[pal.bassStyle] || 'drive'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} stutter:${useStutter ? 'on' : 'off'} falseDrop:${useFalseDrop ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'} keyChange:${keyChangeIdx >= 0 ? '+' + keyShift : 'off'}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} bass:${bassMotif || BASS_MOTIF_FOR[pal.bassStyle] || 'drive'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} stutter:${useStutter ? 'on' : 'off'} falseDrop:${useFalseDrop ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'} keyChange:${keyChangeIdx >= 0 ? '+' + keyShift : 'off'}${moodTag}`,
   }
 }
 

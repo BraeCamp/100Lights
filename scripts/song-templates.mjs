@@ -24,11 +24,41 @@
 //   presets     per-role timbre overrides { keys,pad,lead,bass,arp } (builtin-N)
 // Variants override any of: genre, sig, bias, presets.
 
+// ── MOODS — the "feeling" of a song, connected to templates ───────────────────
+//
+// Brae: "assign feelings to each recipe and pattern so the computer uses darker
+// sounds in dark music — less note change, lower. Connect feelings and apply them
+// to templates, which changes the foundation and rhythm."
+//
+// A mood reshapes the FOUNDATION (register, brightness, harmony darkness, timbre)
+// and the LEAD/RHYTHM (how much the lead moves, whether there's a lead at all,
+// drum energy). Templates carry a mood; variants may override it. compose reads
+// `opts.mood` and applies every field.
+//
+//   leadRegister  semitones added to the lead's (now lower) base — dark = lower
+//   leadMotion    0..1  how busy the lead is: 0 = held/repeated & resty, 1 = running
+//   leadPolicy    'none' | 'sparse' | 'peak' | 'featured'  — how present the lead is
+//   bright        0..1  scales the energy→cutoff curve — dark music stays darker
+//   drumEnergy    added to each section's drum energy (dark/chill = calmer)
+//   darkness      0..1  target harmonic darkness; recipes are scored & matched
+//   swing         optional swing override (0..~0.3)
+export const MOODS = {
+  dark:        { leadRegister: -12, leadMotion: 0.22, leadPolicy: 'sparse',   bright: 0.5,  drumEnergy: -0.05, darkness: 0.85 },
+  melancholic: { leadRegister: -12, leadMotion: 0.38, leadPolicy: 'peak',     bright: 0.62, drumEnergy: -0.03, darkness: 0.7 },
+  tense:       { leadRegister: -12, leadMotion: 0.5,  leadPolicy: 'peak',     bright: 0.6,  drumEnergy: 0.02,  darkness: 0.75 },
+  chill:       { leadRegister: -12, leadMotion: 0.32, leadPolicy: 'sparse',   bright: 0.72, drumEnergy: -0.05, darkness: 0.45 },
+  dreamy:      { leadRegister: -7,  leadMotion: 0.3,  leadPolicy: 'sparse',   bright: 0.82, drumEnergy: -0.04, darkness: 0.5 },
+  warm:        { leadRegister: -7,  leadMotion: 0.5,  leadPolicy: 'peak',     bright: 0.85, drumEnergy: 0,     darkness: 0.35 },
+  bright:      { leadRegister: 0,   leadMotion: 0.7,  leadPolicy: 'featured', bright: 1.0,  drumEnergy: 0.03,  darkness: 0.15 },
+  energetic:   { leadRegister: -5,  leadMotion: 0.85, leadPolicy: 'featured', bright: 1.0,  drumEnergy: 0.05,  darkness: 0.3 },
+}
+
 export const TEMPLATES = {
   // 1 ── SLOW BURN — sparse long-note opening that swells into a full peak.
   'slow-burn': {
     name: 'Slow Burn',
     desc: 'Starts bare and patient, then swells section by section into a big emotional peak.',
+    mood: 'melancholic',
     genres: ['ambient', 'synthwave', 'future-bass', 'trance', 'rnb'],
     tempo: [72, 100],
     formFamily: 'edm',
@@ -42,9 +72,9 @@ export const TEMPLATES = {
       impact: true, stutter: false, halfTime: false, humanize: 0.012, voicing: 'open' },
     variants: {
       'piano-swell': { presets: { keys: 'builtin-2', lead: 'builtin-2' }, sig: 'space' },
-      'guitar-burn': { sig: 'guitar' },
-      'analog-rise': { presets: { pad: 'builtin-29' }, sig: 'space' },
-      'strings-lift': { presets: { lead: 'builtin-24', pad: 'builtin-6' }, sig: 'space' },
+      'guitar-burn': { sig: 'guitar', mood: 'dark' },
+      'analog-rise': { presets: { pad: 'builtin-29' }, sig: 'space', mood: 'dreamy' },
+      'strings-lift': { presets: { lead: 'builtin-24', pad: 'builtin-6' }, sig: 'space', mood: 'warm' },
     },
   },
 
@@ -52,6 +82,7 @@ export const TEMPLATES = {
   'club-tool': {
     name: 'Club Tool',
     desc: 'Relentless four-on-the-floor groove — tight lineup, heavy sidechain pump, long mixable intro/outro.',
+    mood: 'energetic',
     genres: ['house', 'deep-house', 'techno', 'trance'],
     tempo: [122, 130],
     formFamily: 'edm',
@@ -62,10 +93,10 @@ export const TEMPLATES = {
     bias: { sidechain: true, introStyle: 'layered', filterArc: true, sweeps: true, rolls: true,
       riser: true, impact: true, stutter: false, halfTime: false, keyChange: false, humanize: 0, voicing: 'close' },
     variants: {
-      'rolling-bass': { genre: 'deep-house', presets: { bass: 'builtin-4' } },
+      'rolling-bass': { genre: 'deep-house', presets: { bass: 'builtin-4' }, mood: 'chill' },
       'stab-house': { genre: 'house', presets: { keys: 'builtin-1' } },
-      'hypno-arp': { genre: 'techno', presets: { arp: 'builtin-8' } },
-      'trance-pulse': { genre: 'trance', presets: { arp: 'builtin-3' }, sig: 'space' },
+      'hypno-arp': { genre: 'techno', presets: { arp: 'builtin-8' }, mood: 'tense' },
+      'trance-pulse': { genre: 'trance', presets: { arp: 'builtin-3' }, sig: 'space', mood: 'dreamy' },
     },
   },
 
@@ -73,6 +104,7 @@ export const TEMPLATES = {
   'beat-tape': {
     name: 'Beat Tape',
     desc: 'Short, dusty, swung loop — keys-and-bass forward, no builds or drops, just a mood.',
+    mood: 'chill',
     genres: ['lofi', 'boombap', 'rnb'],
     tempo: [70, 92],
     formFamily: 'loop',
@@ -84,9 +116,9 @@ export const TEMPLATES = {
       impact: false, stutter: false, halfTime: false, keyChange: false, humanize: 0.015, voicing: 'open' },
     variants: {
       'dusty-jazz': { genre: 'lofi', presets: { keys: 'builtin-2', lead: 'builtin-36' } },
-      'boom-bap': { genre: 'boombap' },
+      'boom-bap': { genre: 'boombap', mood: 'dark' },
       'chillhop': { genre: 'lofi', presets: { keys: 'builtin-27' } },
-      'tape-soul': { genre: 'rnb', presets: { keys: 'builtin-26' } },
+      'tape-soul': { genre: 'rnb', presets: { keys: 'builtin-26' }, mood: 'warm' },
     },
   },
 
@@ -94,6 +126,7 @@ export const TEMPLATES = {
   'pop-song': {
     name: 'Pop Song',
     desc: 'Bright verse–chorus–bridge structure with a hook up front and a lift into the last chorus.',
+    mood: 'bright',
     genres: ['pop', 'disco', 'funk', 'synthwave'],
     tempo: [100, 124],
     formFamily: 'song',
@@ -104,9 +137,9 @@ export const TEMPLATES = {
     bias: { introStyle: 'layered', filterArc: false, sweeps: false, rolls: true, riser: false,
       impact: false, stutter: false, keyChange: true, humanize: 0.008, voicing: 'close' },
     variants: {
-      'dance-pop': { genre: 'disco', sig: 'pump' },
-      'synth-pop': { genre: 'synthwave', sig: 'space' },
-      'funk-pop': { genre: 'funk' },
+      'dance-pop': { genre: 'disco', sig: 'pump', mood: 'energetic' },
+      'synth-pop': { genre: 'synthwave', sig: 'space', mood: 'dreamy' },
+      'funk-pop': { genre: 'funk', mood: 'warm' },
       'bright-pop': { genre: 'pop' },
     },
   },
@@ -115,6 +148,7 @@ export const TEMPLATES = {
   'ambient-drift': {
     name: 'Ambient Drift',
     desc: 'Beatless, weightless — evolving pads and long tones drifting through slow filter motion.',
+    mood: 'dreamy',
     genres: ['ambient'],
     tempo: [60, 82],
     formFamily: 'edm',
@@ -126,10 +160,10 @@ export const TEMPLATES = {
     bias: { introStyle: 'soft', filterArc: true, sweeps: true, rolls: false, riser: false,
       impact: false, stutter: false, halfTime: false, keyChange: false, humanize: 0.02, voicing: 'open' },
     variants: {
-      'drone': { presets: { pad: 'builtin-29', lead: 'builtin-43' } },
+      'drone': { presets: { pad: 'builtin-29', lead: 'builtin-43' }, mood: 'dark' },
       'glass-arp': { presets: { arp: 'builtin-39' } },
       'piano-space': { presets: { keys: 'builtin-2', lead: 'builtin-2' } },
-      'warm-analog': { presets: { pad: 'builtin-6' } },
+      'warm-analog': { presets: { pad: 'builtin-6' }, mood: 'warm' },
     },
   },
 
@@ -137,6 +171,7 @@ export const TEMPLATES = {
   'festival-drop': {
     name: 'Festival Drop',
     desc: 'Big-room build-and-drop energy — risers, impacts, false-drops and stacked leads at the peak.',
+    mood: 'energetic',
     genres: ['future-bass', 'dubstep', 'trance', 'dnb'],
     // no tempo override → each genre keeps its own idiomatic bpm
     formFamily: 'edm',
@@ -147,10 +182,10 @@ export const TEMPLATES = {
     bias: { introStyle: 'layered', filterArc: true, sweeps: true, rolls: true, riser: true,
       impact: true, stutter: true, falseDrop: true, humanize: 0, voicing: 'open' },
     variants: {
-      'melodic-drop': { genre: 'future-bass', sig: 'space' },
-      'bass-drop': { genre: 'dubstep', sig: 'crush' },
+      'melodic-drop': { genre: 'future-bass', sig: 'space', mood: 'dreamy' },
+      'bass-drop': { genre: 'dubstep', sig: 'crush', mood: 'tense' },
       'trance-peak': { genre: 'trance', sig: 'space' },
-      'liquid-dnb': { genre: 'dnb', sig: 'space' },
+      'liquid-dnb': { genre: 'dnb', sig: 'space', mood: 'dreamy' },
     },
   },
 
@@ -158,6 +193,7 @@ export const TEMPLATES = {
   'groove-jam': {
     name: 'Groove Jam',
     desc: 'Live-band pocket — syncopated, humanized, bass-and-keys forward with riffing leads.',
+    mood: 'warm',
     genres: ['funk', 'disco', 'afrobeat', 'rnb'],
     tempo: [100, 120],
     formFamily: 'song',
@@ -168,8 +204,8 @@ export const TEMPLATES = {
     bias: { introStyle: 'layered', filterArc: false, sweeps: false, rolls: false, riser: false,
       impact: false, stutter: false, halfTime: false, humanize: 0.015, voicing: 'inv1' },
     variants: {
-      'funk-jam': { genre: 'funk', sig: 'crush' },
-      'disco-strut': { genre: 'disco', sig: 'pump' },
+      'funk-jam': { genre: 'funk', sig: 'crush', mood: 'energetic' },
+      'disco-strut': { genre: 'disco', sig: 'pump', mood: 'energetic' },
       'afro-groove': { genre: 'afrobeat' },
       'neo-soul': { genre: 'rnb', presets: { keys: 'builtin-2' } },
     },
@@ -191,8 +227,10 @@ export function resolveTemplate(tid, rand, { variant, genre } = {}) {
   const genreId = genre || v.genre || rand.pick(t.genres)
   const tempo = t.tempo ? rand.int(t.tempo[0], t.tempo[1]) : undefined
   const sig = v.sig !== undefined ? v.sig : t.sig
+  const moodName = v.mood || t.mood || null
+  const mood = moodName ? MOODS[moodName] : null
   return {
-    templateId: tid, templateName: t.name, variantName: vname, genreId,
+    templateId: tid, templateName: t.name, variantName: vname, genreId, moodName,
     opts: {
       tempo,
       sig: sig || undefined,
@@ -201,6 +239,7 @@ export function resolveTemplate(tid, rand, { variant, genre } = {}) {
       roster: t.roster,
       bias: { ...(t.bias || {}), ...(v.bias || {}) },
       presets: { ...(t.presets || {}), ...(v.presets || {}) },
+      mood, moodName,
       templateName: t.name,
       variantName: vname,
     },
