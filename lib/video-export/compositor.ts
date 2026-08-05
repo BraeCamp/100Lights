@@ -22,6 +22,7 @@
 import type { CaptionStyle, TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
 import { DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
+import { captionWords } from '@/lib/captions'
 import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 
@@ -411,8 +412,9 @@ function drawCaption(
   ctx.textBaseline = 'middle'
   ctx.font = `500 ${fontSize}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`
 
-  const karaoke = style.karaoke && !!cap.words?.length
-  const label = karaoke ? cap.words!.map(w => w.w).join(' ')
+  const kWords = style.karaoke ? captionWords(cap) : []
+  const karaoke = kWords.length > 0
+  const label = karaoke ? kWords.map(w => w.w).join(' ')
              : cap.speaker ? `${cap.speaker}  ${cap.text}` : cap.text
   const m = ctx.measureText(label)
   const padX = 16, padY = 8
@@ -440,7 +442,7 @@ function drawCaption(
   }
 
   // Karaoke: lay the words out centred, then paint each with its own colour.
-  const words = cap.words!
+  const words = kWords
   const spaceW = ctx.measureText(' ').width
   const widths = words.map(w => ctx.measureText(w.w).width)
   const totalW = widths.reduce((s, w) => s + w, 0) + spaceW * (words.length - 1)

@@ -968,9 +968,8 @@ export default function VideoEditor({
   // Transition-in of the active clip: the clip that occupied the SAME TRACK
   // just before this one becomes the frozen frame the transition blends from.
   // Mirrors lib/video-export/compositor.transitionAt (per-track, now that
-  // lower tracks stack as layers). Preview-only extra: a same-source prev
-  // falls back to from-black — the shared element pool can't show two frames
-  // of one file (the export renders that case properly via per-clip elements).
+  // lower tracks stack as layers). The preview renders the frozen frame in a
+  // dedicated element, so same-source cuts cross-blend like the export.
   const viewerTransition = useMemo((): ActiveClipTransition | undefined => {
     const clip = viewerClip
     if (!clip?.transitionIn) return undefined
@@ -986,8 +985,7 @@ export default function VideoEditor({
     if (prev && (
       prev.contentType === 'title' ||
       prev.contentType === 'audio' ||
-      !prev.url ||
-      prev.url === clip.url
+      !prev.url
     )) prev = null
     return {
       type: clip.transitionIn,
@@ -1737,7 +1735,7 @@ export default function VideoEditor({
   async function handleBounceDawMix() {
     const daw = dawProjectRef.current
     if (!daw || bounceStatus === 'working') return
-    const clips = (daw.tracks ?? []).flatMap(t => (t as { clips?: Array<{ startBeat: number; durationBeats?: number }> }).clips ?? [])
+    const clips = daw.arrangementClips ?? []
     const endBeat = clips.reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
     if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
     setBounceStatus('working')

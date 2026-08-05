@@ -586,7 +586,7 @@ export default function Inspector({
                         </label>
                       </div>
                       {captionStyle.karaoke && !captions.some(c => c.words?.length) && (
-                        <p className="text-xs" style={{ color: '#fbbf24' }}>This transcript has no word timings — re-transcribe to enable per-word highlighting.</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>This transcript predates word timings, so highlighting uses estimated timing — re-transcribe for exact sync.</p>
                       )}
                     </div>
                   )}

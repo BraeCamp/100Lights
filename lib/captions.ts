@@ -1,5 +1,26 @@
 import type { Caption } from '@/lib/types'
 
+/**
+ * Word timings for karaoke highlighting. Real Deepgram timings when the
+ * transcript has them; otherwise estimated by spreading the caption's window
+ * across its words proportionally to word length — close enough for the
+ * word-pop effect on transcripts made before timings were stored.
+ */
+export function captionWords(cap: Caption): Array<{ w: string; s: number; e: number }> {
+  if (cap.words?.length) return cap.words
+  const words = cap.text.split(/\s+/).filter(Boolean)
+  if (!words.length) return []
+  const span = Math.max(0.1, cap.end - cap.start)
+  const totalLen = words.reduce((s, w) => s + w.length + 1, 0)
+  let t = cap.start
+  return words.map(w => {
+    const d = span * ((w.length + 1) / totalLen)
+    const out = { w, s: t, e: t + d }
+    t += d
+    return out
+  })
+}
+
 function pad(n: number, digits = 2) {
   return String(Math.floor(n)).padStart(digits, '0')
 }

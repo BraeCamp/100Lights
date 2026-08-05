@@ -6,6 +6,7 @@ import type { Caption, ContentType } from '@/lib/types'
 import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } from '@/lib/editor-types'
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
+import { captionWords } from '@/lib/captions'
 import { instantSpeed, sourceOffsetAt } from '@/lib/video-export/speed'
 import { getLutGL } from '@/lib/video-export/lut-gl'
 import type { LutData } from '@/lib/lut-parser'
@@ -504,14 +505,14 @@ export default function VideoPlayer({
   // or scrubbing, so a half-finished wipe parks half-finished, like the export.
   const [transP, setTransP] = useState(1)
   const transPRef = useRef(1)
+  const transPrevElRef = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
     if (!transition || !src) { transPRef.current = 1; setTransP(1); return }
-    // Park the outgoing clip's element on its frozen last frame.
-    if (transition.prevSrc && transition.prevSrc !== src) {
-      const prevEl = poolRef.current.get(transition.prevSrc)
-      if (prevEl && Math.abs(prevEl.currentTime - transition.prevTime) > 0.1) {
-        try { prevEl.currentTime = transition.prevTime } catch { /* not seekable yet */ }
-      }
+    // Park the DEDICATED outgoing element on its frozen last frame (its own
+    // element, so even a same-source cut shows two different frames).
+    const prevEl = transPrevElRef.current
+    if (prevEl && Math.abs(prevEl.currentTime - transition.prevTime) > 0.1) {
+      try { prevEl.currentTime = transition.prevTime } catch { /* not seekable yet */ }
     }
     let rafId: number
     const tick = () => {
@@ -535,7 +536,6 @@ export default function VideoPlayer({
   }, [transition, src, clipInPoint])
 
   const transitionActive = !!transition && transP < 1
-  const transPrevSrc = transitionActive && transition!.prevSrc !== src ? transition!.prevSrc : null
 
   // ── Under-layers (multi-track compositing) ────────────────────────────────
   // Each lower-track clip gets its OWN muted element (separate from the shared
@@ -841,12 +841,6 @@ export default function VideoPlayer({
         const rest = !clipStyle.transform || clipStyle.transform === 'none' ? '' : ` ${clipStyle.transform}`
         style.transform = `translateX(${((1 - transP) * 100).toFixed(2)}%)${rest}`
       }
-    } else if (s === transPrevSrc && transition) {
-      // Frozen last frame of the outgoing clip, under the incoming clip.
-      style.opacity = transition.type === 'dip_black' ? 0 : 1
-      style.objectFit = transition.prevFitMode ?? 'contain'
-      style.zIndex = 1
-      if (transition.type === 'push') style.transform = `translateX(${(-transP * 100).toFixed(2)}%)`
     }
     return style
   }
@@ -929,6 +923,26 @@ export default function VideoPlayer({
               }}>{layer.text}</span>
             </div>
           ))}
+
+          {/* Transition-in: the outgoing clip's frozen last frame in its own
+              element (works even when both clips share one source file) */}
+          {transition?.prevSrc && (
+            <video
+              ref={transPrevElRef}
+              src={transition.prevSrc}
+              muted playsInline preload="auto"
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: transition.prevFitMode ?? 'contain',
+                filter: effectiveFilter,
+                opacity: transitionActive && transition.type !== 'dip_black' ? 1 : 0,
+                transform: transitionActive && transition.type === 'push' ? `translateX(${(-transP * 100).toFixed(2)}%)` : undefined,
+                pointerEvents: 'none',
+                zIndex: 1,
+              }}
+            />
+          )}
 
           {/* LUT overlay — GPU-graded frames of the active clip */}
           {lutActive && (
@@ -1202,7 +1216,8 @@ export default function VideoPlayer({
             {activeCaption && (() => {
               const st = captionStyle
               const fs = Math.max(10, Math.round(stage.height * 0.028 * (st.size || 1)))
-              const karaoke = st.karaoke && !!activeCaption.words?.length
+              const kWords = st.karaoke ? captionWords(activeCaption) : []
+              const karaoke = kWords.length > 0
               const posStyle: React.CSSProperties =
                 st.position === 'top'    ? { top: '8%', transform: 'translateX(-50%)' } :
                 st.position === 'center' ? { top: '50%', transform: 'translate(-50%, -50%)' } :
@@ -1224,7 +1239,7 @@ export default function VideoPlayer({
                   }}
                 >
                   {karaoke
-                    ? activeCaption.words!.map((w, i) => {
+                    ? kWords.map((w, i) => {
                         const active = karaokeT >= w.s && karaokeT <= w.e
                         const past = karaokeT > w.e
                         return (
