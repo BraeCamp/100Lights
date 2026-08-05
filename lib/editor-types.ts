@@ -129,6 +129,10 @@ export interface TimelineItem {
   grade?: { brightness: number; contrast: number; saturation: number }
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
+  // Live DAW-mix link: this clip carries the project's bounced DAW arrangement
+  // and is re-rendered (media swapped in place) whenever the audio changes.
+  dawMixLinked?: boolean
+  dawMixStamp?: string   // ISO stamp of the audio state this bounce rendered
   // Draw Focus overlay fields (only for clips on drawfocus tracks)
   focusX?: number      // 0–1 horizontal position (default 0.5) — static fallback when no keyframes
   focusY?: number      // 0–1 vertical position (default 0.5)

@@ -22,6 +22,7 @@ const ColorScopes   = dynamic(() => import('@/components/editor/ColorScopes'),  
 const RenderQueue   = dynamic(() => import('@/components/editor/RenderQueue'),   { ssr: false })
 const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),   { ssr: false })
 const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
+const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),    { ssr: false })
 import {
   serialize, saveProjectToFile, openProjectFromFile, deserialize,
   type CfProjFile, type EditorSnapshot,
@@ -29,7 +30,7 @@ import {
 import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
   DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, DEFAULT_ASPECT, PROJECT_ASPECTS,
-  RULER_HEIGHT, TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
+  RULER_HEIGHT, TRACK_HEIGHT, AUDIO_TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
   MODULE_DEFS, ALL_MODULE_KEYS, beatDur, nearestBeat,
   type ModuleKey, type ProjectAspect, type BeatGrid,
 } from '@/lib/editor-types'
@@ -705,6 +706,8 @@ export default function VideoEditor({
   const dawProjectRef = useRef<import('@/lib/daw-types').DawProject | null>(null)
   const [hasDawProject, setHasDawProject] = useState(false)
   const [bounceStatus, setBounceStatus] = useState<'idle' | 'working' | 'error'>('idle')
+  // Set during load when the saved audio is newer than the linked mix bounce
+  const pendingMixRefreshRef = useRef<string | null>(null)
   const [viewerZoom, setViewerZoom] = useState(1)
   const [showStoryboard, setShowStoryboard] = useState(false)
   const [showVUMeter, setShowVUMeter] = useState(false)
@@ -1109,6 +1112,14 @@ export default function VideoEditor({
       setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
       dawProjectRef.current = cfproj.dawProject ?? null
       setHasDawProject(!!cfproj.dawProject)
+      // Linked DAW mix older than the audio module's last save → auto-refresh.
+      {
+        const audioAt = cfproj.moduleSavedAt?.audio
+        const linked = patchedItems.find(i => i.dawMixLinked)
+        if (cfproj.dawProject && audioAt && linked && (!linked.dawMixStamp || linked.dawMixStamp < audioAt)) {
+          pendingMixRefreshRef.current = audioAt
+        }
+      }
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
 
@@ -1735,27 +1746,110 @@ export default function VideoEditor({
     setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, startTime: nearestBeat(grid, i.startTime) } : i))
   }
 
-  /** Bounce the project's DAW arrangement to a wav and drop it in the media pool. */
-  async function handleBounceDawMix() {
+  /**
+   * Bounce the project's DAW arrangement to a wav as the LINKED mix track.
+   * First run creates a "DAW" audio track with one linked clip; later runs
+   * (manual button, stale-on-load, live edits arriving over the collab room)
+   * re-render and swap the same clip's media in place.
+   */
+  const dawMixBusyRef = useRef(false)
+  async function refreshDawMix(stamp?: string) {
     const daw = dawProjectRef.current
-    if (!daw || bounceStatus === 'working') return
-    const clips = daw.arrangementClips ?? []
-    const endBeat = clips.reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
+    if (!daw || dawMixBusyRef.current) return
+    const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
     if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
+    dawMixBusyRef.current = true
     setBounceStatus('working')
     try {
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
       const blob = await renderProjectAudioBlob(daw, { startBeat: 0, endBeat, userId: user?.id })
       const file = new File([blob], `${localProjectName || 'Project'} mix.wav`, { type: 'audio/wav' })
-      handleFileImport(file)
-      // The mix defines the musical grid — set it from the DAW tempo.
-      if (daw.tempo) setBeatGrid({ bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
+      const url = URL.createObjectURL(file)
+      const dur = await readDuration(url, 'audio')
+      const stampVal = stamp ?? new Date().toISOString()
+
+      const linked = timelineItemsRef.current.find(i => i.dawMixLinked)
+      if (linked) {
+        // Replace in place: same media item, same clip — new audio.
+        const media = mediaItemsRef.current.find(m => m.url === linked.url)
+        const prevUrl = linked.url
+        if (media) {
+          setMediaItems(prev => prev.map(m => m.id === media.id
+            ? { ...m, url, duration: dur, peaks: undefined, uploadStatus: 'uploading' as const }
+            : m))
+          uploadMediaToR2(file, media.id)
+        }
+        setTimelineItems(prev => prev.map(i => {
+          if (!i.dawMixLinked) return i
+          // Untrimmed clips follow the new mix length; trimmed ones just clamp.
+          const wasFull = i.inPoint === 0 && (!media?.duration || Math.abs((i.outPoint - i.inPoint) - media.duration) < 0.05)
+          return {
+            ...i, url,
+            dawMixStamp: stampVal,
+            inPoint: Math.min(i.inPoint, Math.max(0, dur - 0.1)),
+            outPoint: wasFull ? dur : Math.min(i.outPoint, dur),
+          }
+        }))
+        if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl)
+      } else {
+        // First bounce: dedicated audio track + linked clip spanning the mix.
+        const mediaId = crypto.randomUUID()
+        setMediaItems(prev => [...prev, { id: mediaId, name: file.name, contentType: 'audio', url, file, duration: dur, uploadStatus: 'uploading' }])
+        uploadMediaToR2(file, mediaId)
+        let trackId = tracksRef.current.find(t => t.type === 'audio' && t.label === 'DAW')?.id
+        if (!trackId) {
+          trackId = crypto.randomUUID()
+          setTracks(prev => [...prev, { id: trackId!, label: 'DAW', type: 'audio', height: AUDIO_TRACK_HEIGHT }])
+        }
+        setTimelineItems(prev => [...prev, {
+          id: crypto.randomUUID(),
+          label: 'DAW Mix',
+          startTime: 0, inPoint: 0, outPoint: dur,
+          captions: [], color: '#3b82f6',
+          trackId: trackId!, url, contentType: 'audio',
+          dawMixLinked: true, dawMixStamp: stampVal,
+        }])
+      }
+      computeAudioPeaks(url).then(peaks => {
+        if (peaks.length) setMediaItems(prev => prev.map(m => m.url === url ? { ...m, peaks } : m))
+      })
+      // The mix defines the musical grid — adopt the DAW tempo unless the user
+      // already tuned a grid of their own.
+      if (daw.tempo) setBeatGrid(g => g ?? { bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
       setBounceStatus('idle')
     } catch {
       setBounceStatus('error')
       setTimeout(() => setBounceStatus('idle'), 2500)
+    } finally {
+      dawMixBusyRef.current = false
     }
   }
+  const refreshDawMixRef = useRef(refreshDawMix)
+  refreshDawMixRef.current = refreshDawMix
+  function handleBounceDawMix() { void refreshDawMix() }
+
+  // Live audio→video: edits arriving over the project's collab room update the
+  // DawProject replica immediately; the actual re-bounce debounces behind the
+  // last edit so a burst of changes renders once.
+  const liveMixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function handleLiveDawProject(project: import('@/lib/daw-types').DawProject, live: boolean) {
+    dawProjectRef.current = project
+    setHasDawProject(true)
+    if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
+    liveMixTimerRef.current = setTimeout(() => {
+      // Only auto-render when the mix is linked (or adopting fresher joined
+      // state with a linked clip) — a project that never bounced stays manual.
+      if (timelineItemsRef.current.some(i => i.dawMixLinked)) void refreshDawMixRef.current()
+    }, live ? 2500 : 1200)
+  }
+
+  // Stale mix detected during load → refresh once state has settled.
+  useEffect(() => {
+    if (!pendingMixRefreshRef.current || !hasDawProject) return
+    const stamp = pendingMixRefreshRef.current
+    pendingMixRefreshRef.current = null
+    void refreshDawMixRef.current(stamp)
+  }, [hasDawProject]) // eslint-disable-line
 
   // Blade split: split a clip at a given timeline time
   function handleSplitItem(id: string, atTime: number) {
@@ -3263,6 +3357,16 @@ export default function VideoEditor({
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
+
+      {/* Live audio→video link: listen to the project's DAW collab room and
+          re-bounce the linked mix track when the arrangement changes. */}
+      {hasDawProject && projectId && (
+        <DawMixSync
+          projectId={savedProjectId}
+          getProject={() => dawProjectRef.current}
+          onProject={handleLiveDawProject}
+        />
+      )}
 
       {/* Project loading overlay */}
       {isLoadingProject && (

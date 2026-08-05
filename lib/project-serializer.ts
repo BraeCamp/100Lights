@@ -68,6 +68,9 @@ export interface SerializedClip {
   eq?: { low: number; mid: number; high: number }
   grade?: { brightness: number; contrast: number; saturation: number }
   lutId?: string
+  // DAW-mix link
+  dawMixLinked?: boolean
+  dawMixStamp?: string
   // Draw Focus
   focusX?: number
   focusY?: number
@@ -210,6 +213,8 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       eq:               item.eq,
       grade:            item.grade,
       lutId:            item.lutId,
+      dawMixLinked:     item.dawMixLinked,
+      dawMixStamp:      item.dawMixStamp,
       focusX:           item.focusX,
       focusY:           item.focusY,
       focusRadius:      item.focusRadius,
@@ -298,6 +303,8 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     eq:               clip.eq,
     grade:            clip.grade,
     lutId:            clip.lutId,
+    dawMixLinked:     clip.dawMixLinked,
+    dawMixStamp:      clip.dawMixStamp,
     focusX:           clip.focusX,
     focusY:           clip.focusY,
     focusRadius:      clip.focusRadius,
