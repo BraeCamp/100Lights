@@ -833,7 +833,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
     if (endBeat <= 0) return null
     const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-    return renderProjectAudioBlob(daw, { startBeat: 0, endBeat })
+    const { blob } = await renderProjectAudioBlob(daw, { startBeat: 0, endBeat })
+    return blob
   }
   // PULL: link another project's mix in as a new live audio track.
   async function linkProjectAudio(sourceId: string, name: string) {

@@ -434,7 +434,7 @@ export default function SongVideoPlayer({ song, meta, accent = '#a78bfa', slug =
         const cs = i * CHUNK_BEATS, ce = Math.min(winLen, cs + CHUNK_BEATS)
         const absCs = winStartBeat + cs, absCe = winStartBeat + ce
         const lookbackBeats = Math.min(LOOKBACK_BEATS, absCs)
-        const blob = await renderProjectAudioBlob(dawProject, { startBeat: absCs - lookbackBeats, endBeat: absCe, userId })
+        const { blob } = await renderProjectAudioBlob(dawProject, { startBeat: absCs - lookbackBeats, endBeat: absCe, userId })
         if (token !== renderToken.current) return
         const decoded = await g.ctx.decodeAudioData(await blob.arrayBuffer())
         sr = decoded.sampleRate

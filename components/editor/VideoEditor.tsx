@@ -1958,7 +1958,7 @@ export default function VideoEditor({
           : 'DAW Mix'
 
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-      const blob = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
+      const { blob, durationSec, peaks: renderedPeaks } = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
       const baseName = src ? (srcLabel || 'Linked project') : (localProjectName || 'Project')
       // The render is compressed (AAC/.m4a) when the browser can, else WAV —
       // name the file from the blob's actual type so the presign guesses right.
@@ -1966,7 +1966,8 @@ export default function VideoEditor({
       const ext = mime.includes('mp4') || mime.includes('m4a') ? '.m4a' : mime.includes('mpeg') ? '.mp3' : '.wav'
       const file = new File([blob], `${baseName} ${isStem ? stemNames.join('+') : 'mix'}${ext}`, { type: mime })
       const url = URL.createObjectURL(file)
-      const dur = await readDuration(url, 'audio')
+      // Duration comes straight from the render (no extra <audio> metadata decode).
+      const dur = durationSec
 
       const siblings = timelineItemsRef.current.filter(i => sameLink(i, trackIds, src))
       const linked = siblings.find(i => !i.dawMixLocked)
@@ -2020,9 +2021,8 @@ export default function VideoEditor({
           dawMixSourceProjectId: src,
         }])
       }
-      computeAudioPeaks(url).then(peaks => {
-        if (peaks.length) setMediaItems(prev => prev.map(m => m.url === url ? { ...m, peaks } : m))
-      })
+      // Peaks came back with the render — no re-decode of the file needed.
+      if (renderedPeaks.length) setMediaItems(prev => prev.map(m => m.url === url ? { ...m, peaks: renderedPeaks } : m))
       // The mix defines the musical grid — adopt the DAW tempo unless the user
       // already tuned a grid of their own.
       if (daw.tempo) setBeatGrid(g => g ?? { bpm: daw.tempo, offset: 0, beatsPerBar: 4 })

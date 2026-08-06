@@ -16,10 +16,17 @@ import { encodeMix } from './encode-audio'
 // renders in a fraction of the time instead of 4 minutes. Client-only
 // (OfflineAudioContext + IndexedDB library). Import it lazily.
 
+export interface RenderedMix {
+  blob: Blob
+  durationSec: number
+  peaks: number[]   // 80-band max-abs, matching the timeline waveform format
+}
+
 export async function renderProjectAudioBlob(
   project: DawProject,
   opts: { startBeat: number; endBeat: number; userId?: string | null },
-): Promise<Blob> {
+): Promise<RenderedMix> {
+  const t0 = performance.now()
   initLibrary(opts.userId ?? null)
   await seedDefaultSamples().catch(() => {})
   // seedDefaultSamples() fires the multisample instrument folders (Rhodes/EP/
@@ -45,9 +52,22 @@ export async function renderProjectAudioBlob(
   const engine = new DawEngine({ ctx: octx as unknown as AudioContext })
   engine.setPresets(combinePresets(project.presets))
   engine.updateProject(project)
+  const t1 = performance.now()
   const { channels, sampleRate: sr } = await engine.renderOffline({ startBeat: opts.startBeat, endBeat: opts.endBeat })
+  const t2 = performance.now()
   // Compress to AAC/Opus when possible (falls back to WAV) — the returned blob's
   // `.type` tells callers which it is, so they can name/presign the file right.
   const { blob } = await encodeMix(channels, sr)
-  return blob
+  // Duration + 80-band peaks straight from the rendered PCM, so callers don't
+  // re-decode the file twice (readDuration + computeAudioPeaks each cost a decode).
+  const ch0 = channels[0] ?? new Float32Array(0)
+  const bands = 80, step = Math.max(1, Math.floor(ch0.length / bands))
+  const peaks = Array.from({ length: bands }, (_, i) => {
+    let max = 0
+    for (let j = 0; j < step; j++) max = Math.max(max, Math.abs(ch0[i * step + j] ?? 0))
+    return max
+  })
+  const t3 = performance.now()
+  console.log(`[dawmix] setup ${(t1 - t0) | 0}ms · render ${(t2 - t1) | 0}ms · encode+peaks ${(t3 - t2) | 0}ms · total ${(t3 - t0) | 0}ms`)
+  return { blob, durationSec: durSec, peaks }
 }
