@@ -1952,7 +1952,11 @@ export default function VideoEditor({
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
       const blob = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
       const baseName = src ? (srcLabel || 'Linked project') : (localProjectName || 'Project')
-      const file = new File([blob], `${baseName} ${isStem ? stemNames.join('+') : 'mix'}.wav`, { type: 'audio/wav' })
+      // The render is compressed (AAC/.m4a) when the browser can, else WAV —
+      // name the file from the blob's actual type so the presign guesses right.
+      const mime = blob.type || 'audio/wav'
+      const ext = mime.includes('mp4') || mime.includes('m4a') ? '.m4a' : mime.includes('mpeg') ? '.mp3' : '.wav'
+      const file = new File([blob], `${baseName} ${isStem ? stemNames.join('+') : 'mix'}${ext}`, { type: mime })
       const url = URL.createObjectURL(file)
       const dur = await readDuration(url, 'audio')
 

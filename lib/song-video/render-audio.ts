@@ -8,7 +8,7 @@ import {
 } from '@/lib/default-samples'
 import { combinePresets } from '@/lib/midi-presets'
 import { tempoSegments, beatToSeconds } from '@/lib/tempo-map'
-import { encodeWav16 } from './wav16'
+import { encodeMix } from './encode-audio'
 
 // Bounce the REAL project audio for a beat window, so a song-video can use the
 // actual mix instead of the preview synth. Uses the studio engine's OFFLINE
@@ -46,5 +46,8 @@ export async function renderProjectAudioBlob(
   engine.setPresets(combinePresets(project.presets))
   engine.updateProject(project)
   const { channels, sampleRate: sr } = await engine.renderOffline({ startBeat: opts.startBeat, endBeat: opts.endBeat })
-  return new Blob([encodeWav16(channels, sr)], { type: 'audio/wav' })
+  // Compress to AAC/Opus when possible (falls back to WAV) — the returned blob's
+  // `.type` tells callers which it is, so they can name/presign the file right.
+  const { blob } = await encodeMix(channels, sr)
+  return blob
 }
