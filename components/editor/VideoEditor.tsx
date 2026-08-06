@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
@@ -750,6 +750,11 @@ export default function VideoEditor({
   const [showColorScopes, setShowColorScopes] = useState(false)
   const [colorScopesType, setColorScopesType] = useState<'waveform' | 'vectorscope' | 'histogram' | 'parade' | 'spectrum'>('waveform')
   const [showRenderQueue, setShowRenderQueue] = useState(false)
+  // Preview-overlay toggles are grouped under one "Overlays ▾" menu to de-clutter
+  // the viewport toolbar (fixed-positioned so it escapes the clipped bar).
+  const [showOverlaysMenu, setShowOverlaysMenu] = useState(false)
+  const [overlaysMenuPos, setOverlaysMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const overlaysBtnRef = useRef<HTMLButtonElement>(null)
   const [audioDuckingEnabled, setAudioDuckingEnabled] = useState(false)
 
   // Audio ducking: analyzes primary track, reduces volume on music tracks under dialogue
@@ -3260,83 +3265,48 @@ export default function VideoEditor({
                   </select>
                 )}
 
-                {/* VU meter */}
-                {viewportTab === 'video' && !isAudioOnly && (
-                  <button
-                    onClick={() => setShowVUMeter(v => !v)}
-                    className="px-2 py-1 rounded text-xs"
-                    title="VU audio meter"
-                    style={{
-                      color: showVUMeter ? 'var(--accent-light)' : 'var(--text-muted)',
-                      background: showVUMeter ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                  >VU</button>
-                )}
-
-                {/* Frame blend */}
-                {viewportTab === 'video' && !isAudioOnly && (
-                  <button
-                    onClick={() => setFrameBlendEnabled(v => !v)}
-                    className="px-2 py-1 rounded text-xs"
-                    title="Frame blending (smooth slow-motion)"
-                    style={{
-                      color: frameBlendEnabled ? 'var(--accent-light)' : 'var(--text-muted)',
-                      background: frameBlendEnabled ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                  >Blend</button>
-                )}
-
-                {/* Optical flow */}
-                {viewportTab === 'video' && !isAudioOnly && (
-                  <button
-                    onClick={() => setOpticalFlowEnabled(v => !v)}
-                    className="px-2 py-1 rounded text-xs"
-                    title="Optical flow (multi-frame temporal smoothing)"
-                    style={{
-                      color: opticalFlowEnabled ? 'var(--accent-light)' : 'var(--text-muted)',
-                      background: opticalFlowEnabled ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                  >Flow</button>
-                )}
-
-                {/* Motion blur */}
-                {viewportTab === 'video' && !isAudioOnly && (
-                  <button
-                    onClick={() => setMotionBlurGlobal(v => !v)}
-                    className="px-2 py-1 rounded text-xs"
-                    title="Motion blur (speed-proportional shutter blur)"
-                    style={{
-                      color: motionBlurGlobal ? 'var(--accent-light)' : 'var(--text-muted)',
-                      background: motionBlurGlobal ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                  >MBlur</button>
-                )}
-
-                {/* Storyboard view */}
-                {hasStoryboard && (
-                  <button
-                    onClick={() => setShowStoryboard(v => !v)}
-                    className="mr-2 px-2 py-1 rounded text-xs"
-                    title="Storyboard view"
-                    style={{
-                      color: showStoryboard ? 'var(--accent-light)' : 'var(--text-muted)',
-                      background: showStoryboard ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                  >Board</button>
-                )}
-
-                {/* Color scopes */}
-                {viewportTab === 'video' && !isAudioOnly && (
-                  <button
-                    onClick={() => setShowColorScopes(v => !v)}
-                    className="mr-1 px-2 py-1 rounded text-xs"
-                    title="Color scopes"
-                    style={{
-                      color: showColorScopes ? 'var(--accent-light)' : 'var(--text-muted)',
-                      background: showColorScopes ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                  >Scopes</button>
-                )}
+                {/* Preview overlays — VU / scopes / motion smoothing / storyboard,
+                    grouped into one menu instead of six terse toggles. */}
+                {viewportTab === 'video' && !isAudioOnly && (() => {
+                  const overlays = [
+                    { label: 'VU meter', on: showVUMeter, toggle: () => setShowVUMeter(v => !v) },
+                    { label: 'Color scopes', on: showColorScopes, toggle: () => setShowColorScopes(v => !v) },
+                    { label: 'Frame blend', on: frameBlendEnabled, toggle: () => setFrameBlendEnabled(v => !v) },
+                    { label: 'Optical flow', on: opticalFlowEnabled, toggle: () => setOpticalFlowEnabled(v => !v) },
+                    { label: 'Motion blur', on: motionBlurGlobal, toggle: () => setMotionBlurGlobal(v => !v) },
+                    ...(hasStoryboard ? [{ label: 'Storyboard', on: showStoryboard, toggle: () => setShowStoryboard(v => !v) }] : []),
+                  ]
+                  const anyOn = overlays.some(o => o.on)
+                  return (
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        ref={overlaysBtnRef}
+                        onClick={() => { const r = overlaysBtnRef.current?.getBoundingClientRect(); if (r) setOverlaysMenuPos({ top: r.bottom + 4, left: r.left }); setShowOverlaysMenu(v => !v) }}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                        title="Preview overlays — meters, scopes, motion smoothing"
+                        style={{ color: anyOn ? 'var(--accent-light)' : 'var(--text-muted)', background: anyOn ? 'var(--accent-subtle)' : 'transparent' }}
+                        aria-haspopup="menu" aria-expanded={showOverlaysMenu}
+                      >
+                        <Layers size={12} /> Overlays <ChevronDown size={11} />
+                      </button>
+                      {showOverlaysMenu && overlaysMenuPos && (<>
+                        <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setShowOverlaysMenu(false)} />
+                        <div role="menu" style={{ position: 'fixed', top: overlaysMenuPos.top, left: overlaysMenuPos.left, zIndex: 1000, minWidth: 190, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4 }}>
+                          {overlays.map(o => (
+                            <button key={o.label} role="menuitemcheckbox" aria-checked={o.on} onClick={o.toggle}
+                              className="flex items-center gap-2 w-full text-left rounded"
+                              style={{ padding: '6px 8px', fontSize: 12.5, background: 'transparent', border: 'none', cursor: 'pointer', color: o.on ? 'var(--accent-light)' : 'var(--text-primary)' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                              <span style={{ width: 14, flexShrink: 0, display: 'inline-flex' }}>{o.on && <CheckIcon size={13} />}</span>
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>)}
+                    </div>
+                  )
+                })()}
 
                 {/* Render queue */}
                 <button
