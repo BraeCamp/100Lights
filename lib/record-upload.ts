@@ -45,7 +45,7 @@ export async function uploadRecordingBlob(blob: Blob, clipId: string): Promise<s
     if (blob.size <= 4 * 1024 * 1024) {
       const proxy = await fetch('/api/media/upload', {
         method: 'POST',
-        headers: { 'Content-Type': baseType, 'x-media-id': `rec-${clipId}`, 'x-filename': `recording-${clipId}${ext}` },
+        headers: { 'Content-Type': baseType, 'x-media-id': `rec-${clipId}`, 'x-ext': ext },
         body: blob,
       })
       if (proxy.ok) { const { key: k } = await proxy.json() as { key: string }; return k ?? null }

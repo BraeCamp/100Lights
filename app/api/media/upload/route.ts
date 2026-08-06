@@ -28,13 +28,11 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const mediaId = (req.headers.get('x-media-id') || '').trim()
-  const filename = (req.headers.get('x-filename') || '').trim()
+  const ext = (req.headers.get('x-ext') || '').trim().toLowerCase()
   const contentType = req.headers.get('content-type') || 'application/octet-stream'
-  if (!mediaId || !filename) return Response.json({ error: 'Missing media id or filename' }, { status: 400 })
+  if (!mediaId) return Response.json({ error: 'Missing media id' }, { status: 400 })
   if (!contentType.startsWith('audio/') && !contentType.startsWith('video/'))
-    return Response.json({ error: 'Only audio/video uploads are allowed' }, { status: 415 })
-
-  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : ''
+    return Response.json({ error: `Only audio/video uploads are allowed (got "${contentType}")` }, { status: 415 })
   if (!EXT_OK.has(ext)) return Response.json({ error: `Unsupported file type (${ext || 'unknown'})` }, { status: 415 })
 
   const buf = new Uint8Array(await req.arrayBuffer())

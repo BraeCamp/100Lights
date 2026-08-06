@@ -2456,23 +2456,30 @@ export default function VideoEditor({
   }
 
   // Fallback: POST the bytes through our own server, which PUTs to R2 (no browser
-  // CORS involved). Only for files under the proxy's size cap. Returns the key.
-  async function proxyUpload(file: File, mediaId: string): Promise<string | null> {
-    if (file.size > 4 * 1024 * 1024) return null
+  // CORS involved). Only for files under the proxy's size cap. Reports the real
+  // reason on failure so a stuck upload is diagnosable.
+  async function proxyUpload(file: File, mediaId: string): Promise<{ ok: true; key: string } | { ok: false; reason: string }> {
+    if (file.size > 4 * 1024 * 1024) return { ok: false, reason: `${(file.size / 1048576).toFixed(1)}MB exceeds the 4MB server-upload cap` }
+    // Send only the extension in a header (ASCII-safe) — a full filename can carry
+    // non-latin1 characters that make fetch throw when set as a header value.
+    const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')).toLowerCase() : ''
     try {
       const res = await fetch('/api/media/upload', {
         method: 'POST',
         headers: {
           'Content-Type': file.type || 'application/octet-stream',
           'x-media-id': mediaId,
-          'x-filename': file.name,
+          'x-ext': ext,
         },
         body: file,
       })
-      if (!res.ok) return null
-      const { key } = await res.json() as { key: string }
-      return key ?? null
-    } catch { return null }
+      if (res.ok) {
+        const { key } = await res.json() as { key: string }
+        return key ? { ok: true, key } : { ok: false, reason: 'server returned no key' }
+      }
+      const body = await res.json().catch(() => ({})) as { error?: string }
+      return { ok: false, reason: `server ${res.status}${body.error ? `: ${body.error}` : ''}` }
+    } catch (e) { return { ok: false, reason: `request failed: ${e instanceof Error ? e.message : String(e)}` } }
   }
 
   async function uploadMediaToR2(file: File, mediaId: string) {
@@ -2511,19 +2518,17 @@ export default function VideoEditor({
 
       // Direct PUT was blocked (typically R2 CORS) — fall back through our server.
       const proxied = await proxyUpload(file, mediaId)
-      if (proxied) { markUploaded(mediaId, proxied, file, contentType); return }
+      if (proxied.ok) { markUploaded(mediaId, proxied.key, file, contentType); return }
 
-      const msg = file.size > 4 * 1024 * 1024
-        ? 'Upload blocked (R2 CORS) and file is too large for the server fallback — add the R2 CORS rule for this origin.'
-        : 'Upload blocked (R2 CORS) and the server fallback failed. Add the R2 CORS rule for this origin.'
+      const msg = `Upload blocked (R2 CORS); server fallback also failed — ${proxied.reason}. Add the R2 CORS rule for this origin.`
       setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: msg } : m))
       setTranscribeError(msg)
     } catch (err) {
       // Presign or something unexpected threw — last-ditch proxy attempt.
       const proxied = await proxyUpload(file, mediaId)
-      if (proxied) { markUploaded(mediaId, proxied, file, contentType); return }
+      if (proxied.ok) { markUploaded(mediaId, proxied.key, file, contentType); return }
       const raw = err instanceof Error ? err.message : 'Upload failed'
-      setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: raw } : m))
+      setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: `${raw}; server fallback: ${proxied.reason}` } : m))
       setTranscribeError(raw)
     }
   }
