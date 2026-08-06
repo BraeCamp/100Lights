@@ -23,6 +23,14 @@ const RenderQueue   = dynamic(() => import('@/components/editor/RenderQueue'),  
 const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),   { ssr: false })
 const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
 const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),    { ssr: false })
+
+// Cross-project audio sync is SYNC-ON-SAVE, not real-time. A linked source
+// project is rendered from its latest SAVED state (pulled fresh from the API on
+// link, on load, and on manual re-sync). The live Liveblocks-room path is off:
+// a source that isn't currently open has an empty/stale room, so subscribing to
+// it handed back a silent replica that overwrote the good saved render. Flip
+// this true (behind a Pro check) to re-enable live cross-project re-bouncing.
+const LIVE_CROSS_PROJECT_SYNC = false
 import {
   serialize, saveProjectToFile, openProjectFromFile, deserialize,
   type CfProjFile, type EditorSnapshot,
@@ -2011,19 +2019,42 @@ export default function VideoEditor({
     window.location.assign(`/projects/${targetId}`)
   }
   // Reload: re-fetch each linked source so its live replica + listener come back.
+  // Sync-on-save: fetch a linked source's latest SAVED arrangement (the studio
+  // persists to the DB on save) and cache it as the replica we render from.
+  // This is the authoritative state — unlike the live collab room, which is
+  // empty when the source project isn't open. Returns null if unreachable or
+  // it carries no audio.
+  async function pullSavedSource(sid: string): Promise<import('@/lib/daw-types').DawProject | null> {
+    try {
+      const r = await fetch(`/api/projects/${sid}`)
+      if (!r.ok) return null
+      const cf = await r.json() as { name?: string; dawProject?: import('@/lib/daw-types').DawProject }
+      if (!cf.dawProject?.tracks?.length) return null
+      sourceReplicasRef.current.set(sid, cf.dawProject)
+      if (cf.name) sourceNamesRef.current.set(sid, cf.name)
+      return cf.dawProject
+    } catch { return null }
+  }
+
+  // Manual "Re-sync" on a linked project: pull its latest saved mix, re-bounce.
+  async function resyncSource(sid: string) {
+    setBounceStatus('working')
+    const daw = await pullSavedSource(sid)
+    if (!daw) {
+      setBounceStatus('error')
+      setTimeout(() => setBounceStatus('idle'), 2500)
+      window.alert(`Couldn't re-sync that project — it may be unreachable or have no audio.`)
+      return
+    }
+    await renderDawSelection(daw, undefined, new Date().toISOString(), sid, sourceNamesRef.current.get(sid))
+  }
+
   async function rehydrateLinkedSources(sourceIds: string[]) {
+    // Always re-pull the saved state so opening the video syncs it to whatever
+    // the linked audio project last saved (rather than a stale cached replica).
     const fetched: string[] = []
     for (const sid of sourceIds) {
-      if (sourceReplicasRef.current.has(sid)) { fetched.push(sid); continue }
-      try {
-        const r = await fetch(`/api/projects/${sid}`)
-        if (!r.ok) continue
-        const cf = await r.json() as { name?: string; dawProject?: import('@/lib/daw-types').DawProject }
-        if (!cf.dawProject?.tracks?.length) continue
-        sourceReplicasRef.current.set(sid, cf.dawProject)
-        sourceNamesRef.current.set(sid, cf.name || 'Linked project')
-        fetched.push(sid)
-      } catch { /* source unreachable — leave its last-rendered clip in place */ }
+      if (await pullSavedSource(sid)) fetched.push(sid)
     }
     if (fetched.length) {
       setLinkedSourceIds(prev => Array.from(new Set([...prev, ...fetched])))
@@ -2051,7 +2082,7 @@ export default function VideoEditor({
       const name = sourceName || cf.name || 'Linked project'
       sourceReplicasRef.current.set(sourceId, daw)
       sourceNamesRef.current.set(sourceId, name)
-      setLinkedSourceIds(prev => prev.includes(sourceId) ? prev : [...prev, sourceId])   // mounts DawMixSync for live re-sync
+      setLinkedSourceIds(prev => prev.includes(sourceId) ? prev : [...prev, sourceId])   // tracks the link for the Linked-projects UI + load-time re-pull
       await renderDawSelection(daw, undefined, new Date().toISOString(), sourceId, name)
       // If nothing landed on the timeline, the render came back empty/silent —
       // say so instead of leaving the user staring at an empty pool.
@@ -3172,7 +3203,7 @@ export default function VideoEditor({
                 onSendProject={hasDawProject ? () => openProjectPicker('send') : undefined}
                 linkedSources={linkedSourceIds.map(id => ({ id, name: sourceNamesRef.current.get(id) || 'Linked project', syncing: bounceStatus === 'working' }))}
                 onOpenSource={(id) => window.open(`/projects/${id}`, '_blank')}
-                onResyncSource={() => { void refreshAllDawMixesRef.current() }}
+                onResyncSource={(id) => { void resyncSource(id) }}
                 dawTracks={dawTracks}
                 bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
@@ -3637,9 +3668,11 @@ export default function VideoEditor({
         />
       )}
 
-      {/* Cross-project links: one live listener per LINKED source project. When a
-          source is edited, its replica updates and the linked clip re-syncs. */}
-      {linkedSourceIds.map(sid => (
+      {/* Cross-project links are sync-on-save (see LIVE_CROSS_PROJECT_SYNC): the
+          linked mix is rendered from the source's saved state on link / load /
+          manual re-sync, not from a live room. Real-time re-bouncing is gated
+          off here — flip the flag (behind Pro) to restore the live listeners. */}
+      {LIVE_CROSS_PROJECT_SYNC && linkedSourceIds.map(sid => (
         <DawMixSync
           key={sid}
           projectId={sid}
